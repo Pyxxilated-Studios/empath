@@ -1,0 +1,18 @@
+[package]
+name = "smtp-server"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+colored = "2"
+mio = { version = "0.8", features = ["os-poll", "net"] }
+
+[[bin]]
+name = "server"
+path = "bin/main.rs"
+
+[profile.release]
+lto = "thin"
