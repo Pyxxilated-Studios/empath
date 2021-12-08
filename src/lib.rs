@@ -1,3 +1,4 @@
+pub mod log;
 pub mod server;
 
 pub use self::server::*;

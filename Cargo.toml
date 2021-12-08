@@ -1,5 +1,5 @@
 [package]
-name = "smtp-server"
+name = "smtp"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,6 +9,8 @@ path = "src/lib.rs"
 [dependencies]
 colored = "2"
 mio = { version = "0.8", features = ["os-poll", "net"] }
+mailparse = "0.13"
+chrono = "0.4"
 
 [[bin]]
 name = "server"

@@ -1,24 +1,26 @@
-use smtp_server::{server::Server, Command, SMTPServer};
+use mailparse::parse_mail;
+use smtp::{server::Server, Command, SMTPServer};
 
 fn main() -> std::io::Result<()> {
     SMTPServer! {
         LISTEN 1025
 
-        Ehlo |context| {
-            Ok(String::from("Hello! Nice to meet you!"))
+        Ehlo |_context| {
+            Ok(())
         }
 
-        Data |context| {
-            Ok(String::from("Why though"))
+        Data |_context| {
+            Ok(())
         }
 
-        DataReceived |context| {
-            println!("Data: {}", context.message);
-            Ok(String::new())
+        DataReceived |_context| {
+            // let parsed = parse_mail(context.message.as_bytes());
+            // println!("Data: {:#?}", parsed);
+            Ok(())
         }
 
         Quit |_| {
-            Ok(String::new())
+            Ok(())
         }
     }
     .run()?;
