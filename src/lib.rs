@@ -25,14 +25,13 @@ pub use self::server::*;
 /// ```
 #[macro_export]
 macro_rules! SMTPServer {
-    (LISTEN $address:literal $($command:tt $req:expr) *) => {
-        Server::default()
+    (LISTEN $address:literal $($state:tt $req:expr) *) => {
+        SMTPServer!($($state $req)*)
             .listen($address)
-            $(.handle(Command::$command, $req))*
     };
 
-    ($($command:tt $req:expr) *) => {
+    ($($state:tt $req:expr) *) => {
         Server::default()
-            $(.handle(Command::$command, $req))*
+            $(.handle(State::$state, $req))*
     };
 }

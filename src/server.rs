@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::str::FromStr;
+use std::sync::{Arc, RwLock};
 
-use mio::event::Event;
-use mio::net::{TcpListener, TcpStream};
-use mio::{Events, Interest, Poll, Token};
+use smol::Async;
 
 use crate::log::Logger;
 
@@ -26,17 +25,8 @@ impl Display for Status {
     }
 }
 
-#[derive(PartialEq, PartialOrd)]
-pub enum State {
-    CONNECTED,
-    HELLO,
-    FROM,
-    RCPTTO,
-    QUIT,
-}
-
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
-pub enum Command {
+pub enum State {
     Connect,
     Ehlo,
     MailFrom,
@@ -46,79 +36,71 @@ pub enum Command {
     DataReceived,
     Quit,
     Invalid,
+    Close,
 }
 
-impl Display for Command {
+impl Display for State {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         fmt.write_str(match self {
-            Command::Reading | Command::DataReceived => "",
-            Command::Connect => "Connect",
-            Command::Ehlo => "EHLO",
-            Command::MailFrom => "MAIL",
-            Command::RcptTo => "RCPT",
-            Command::Data => "DATA",
-            Command::Quit => "QUIT",
-            Command::Invalid => "INVALID",
+            State::Reading | State::DataReceived => "",
+            State::Connect => "Connect",
+            State::Close => "Close",
+            State::Ehlo => "EHLO",
+            State::MailFrom => "MAIL",
+            State::RcptTo => "RCPT",
+            State::Data => "DATA",
+            State::Quit => "QUIT",
+            State::Invalid => "INVALID",
         })
     }
 }
 
-impl FromStr for Command {
+impl FromStr for State {
     type Err = Self;
 
     fn from_str(command: &str) -> Result<Self, <Self as FromStr>::Err> {
         match command.to_ascii_uppercase().trim() {
-            "EHLO" | "HELO" => Ok(Command::Ehlo),
-            "MAIL" => Ok(Command::MailFrom),
-            "RCPT" => Ok(Command::RcptTo),
-            "DATA" => Ok(Command::Data),
-            "QUIT" => Ok(Command::Quit),
-            _ => Err(Command::Invalid),
+            "EHLO" | "HELO" => Ok(State::Ehlo),
+            "MAIL" => Ok(State::MailFrom),
+            "RCPT" => Ok(State::RcptTo),
+            "DATA" => Ok(State::Data),
+            "QUIT" => Ok(State::Quit),
+            _ => Err(State::Invalid),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Context {
-    pub command: Command,
+    pub command: State,
     pub message: String,
     sent: bool,
 }
 
 pub(crate) type Handle = fn(&Context) -> std::io::Result<()>;
-pub(crate) type Handles = HashMap<Command, Handle>;
+pub(crate) type Handles = HashMap<State, Handle>;
 
 pub struct Server {
-    connections: HashMap<Token, (TcpStream, Context)>,
     address: IpAddr,
     port: u16,
-    handlers: Handles,
-    logger: Logger,
+    handlers: Arc<RwLock<Handles>>,
 }
 
 impl Default for Server {
     fn default() -> Self {
         Server {
-            connections: HashMap::new(),
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 1025,
-            handlers: HashMap::new(),
-            logger: Logger::default(),
+            handlers: Arc::default(),
         }
     }
 }
 
-struct Connection<'a> {
-    token: &'a mut Token,
-    event: &'a Event,
-    poll: &'a mut Poll,
-}
-
-const SERVER: Token = Token(0);
-
 impl Server {
-    pub fn handle(mut self, command: Command, handler: Handle) -> Server {
+    pub fn handle(self, command: State, handler: Handle) -> Server {
         self.handlers
+            .write()
+            .expect("Unable to add handler")
             .entry(command)
             .and_modify(|hdlr| *hdlr = handler)
             .or_insert(handler);
@@ -131,166 +113,101 @@ impl Server {
         self
     }
 
-    pub fn run(mut self) -> std::io::Result<()> {
-        // Create storage for events.
-        let mut events = Events::with_capacity(128);
-        let mut poll = Poll::new()?;
+    pub fn run(self) -> std::io::Result<()> {
+        smol::block_on(async {
+            let listener = Async::<TcpListener>::bind(SocketAddr::new(self.address, self.port))?;
 
-        let mut listener = TcpListener::bind(SocketAddr::new(self.address, self.port))?;
+            loop {
+                let (stream, address) = listener.accept().await?;
 
-        poll.registry().register(
-            &mut listener,
-            SERVER,
-            Interest::READABLE | Interest::WRITABLE,
-        )?;
+                Logger::incoming(&format!("Connection from {}", address));
 
-        let mut unique_token = Token(SERVER.0 + 1);
-
-        // Start an event loop.
-        loop {
-            // Poll Mio for events, blocking until we get an event.
-            poll.poll(&mut events, None)?;
-
-            // Process each event.
-            for event in events.iter() {
-                // We can use the token we previously provided to `register` to
-                // determine for which socket the event is.
-                match event.token() {
-                    SERVER => {
-                        let (mut connection, address) = match listener.accept() {
-                            Ok((connection, address)) => (connection, address),
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                // If we get a `WouldBlock` error we know our
-                                // listener has no more incoming connections queued,
-                                // so we can return to polling and wait for some
-                                // more.
-                                break;
-                            }
-                            Err(e) => {
-                                // If it was any other kind of error, something went
-                                // wrong and we terminate with an error.
-                                return Err(e);
-                            }
-                        };
-
-                        self.logger
-                            .incoming(&format!("Connection from {}", address));
-
-                        let token = next(&mut unique_token);
-                        poll.registry().register(
-                            &mut connection,
-                            token,
-                            Interest::READABLE | Interest::WRITABLE,
-                        )?;
-
-                        write!(connection, "{} localhost\r\n", Status::ServiceReady)?;
-
-                        self.connections.insert(
-                            token,
-                            (
-                                connection,
-                                Context {
-                                    command: Command::Connect,
-                                    message: String::new(),
-                                    sent: true,
-                                },
-                            ),
-                        );
-                    }
-                    mut token => {
-                        let done = self
-                            .handle_connection_event(&Connection {
-                                token: &mut token,
-                                event,
-                                poll: &mut poll,
-                            })
-                            .unwrap_or(false);
-
-                        if done {
-                            if let Some(mut connection) = self.connections.remove(&token) {
-                                poll.registry().deregister(&mut connection.0)?;
-                            }
-
-                            self.logger.outgoing("=== Connection closed");
-                        }
-                    }
-                }
+                smol::spawn(Server::handle_connection_event(
+                    Arc::clone(&self.handlers),
+                    stream,
+                    Context {
+                        command: State::Connect,
+                        message: String::new(),
+                        sent: false,
+                    },
+                ))
+                .detach();
             }
-        }
+        })
     }
 
     /// Returns `true` if the connection is done.
-    fn handle_connection_event(&mut self, connection: &Connection) -> std::io::Result<bool> {
-        if let Some((stream, context)) = self.connections.get_mut(connection.token) {
-            let mut connection_closed = false;
+    async fn handle_connection_event(
+        handlers: Arc<RwLock<Handles>>,
+        mut stream: Async<TcpStream>,
+        mut context: Context,
+    ) -> std::io::Result<bool> {
+        let mut connection_closed = false;
 
-            if connection.event.is_readable() {
-                if receive(stream, context)? {
-                    connection_closed = true;
-                }
-
-                self.logger
-                    .incoming(&format!("{} {}", context.command, context.message));
-            }
-
-            if connection.event.is_writable() && !context.sent {
-                let (response, close) = response(context, &self.handlers)?;
+        loop {
+            if let Ok((response, close)) = response(&mut context, &handlers) {
+                context.sent = true;
 
                 if let Some(response) = response {
-                    self.logger.outgoing(&response);
-                    write!(stream, "{}\r\n", response)?;
+                    Logger::outgoing(&response);
+                    stream
+                        .write_with(|mut stream| write!(stream, "{}\r\n", response))
+                        .await?;
                 }
 
                 if close {
-                    connection_closed = close;
+                    connection_closed = true;
                 }
+            }
 
-                context.sent = true;
+            match receive(&mut stream, &mut context).await? {
+                ReceivedMessage {
+                    reading_done: true,
+                    connection_closed: closed,
+                } => {
+                    Logger::incoming(format!("{} {}", context.command, context.message).trim());
+                    if closed {
+                        connection_closed = true;
+                    }
+                }
+                ReceivedMessage {
+                    connection_closed: true,
+                    ..
+                } => {
+                    connection_closed = true;
+                }
+                _ => {}
             }
 
             if connection_closed {
+                Logger::outgoing("Connection closed");
                 return Ok(true);
             }
-
-            connection.poll.registry().reregister(
-                stream,
-                connection.event.token(),
-                Interest::WRITABLE | Interest::READABLE,
-            )?;
         }
-
-        Ok(false)
     }
 }
 
-fn next(current: &mut Token) -> Token {
-    let next = current.0;
-    current.0 += 1;
-    Token(next)
-}
+fn response(
+    context: &mut Context,
+    handlers: &Arc<RwLock<Handles>>,
+) -> std::io::Result<(Option<String>, bool)> {
+    if context.sent {
+        return Ok((None, false));
+    }
 
-fn would_block(err: &std::io::Error) -> bool {
-    err.kind() == std::io::ErrorKind::WouldBlock
-}
-
-fn interrupted(err: &std::io::Error) -> bool {
-    err.kind() == std::io::ErrorKind::Interrupted
-}
-
-fn response(context: &mut Context, handlers: &Handles) -> std::io::Result<(Option<String>, bool)> {
-    if let Some(handler) = handlers.get(&context.command) {
+    if let Some(handler) = handlers.read().unwrap().get(&context.command) {
         handler(context)?;
     }
 
     Ok(match context.command {
-        Command::Connect | Command::Reading => (None, false),
-        Command::Ehlo => (
+        State::Connect => (Some(format!("{} localhost", Status::ServiceReady)), false),
+        State::Ehlo => (
             Some(format!("{} Hello {}", Status::Ok, context.message)),
             false,
         ),
-        Command::MailFrom | Command::RcptTo => (Some(format!("{} Ok", Status::Ok)), false),
-        Command::Data => {
-            context.command = Command::Reading;
+        State::MailFrom | State::RcptTo => (Some(format!("{} Ok", Status::Ok)), false),
+        State::Data => {
+            context.command = State::Reading;
             (
                 Some(format!(
                     "{} End data with <CR><LF>.<CR><LF>",
@@ -299,9 +216,9 @@ fn response(context: &mut Context, handlers: &Handles) -> std::io::Result<(Optio
                 false,
             )
         }
-        Command::DataReceived => (Some(format!("{} Ok: queued as 123", Status::Ok)), false),
-        Command::Quit => (Some(format!("{} Bye", Status::GoodBye)), true),
-        Command::Invalid => (
+        State::DataReceived => (Some(format!("{} Ok: queued as 123", Status::Ok)), false),
+        State::Quit => (Some(format!("{} Bye", Status::GoodBye)), true),
+        State::Invalid => (
             Some(format!(
                 "{} Invalid command '{}'",
                 Status::InvalidCommandSequence,
@@ -309,72 +226,85 @@ fn response(context: &mut Context, handlers: &Handles) -> std::io::Result<(Optio
             )),
             true,
         ),
+        State::Reading | State::Close => (None, false),
     })
 }
 
-fn receive(stream: &mut TcpStream, context: &mut Context) -> std::io::Result<bool> {
+struct ReceivedMessage {
+    connection_closed: bool,
+    reading_done: bool,
+}
+
+async fn receive(
+    stream: &mut Async<TcpStream>,
+    context: &mut Context,
+) -> std::io::Result<ReceivedMessage> {
     let mut received_data = vec![0; 4096];
     let mut bytes_read = 0;
 
-    loop {
-        match stream.read(&mut received_data[bytes_read..]) {
-            Ok(0) => {
-                // Reading 0 bytes means the other side has closed the
-                // connection or is done writing, then so are we.
-                return Ok(true);
-            }
-            Ok(n) => {
-                bytes_read += n;
-                if bytes_read == received_data.len() {
-                    received_data.resize(received_data.len() + 1024, 0);
-                }
-            }
-            // Would block "errors" are the OS's way of saying that the
-            // connection is not actually ready to perform this I/O operation.
-            Err(ref err) if would_block(err) => break,
-            Err(ref err) if interrupted(err) => continue,
-            // Other errors we'll consider fatal.
-            Err(err) => return Err(err),
+    match stream
+        .read_with(|mut stream| stream.read(&mut received_data))
+        .await
+    {
+        Ok(0) => {
+            // Reading 0 bytes means the other side has closed the
+            // connection or is done writing, then so are we.
+            return Ok(ReceivedMessage {
+                connection_closed: true,
+                reading_done: true,
+            });
         }
+        Ok(n) => {
+            bytes_read += n;
+        }
+        // Other errors we'll consider fatal.
+        Err(err) => return Err(err),
     }
 
-    if bytes_read != 0 {
-        let received_data = &received_data[..bytes_read];
-        if let Ok(receieved) = std::str::from_utf8(received_data) {
-            let mut mess = receieved.split(' ');
-            let command = mess.next().unwrap_or("");
-            let command = command.trim();
-            let data = mess.collect::<Vec<_>>().join(" ");
-
-            if context.command == Command::Reading {
-                let message = format!("{}{}", context.message, receieved);
-
-                if message.contains("\r\n.\r\n") {
-                    *context = Context {
-                        command: Command::DataReceived,
-                        message,
-                        sent: false,
-                    };
-                } else {
-                    context.message = message;
-                }
-            } else {
-                let mut message = String::from(data.trim());
-                let command = command.parse::<Command>().unwrap_or_else(|comm| {
-                    message = format!("{} {}", command, message);
-                    comm
-                });
-
+    if let Ok(receieved) = std::str::from_utf8(&received_data[..bytes_read]) {
+        if context.command == State::Reading {
+            if receieved.ends_with("\r\n.\r\n") {
                 *context = Context {
-                    command,
-                    message,
+                    command: State::DataReceived,
+                    message: format!("{}{}", context.message, receieved),
                     sent: false,
                 };
+
+                return Ok(ReceivedMessage {
+                    connection_closed: false,
+                    reading_done: true,
+                });
             }
-        } else {
-            println!("Received (non UTF-8) data: {:?}", received_data);
+
+            context.message += receieved;
+            return Ok(ReceivedMessage {
+                connection_closed: false,
+                reading_done: false,
+            });
         }
+
+        let mut mess = receieved.split(' ');
+        let command = mess.next().unwrap_or("");
+        let command = command.trim();
+        let data = mess.collect::<Vec<_>>().join(" ");
+
+        let mut message = String::from(data.trim());
+        let command = command.parse::<State>().unwrap_or_else(|comm| {
+            message = format!("{} {}", command, message);
+            comm
+        });
+
+        *context = Context {
+            command,
+            message,
+            sent: false,
+        };
+    } else {
+        println!("Received (non UTF-8) data: {:?}", received_data);
     }
 
-    Ok(false)
+    Ok(ReceivedMessage {
+        connection_closed: false,
+        reading_done: true,
+    })
 }

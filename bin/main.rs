@@ -1,5 +1,4 @@
-use mailparse::parse_mail;
-use smtp::{server::Server, Command, SMTPServer};
+use smtp::{server::Server, SMTPServer, State};
 
 fn main() -> std::io::Result<()> {
     SMTPServer! {

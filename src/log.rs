@@ -9,11 +9,11 @@ fn timestamp() -> ColoredString {
 }
 
 impl Logger {
-    pub fn incoming(&self, message: &str) {
+    pub fn incoming(message: &str) {
         println!("[{}][{}] {}", timestamp(), "Incoming".green(), message);
     }
 
-    pub fn outgoing(&self, message: &str) {
+    pub fn outgoing(message: &str) {
         println!("[{}][{}] {}", timestamp(), "Outgoing".purple(), message);
     }
 }
