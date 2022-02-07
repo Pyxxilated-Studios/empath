@@ -1,19 +1,42 @@
 use chrono::prelude::*;
-use colored::{ColoredString, Colorize};
+use colored::Colorize;
+use fern::Dispatch;
+use log::info;
 
 #[derive(Default)]
-pub struct Logger;
-
-fn timestamp() -> ColoredString {
-    Utc::now().timestamp_millis().to_string().yellow()
+pub struct Logger<'a> {
+    id: &'a str,
 }
 
-impl Logger {
-    pub fn incoming(message: &str) {
-        println!("[{}][{}] {}", timestamp(), "Incoming".green(), message);
+impl<'a> Logger<'a> {
+    pub fn init() {
+        Dispatch::new()
+            .format(|out, message, _| {
+                out.finish(format_args!(
+                    "[{}] {}",
+                    Utc::now().timestamp_millis().to_string().yellow(),
+                    message
+                ));
+            })
+            .chain(std::io::stdout())
+            .level(log::LevelFilter::Info)
+            .apply()
+            .expect("Unable to start logger");
     }
 
-    pub fn outgoing(message: &str) {
-        println!("[{}][{}] {}", timestamp(), "Outgoing".purple(), message);
+    pub fn with_id(id: &'a str) -> Logger {
+        Logger { id }
+    }
+
+    pub fn incoming(&self, message: &str) {
+        info!("[{}] [{}] {}", self.id, "Incoming".green(), message);
+    }
+
+    pub fn outgoing(&self, message: &str) {
+        info!("[{}] [{}] {}", self.id, "Outgoing".purple(), message);
+    }
+
+    pub fn internal(&self, message: &str) {
+        info!("[{}] [{}] {}", self.id, "Internal".blue(), message);
     }
 }

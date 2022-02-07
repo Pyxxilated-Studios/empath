@@ -7,10 +7,12 @@ edition = "2021"
 path = "src/lib.rs"
 
 [dependencies]
-colored = "2"
-smol = "1.2"
-mailparse = "0.13"
 chrono = "0.4"
+colored = "2"
+log = "0.4"
+mailparse = "0.13"
+fern = "0.6"
+smol = "1.2"
 
 [[bin]]
 name = "server"

@@ -3,6 +3,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::str::FromStr;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 
 use smol::Async;
@@ -72,9 +73,13 @@ impl FromStr for State {
 
 #[derive(Debug)]
 pub struct Context {
-    pub command: State,
+    pub state: State,
     pub message: String,
     sent: bool,
+}
+
+pub struct ValidationContext {
+    envelope: (),
 }
 
 pub(crate) type Handle = fn(&Context) -> std::io::Result<()>;
@@ -107,6 +112,72 @@ impl Server {
         self
     }
 
+    /// Returns `true` if the connection is done.
+    async fn handle_connection_event(
+        handlers: Arc<RwLock<Handles>>,
+        queue: Arc<AtomicU64>,
+        mut stream: Async<TcpStream>,
+        mut context: Context,
+        peer: SocketAddr,
+    ) -> std::io::Result<bool> {
+        let mut connection_closed = false;
+
+        let id = peer.to_string();
+        let logger = Logger::with_id(&id);
+
+        logger.internal("Connected");
+
+        loop {
+            if let Ok((response, close)) = response(&queue, &mut context, &handlers) {
+                context.sent = true;
+
+                if let Some(response) = response {
+                    logger.outgoing(&response);
+                    stream
+                        .write_with(|mut stream| write!(stream, "{}\r\n", response))
+                        .await?;
+                }
+
+                if close {
+                    // connection_closed = true;
+
+                    return Ok(true);
+                }
+            }
+
+            stream.readable().await?;
+
+            if let Ok(message) = receive(&mut stream, &mut context).await {
+                match message {
+                    ReceivedMessage {
+                        reading_done: true,
+                        connection_closed: closed,
+                    } => {
+                        if context.state != State::DataReceived {
+                            logger
+                                .incoming(format!("{} {}", context.state, context.message).trim());
+                        }
+                        if closed {
+                            connection_closed = true;
+                        }
+                    }
+                    ReceivedMessage {
+                        connection_closed: true,
+                        ..
+                    } => connection_closed = true,
+                    _ => {}
+                }
+            } else {
+                connection_closed = true;
+            }
+
+            if connection_closed {
+                logger.internal("Connection closed");
+                return Ok(true);
+            }
+        }
+    }
+
     pub fn listen(mut self, port: u16) -> Server {
         self.port = port;
 
@@ -115,79 +186,33 @@ impl Server {
 
     pub fn run(self) -> std::io::Result<()> {
         smol::block_on(async {
+            Logger::init();
+
             let listener = Async::<TcpListener>::bind(SocketAddr::new(self.address, self.port))?;
+            let queue = Arc::new(AtomicU64::default());
 
             loop {
                 let (stream, address) = listener.accept().await?;
 
-                Logger::incoming(&format!("Connection from {}", address));
-
                 smol::spawn(Server::handle_connection_event(
                     Arc::clone(&self.handlers),
+                    Arc::clone(&queue),
                     stream,
                     Context {
-                        command: State::Connect,
+                        state: State::Connect,
                         message: String::new(),
                         sent: false,
                     },
+                    address,
                 ))
                 .detach();
             }
         })
     }
-
-    /// Returns `true` if the connection is done.
-    async fn handle_connection_event(
-        handlers: Arc<RwLock<Handles>>,
-        mut stream: Async<TcpStream>,
-        mut context: Context,
-    ) -> std::io::Result<bool> {
-        let mut connection_closed = false;
-
-        loop {
-            if let Ok((response, close)) = response(&mut context, &handlers) {
-                context.sent = true;
-
-                if let Some(response) = response {
-                    Logger::outgoing(&response);
-                    stream
-                        .write_with(|mut stream| write!(stream, "{}\r\n", response))
-                        .await?;
-                }
-
-                if close {
-                    connection_closed = true;
-                }
-            }
-
-            match receive(&mut stream, &mut context).await? {
-                ReceivedMessage {
-                    reading_done: true,
-                    connection_closed: closed,
-                } => {
-                    Logger::incoming(format!("{} {}", context.command, context.message).trim());
-                    if closed {
-                        connection_closed = true;
-                    }
-                }
-                ReceivedMessage {
-                    connection_closed: true,
-                    ..
-                } => {
-                    connection_closed = true;
-                }
-                _ => {}
-            }
-
-            if connection_closed {
-                Logger::outgoing("Connection closed");
-                return Ok(true);
-            }
-        }
-    }
 }
 
 fn response(
+    queue: &Arc<AtomicU64>,
     context: &mut Context,
     handlers: &Arc<RwLock<Handles>>,
 ) -> std::io::Result<(Option<String>, bool)> {
@@ -195,11 +220,11 @@ fn response(
         return Ok((None, false));
     }
 
-    if let Some(handler) = handlers.read().unwrap().get(&context.command) {
+    if let Some(handler) = handlers.read().unwrap().get(&context.state) {
         handler(context)?;
     }
 
-    Ok(match context.command {
+    Ok(match context.state {
         State::Connect => (Some(format!("{} localhost", Status::ServiceReady)), false),
         State::Ehlo => (
             Some(format!("{} Hello {}", Status::Ok, context.message)),
@@ -207,7 +232,7 @@ fn response(
         ),
         State::MailFrom | State::RcptTo => (Some(format!("{} Ok", Status::Ok)), false),
         State::Data => {
-            context.command = State::Reading;
+            context.state = State::Reading;
             (
                 Some(format!(
                     "{} End data with <CR><LF>.<CR><LF>",
@@ -216,7 +241,13 @@ fn response(
                 false,
             )
         }
-        State::DataReceived => (Some(format!("{} Ok: queued as 123", Status::Ok)), false),
+        State::DataReceived => {
+            let queue = queue.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            (
+                Some(format!("{} Ok: queued as {}", Status::Ok, queue)),
+                false,
+            )
+        }
         State::Quit => (Some(format!("{} Bye", Status::GoodBye)), true),
         State::Invalid => (
             Some(format!(
@@ -224,7 +255,7 @@ fn response(
                 Status::InvalidCommandSequence,
                 context.message
             )),
-            true,
+            false,
         ),
         State::Reading | State::Close => (None, false),
     })
@@ -240,9 +271,8 @@ async fn receive(
     context: &mut Context,
 ) -> std::io::Result<ReceivedMessage> {
     let mut received_data = vec![0; 4096];
-    let mut bytes_read = 0;
 
-    match stream
+    let bytes_read = match stream
         .read_with(|mut stream| stream.read(&mut received_data))
         .await
     {
@@ -254,18 +284,16 @@ async fn receive(
                 reading_done: true,
             });
         }
-        Ok(n) => {
-            bytes_read += n;
-        }
+        Ok(n) => n,
         // Other errors we'll consider fatal.
         Err(err) => return Err(err),
-    }
+    };
 
     if let Ok(receieved) = std::str::from_utf8(&received_data[..bytes_read]) {
-        if context.command == State::Reading {
+        if context.state == State::Reading {
             if receieved.ends_with("\r\n.\r\n") {
                 *context = Context {
-                    command: State::DataReceived,
+                    state: State::DataReceived,
                     message: format!("{}{}", context.message, receieved),
                     sent: false,
                 };
@@ -295,7 +323,7 @@ async fn receive(
         });
 
         *context = Context {
-            command,
+            state: command,
             message,
             sent: false,
         };
