@@ -1,9 +1,9 @@
 use mailparse::parse_mail;
-use smtp::{server::Server, SMTPServer, State};
+use smtp::{server::Server, SMTPServer, State, Status};
 
 fn main() -> std::io::Result<()> {
     SMTPServer! {
-        LISTEN 1025
+        LISTEN 1026
 
         Ehlo |_context| {
             Ok(())

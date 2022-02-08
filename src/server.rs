@@ -6,7 +6,10 @@ use std::str::FromStr;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 
+use mailparse::{MailAddr, SingleInfo};
 use smol::Async;
+use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
+use trust_dns_resolver::Resolver;
 
 use crate::log::Logger;
 
@@ -18,6 +21,7 @@ pub enum Status {
     StartMailInput = 354,
     Unavailable = 421,
     InvalidCommandSequence = 503,
+    Error = 550,
 }
 
 impl Display for Status {
@@ -78,11 +82,24 @@ pub struct Context {
     sent: bool,
 }
 
-pub struct ValidationContext {
-    envelope: (),
+impl Default for Context {
+    fn default() -> Self {
+        Context {
+            state: State::Connect,
+            message: String::default(),
+            sent: false,
+        }
+    }
 }
 
-pub(crate) type Handle = fn(&Context) -> std::io::Result<()>;
+#[derive(Default, Debug)]
+pub struct ValidationContext {
+    mail_from: Option<String>,
+    rcpt_to: Option<Vec<String>>,
+    data: Option<String>,
+}
+
+pub(crate) type Handle = fn(&Context) -> Result<(), (Status, String)>;
 pub(crate) type Handles = HashMap<State, Handle>;
 
 pub struct Server {
@@ -113,63 +130,64 @@ impl Server {
     }
 
     /// Returns `true` if the connection is done.
-    async fn handle_connection_event(
+    async fn connect(
         handlers: Arc<RwLock<Handles>>,
         queue: Arc<AtomicU64>,
         mut stream: Async<TcpStream>,
         mut context: Context,
         peer: SocketAddr,
     ) -> std::io::Result<bool> {
-        let mut connection_closed = false;
-
         let id = peer.to_string();
         let logger = Logger::with_id(&id);
+        let mut vctx = ValidationContext::default();
 
         logger.internal("Connected");
 
         loop {
-            if let Ok((response, close)) = response(&queue, &mut context, &handlers) {
-                context.sent = true;
+            stream.writable().await?;
 
-                if let Some(response) = response {
+            match send(&queue, &mut context, &handlers, &mut vctx) {
+                Ok((response, close)) => {
+                    context.sent = true;
+
+                    if let Some(response) = response {
+                        logger.outgoing(&response);
+                        stream
+                            .write_with(|mut stream| write!(stream, "{}\r\n", response))
+                            .await?;
+                    }
+
+                    if close {
+                        return Ok(true);
+                    }
+
+                    if context.state == State::DataReceived {
+                        forward(&vctx).await?;
+                    }
+                }
+                Err((status, message)) => {
+                    let response = format!("{status} {message}");
                     logger.outgoing(&response);
                     stream
-                        .write_with(|mut stream| write!(stream, "{}\r\n", response))
+                        .write_with(|mut stream| write!(stream, "{response}\r\n"))
                         .await?;
-                }
-
-                if close {
-                    // connection_closed = true;
-
-                    return Ok(true);
                 }
             }
 
             stream.readable().await?;
 
-            if let Ok(message) = receive(&mut stream, &mut context).await {
-                match message {
-                    ReceivedMessage {
-                        reading_done: true,
-                        connection_closed: closed,
-                    } => {
-                        if context.state != State::DataReceived {
-                            logger
-                                .incoming(format!("{} {}", context.state, context.message).trim());
-                        }
-                        if closed {
-                            connection_closed = true;
-                        }
-                    }
-                    ReceivedMessage {
-                        connection_closed: true,
-                        ..
-                    } => connection_closed = true,
-                    _ => {}
-                }
-            } else {
-                connection_closed = true;
-            }
+            let connection_closed =
+                receive(&mut stream, &mut context, &logger)
+                    .await
+                    .map_or(true, |message| {
+                        matches!(
+                            message,
+                            ReceivedMessage {
+                                connection_closed: true,
+                                ..
+                            }
+                        )
+                    });
 
             if connection_closed {
                 logger.internal("Connection closed");
@@ -194,15 +212,11 @@ impl Server {
             loop {
                 let (stream, address) = listener.accept().await?;
 
-                smol::spawn(Server::handle_connection_event(
+                smol::spawn(Server::connect(
                     Arc::clone(&self.handlers),
                     Arc::clone(&queue),
                     stream,
-                    Context {
-                        state: State::Connect,
-                        message: String::new(),
-                        sent: false,
-                    },
+                    Context::default(),
                     address,
                 ))
                 .detach();
@@ -211,26 +225,42 @@ impl Server {
     }
 }
 
-fn response(
+fn send(
     queue: &Arc<AtomicU64>,
     context: &mut Context,
     handlers: &Arc<RwLock<Handles>>,
-) -> std::io::Result<(Option<String>, bool)> {
+    vctx: &mut ValidationContext,
+) -> Result<(Option<String>, bool), (Status, String)> {
     if context.sent {
         return Ok((None, false));
     }
 
-    if let Some(handler) = handlers.read().unwrap().get(&context.state) {
-        handler(context)?;
-    }
+    handlers
+        .read()
+        .unwrap()
+        .get(&context.state)
+        .map_or_else(|| Ok(()), |handler| handler(context))?;
 
-    Ok(match context.state {
+    let status = match context.state {
         State::Connect => (Some(format!("{} localhost", Status::ServiceReady)), false),
         State::Ehlo => (
             Some(format!("{} Hello {}", Status::Ok, context.message)),
             false,
         ),
-        State::MailFrom | State::RcptTo => (Some(format!("{} Ok", Status::Ok)), false),
+        State::MailFrom => {
+            vctx.mail_from = Some(context.message.clone());
+
+            (Some(format!("{} Ok", Status::Ok)), false)
+        }
+        State::RcptTo => {
+            if vctx.rcpt_to.is_some() {
+                vctx.rcpt_to.as_mut().unwrap().push(context.message.clone());
+            } else {
+                vctx.rcpt_to = Some(vec![context.message.clone()]);
+            }
+
+            (Some(format!("{} Ok", Status::Ok)), false)
+        }
         State::Data => {
             context.state = State::Reading;
             (
@@ -242,6 +272,8 @@ fn response(
             )
         }
         State::DataReceived => {
+            vctx.data = Some(context.message.clone());
+
             let queue = queue.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             (
                 Some(format!("{} Ok: queued as {}", Status::Ok, queue)),
@@ -258,17 +290,19 @@ fn response(
             false,
         ),
         State::Reading | State::Close => (None, false),
-    })
+    };
+
+    Ok(status)
 }
 
 struct ReceivedMessage {
     connection_closed: bool,
-    reading_done: bool,
 }
 
-async fn receive(
+async fn receive<'a>(
     stream: &mut Async<TcpStream>,
     context: &mut Context,
+    logger: &Logger<'a>,
 ) -> std::io::Result<ReceivedMessage> {
     let mut received_data = vec![0; 4096];
 
@@ -281,7 +315,6 @@ async fn receive(
             // connection or is done writing, then so are we.
             return Ok(ReceivedMessage {
                 connection_closed: true,
-                reading_done: true,
             });
         }
         Ok(n) => n,
@@ -289,29 +322,30 @@ async fn receive(
         Err(err) => return Err(err),
     };
 
-    if let Ok(receieved) = std::str::from_utf8(&received_data[..bytes_read]) {
+    if let Ok(received) = std::str::from_utf8(&received_data[..bytes_read]) {
         if context.state == State::Reading {
-            if receieved.ends_with("\r\n.\r\n") {
-                *context = Context {
-                    state: State::DataReceived,
-                    message: format!("{}{}", context.message, receieved),
-                    sent: false,
-                };
+            context.message += received;
 
-                return Ok(ReceivedMessage {
+            return Ok(context
+                .message
+                .ends_with("\r\n.\r\n")
+                .then(|| {
+                    *context = Context {
+                        state: State::DataReceived,
+                        message: context.message.clone(),
+                        sent: false,
+                    };
+
+                    ReceivedMessage {
+                        connection_closed: false,
+                    }
+                })
+                .unwrap_or(ReceivedMessage {
                     connection_closed: false,
-                    reading_done: true,
-                });
-            }
-
-            context.message += receieved;
-            return Ok(ReceivedMessage {
-                connection_closed: false,
-                reading_done: false,
-            });
+                }));
         }
 
-        let mut mess = receieved.split(' ');
+        let mut mess = received.split(' ');
         let command = mess.next().unwrap_or("");
         let command = command.trim();
         let data = mess.collect::<Vec<_>>().join(" ");
@@ -331,8 +365,90 @@ async fn receive(
         println!("Received (non UTF-8) data: {:?}", received_data);
     }
 
+    logger.incoming(format!("{} {}", context.state, context.message).trim());
+
     Ok(ReceivedMessage {
         connection_closed: false,
-        reading_done: true,
     })
+}
+
+async fn forward(vctx: &ValidationContext) -> std::io::Result<()> {
+    println!("{vctx:#?}");
+
+    let from = vctx.mail_from.as_ref().unwrap().split(':').nth(1).unwrap();
+    let to = vctx
+        .rcpt_to
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|to| to.split(':').nth(1).unwrap())
+        .collect::<Vec<_>>();
+
+    let from = if let MailAddr::Single(SingleInfo { addr, .. }) =
+        mailparse::addrparse(from).unwrap().first().unwrap()
+    {
+        addr.clone()
+    } else {
+        String::default()
+    };
+    let to = mailparse::addrparse(to.join(",").as_str()).unwrap();
+
+    println!("{from:#?} --> {to:#?}");
+
+    let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
+
+    if let MailAddr::Single(SingleInfo { addr, .. }) = to.first().unwrap() {
+        let response = resolver.mx_lookup(addr.split('@').nth(1).unwrap()).unwrap();
+        let response = response.iter().next().unwrap();
+
+        println!("{}", response.exchange());
+
+        let response = resolver.lookup_ip(response.exchange().to_string()).unwrap();
+
+        let address = response.iter().next().expect("no addresses returned!");
+
+        println!("{address}");
+
+        let conn = Async::<TcpStream>::connect((address, 25)).await?;
+
+        println!("{conn:#?}");
+
+        let mut buffer = [0; 4096];
+
+        conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
+        println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
+
+        let mut buffer = [0; 4096];
+        conn.write_with(|mut conn| write!(conn, "EHLO test-local\r\n"))
+            .await?;
+        conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
+        println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
+
+        let mut buffer = [0; 4096];
+        conn.write_with(|mut conn| write!(conn, "MAIL FROM:<{from}>\r\n"))
+            .await?;
+        conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
+        println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
+
+        let mut buffer = [0; 4096];
+        conn.write_with(|mut conn| write!(conn, "RCPT TO:<{to}>\r\n"))
+            .await?;
+        conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
+        println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
+
+        let mut buffer = [0; 4096];
+        conn.write_with(|mut conn| write!(conn, "DATA\r\n")).await?;
+        conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
+        println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
+
+        let mut buffer = [0; 4096];
+        conn.write_with(|mut conn| write!(conn, "{}\r\n", vctx.data.as_ref().unwrap()))
+            .await?;
+        conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
+        println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
+
+        conn.write_with(|mut conn| write!(conn, "QUIT\r\n")).await?;
+    }
+
+    Ok(())
 }
