@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 pub mod log;
 pub mod smtp;
 
@@ -26,13 +28,14 @@ pub use self::smtp::*;
 /// ```
 #[macro_export]
 macro_rules! SMTPServer {
-    (PORT $port:literal $($state:tt $req:expr) *) => {
-        SMTPServer!($($state $req)*)
-            .on_port($port)
+    () => {
+        Server::default()
     };
 
-    ($($state:tt $req:expr) *) => {
-        Server::default()
-            $(.handle(State::$state, $req))*
+    ( $( PORT $port:literal )? $( EXTENSIONS { $($ext:tt) * } )? $( HANDLERS { $($state:tt $req:expr) * } )? ) => {
+        SMTPServer!()
+            $($(.extension(Extension::$ext))*)*
+            $($(.handle(State::$state, $req))*)*
+            $(.on_port($port))*
     };
 }
