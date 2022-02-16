@@ -1,7 +1,8 @@
 pub mod log;
-pub mod server;
+pub mod smtp;
 
-pub use self::server::*;
+pub use self::smtp::server::*;
+pub use self::smtp::*;
 
 ///
 /// A generator for an SMTP Server, used as:
@@ -25,9 +26,9 @@ pub use self::server::*;
 /// ```
 #[macro_export]
 macro_rules! SMTPServer {
-    (LISTEN $address:literal $($state:tt $req:expr) *) => {
+    (PORT $port:literal $($state:tt $req:expr) *) => {
         SMTPServer!($($state $req)*)
-            .listen($address)
+            .on_port($port)
     };
 
     ($($state:tt $req:expr) *) => {

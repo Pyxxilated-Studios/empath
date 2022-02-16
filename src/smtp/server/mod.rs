@@ -11,24 +11,8 @@ use smol::Async;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::Resolver;
 
-use crate::log::Logger;
-
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
-pub enum Status {
-    ServiceReady = 220,
-    GoodBye = 221,
-    Ok = 250,
-    StartMailInput = 354,
-    Unavailable = 421,
-    InvalidCommandSequence = 503,
-    Error = 550,
-}
-
-impl Display for Status {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        fmt.write_fmt(format_args!("{}", *self as i32))
-    }
-}
+use crate::common::command::Command;
+use crate::{common::status::Status, log::Logger};
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum State {
@@ -160,10 +144,6 @@ impl Server {
                     if close {
                         return Ok(true);
                     }
-
-                    if context.state == State::DataReceived {
-                        forward(&vctx).await?;
-                    }
                 }
                 Err((status, message)) => {
                     let response = format!("{status} {message}");
@@ -196,7 +176,7 @@ impl Server {
         }
     }
 
-    pub fn listen(mut self, port: u16) -> Server {
+    pub fn on_port(mut self, port: u16) -> Server {
         self.port = port;
 
         self
@@ -348,24 +328,21 @@ async fn receive<'a>(
         let mut mess = received.split(' ');
         let command = mess.next().unwrap_or("");
         let command = command.trim();
-        let data = mess.collect::<Vec<_>>().join(" ");
+        let comm = command.parse().unwrap_or_else(|comm| comm);
 
-        let mut message = String::from(data.trim());
-        let command = command.parse::<State>().unwrap_or_else(|comm| {
-            message = format!("{} {}", command, message);
-            comm
-        });
+        let message = received.trim();
+        let command = message.parse::<Command>().unwrap_or_else(|comm| comm);
+
+        logger.incoming(format!("{} {}", command, message).trim());
 
         *context = Context {
-            state: command,
-            message,
+            state: comm,
+            message: String::from(message),
             sent: false,
         };
     } else {
-        println!("Received (non UTF-8) data: {:?}", received_data);
+        logger.internal(&format!("Received (non UTF-8) data: {:?}", received_data));
     }
-
-    logger.incoming(format!("{} {}", context.state, context.message).trim());
 
     Ok(ReceivedMessage {
         connection_closed: false,

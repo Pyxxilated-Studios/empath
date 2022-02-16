@@ -10,7 +10,7 @@ pub struct Logger<'a> {
 
 impl<'a> Logger<'a> {
     pub fn init() {
-        Dispatch::new()
+        let _ = Dispatch::new()
             .format(|out, message, _| {
                 out.finish(format_args!(
                     "[{}] {}",
@@ -20,22 +20,30 @@ impl<'a> Logger<'a> {
             })
             .chain(std::io::stdout())
             .level(log::LevelFilter::Info)
-            .apply()
-            .expect("Unable to start logger");
+            .apply();
     }
 
     pub fn with_id(id: &'a str) -> Logger {
         Logger { id }
     }
 
+    ///
+    /// Log an incoming request/response -- e.g. from a client to the server
+    ///
     pub fn incoming(&self, message: &str) {
         info!("[{}] [{}] {}", self.id, "Incoming".green(), message);
     }
 
+    ///
+    /// Log an outgoing response/request -- e.g. from the server to a client
+    ///
     pub fn outgoing(&self, message: &str) {
         info!("[{}] [{}] {}", self.id, "Outgoing".purple(), message);
     }
 
+    ///
+    /// Log an internal message
+    ///
     pub fn internal(&self, message: &str) {
         info!("[{}] [{}] {}", self.id, "Internal".blue(), message);
     }
