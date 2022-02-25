@@ -11,6 +11,7 @@ use crate::validation_context::ValidationContext;
 pub enum State {
     Connect,
     Ehlo,
+    Helo,
     StartTLS,
     MailFrom,
     RcptTo,
@@ -30,6 +31,7 @@ impl Display for State {
             State::Connect => "Connect",
             State::Close => "Close",
             State::Ehlo => "EHLO",
+            State::Helo => "HELO",
             State::StartTLS => "STARTTLS",
             State::MailFrom => "MAIL",
             State::RcptTo => "RCPT",
@@ -46,7 +48,8 @@ impl FromStr for State {
 
     fn from_str(command: &str) -> Result<Self, <Self as FromStr>::Err> {
         match command.to_ascii_uppercase().trim() {
-            "EHLO" | "HELO" => Ok(State::Ehlo),
+            "EHLO" => Ok(State::Ehlo),
+            "HELO" => Ok(State::Helo),
             "STARTTLS" => Ok(State::StartTLS),
             "MAIL" => Ok(State::MailFrom),
             "RCPT" => Ok(State::RcptTo),
@@ -60,12 +63,16 @@ impl FromStr for State {
 impl State {
     pub(crate) fn transition(self, command: Command, vctx: &mut ValidationContext) -> State {
         match (self, command) {
-            (State::Connect, Command::Helo(HeloVariant::Helo(id) | HeloVariant::Ehlo(id))) => {
+            (State::Connect, Command::Helo(HeloVariant::Ehlo(id))) => {
                 vctx.id = id;
                 State::Ehlo
             }
-            (State::Ehlo, Command::StartTLS) => State::StartTLS,
-            (State::Ehlo | State::StartTLS, Command::MailFrom(from)) => {
+            (State::Connect, Command::Helo(HeloVariant::Helo(id))) => {
+                vctx.id = id;
+                State::Helo
+            }
+            (State::Ehlo | State::Helo, Command::StartTLS) => State::StartTLS,
+            (State::Ehlo | State::Helo | State::StartTLS, Command::MailFrom(from)) => {
                 vctx.mail_from = from;
                 State::MailFrom
             }

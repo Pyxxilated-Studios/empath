@@ -1,9 +1,13 @@
+use core::panic;
 use std::collections::HashMap;
-use std::fmt::Debug;
-use std::io::{Read, Write};
+use std::fmt::{Debug, Display};
+use std::io::{BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::{atomic::AtomicU64, Arc, RwLock};
+use std::{fs, io};
 
+use rustls::server::AllowAnyAnonymousOrAuthenticatedClient;
+use rustls::{RootCertStore, ServerConfig, ServerConnection};
 use smol::{io::AsyncWriteExt, Async};
 // use trust_dns_resolver::{
 //     config::{ResolverConfig, ResolverOpts},
@@ -19,18 +23,18 @@ use state::State;
 pub mod validation_context;
 use validation_context::ValidationContext;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Context {
     pub state: State,
-    pub message: String,
-    sent: bool,
+    pub message: Vec<u8>,
+    pub sent: bool,
 }
 
 impl Default for Context {
     fn default() -> Self {
         Context {
             state: State::Connect,
-            message: String::default(),
+            message: Vec::default(),
             sent: false,
         }
     }
@@ -42,7 +46,7 @@ struct ReceivedMessage {
 
 pub(crate) type Handle = fn(&ValidationContext) -> Result<(), (Status, String)>;
 pub(crate) type Handles = HashMap<State, Handle>;
-type Response = Result<(Option<Vec<String>>, bool), (Status, String)>;
+pub(crate) type Response = Result<(Option<Vec<String>>, bool), (Status, String)>;
 
 #[derive(Clone)]
 pub struct Server {
@@ -50,6 +54,90 @@ pub struct Server {
     port: u16,
     handlers: Arc<RwLock<Handles>>,
     extensions: Arc<RwLock<Vec<Extension>>>,
+    context: Context,
+}
+
+pub struct Connection {
+    stream: Async<TcpStream>,
+    tls: Option<ServerConnection>,
+    peer: SocketAddr,
+}
+
+impl Connection {
+    async fn send<S: Display>(&mut self, response: S) -> io::Result<()> {
+        self.stream.writable().await?;
+
+        self.stream
+            .write_with(|mut stream| {
+                if let Some(ref mut tls) = self.tls {
+                    tls.write_tls(&mut stream)?;
+                    write!(tls.writer(), "{response}\r\n")?;
+                    tls.write_tls(&mut stream)?;
+                    tls.writer().flush()
+                } else {
+                    write!(stream, "{}\r\n", response)
+                }
+            })
+            .await
+    }
+
+    async fn upgrade(&mut self) -> io::Result<()> {
+        let certfile = fs::File::open("certificate.crt").expect("cannot open certificate file");
+        let mut reader = BufReader::new(certfile);
+        let certs = rustls_pemfile::certs(&mut reader)
+            .unwrap()
+            .iter()
+            .map(|v| rustls::Certificate(v.clone()))
+            .collect::<Vec<_>>();
+
+        let keyfile = fs::File::open("private.key").expect("cannot open private key file");
+        let mut reader = BufReader::new(keyfile);
+
+        let key = match rustls_pemfile::read_one(&mut reader)
+            .expect("cannot parse private key .pem file")
+        {
+            Some(rustls_pemfile::Item::RSAKey(key)) => rustls::PrivateKey(key),
+            Some(rustls_pemfile::Item::PKCS8Key(key)) => rustls::PrivateKey(key),
+            Some(rustls_pemfile::Item::ECKey(key)) => rustls::PrivateKey(key),
+            _ => panic!("Unable to determine key file"),
+        };
+        let mut tls_connection = ServerConnection::new(Arc::new(
+            ServerConfig::builder()
+                .with_safe_default_cipher_suites()
+                .with_safe_default_kx_groups()
+                .with_safe_default_protocol_versions()
+                .expect("Invalid TLS Configuration")
+                .with_client_cert_verifier(AllowAnyAnonymousOrAuthenticatedClient::new({
+                    let mut cert_store = RootCertStore::empty();
+                    cert_store.add(certs.first().unwrap()).unwrap();
+                    cert_store
+                }))
+                .with_single_cert_with_ocsp_and_sct(certs, key, Vec::new(), Vec::new())
+                .expect("Invalid Cert Configuration"),
+        ))
+        .unwrap();
+
+        while tls_connection.read_tls(self.stream.get_mut()).is_ok() {
+            match tls_connection.process_new_packets() {
+                Ok(a) => {
+                    if a.tls_bytes_to_write() > 0 {
+                        tls_connection.write_tls(self.stream.get_mut())?;
+                    }
+                }
+                Err(err) => {
+                    println!("ERROR WHILE READING PACKETS: {}", err);
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        err.to_string(),
+                    ));
+                }
+            }
+        }
+
+        self.tls = Some(tls_connection);
+
+        Ok(())
+    }
 }
 
 impl Default for Server {
@@ -59,11 +147,32 @@ impl Default for Server {
             port: 1025,
             handlers: Arc::default(),
             extensions: Arc::default(),
+            context: Context::default(),
         }
     }
 }
 
 impl Server {
+    /// Add a handler for a specific `State`. This is useful for doing specific
+    /// checks at certain points, e.g. on `Connect` you can check the IP against
+    /// a block list and abort the connection due to suspected spam.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smtplib::smtp::server::Server;
+    ///
+    /// let server = Server::default()
+    ///     .handle(State::Connect, |vctx| println!("Connected!"));
+    ///
+    /// server.run(); // Whenever the server receives a connection it'll print `Connected!`
+    ///
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the server is unable to obtain a write lock on the internal handles
+    /// it has
     pub fn handle(self, command: State, handler: Handle) -> Server {
         self.handlers
             .write()
@@ -74,6 +183,25 @@ impl Server {
         self
     }
 
+    /// Add an `Extension` to advertise that the server supports, as well
+    /// as request the server to actually handle the command the extension
+    /// pertains to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smtplib::smtp::server::Server;
+    ///
+    /// let server = Server::default().extension(STARTTLS);
+    /// server.run(); // The server will now advertise that it supports the
+    ///               // STARTTLS extension, and will also accept it as a
+    ///               // command
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the server is unable to obtain a write lock on the internal
+    /// extensions it has
     pub fn extension(self, extension: Extension) -> Server {
         self.extensions
             .write()
@@ -83,40 +211,36 @@ impl Server {
         self
     }
 
-    /// Returns `true` if the connection is done.
     async fn connect(
-        self,
+        mut self,
         queue: Arc<AtomicU64>,
-        mut stream: Async<TcpStream>,
-        mut context: Context,
+        stream: Async<TcpStream>,
         peer: SocketAddr,
     ) -> std::io::Result<bool> {
-        let id = peer.to_string();
+        let mut connection = Connection {
+            stream,
+            tls: None,
+            peer,
+        };
+        let id = connection.peer.to_string();
         let logger = Logger::with_id(&id);
         let mut vctx = ValidationContext::default();
 
         logger.internal("Connected");
 
         loop {
-            stream.writable().await?;
-
-            match self.send(&queue, &mut context, &mut vctx) {
+            match self.response(&queue, &mut vctx) {
                 Ok((response, close)) => {
-                    context.sent = true;
+                    self.context.sent = true;
 
                     if let Some(response) = response {
-                        stream
-                            .write_with(|mut stream| {
-                                for response in &response {
-                                    logger.outgoing(response);
-                                    if let Err(err) = write!(stream, "{}\r\n", response) {
-                                        return Err(err);
-                                    }
-                                }
-
-                                Ok(())
-                            })
-                            .await?;
+                        for response in response {
+                            logger.outgoing(&response);
+                            if let Err(err) = connection.send(response).await {
+                                logger.internal(&format!("Error: {}", err));
+                                return Err(err);
+                            }
+                        }
                     }
 
                     if close {
@@ -126,41 +250,66 @@ impl Server {
                 Err((status, message)) => {
                     let response = format!("{status} {message}");
                     logger.outgoing(&response);
-                    stream
-                        .write_with(|mut stream| write!(stream, "{response}\r\n"))
-                        .await?;
+                    connection.send(response).await?;
                 }
             }
 
-            stream.readable().await?;
+            connection.stream.readable().await?;
 
-            let connection_closed = self
-                .receive(&mut stream, &mut context, &logger, &mut vctx)
-                .await
-                .map_or(true, |message| {
-                    matches!(
-                        message,
-                        ReceivedMessage {
-                            connection_closed: true,
-                            ..
-                        }
-                    )
-                });
+            if self.context.state == State::StartTLS {
+                connection.upgrade().await?;
+                self.context = Context::default();
+                self.context.sent = true;
+            } else {
+                let connection_closed = matches!(
+                    self.receive(&mut connection, &logger, &mut vctx).await,
+                    Ok(ReceivedMessage {
+                        connection_closed: true,
+                        ..
+                    }) | Err(_)
+                );
 
-            if connection_closed {
-                logger.internal("Connection closed");
-                stream.flush().await?;
-                return Ok(true);
+                if connection_closed {
+                    logger.internal("Connection closed");
+                    connection.stream.flush().await?;
+                    return Ok(true);
+                }
             }
         }
     }
 
+    /// Tell the server to listen on a specific port
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smtplib::smtp::server::Server;
+    ///
+    /// let server = Server::default().on_port(1026);
+    /// assert_eq!(server.port, 1026);
+    /// ```
     pub fn on_port(mut self, port: u16) -> Server {
         self.port = port;
 
         self
     }
 
+    /// Run the server, which will accept connections on the
+    /// port it is asked to (or the default if not chosen).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smtplib::smtp::server::Server;
+    ///
+    /// let server = Server::default();
+    /// server.run();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if there is an issue accepting a connection,
+    /// or if there is an issue binding to the specific address and port combination.
     pub fn run(self) -> std::io::Result<()> {
         smol::block_on(async {
             Logger::init();
@@ -171,41 +320,34 @@ impl Server {
             loop {
                 let (stream, address) = listener.accept().await?;
 
-                smol::spawn(self.clone().connect(
-                    Arc::clone(&queue),
-                    stream,
-                    Context::default(),
-                    address,
-                ))
-                .detach();
+                smol::spawn(self.clone().connect(Arc::clone(&queue), stream, address)).detach();
             }
         })
     }
 
-    fn send(
-        &self,
-        queue: &Arc<AtomicU64>,
-        context: &mut Context,
-        vctx: &mut ValidationContext,
-    ) -> Response {
-        if context.sent {
+    fn response(&mut self, queue: &Arc<AtomicU64>, vctx: &mut ValidationContext) -> Response {
+        if self.context.sent {
             return Ok((None, false));
         }
 
-        if let Some(handler) = self.handlers.read().unwrap().get(&context.state) {
+        if let Some(handler) = self.handlers.read().unwrap().get(&self.context.state) {
             handler(vctx)?;
         }
 
-        let status = match context.state {
+        let status = match self.context.state {
             State::Connect => (
                 Some(vec![format!("{} localhost", Status::ServiceReady)]),
                 false,
             ),
-            State::Ehlo => {
+            State::Ehlo | State::Helo => {
                 let mut response = vec![];
 
                 if let Ok(extensions) = self.extensions.read() {
-                    response.push(format!("{}-Hello {}", Status::Ok, context.message));
+                    response.push(format!(
+                        "{}-Hello {}",
+                        Status::Ok,
+                        std::str::from_utf8(&self.context.message).unwrap()
+                    ));
                     for (idx, extension) in extensions.iter().enumerate() {
                         response.push(format!(
                             "{}{}{}",
@@ -219,17 +361,21 @@ impl Server {
                         ));
                     }
                 } else {
-                    response.push(format!("{} Hello {}", Status::Ok, context.message));
+                    response.push(format!(
+                        "{} Hello {}",
+                        Status::Ok,
+                        std::str::from_utf8(&self.context.message).unwrap()
+                    ));
                 }
                 (Some(response), false)
             }
             State::StartTLS => (
-                Some(vec![format!("{} Ready to begin TLS", Status::Ok)]),
+                Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
                 false,
             ),
             State::MailFrom | State::RcptTo => (Some(vec![format!("{} Ok", Status::Ok)]), false),
             State::Data => {
-                context.state = State::Reading;
+                self.context.state = State::Reading;
                 (
                     Some(vec![format!(
                         "{} End data with <CR><LF>.<CR><LF>",
@@ -250,7 +396,7 @@ impl Server {
                 Some(vec![format!(
                     "{} Invalid command '{}'",
                     Status::InvalidCommandSequence,
-                    context.message
+                    std::str::from_utf8(&self.context.message).unwrap()
                 )]),
                 true,
             ),
@@ -259,7 +405,7 @@ impl Server {
                 Some(vec![format!(
                     "{} {}",
                     Status::InvalidCommandSequence,
-                    context.state
+                    self.context.state
                 )]),
                 true,
             ),
@@ -269,72 +415,83 @@ impl Server {
     }
 
     async fn receive(
-        &self,
-        stream: &mut Async<TcpStream>,
-        context: &mut Context,
+        &mut self,
+        connection: &mut Connection,
         logger: &Logger<'_>,
         vctx: &mut ValidationContext,
     ) -> std::io::Result<ReceivedMessage> {
         let mut received_data = vec![0; 4096];
 
-        let bytes_read = match stream
-            .read_with(|mut stream| stream.read(&mut received_data))
+        let bytes_read = match connection
+            .stream
+            .read_with(|mut stream| {
+                if let Some(ref mut tls) = connection.tls {
+                    tls.read_tls(&mut stream)?;
+                    let _ = tls.process_new_packets();
+                    tls.reader().read(&mut received_data)
+                } else {
+                    stream.read(&mut received_data)
+                }
+            })
             .await
         {
             Ok(0) => {
                 // Reading 0 bytes means the other side has closed the
                 // connection or is done writing, then so are we.
                 return Ok(ReceivedMessage {
-                    connection_closed: true,
+                    connection_closed: false,
                 });
             }
             Ok(n) => n,
             // Other errors we'll consider fatal.
-            Err(err) => return Err(err),
+            Err(err) => {
+                logger.internal(&format!("Error: {}", err));
+                return Err(err);
+            }
         };
 
-        if let Ok(received) = std::str::from_utf8(&received_data[..bytes_read]) {
-            if context.state == State::Reading {
-                context.message += received;
+        let received = &received_data[..bytes_read];
 
-                return Ok(context
-                    .message
-                    .ends_with("\r\n.\r\n")
-                    .then(|| {
-                        *context = Context {
-                            state: State::DataReceived,
-                            message: context.message.clone(),
-                            sent: false,
-                        };
+        // if let Ok(received) = std::str::from_utf8(&received_data[..bytes_read]) {
+        if self.context.state == State::Reading {
+            self.context.message.extend(received);
 
-                        vctx.data = Some(context.message.clone());
+            return Ok(self
+                .context
+                .message
+                .ends_with(b"\r\n.\r\n")
+                .then(|| {
+                    self.context = Context {
+                        state: State::DataReceived,
+                        message: self.context.message.clone(),
+                        sent: false,
+                    };
 
-                        ReceivedMessage {
-                            connection_closed: false,
-                        }
-                    })
-                    .unwrap_or(ReceivedMessage {
+                    vctx.data = Some(self.context.message.clone());
+
+                    ReceivedMessage {
                         connection_closed: false,
-                    }));
-            }
-
-            let command = received
-                .trim()
-                .parse::<Command>()
-                .unwrap_or_else(|comm| comm);
-
-            let message = command.inner();
-
-            logger.incoming(&format!("{command}"));
-
-            *context = Context {
-                state: context.state.transition(command, vctx),
-                message,
-                sent: false,
-            };
-        } else {
-            logger.internal(&format!("Received (non UTF-8) data: {:?}", received_data));
+                    }
+                })
+                .unwrap_or(ReceivedMessage {
+                    connection_closed: false,
+                }));
         }
+
+        let command = Command::from(received);
+
+        let message = command.inner();
+
+        logger.incoming(&format!("{command}"));
+
+        self.context = Context {
+            state: self.context.state.transition(command, vctx),
+            message: message.into_bytes(),
+            sent: false,
+        };
+        // } else {
+        //     logger.internal(&format!("Received (non UTF-8) data"));
+        // }
 
         Ok(ReceivedMessage {
             connection_closed: false,

@@ -10,14 +10,6 @@ fn main() -> std::io::Result<()> {
         }
 
         HANDLERS {
-            Ehlo |_context| {
-                Ok(())
-            }
-
-            Data |_context| {
-                Ok(())
-            }
-
             DataReceived |vctx| {
                 let message = vctx.message();
                 let parsed = parse_mail(message.as_bytes());
@@ -28,10 +20,6 @@ fn main() -> std::io::Result<()> {
                 println!("TO: {}", vctx.recipients());
                 // let body = parsed.subparts[1].get_body();
                 // println!("Data: {body:#?}");
-                Ok(())
-            }
-
-            Quit |_| {
                 Ok(())
             }
         }

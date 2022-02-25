@@ -44,7 +44,7 @@ impl Command {
 impl Display for Command {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            Command::Helo(v) => fmt.write_fmt(format_args!("{}", v)),
+            Command::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
             Command::MailFrom(s) => {
                 fmt.write_fmt(format_args!("MAIL FROM:<{}>", s.as_deref().unwrap_or("")))
             }
@@ -65,8 +65,7 @@ impl FromStr for Command {
         let comm = comm.trim();
 
         if comm.starts_with("MAIL FROM:") {
-            let from = command[command.find(':').unwrap() + 1..].to_string();
-            let from = from.trim();
+            let from = command[command.find(':').unwrap() + 1..].trim();
 
             Ok(Command::MailFrom(if from.is_empty() {
                 None
@@ -75,15 +74,25 @@ impl FromStr for Command {
             }))
         } else if comm.starts_with("RCPT TO:") {
             Ok(Command::RcptTo(
-                command[command.find(':').unwrap() + 1..].to_string(),
+                command[command.find(':').unwrap() + 1..].trim().to_string(),
             ))
         } else if comm.starts_with("EHLO") {
             Ok(Command::Helo(HeloVariant::Ehlo(
-                command.split(' ').nth(1).unwrap_or_default().to_string(),
+                command
+                    .split(' ')
+                    .nth(1)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
             )))
         } else if comm.starts_with("HELO") {
             Ok(Command::Helo(HeloVariant::Helo(
-                command.split(' ').nth(1).unwrap_or_default().to_string(),
+                command
+                    .split(' ')
+                    .nth(1)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
             )))
         } else {
             match comm {
@@ -104,6 +113,15 @@ impl From<&str> for Command {
 
 impl From<String> for Command {
     fn from(val: String) -> Self {
-        Command::from(val.as_ref())
+        Command::from(val.as_str())
+    }
+}
+
+impl From<&[u8]> for Command {
+    fn from(val: &[u8]) -> Self {
+        match std::str::from_utf8(val) {
+            Ok(s) => Command::from_str(s).unwrap_or_else(|e| e),
+            Err(_) => Command::Invalid("Unable to interpret command".to_string()),
+        }
     }
 }

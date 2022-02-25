@@ -1,9 +1,11 @@
+use std::fmt::Debug;
+
 #[derive(Default, Debug)]
 pub struct ValidationContext {
     pub(crate) id: String,
     pub(crate) mail_from: Option<String>,
     pub(crate) rcpt_to: Option<Vec<String>>,
-    pub(crate) data: Option<String>,
+    pub(crate) data: Option<Vec<u8>>,
 }
 
 impl ValidationContext {
@@ -12,7 +14,14 @@ impl ValidationContext {
     }
 
     pub fn message(&self) -> String {
-        self.data.clone().unwrap_or_default()
+        if let Some(data) = &self.data {
+            match std::str::from_utf8(&data) {
+                Ok(s) => format!("{s}"),
+                Err(_) => format!("{data:#?}"),
+            }
+        } else {
+            String::default()
+        }
     }
 
     pub fn sender(&self) -> String {

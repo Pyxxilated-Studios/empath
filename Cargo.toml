@@ -12,6 +12,8 @@ colored = "2"
 fern = "0.6"
 log = "0.4"
 mailparse = "0.13"
+rustls = "0.20"
+rustls-pemfile = "0.3"
 smol = "1.2"
 trust-dns-resolver = "0.20"
 
