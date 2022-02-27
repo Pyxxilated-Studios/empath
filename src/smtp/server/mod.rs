@@ -40,10 +40,6 @@ impl Default for Context {
     }
 }
 
-struct ReceivedMessage {
-    connection_closed: bool,
-}
-
 pub(crate) type Handle = fn(&ValidationContext) -> Result<(), (Status, String)>;
 pub(crate) type Handles = HashMap<State, Handle>;
 pub(crate) type Response = Result<(Option<Vec<String>>, bool), (Status, String)>;
@@ -64,7 +60,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    async fn send<S: Display>(&mut self, response: S) -> io::Result<()> {
+    async fn send<S: Display>(&mut self, response: &S) -> io::Result<()> {
         self.stream.writable().await?;
 
         self.stream
@@ -75,7 +71,7 @@ impl Connection {
                     tls.write_tls(&mut stream)?;
                     tls.writer().flush()
                 } else {
-                    write!(stream, "{}\r\n", response)
+                    write!(stream, "{response}\r\n")
                 }
             })
             .await
@@ -96,9 +92,11 @@ impl Connection {
         let key = match rustls_pemfile::read_one(&mut reader)
             .expect("cannot parse private key .pem file")
         {
-            Some(rustls_pemfile::Item::RSAKey(key)) => rustls::PrivateKey(key),
-            Some(rustls_pemfile::Item::PKCS8Key(key)) => rustls::PrivateKey(key),
-            Some(rustls_pemfile::Item::ECKey(key)) => rustls::PrivateKey(key),
+            Some(
+                rustls_pemfile::Item::RSAKey(key)
+                | rustls_pemfile::Item::PKCS8Key(key)
+                | rustls_pemfile::Item::ECKey(key),
+            ) => rustls::PrivateKey(key),
             _ => panic!("Unable to determine key file"),
         };
         let mut tls_connection = ServerConnection::new(Arc::new(
@@ -116,6 +114,8 @@ impl Connection {
                 .expect("Invalid Cert Configuration"),
         ))
         .unwrap();
+
+        self.stream.readable().await?;
 
         while tls_connection.read_tls(self.stream.get_mut()).is_ok() {
             match tls_connection.process_new_packets() {
@@ -137,6 +137,24 @@ impl Connection {
         self.tls = Some(tls_connection);
 
         Ok(())
+    }
+
+    async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        self.stream.readable().await?;
+
+        self.stream
+            .read_with(|mut stream| {
+                if let Some(ref mut tls) = self.tls {
+                    tls.read_tls(&mut stream)?;
+                    tls.process_new_packets().map_err(|e| {
+                        io::Error::new(io::ErrorKind::ConnectionAborted, e.to_string())
+                    })?;
+                    tls.reader().read(buf)
+                } else {
+                    stream.read(buf)
+                }
+            })
+            .await
     }
 }
 
@@ -236,8 +254,8 @@ impl Server {
                     if let Some(response) = response {
                         for response in response {
                             logger.outgoing(&response);
-                            if let Err(err) = connection.send(response).await {
-                                logger.internal(&format!("Error: {}", err));
+                            if let Err(err) = connection.send(&response).await {
+                                logger.internal(&format!("Error: {err}"));
                                 return Err(err);
                             }
                         }
@@ -250,11 +268,9 @@ impl Server {
                 Err((status, message)) => {
                     let response = format!("{status} {message}");
                     logger.outgoing(&response);
-                    connection.send(response).await?;
+                    connection.send(&response).await?;
                 }
             }
-
-            connection.stream.readable().await?;
 
             if self.context.state == State::StartTLS {
                 connection.upgrade().await?;
@@ -263,10 +279,7 @@ impl Server {
             } else {
                 let connection_closed = matches!(
                     self.receive(&mut connection, &logger, &mut vctx).await,
-                    Ok(ReceivedMessage {
-                        connection_closed: true,
-                        ..
-                    }) | Err(_)
+                    Ok(true) | Err(_)
                 );
 
                 if connection_closed {
@@ -325,6 +338,8 @@ impl Server {
         })
     }
 
+    /// Generate the response(s) that should be sent back to the client
+    /// depending on the servers state
     fn response(&mut self, queue: &Arc<AtomicU64>, vctx: &mut ValidationContext) -> Response {
         if self.context.sent {
             return Ok((None, false));
@@ -419,83 +434,51 @@ impl Server {
         connection: &mut Connection,
         logger: &Logger<'_>,
         vctx: &mut ValidationContext,
-    ) -> std::io::Result<ReceivedMessage> {
+    ) -> std::io::Result<bool> {
         let mut received_data = vec![0; 4096];
 
-        let bytes_read = match connection
-            .stream
-            .read_with(|mut stream| {
-                if let Some(ref mut tls) = connection.tls {
-                    tls.read_tls(&mut stream)?;
-                    let _ = tls.process_new_packets();
-                    tls.reader().read(&mut received_data)
-                } else {
-                    stream.read(&mut received_data)
-                }
-            })
-            .await
-        {
+        match connection.receive(&mut received_data).await {
+            // Consider any errors received here to be fatal
+            Err(err) => {
+                logger.internal(&format!("Error: {err}"));
+                Err(err)
+            }
             Ok(0) => {
                 // Reading 0 bytes means the other side has closed the
                 // connection or is done writing, then so are we.
-                return Ok(ReceivedMessage {
-                    connection_closed: false,
-                });
+                Ok(false)
             }
-            Ok(n) => n,
-            // Other errors we'll consider fatal.
-            Err(err) => {
-                logger.internal(&format!("Error: {}", err));
-                return Err(err);
-            }
-        };
+            Ok(bytes_read) => {
+                let received = &received_data[..bytes_read];
 
-        let received = &received_data[..bytes_read];
+                if self.context.state == State::Reading {
+                    self.context.message.extend(received);
 
-        // if let Ok(received) = std::str::from_utf8(&received_data[..bytes_read]) {
-        if self.context.state == State::Reading {
-            self.context.message.extend(received);
+                    if self.context.message.ends_with(b"\r\n.\r\n") {
+                        self.context = Context {
+                            state: State::DataReceived,
+                            message: self.context.message.clone(),
+                            sent: false,
+                        };
 
-            return Ok(self
-                .context
-                .message
-                .ends_with(b"\r\n.\r\n")
-                .then(|| {
+                        vctx.data = Some(self.context.message.clone());
+                    }
+                } else {
+                    let command = Command::from(received);
+                    let message = command.inner().into_bytes();
+
+                    logger.incoming(&format!("{command}"));
+
                     self.context = Context {
-                        state: State::DataReceived,
-                        message: self.context.message.clone(),
+                        state: self.context.state.transition(command, vctx),
+                        message,
                         sent: false,
                     };
+                }
 
-                    vctx.data = Some(self.context.message.clone());
-
-                    ReceivedMessage {
-                        connection_closed: false,
-                    }
-                })
-                .unwrap_or(ReceivedMessage {
-                    connection_closed: false,
-                }));
+                Ok(false)
+            }
         }
-
-        let command = Command::from(received);
-
-        let message = command.inner();
-
-        logger.incoming(&format!("{command}"));
-
-        self.context = Context {
-            state: self.context.state.transition(command, vctx),
-            message: message.into_bytes(),
-            sent: false,
-        };
-        // } else {
-        //     logger.internal(&format!("Received (non UTF-8) data"));
-        // }
-
-        Ok(ReceivedMessage {
-            connection_closed: false,
-        })
     }
 }
 

@@ -7,22 +7,24 @@ pub use self::smtp::server::*;
 pub use self::smtp::*;
 
 ///
-/// A generator for an SMTP Server, used as:
+/// A generator for an SMTP Server
+///
+/// # Examples
 ///
 /// ```
 /// SMTPServer! {
-///   LISTEN 1025
+///   PORT 1025
 ///
-///   CONNECTED |context| {
-///       ...
-///   }
+///   EXTENSIONS { STARTTLS }
 ///
-///   MAILFROM |context| {
-///       ...
-///   }
+///   HANDLERS {
+///     CONNECTED |context| {
+///         // ...
+///     }
 ///
-///   DATA |context| {
-///      ...
+///     DATA |context| {
+///         // ...
+///     }
 ///   }
 /// }
 /// ```

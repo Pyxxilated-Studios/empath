@@ -15,9 +15,10 @@ impl ValidationContext {
 
     pub fn message(&self) -> String {
         if let Some(data) = &self.data {
-            match std::str::from_utf8(&data) {
-                Ok(s) => format!("{s}"),
-                Err(_) => format!("{data:#?}"),
+            if let Ok(s) = std::str::from_utf8(data) {
+                s.to_string()
+            } else {
+                format!("{data:#?}")
             }
         } else {
             String::default()
