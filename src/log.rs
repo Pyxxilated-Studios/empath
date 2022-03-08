@@ -23,6 +23,16 @@ impl<'a> Logger<'a> {
             .apply();
     }
 
+    /// Create a logger with an id
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smtplib::log::Logger;
+    ///
+    /// let id = "test";
+    /// assert_eq!(Logger::with_id(id), Logger { id });
+    /// ```
     pub fn with_id(id: &'a str) -> Logger {
         Logger { id }
     }

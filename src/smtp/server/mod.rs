@@ -4,11 +4,13 @@ use std::fmt::{Debug, Display};
 use std::io::{BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::{atomic::AtomicU64, Arc, RwLock};
+use std::time::Duration;
 use std::{fs, io};
 
 use rustls::server::AllowAnyAnonymousOrAuthenticatedClient;
 use rustls::{RootCertStore, ServerConfig, ServerConnection};
 use smol::{io::AsyncWriteExt, Async};
+use smol_timeout::TimeoutExt;
 // use trust_dns_resolver::{
 //     config::{ResolverConfig, ResolverOpts},
 //     Resolver,
@@ -22,6 +24,13 @@ use state::State;
 
 pub mod validation_context;
 use validation_context::ValidationContext;
+
+#[repr(C)]
+#[derive(PartialEq)]
+pub enum Event {
+    ConnectionClose,
+    ConnectionKeepAlive,
+}
 
 #[derive(Debug, Clone)]
 pub struct Context {
@@ -40,9 +49,10 @@ impl Default for Context {
     }
 }
 
-pub(crate) type Handle = fn(&ValidationContext) -> Result<(), (Status, String)>;
+pub(crate) type SMTPError = (Status, String);
+pub(crate) type Handle = fn(&ValidationContext) -> Result<(), SMTPError>;
 pub(crate) type Handles = HashMap<State, Handle>;
-pub(crate) type Response = Result<(Option<Vec<String>>, bool), (Status, String)>;
+pub(crate) type Response = Result<(Option<Vec<String>>, Event), SMTPError>;
 
 #[derive(Clone)]
 pub struct Server {
@@ -61,7 +71,16 @@ pub struct Connection {
 
 impl Connection {
     async fn send<S: Display>(&mut self, response: &S) -> io::Result<()> {
-        self.stream.writable().await?;
+        self.stream
+            .writable()
+            .timeout(Duration::from_millis(5000))
+            .await
+            .unwrap_or_else(|| {
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "Took too long",
+                ))
+            })?;
 
         self.stream
             .write_with(|mut stream| {
@@ -89,31 +108,30 @@ impl Connection {
         let keyfile = fs::File::open("private.key").expect("cannot open private key file");
         let mut reader = BufReader::new(keyfile);
 
-        let key = match rustls_pemfile::read_one(&mut reader)
-            .expect("cannot parse private key .pem file")
-        {
-            Some(
-                rustls_pemfile::Item::RSAKey(key)
-                | rustls_pemfile::Item::PKCS8Key(key)
-                | rustls_pemfile::Item::ECKey(key),
-            ) => rustls::PrivateKey(key),
-            _ => panic!("Unable to determine key file"),
-        };
-        let mut tls_connection = ServerConnection::new(Arc::new(
-            ServerConfig::builder()
-                .with_safe_default_cipher_suites()
-                .with_safe_default_kx_groups()
-                .with_safe_default_protocol_versions()
-                .expect("Invalid TLS Configuration")
-                .with_client_cert_verifier(AllowAnyAnonymousOrAuthenticatedClient::new({
-                    let mut cert_store = RootCertStore::empty();
-                    cert_store.add(certs.first().unwrap()).unwrap();
-                    cert_store
-                }))
-                .with_single_cert_with_ocsp_and_sct(certs, key, Vec::new(), Vec::new())
-                .expect("Invalid Cert Configuration"),
-        ))
-        .unwrap();
+        let key =
+            match rustls_pemfile::read_one(&mut reader).expect("cannot parse private key file") {
+                Some(
+                    rustls_pemfile::Item::RSAKey(key)
+                    | rustls_pemfile::Item::PKCS8Key(key)
+                    | rustls_pemfile::Item::ECKey(key),
+                ) => rustls::PrivateKey(key),
+                _ => panic!("Unable to determine key file"),
+            };
+
+        let config = ServerConfig::builder()
+            .with_safe_default_cipher_suites()
+            .with_safe_default_kx_groups()
+            .with_safe_default_protocol_versions()
+            .expect("Invalid TLS Configuration")
+            .with_client_cert_verifier(AllowAnyAnonymousOrAuthenticatedClient::new({
+                let mut cert_store = RootCertStore::empty();
+                cert_store.add(certs.first().unwrap()).unwrap();
+                cert_store
+            }))
+            .with_single_cert_with_ocsp_and_sct(certs, key, Vec::new(), Vec::new())
+            .expect("Invalid Cert Configuration");
+
+        let mut tls_connection = ServerConnection::new(Arc::new(config)).unwrap();
 
         self.stream.readable().await?;
 
@@ -140,7 +158,16 @@ impl Connection {
     }
 
     async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
-        self.stream.readable().await?;
+        self.stream
+            .readable()
+            .timeout(Duration::from_millis(5000))
+            .await
+            .unwrap_or_else(|| {
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "Took too long",
+                ))
+            })?;
 
         self.stream
             .read_with(|mut stream| {
@@ -179,9 +206,13 @@ impl Server {
     ///
     /// ```
     /// use smtplib::smtp::server::Server;
+    /// use smtplib::smtp::server::state::State;
     ///
     /// let server = Server::default()
-    ///     .handle(State::Connect, |vctx| println!("Connected!"));
+    ///     .handle(State::Connect, |vctx| {
+    ///         println!("Connected!");
+    ///         Ok(())
+    ///     });
     ///
     /// server.run(); // Whenever the server receives a connection it'll print `Connected!`
     ///
@@ -191,6 +222,7 @@ impl Server {
     ///
     /// Panics if the server is unable to obtain a write lock on the internal handles
     /// it has
+    #[must_use]
     pub fn handle(self, command: State, handler: Handle) -> Server {
         self.handlers
             .write()
@@ -198,6 +230,7 @@ impl Server {
             .entry(command)
             .and_modify(|hdlr| *hdlr = handler)
             .or_insert(handler);
+
         self
     }
 
@@ -220,6 +253,7 @@ impl Server {
     ///
     /// Panics if the server is unable to obtain a write lock on the internal
     /// extensions it has
+    #[must_use]
     pub fn extension(self, extension: Extension) -> Server {
         self.extensions
             .write()
@@ -248,20 +282,19 @@ impl Server {
 
         loop {
             match self.response(&queue, &mut vctx) {
-                Ok((response, close)) => {
+                Ok((response, ev)) => {
                     self.context.sent = true;
 
-                    if let Some(response) = response {
-                        for response in response {
-                            logger.outgoing(&response);
-                            if let Err(err) = connection.send(&response).await {
-                                logger.internal(&format!("Error: {err}"));
-                                return Err(err);
-                            }
-                        }
+                    for response in response.unwrap_or_default() {
+                        logger.outgoing(&response);
+
+                        connection.send(&response).await.map_err(|err| {
+                            logger.internal(&format!("Error: {err}"));
+                            io::Error::new(io::ErrorKind::ConnectionAborted, err.to_string())
+                        })?;
                     }
 
-                    if close {
+                    if Event::ConnectionClose == ev {
                         return Ok(true);
                     }
                 }
@@ -274,8 +307,10 @@ impl Server {
 
             if self.context.state == State::StartTLS {
                 connection.upgrade().await?;
-                self.context = Context::default();
-                self.context.sent = true;
+                self.context = Context {
+                    sent: true,
+                    ..Default::default()
+                };
             } else {
                 let connection_closed = matches!(
                     self.receive(&mut connection, &logger, &mut vctx).await,
@@ -301,6 +336,7 @@ impl Server {
     /// let server = Server::default().on_port(1026);
     /// assert_eq!(server.port, 1026);
     /// ```
+    #[must_use]
     pub fn on_port(mut self, port: u16) -> Server {
         self.port = port;
 
@@ -342,7 +378,7 @@ impl Server {
     /// depending on the servers state
     fn response(&mut self, queue: &Arc<AtomicU64>, vctx: &mut ValidationContext) -> Response {
         if self.context.sent {
-            return Ok((None, false));
+            return Ok((None, Event::ConnectionKeepAlive));
         }
 
         if let Some(handler) = self.handlers.read().unwrap().get(&self.context.state) {
@@ -352,7 +388,7 @@ impl Server {
         let status = match self.context.state {
             State::Connect => (
                 Some(vec![format!("{} localhost", Status::ServiceReady)]),
-                false,
+                Event::ConnectionKeepAlive,
             ),
             State::Ehlo | State::Helo => {
                 let mut response = vec![];
@@ -382,13 +418,16 @@ impl Server {
                         std::str::from_utf8(&self.context.message).unwrap()
                     ));
                 }
-                (Some(response), false)
+                (Some(response), Event::ConnectionKeepAlive)
             }
             State::StartTLS => (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
-                false,
+                Event::ConnectionKeepAlive,
             ),
-            State::MailFrom | State::RcptTo => (Some(vec![format!("{} Ok", Status::Ok)]), false),
+            State::MailFrom | State::RcptTo => (
+                Some(vec![format!("{} Ok", Status::Ok)]),
+                Event::ConnectionKeepAlive,
+            ),
             State::Data => {
                 self.context.state = State::Reading;
                 (
@@ -396,33 +435,36 @@ impl Server {
                         "{} End data with <CR><LF>.<CR><LF>",
                         Status::StartMailInput
                     )]),
-                    false,
+                    Event::ConnectionKeepAlive,
                 )
             }
             State::DataReceived => {
                 let queue = queue.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 (
                     Some(vec![format!("{} Ok: queued as {}", Status::Ok, queue)]),
-                    false,
+                    Event::ConnectionKeepAlive,
                 )
             }
-            State::Quit => (Some(vec![format!("{} Bye", Status::GoodBye)]), true),
+            State::Quit => (
+                Some(vec![format!("{} Bye", Status::GoodBye)]),
+                Event::ConnectionClose,
+            ),
             State::Invalid => (
                 Some(vec![format!(
                     "{} Invalid command '{}'",
                     Status::InvalidCommandSequence,
                     std::str::from_utf8(&self.context.message).unwrap()
                 )]),
-                true,
+                Event::ConnectionClose,
             ),
-            State::Reading | State::Close => (None, false),
+            State::Reading | State::Close => (None, Event::ConnectionKeepAlive),
             State::InvalidCommandSequence => (
                 Some(vec![format!(
                     "{} {}",
                     Status::InvalidCommandSequence,
                     self.context.state
                 )]),
-                true,
+                Event::ConnectionClose,
             ),
         };
 
@@ -467,7 +509,7 @@ impl Server {
                     let command = Command::from(received);
                     let message = command.inner().into_bytes();
 
-                    logger.incoming(&format!("{command}"));
+                    logger.incoming(&command.to_string());
 
                     self.context = Context {
                         state: self.context.state.transition(command, vctx),

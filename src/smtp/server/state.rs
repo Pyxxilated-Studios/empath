@@ -78,9 +78,9 @@ impl State {
             }
             (State::RcptTo | State::MailFrom, Command::RcptTo(to)) => {
                 if let Some(rcpts) = vctx.rcpt_to.borrow_mut() {
-                    rcpts.push(to);
+                    rcpts.extend_from_slice(&to[..]);
                 } else {
-                    vctx.rcpt_to = Some(vec![to]);
+                    vctx.rcpt_to = Some(to);
                 }
                 State::RcptTo
             }

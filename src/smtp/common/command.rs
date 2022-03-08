@@ -3,6 +3,8 @@ use std::{
     str::FromStr,
 };
 
+use mailparse::MailAddrList;
+
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum HeloVariant {
     Ehlo(String),
@@ -18,11 +20,11 @@ impl Display for HeloVariant {
     }
 }
 
-#[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
+#[derive(PartialEq, Debug)]
 pub enum Command {
     Helo(HeloVariant),
-    MailFrom(Option<String>),
-    RcptTo(String),
+    MailFrom(Option<MailAddrList>),
+    RcptTo(MailAddrList),
     Data,
     Quit,
     StartTLS,
@@ -32,8 +34,8 @@ pub enum Command {
 impl Command {
     pub(crate) fn inner(&self) -> String {
         match self {
-            Command::MailFrom(from) => String::from(from.as_deref().unwrap_or("")),
-            Command::RcptTo(to) => to.clone(),
+            Command::MailFrom(from) => from.clone().map(|f| f.to_string()).unwrap_or_default(),
+            Command::RcptTo(to) => to.to_string(),
             Command::Invalid(command) => command.clone(),
             Command::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => id.clone(),
             _ => String::default(),
@@ -45,9 +47,10 @@ impl Display for Command {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             Command::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
-            Command::MailFrom(s) => {
-                fmt.write_fmt(format_args!("MAIL FROM:<{}>", s.as_deref().unwrap_or("")))
-            }
+            Command::MailFrom(s) => fmt.write_fmt(format_args!(
+                "MAIL FROM:{}",
+                s.clone().map(|f| f.to_string()).unwrap_or_default()
+            )),
             Command::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{}", rcpt)),
             Command::Data => fmt.write_str("DATA"),
             Command::Quit => fmt.write_str("QUIT"),
@@ -65,17 +68,21 @@ impl FromStr for Command {
         let comm = comm.trim();
 
         if comm.starts_with("MAIL FROM:") {
-            let from = command[command.find(':').unwrap() + 1..].trim();
+            let from = mailparse::addrparse(command[command.find(':').unwrap() + 1..].trim())
+                .map_err(|e| {
+                    println!("ERROR: {e}");
+                    e.to_string()
+                })?;
 
             Ok(Command::MailFrom(if from.is_empty() {
                 None
             } else {
-                Some(from.to_string())
+                Some(from)
             }))
         } else if comm.starts_with("RCPT TO:") {
-            Ok(Command::RcptTo(
-                command[command.find(':').unwrap() + 1..].trim().to_string(),
-            ))
+            let to = mailparse::addrparse(command[command.find(':').unwrap() + 1..].trim())
+                .map_err(|e| e.to_string())?;
+            Ok(Command::RcptTo(to))
         } else if comm.starts_with("EHLO") {
             Ok(Command::Helo(HeloVariant::Ehlo(
                 command

@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 
+#[repr(C)]
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub enum Status {
     ServiceReady = 220,
@@ -13,6 +14,6 @@ pub enum Status {
 
 impl Display for Status {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        fmt.write_fmt(format_args!("{}", *self as i32))
+        write!(fmt, "{}", *self as i32)
     }
 }
