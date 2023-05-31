@@ -1,12 +1,14 @@
 use core::panic;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
+use std::future::Future;
 use std::io::{BufReader, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::{atomic::AtomicU64, Arc, RwLock};
 use std::time::Duration;
 use std::{fs, io};
 
+use mailparse::MailParseError;
 use rustls::server::AllowAnyAnonymousOrAuthenticatedClient;
 use rustls::{RootCertStore, ServerConfig, ServerConnection};
 use smol::{io::AsyncWriteExt, Async};
@@ -19,14 +21,14 @@ use smol_timeout::TimeoutExt;
 use crate::common::{command::Command, extensions::Extension, status::Status};
 use crate::log::Logger;
 
-pub mod state;
-use state::State;
+pub mod phase;
+use phase::Phase;
 
 pub mod validation_context;
 use validation_context::ValidationContext;
 
 #[repr(C)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum Event {
     ConnectionClose,
     ConnectionKeepAlive,
@@ -34,7 +36,7 @@ pub enum Event {
 
 #[derive(Debug, Clone)]
 pub struct Context {
-    pub state: State,
+    pub state: Phase,
     pub message: Vec<u8>,
     pub sent: bool,
 }
@@ -42,17 +44,30 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Context {
-            state: State::Connect,
+            state: Phase::Connect,
             message: Vec::default(),
             sent: false,
         }
     }
 }
 
-pub(crate) type SMTPError = (Status, String);
+pub struct SMTPError {
+    status: Status,
+    message: String,
+}
+
 pub(crate) type Handle = fn(&ValidationContext) -> Result<(), SMTPError>;
-pub(crate) type Handles = HashMap<State, Handle>;
+pub(crate) type Handles = HashMap<Phase, Vec<Handle>>;
 pub(crate) type Response = Result<(Option<Vec<String>>, Event), SMTPError>;
+
+impl From<MailParseError> for SMTPError {
+    fn from(err: MailParseError) -> Self {
+        SMTPError {
+            status: Status::Error,
+            message: err.to_string(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Server {
@@ -69,21 +84,25 @@ pub struct Connection {
     peer: SocketAddr,
 }
 
+async fn with_timeout<F, T>(timeout: Duration, af: F) -> io::Result<T>
+where
+    F: Future<Output = io::Result<T>>,
+{
+    af.timeout(timeout).await.unwrap_or_else(|| {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "Connection rejected due to timeout",
+        ))
+    })
+}
+
 impl Connection {
     async fn send<S: Display>(&mut self, response: &S) -> io::Result<()> {
-        self.stream
-            .writable()
-            .timeout(Duration::from_millis(5000))
-            .await
-            .unwrap_or_else(|| {
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionAborted,
-                    "Took too long",
-                ))
-            })?;
+        with_timeout(Duration::from_secs(30), self.stream.writable()).await?;
 
-        self.stream
-            .write_with(|mut stream| {
+        with_timeout(
+            Duration::from_secs(30),
+            self.stream.write_with(|mut stream| {
                 if let Some(ref mut tls) = self.tls {
                     tls.write_tls(&mut stream)?;
                     write!(tls.writer(), "{response}\r\n")?;
@@ -92,8 +111,9 @@ impl Connection {
                 } else {
                     write!(stream, "{response}\r\n")
                 }
-            })
-            .await
+            }),
+        )
+        .await
     }
 
     async fn upgrade(&mut self) -> io::Result<()> {
@@ -123,11 +143,11 @@ impl Connection {
             .with_safe_default_kx_groups()
             .with_safe_default_protocol_versions()
             .expect("Invalid TLS Configuration")
-            .with_client_cert_verifier(AllowAnyAnonymousOrAuthenticatedClient::new({
+            .with_client_cert_verifier(Arc::new(AllowAnyAnonymousOrAuthenticatedClient::new({
                 let mut cert_store = RootCertStore::empty();
                 cert_store.add(certs.first().unwrap()).unwrap();
                 cert_store
-            }))
+            })))
             .with_single_cert_with_ocsp_and_sct(certs, key, Vec::new(), Vec::new())
             .expect("Invalid Cert Configuration");
 
@@ -143,7 +163,7 @@ impl Connection {
                     }
                 }
                 Err(err) => {
-                    println!("ERROR WHILE READING PACKETS: {}", err);
+                    eprintln!("ERROR WHILE READING PACKETS: {}", err);
                     return Err(io::Error::new(
                         io::ErrorKind::ConnectionAborted,
                         err.to_string(),
@@ -157,22 +177,16 @@ impl Connection {
         Ok(())
     }
 
-    async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
-        self.stream
-            .readable()
-            .timeout(Duration::from_millis(5000))
-            .await
-            .unwrap_or_else(|| {
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionAborted,
-                    "Took too long",
-                ))
-            })?;
+    async fn receive(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        with_timeout(Duration::from_secs(30), self.stream.readable()).await?;
 
-        self.stream
-            .read_with(|mut stream| {
+        with_timeout(
+            Duration::from_secs(30),
+            self.stream.read_with(|mut stream| {
                 if let Some(ref mut tls) = self.tls {
-                    tls.read_tls(&mut stream)?;
+                    if tls.wants_read() {
+                        tls.read_tls(&mut stream)?;
+                    }
                     tls.process_new_packets().map_err(|e| {
                         io::Error::new(io::ErrorKind::ConnectionAborted, e.to_string())
                     })?;
@@ -180,15 +194,16 @@ impl Connection {
                 } else {
                     stream.read(buf)
                 }
-            })
-            .await
+            }),
+        )
+        .await
     }
 }
 
 impl Default for Server {
     fn default() -> Self {
         Server {
-            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            address: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             port: 1025,
             handlers: Arc::default(),
             extensions: Arc::default(),
@@ -205,8 +220,8 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use smtplib::smtp::server::Server;
-    /// use smtplib::smtp::server::state::State;
+    /// use entropy::smtp::server::Server;
+    /// use entropy::smtp::server::state::State;
     ///
     /// let server = Server::default()
     ///     .handle(State::Connect, |vctx| {
@@ -223,13 +238,13 @@ impl Server {
     /// Panics if the server is unable to obtain a write lock on the internal handles
     /// it has
     #[must_use]
-    pub fn handle(self, command: State, handler: Handle) -> Server {
+    pub fn handle(self, command: Phase, handler: Handle) -> Server {
         self.handlers
             .write()
             .expect("Unable to add handler")
             .entry(command)
-            .and_modify(|hdlr| *hdlr = handler)
-            .or_insert(handler);
+            .and_modify(|hdlr| hdlr.push(handler))
+            .or_insert(vec![handler]);
 
         self
     }
@@ -241,9 +256,10 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use smtplib::smtp::server::Server;
+    /// use entropy::smtp::server::Server;
     ///
     /// let server = Server::default().extension(STARTTLS);
+    /// assert_eq!(server.extensions.read().unwrap(), vec![STARTTLS]);
     /// server.run(); // The server will now advertise that it supports the
     ///               // STARTTLS extension, and will also accept it as a
     ///               // command
@@ -268,7 +284,7 @@ impl Server {
         queue: Arc<AtomicU64>,
         stream: Async<TcpStream>,
         peer: SocketAddr,
-    ) -> std::io::Result<bool> {
+    ) -> std::io::Result<()> {
         let mut connection = Connection {
             stream,
             tls: None,
@@ -278,7 +294,7 @@ impl Server {
         let logger = Logger::with_id(&id);
         let mut vctx = ValidationContext::default();
 
-        logger.internal("Connected");
+        logger.internal(&format!("Connected to {}", peer));
 
         loop {
             match self.response(&queue, &mut vctx) {
@@ -295,17 +311,17 @@ impl Server {
                     }
 
                     if Event::ConnectionClose == ev {
-                        return Ok(true);
+                        return Ok(());
                     }
                 }
-                Err((status, message)) => {
+                Err(SMTPError { status, message }) => {
                     let response = format!("{status} {message}");
                     logger.outgoing(&response);
                     connection.send(&response).await?;
                 }
             }
 
-            if self.context.state == State::StartTLS {
+            if self.context.state == Phase::StartTLS {
                 connection.upgrade().await?;
                 self.context = Context {
                     sent: true,
@@ -320,7 +336,7 @@ impl Server {
                 if connection_closed {
                     logger.internal("Connection closed");
                     connection.stream.flush().await?;
-                    return Ok(true);
+                    return Ok(());
                 }
             }
         }
@@ -331,7 +347,7 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use smtplib::smtp::server::Server;
+    /// use entropy::smtp::server::Server;
     ///
     /// let server = Server::default().on_port(1026);
     /// assert_eq!(server.port, 1026);
@@ -349,7 +365,7 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use smtplib::smtp::server::Server;
+    /// use entropy::smtp::server::Server;
     ///
     /// let server = Server::default();
     /// server.run();
@@ -381,24 +397,30 @@ impl Server {
             return Ok((None, Event::ConnectionKeepAlive));
         }
 
-        if let Some(handler) = self.handlers.read().unwrap().get(&self.context.state) {
-            handler(vctx)?;
+        if let Some(handlers) = self.handlers.read().unwrap().get(&self.context.state) {
+            for handler in handlers {
+                handler(vctx)?;
+            }
         }
 
         let status = match self.context.state {
-            State::Connect => (
+            Phase::Connect => (
                 Some(vec![format!("{} localhost", Status::ServiceReady)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Ehlo | State::Helo => {
-                let mut response = vec![];
+            Phase::Ehlo | Phase::Helo => {
+                let mut response = vec![format!(
+                    "{}{}Hello {}",
+                    Status::Ok,
+                    if self.extensions.read().is_ok() {
+                        '-'
+                    } else {
+                        ' '
+                    },
+                    std::str::from_utf8(&self.context.message).unwrap()
+                )];
 
                 if let Ok(extensions) = self.extensions.read() {
-                    response.push(format!(
-                        "{}-Hello {}",
-                        Status::Ok,
-                        std::str::from_utf8(&self.context.message).unwrap()
-                    ));
                     for (idx, extension) in extensions.iter().enumerate() {
                         response.push(format!(
                             "{}{}{}",
@@ -411,25 +433,19 @@ impl Server {
                             extension
                         ));
                     }
-                } else {
-                    response.push(format!(
-                        "{} Hello {}",
-                        Status::Ok,
-                        std::str::from_utf8(&self.context.message).unwrap()
-                    ));
                 }
                 (Some(response), Event::ConnectionKeepAlive)
             }
-            State::StartTLS => (
+            Phase::StartTLS => (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::MailFrom | State::RcptTo => (
+            Phase::MailFrom | Phase::RcptTo => (
                 Some(vec![format!("{} Ok", Status::Ok)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Data => {
-                self.context.state = State::Reading;
+            Phase::Data => {
+                self.context.state = Phase::Reading;
                 (
                     Some(vec![format!(
                         "{} End data with <CR><LF>.<CR><LF>",
@@ -438,18 +454,18 @@ impl Server {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::DataReceived => {
+            Phase::DataReceived => {
                 let queue = queue.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 (
                     Some(vec![format!("{} Ok: queued as {}", Status::Ok, queue)]),
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::Quit => (
+            Phase::Quit => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
                 Event::ConnectionClose,
             ),
-            State::Invalid => (
+            Phase::Invalid => (
                 Some(vec![format!(
                     "{} Invalid command '{}'",
                     Status::InvalidCommandSequence,
@@ -457,8 +473,8 @@ impl Server {
                 )]),
                 Event::ConnectionClose,
             ),
-            State::Reading | State::Close => (None, Event::ConnectionKeepAlive),
-            State::InvalidCommandSequence => (
+            Phase::Reading | Phase::Close => (None, Event::ConnectionKeepAlive),
+            Phase::InvalidCommandSequence => (
                 Some(vec![format!(
                     "{} {}",
                     Status::InvalidCommandSequence,
@@ -493,12 +509,12 @@ impl Server {
             Ok(bytes_read) => {
                 let received = &received_data[..bytes_read];
 
-                if self.context.state == State::Reading {
+                if self.context.state == Phase::Reading {
                     self.context.message.extend(received);
 
                     if self.context.message.ends_with(b"\r\n.\r\n") {
                         self.context = Context {
-                            state: State::DataReceived,
+                            state: Phase::DataReceived,
                             message: self.context.message.clone(),
                             sent: false,
                         };

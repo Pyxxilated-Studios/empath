@@ -28,7 +28,7 @@ impl<'a> Logger<'a> {
     /// # Examples
     ///
     /// ```
-    /// use smtplib::log::Logger;
+    /// use entropy::log::Logger;
     ///
     /// let id = "test";
     /// assert_eq!(Logger::with_id(id), Logger { id });

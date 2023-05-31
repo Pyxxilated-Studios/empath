@@ -55,7 +55,7 @@ impl Display for Command {
             Command::Data => fmt.write_str("DATA"),
             Command::Quit => fmt.write_str("QUIT"),
             Command::StartTLS => fmt.write_str("STARTTLS"),
-            Command::Invalid(_) => fmt.write_str("INVALID"),
+            Command::Invalid(s) => fmt.write_str(s),
         }
     }
 }

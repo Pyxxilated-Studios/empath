@@ -16,15 +16,9 @@ impl ValidationContext {
     }
 
     pub fn message(&self) -> String {
-        if let Some(data) = &self.data {
-            if let Ok(s) = std::str::from_utf8(data) {
-                s.to_string()
-            } else {
-                format!("{data:#?}")
-            }
-        } else {
-            String::default()
-        }
+        self.data.as_deref().map_or_else(String::default, |data| {
+            std::str::from_utf8(data).map_or_else(|_| format!("{:#?}", self.data), str::to_string)
+        })
     }
 
     pub fn sender(&self) -> String {
