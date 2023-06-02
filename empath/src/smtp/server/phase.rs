@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::common::command::{Command, HeloVariant};
-use crate::validation_context::ValidationContext;
+use crate::context::ValidationContext;
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy)]
 pub enum Phase {

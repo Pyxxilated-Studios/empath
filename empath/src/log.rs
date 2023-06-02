@@ -10,17 +10,18 @@ pub struct Logger<'a> {
 
 impl<'a> Logger<'a> {
     pub fn init() {
-        let _ = Dispatch::new()
-            .format(|out, message, _| {
+        Dispatch::new()
+            .format(|out, message, _record| {
                 out.finish(format_args!(
                     "[{}] {}",
                     Utc::now().timestamp_millis().to_string().yellow(),
-                    message
+                    message,
                 ));
             })
             .chain(std::io::stdout())
             .level(log::LevelFilter::Info)
-            .apply();
+            .apply()
+            .expect("Unable to initialise the logger");
     }
 
     /// Create a logger with an id
@@ -28,7 +29,7 @@ impl<'a> Logger<'a> {
     /// # Examples
     ///
     /// ```
-    /// use entropy::log::Logger;
+    /// use empath::log::Logger;
     ///
     /// let id = "test";
     /// assert_eq!(Logger::with_id(id), Logger { id });

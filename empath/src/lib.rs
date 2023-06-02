@@ -3,6 +3,8 @@
 pub mod log;
 pub mod smtp;
 
+pub extern crate mailparse;
+
 pub use self::smtp::server::*;
 pub use self::smtp::*;
 

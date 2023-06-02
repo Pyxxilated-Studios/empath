@@ -1,0 +1,36 @@
+[package]
+name = "empath"
+version = "0.1.0"
+edition = "2021"
+description = "An MTA written in Rust"
+repository = "https://github.com/Pyxxilated-Studios/empath"
+homepage = "https://github.com/Pyxxilated-Studios/empath"
+license-file = "..LICENSE.txt"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "server"
+path = "bin/main.rs"
+
+[dependencies]
+chrono = "0.4"
+colored = "2"
+fern = "0.6"
+log = "0.4"
+mailparse = "0.14"
+rustls = "0.21"
+rustls-pemfile = "1.0"
+smol = "1.2"
+smol-timeout = "0.6"
+trust-dns-resolver = "0.22"
+libloading = "0.8"
+libc = "0.2"
+ctrlc = "3.4.0"
+async-channel = "1.8.0"
+
+[build-dependencies]
+cbindgen = "0.24.5"

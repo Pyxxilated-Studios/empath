@@ -24,8 +24,8 @@ use crate::log::Logger;
 pub mod phase;
 use phase::Phase;
 
-pub mod validation_context;
-use validation_context::ValidationContext;
+pub mod context;
+use context::ValidationContext;
 
 #[repr(C)]
 #[derive(PartialEq, Eq)]
@@ -56,7 +56,7 @@ pub struct SMTPError {
     message: String,
 }
 
-pub(crate) type Handle = fn(&ValidationContext) -> Result<(), SMTPError>;
+pub(crate) type Handle = fn(&mut ValidationContext) -> Result<(), SMTPError>;
 pub(crate) type Handles = HashMap<Phase, Vec<Handle>>;
 pub(crate) type Response = Result<(Option<Vec<String>>, Event), SMTPError>;
 
@@ -220,8 +220,8 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use entropy::smtp::server::Server;
-    /// use entropy::smtp::server::state::State;
+    /// use empath::smtp::server::Server;
+    /// use empath::smtp::server::state::State;
     ///
     /// let server = Server::default()
     ///     .handle(State::Connect, |vctx| {
@@ -256,7 +256,7 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use entropy::smtp::server::Server;
+    /// use empath::smtp::server::Server;
     ///
     /// let server = Server::default().extension(STARTTLS);
     /// assert_eq!(server.extensions.read().unwrap(), vec![STARTTLS]);
@@ -347,7 +347,7 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use entropy::smtp::server::Server;
+    /// use empath::smtp::server::Server;
     ///
     /// let server = Server::default().on_port(1026);
     /// assert_eq!(server.port, 1026);
@@ -365,7 +365,7 @@ impl Server {
     /// # Examples
     ///
     /// ```
-    /// use entropy::smtp::server::Server;
+    /// use empath::smtp::server::Server;
     ///
     /// let server = Server::default();
     /// server.run();
@@ -375,19 +375,17 @@ impl Server {
     ///
     /// This function will return an error if there is an issue accepting a connection,
     /// or if there is an issue binding to the specific address and port combination.
-    pub fn run(self) -> std::io::Result<()> {
-        smol::block_on(async {
-            Logger::init();
+    pub async fn run(self) -> std::io::Result<()> {
+        Logger::init();
 
-            let listener = Async::<TcpListener>::bind(SocketAddr::new(self.address, self.port))?;
-            let queue = Arc::new(AtomicU64::default());
+        let listener = Async::<TcpListener>::bind(SocketAddr::new(self.address, self.port))?;
+        let queue = Arc::new(AtomicU64::default());
 
-            loop {
-                let (stream, address) = listener.accept().await?;
+        loop {
+            let (stream, address) = listener.accept().await?;
 
-                smol::spawn(self.clone().connect(Arc::clone(&queue), stream, address)).detach();
-            }
-        })
+            smol::spawn(self.clone().connect(Arc::clone(&queue), stream, address)).detach();
+        }
     }
 
     /// Generate the response(s) that should be sent back to the client

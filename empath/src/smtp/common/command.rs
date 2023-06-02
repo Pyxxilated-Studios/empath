@@ -23,6 +23,8 @@ impl Display for HeloVariant {
 #[derive(PartialEq, Debug)]
 pub enum Command {
     Helo(HeloVariant),
+    /// If this is `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
+    /// from [RFC-5321](https://www.ietf.org/rfc/rfc5321.txt).
     MailFrom(Option<MailAddrList>),
     RcptTo(MailAddrList),
     Data,
@@ -51,7 +53,7 @@ impl Display for Command {
                 "MAIL FROM:{}",
                 s.clone().map(|f| f.to_string()).unwrap_or_default()
             )),
-            Command::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{}", rcpt)),
+            Command::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{rcpt}")),
             Command::Data => fmt.write_str("DATA"),
             Command::Quit => fmt.write_str("QUIT"),
             Command::StartTLS => fmt.write_str("STARTTLS"),

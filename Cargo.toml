@@ -1,9 +1,17 @@
 [workspace]
-members = ["examples", "entropy"]
+members = ["empath"]
+
+[workspace.empath]
+version = "0.0.1"
+authors = [ "Pyxxil" ]
+description = "An MTA written in Rust"
+documentation = "https://github.com/Pyxxilated-Studios/empath"
+repository = "https://github.com/Pyxxilated-Studios/empath"
+homepage = "https://github.com/Pyxxilated-Studios/empath"
+license-file = "LICENSE.txt"
 
 [profile.release]
 lto = "thin"
-opt-level = 3
+opt-level = 2
 strip = "symbols"
 codegen-units = 1
-panic = "abort"

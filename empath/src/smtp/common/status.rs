@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 
-#[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[repr(C)]
 pub enum Status {
     ServiceReady = 220,
     GoodBye = 221,

@@ -3,3 +3,5 @@ Cargo.lock
 
 *.crt
 *.key
+*.so
+*.dylib
