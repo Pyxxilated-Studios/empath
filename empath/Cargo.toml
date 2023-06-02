@@ -1,11 +1,12 @@
 [package]
 name = "empath"
-version = "0.1.0"
-edition = "2021"
-description = "An MTA written in Rust"
-repository = "https://github.com/Pyxxilated-Studios/empath"
-homepage = "https://github.com/Pyxxilated-Studios/empath"
-license-file = "..LICENSE.txt"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+license-file.workspace = true
+edition.workspace = true
+
 build = "build.rs"
 
 [lib]

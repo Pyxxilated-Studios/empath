@@ -1,14 +1,15 @@
 [workspace]
 members = ["empath"]
 
-[workspace.empath]
+[workspace.package]
 version = "0.0.1"
+edition = "2021"
 authors = [ "Pyxxil" ]
 description = "An MTA written in Rust"
 documentation = "https://github.com/Pyxxilated-Studios/empath"
 repository = "https://github.com/Pyxxilated-Studios/empath"
 homepage = "https://github.com/Pyxxilated-Studios/empath"
-license-file = "LICENSE.txt"
+license-file = "LICENSE"
 
 [profile.release]
 lto = "thin"
