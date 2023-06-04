@@ -2,11 +2,11 @@ name: Analyze - Code Coverage
 
 on:
   push:
-    branches: ["main"]
+    branches: ["master"]
     paths:
       - "**/*.rs"
   pull_request:
-    branches: ["main"]
+    branches: ["master"]
     paths:
       - "**/*.rs"
 
