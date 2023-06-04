@@ -5,5 +5,5 @@ fn test() {
 #[no_mangle]
 pub extern "C" fn init() -> isize {
     test();
-    return 0;
+    0
 }

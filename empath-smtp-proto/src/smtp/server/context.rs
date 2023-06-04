@@ -5,7 +5,7 @@ use mailparse::MailAddrList;
 #[repr(C)]
 pub struct Buffer {
     len: usize,
-    data: *const i8,
+    data: *const *const i8,
 }
 
 #[derive(Default, Debug)]
@@ -61,7 +61,7 @@ impl ValidationContext {
 /// Retrieve the id associated with this context
 #[no_mangle]
 pub extern "C" fn validation_context_get_id(vctx: &ValidationContext) -> *const libc::c_char {
-    let id = CString::new(vctx.id()).unwrap();
+    let id = CString::new(vctx.id()).expect("Invalid CString");
     let data = id.as_ptr();
 
     std::mem::forget(id);
@@ -71,7 +71,17 @@ pub extern "C" fn validation_context_get_id(vctx: &ValidationContext) -> *const 
 
 #[no_mangle]
 pub extern "C" fn validation_context_get_recipients(vctx: &ValidationContext) -> Buffer {
-    let rcpts = vctx.recipients();
+    let rcpts = vctx
+        .recipients()
+        .iter()
+        .map(|rcpt| {
+            let rcpt = CString::new(rcpt.as_str()).expect("Invalid string");
+            let data = rcpt.as_ptr();
+            std::mem::forget(rcpt);
+            data
+        })
+        .collect::<Vec<_>>();
+
     let data = rcpts.as_ptr().cast();
     let len = rcpts.len();
 

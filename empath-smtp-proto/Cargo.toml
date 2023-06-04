@@ -1,0 +1,38 @@
+[package]
+name = "empath-smtp-proto"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+license.workspace = true
+edition.workspace = true
+
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chrono = "0.4"
+libc = "0.2"
+log = "0.4"
+mailparse = "0.14"
+rustls = "0.21"
+rustls-pemfile = "1.0"
+smol = "1"
+smol-timeout = "0.6"
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+    "std",
+] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "fmt",
+    "parking_lot",
+    "tracing-log",
+] }
+trust-dns-resolver = "0.22"
+
+[build-dependencies]
+cbindgen = "0.24.5"

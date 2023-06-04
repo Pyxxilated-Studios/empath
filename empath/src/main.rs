@@ -1,6 +1,11 @@
-use empath::context::ValidationContext;
-use empath::mailparse::parse_mail;
-use empath::{common::extensions::Extension, phase::Phase, server::Server};
+use empath_smtp_proto::{
+    common::{extensions::Extension, status::Status},
+    context::ValidationContext,
+    mailparse::parse_mail,
+    phase::Phase,
+    server::Server,
+    SMTPError,
+};
 
 use libloading::{Library, Symbol};
 use smol::future;
@@ -40,19 +45,27 @@ fn main() -> std::io::Result<()> {
                     .handle(Phase::DataReceived, |vctx| {
                         println!("Second handler");
                         unsafe {
-                            let lib = if cfg!(target_os = "macos") {
-                                Library::new("./target/debug/libdll.dylib").unwrap()
+                            (if cfg!(target_os = "macos") {
+                                Library::new("./examples/libdll.dylib")
                             } else {
-                                Library::new("./examples/src/libdll.so").unwrap()
-                            };
+                                Library::new("./examples/libdll.so")
+                            })
+                            .and_then(|lib| {
+                                let init: Symbol<InitFunc> = lib.get(b"init")?;
+                                let response = init(vctx);
 
-                            let init: Symbol<InitFunc> = lib.get(b"init").unwrap();
-                            let response = init(vctx);
+                                println!("init: {response}");
 
-                            println!("init: {}", response);
+                                Ok(())
+                            })
+                            .map_err(|err| {
+                                eprintln!("{err}");
+                                SMTPError {
+                                    status: Status::Error,
+                                    message: String::from("5.5.1 There was an internal issue"),
+                                }
+                            })
                         }
-
-                        Ok(())
                     })
                     .run()
                     .await
