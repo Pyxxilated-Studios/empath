@@ -1,4 +1,4 @@
-#![feature(async_closure)]
+#![feature(async_closure, new_uninit)]
 
 pub mod log;
 pub mod smtp;

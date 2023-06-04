@@ -52,8 +52,8 @@ impl Default for Context {
 }
 
 pub struct SMTPError {
-    status: Status,
-    message: String,
+    pub status: Status,
+    pub message: String,
 }
 
 pub(crate) type Handle = fn(&mut ValidationContext) -> Result<(), SMTPError>;

@@ -1,16 +1,18 @@
 [workspace]
-members = ["empath"]
+members = ["empath", "empath-smtp-proto"]
+resolver = "2"
 
 [workspace.package]
 version = "0.0.2"
 edition = "2021"
 authors = ["Pyxxil"]
 description = "An MTA written in Rust"
-documentation = "https://github.com/Pyxxilated-Studios/empath"
+documentation = "https://docs.rs/empath"
 repository = "https://github.com/Pyxxilated-Studios/empath"
 homepage = "https://github.com/Pyxxilated-Studios/empath"
-license-file = "LICENSE"
+license = "Apache-2.0"
 readme = "README.md"
+categories = ["command-line-utilities", "email", "network-programming"]
 
 [profile.release]
 lto = "thin"
