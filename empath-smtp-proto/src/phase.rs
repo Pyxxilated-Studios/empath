@@ -4,10 +4,12 @@ use std::{
     str::FromStr,
 };
 
-use crate::common::command::{Command, HeloVariant};
-use crate::context::ValidationContext;
+use crate::command::{Command, HeloVariant};
+use empath_common::context::ValidationContext;
+use serde::{Deserialize, Serialize};
 
-#[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy)]
+#[repr(C)]
+#[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Phase {
     Connect,
     Ehlo,
@@ -61,7 +63,7 @@ impl FromStr for Phase {
 }
 
 impl Phase {
-    pub(crate) fn transition(self, command: Command, vctx: &mut ValidationContext) -> Phase {
+    pub fn transition(self, command: Command, vctx: &mut ValidationContext) -> Phase {
         match (self, command) {
             (Phase::Connect, Command::Helo(HeloVariant::Ehlo(id))) => {
                 vctx.id = id;

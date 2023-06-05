@@ -1,5 +1,5 @@
 [workspace]
-members = ["empath", "empath-smtp-proto"]
+members = ["empath", "empath-common", "empath-server", "empath-smtp-proto"]
 resolver = "2"
 
 [workspace.package]

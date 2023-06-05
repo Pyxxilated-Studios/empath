@@ -42,7 +42,8 @@ jobs:
             -D clippy::all
             -D clippy::pedantic
             -A clippy::must-use-candidate
-            -A clippy::cast-precision-loss | clippy-sarif | tee
+            -A clippy::cast-precision-loss
+            -A clippy::module-name-repetitions | clippy-sarif | tee
           rust-clippy-results.sarif | sarif-fmt
         continue-on-error: true
 
@@ -64,10 +65,16 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
-          components: clippy
+          components: clippy, miri
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
 
       - name: Test Server
-        run: cargo nextest run
+        run: |
+          cargo miri setup
+          cargo miri nextest run
+
+      # Doc tests aren't currently runnable with nextest
+      - name: Run Doctests
+        run: cargo miri test --doc

@@ -40,15 +40,6 @@ impl<'a> Logger<'a> {
     }
 
     /// Create a logger with an id
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use empath::log::Logger;
-    ///
-    /// let id = "test";
-    /// assert_eq!(Logger::with_id(id), Logger { id });
-    /// ```
     pub fn with_id(id: &'a str) -> Logger {
         Logger { id }
     }

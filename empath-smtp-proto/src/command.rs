@@ -34,7 +34,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub(crate) fn inner(&self) -> String {
+    pub fn inner(&self) -> String {
         match self {
             Command::MailFrom(from) => from.clone().map(|f| f.to_string()).unwrap_or_default(),
             Command::RcptTo(to) => to.to_string(),

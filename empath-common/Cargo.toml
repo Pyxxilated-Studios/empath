@@ -1,5 +1,5 @@
 [package]
-name = "empath-smtp-proto"
+name = "empath-common"
 version.workspace = true
 authors.workspace = true
 description.workspace = true
@@ -14,9 +14,11 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-empath-common = { path = "../empath-common" }
+async-trait = "0.1"
+libc = "0.2"
 mailparse = "0.14"
-serde = "1"
+typetag = "0.2"
+
 
 [build-dependencies]
 cbindgen = "0.24.5"
