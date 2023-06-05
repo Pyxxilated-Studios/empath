@@ -1,31 +1,25 @@
-use core::panic;
-use std::collections::HashMap;
-use std::fmt::{Debug, Display};
-use std::future::Future;
-use std::io::{BufReader, Read, Write};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::{atomic::AtomicU64, Arc, RwLock};
-use std::time::Duration;
-use std::{fs, io};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    fs,
+    future::Future,
+    io::{self, BufReader, Read, Write},
+    net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener, TcpStream},
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
+use empath_common::{context::ValidationContext, listener::Listener};
+use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
 use mailparse::MailParseError;
-use rustls::server::AllowAnyAnonymousOrAuthenticatedClient;
-use rustls::{RootCertStore, ServerConfig, ServerConnection};
+use rustls::{
+    server::AllowAnyAnonymousOrAuthenticatedClient, RootCertStore, ServerConfig, ServerConnection,
+};
+use serde::{Deserialize, Serialize};
 use smol::{io::AsyncWriteExt, Async};
 use smol_timeout::TimeoutExt;
-// use trust_dns_resolver::{
-//     config::{ResolverConfig, ResolverOpts},
-//     Resolver,
-// };
 
-use crate::common::{command::Command, extensions::Extension, status::Status};
 use crate::log::Logger;
-
-pub mod phase;
-use phase::Phase;
-
-pub mod context;
-use context::ValidationContext;
 
 #[repr(C)]
 #[derive(PartialEq, Eq)]
@@ -34,7 +28,7 @@ pub enum Event {
     ConnectionKeepAlive,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Context {
     pub state: Phase,
     pub message: Vec<u8>,
@@ -69,13 +63,40 @@ impl From<MailParseError> for SMTPError {
     }
 }
 
-#[derive(Clone)]
-pub struct Server {
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SmtpListener {
     address: IpAddr,
     port: u16,
-    handlers: Arc<RwLock<Handles>>,
-    extensions: Arc<RwLock<Vec<Extension>>>,
     context: Context,
+    #[serde(skip)]
+    handlers: Handles,
+    extensions: Vec<Extension>,
+}
+
+#[typetag::serde]
+#[async_trait::async_trait]
+impl Listener for SmtpListener {
+    async fn spawn(&self) {
+        let smtplistener = self.clone();
+        let listener =
+            Async::<TcpListener>::bind(SocketAddr::new(smtplistener.address, smtplistener.port))
+                .expect("Unable to start smtp session");
+        let queue = Arc::new(AtomicU64::default());
+
+        loop {
+            let (stream, address) = listener
+                .accept()
+                .await
+                .expect("Unable to accept connection");
+
+            smol::spawn(
+                smtplistener
+                    .clone()
+                    .connect(Arc::clone(&queue), stream, address),
+            )
+            .detach();
+        }
+    }
 }
 
 pub struct Connection {
@@ -200,85 +221,19 @@ impl Connection {
     }
 }
 
-impl Default for Server {
+impl Default for SmtpListener {
     fn default() -> Self {
-        Server {
+        SmtpListener {
             address: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             port: 1025,
-            handlers: Arc::default(),
-            extensions: Arc::default(),
             context: Context::default(),
+            handlers: Default::default(),
+            extensions: Default::default(),
         }
     }
 }
 
-impl Server {
-    /// Add a handler for a specific `State`. This is useful for doing specific
-    /// checks at certain points, e.g. on `Connect` you can check the IP against
-    /// a block list and abort the connection due to suspected spam.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use empath::smtp::server::Server;
-    /// use empath::smtp::server::state::State;
-    ///
-    /// let server = Server::default()
-    ///     .handle(State::Connect, |vctx| {
-    ///         println!("Connected!");
-    ///         Ok(())
-    ///     });
-    ///
-    /// server.run(); // Whenever the server receives a connection it'll print `Connected!`
-    ///
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the server is unable to obtain a write lock on the internal handles
-    /// it has
-    #[must_use]
-    pub fn handle(self, command: Phase, handler: Handle) -> Server {
-        self.handlers
-            .write()
-            .expect("Unable to add handler")
-            .entry(command)
-            .and_modify(|hdlr| hdlr.push(handler))
-            .or_insert(vec![handler]);
-
-        self
-    }
-
-    /// Add an `Extension` to advertise that the server supports, as well
-    /// as request the server to actually handle the command the extension
-    /// pertains to.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use empath::smtp::server::Server;
-    ///
-    /// let server = Server::default().extension(STARTTLS);
-    /// assert_eq!(server.extensions.read().unwrap(), vec![STARTTLS]);
-    /// server.run(); // The server will now advertise that it supports the
-    ///               // STARTTLS extension, and will also accept it as a
-    ///               // command
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the server is unable to obtain a write lock on the internal
-    /// extensions it has
-    #[must_use]
-    pub fn extension(self, extension: Extension) -> Server {
-        self.extensions
-            .write()
-            .expect("Unable to add extension")
-            .push(extension);
-
-        self
-    }
-
+impl SmtpListener {
     async fn connect(
         mut self,
         queue: Arc<AtomicU64>,
@@ -342,52 +297,6 @@ impl Server {
         }
     }
 
-    /// Tell the server to listen on a specific port
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use empath::smtp::server::Server;
-    ///
-    /// let server = Server::default().on_port(1026);
-    /// assert_eq!(server.port, 1026);
-    /// ```
-    #[must_use]
-    pub fn on_port(mut self, port: u16) -> Server {
-        self.port = port;
-
-        self
-    }
-
-    /// Run the server, which will accept connections on the
-    /// port it is asked to (or the default if not chosen).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use empath::smtp::server::Server;
-    ///
-    /// let server = Server::default();
-    /// server.run();
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if there is an issue accepting a connection,
-    /// or if there is an issue binding to the specific address and port combination.
-    pub async fn run(self) -> std::io::Result<()> {
-        Logger::init();
-
-        let listener = Async::<TcpListener>::bind(SocketAddr::new(self.address, self.port))?;
-        let queue = Arc::new(AtomicU64::default());
-
-        loop {
-            let (stream, address) = listener.accept().await?;
-
-            smol::spawn(self.clone().connect(Arc::clone(&queue), stream, address)).detach();
-        }
-    }
-
     /// Generate the response(s) that should be sent back to the client
     /// depending on the servers state
     fn response(&mut self, queue: &Arc<AtomicU64>, vctx: &mut ValidationContext) -> Response {
@@ -395,7 +304,7 @@ impl Server {
             return Ok((None, Event::ConnectionKeepAlive));
         }
 
-        if let Some(handlers) = self.handlers.read().unwrap().get(&self.context.state) {
+        if let Some(handlers) = self.handlers.get(&self.context.state) {
             for handler in handlers {
                 handler(vctx)?;
             }
@@ -410,27 +319,21 @@ impl Server {
                 let mut response = vec![format!(
                     "{}{}Hello {}",
                     Status::Ok,
-                    if self.extensions.read().is_ok() {
-                        '-'
-                    } else {
-                        ' '
-                    },
+                    if self.extensions.is_empty() { ' ' } else { '-' },
                     std::str::from_utf8(&self.context.message).unwrap()
                 )];
 
-                if let Ok(extensions) = self.extensions.read() {
-                    for (idx, extension) in extensions.iter().enumerate() {
-                        response.push(format!(
-                            "{}{}{}",
-                            Status::Ok,
-                            if idx == extensions.len() - 1 {
-                                ' '
-                            } else {
-                                '-'
-                            },
-                            extension
-                        ));
-                    }
+                for (idx, extension) in self.extensions.iter().enumerate() {
+                    response.push(format!(
+                        "{}{}{}",
+                        Status::Ok,
+                        if idx == self.extensions.len() - 1 {
+                            ' '
+                        } else {
+                            '-'
+                        },
+                        extension
+                    ));
                 }
                 (Some(response), Event::ConnectionKeepAlive)
             }
@@ -536,85 +439,70 @@ impl Server {
             }
         }
     }
+
+    #[must_use]
+    pub fn on_port(mut self, port: u16) -> SmtpListener {
+        self.port = port;
+
+        self
+    }
+
+    /// Add a handler for a specific `State`. This is useful for doing specific
+    /// checks at certain points, e.g. on `Connect` you can check the IP against
+    /// a block list and abort the connection due to suspected spam.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use empath_server::smtp::SmtpListener;
+    /// use empath_smtp_proto::phase::Phase;
+    ///
+    /// let server = SmtpListener::default()
+    ///     .handle(Phase::Connect, |vctx| {
+    ///         println!("Connected!");
+    ///         Ok(())
+    ///     });
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the server is unable to obtain a write lock on the internal handles
+    /// it has
+    #[must_use]
+    pub fn handle(mut self, command: Phase, handler: Handle) -> SmtpListener {
+        self.handlers
+            .entry(command)
+            .and_modify(|hdlr| hdlr.push(handler))
+            .or_insert(vec![handler]);
+
+        self
+    }
+
+    /// Add an `Extension` to advertise that the server supports, as well
+    /// as request the server to actually handle the command the extension
+    /// pertains to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use empath_server::smtp::SmtpListener;
+    /// use empath_common::listener::Listener;
+    /// use empath_smtp_proto::extensions::Extension::STARTTLS;
+    ///
+    /// let server = SmtpListener::default().extension(STARTTLS);
+    /// server.spawn(); // The server will now advertise that it supports the
+    ///                 // STARTTLS extension, and will also accept it as a
+    ///                 // command
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the server is unable to obtain a write lock on the internal
+    /// extensions it has
+    #[must_use]
+    pub fn extension(mut self, extension: Extension) -> SmtpListener {
+        self.extensions.push(extension);
+
+        self
+    }
 }
-
-// async fn forward(vctx: &ValidationContext) -> std::io::Result<()> {
-//     println!("{vctx:#?}");
-
-//     let from = vctx.mail_from.as_ref().unwrap().split(':').nth(1).unwrap();
-//     let to = vctx
-//         .rcpt_to
-//         .as_ref()
-//         .unwrap()
-//         .iter()
-//         .map(|to| to.split(':').nth(1).unwrap())
-//         .collect::<Vec<_>>();
-
-//     let from = if let MailAddr::Single(SingleInfo { addr, .. }) =
-//         mailparse::addrparse(from).unwrap().first().unwrap()
-//     {
-//         addr.clone()
-//     } else {
-//         String::default()
-//     };
-//     let to = mailparse::addrparse(to.join(",").as_str()).unwrap();
-
-//     println!("{from:#?} --> {to:#?}");
-
-//     let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
-
-//     if let MailAddr::Single(SingleInfo { addr, .. }) = to.first().unwrap() {
-//         let response = resolver.mx_lookup(addr.split('@').nth(1).unwrap()).unwrap();
-//         let response = response.iter().next().unwrap();
-
-//         println!("{}", response.exchange());
-
-//         let response = resolver.lookup_ip(response.exchange().to_string()).unwrap();
-
-//         let address = response.iter().next().expect("no addresses returned!");
-
-//         println!("{address}");
-
-//         let conn = Async::<TcpStream>::connect((address, 25)).await?;
-
-//         println!("{conn:#?}");
-
-//         let mut buffer = [0; 4096];
-
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "EHLO test-local\r\n"))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "MAIL FROM:<{from}>\r\n"))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "RCPT TO:<{to}>\r\n"))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "DATA\r\n")).await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "{}\r\n", vctx.data.as_ref().unwrap()))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         conn.write_with(|mut conn| write!(conn, "QUIT\r\n")).await?;
-//     }
-
-//     Ok(())
-// }

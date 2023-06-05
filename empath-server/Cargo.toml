@@ -1,0 +1,40 @@
+[package]
+name = "empath-server"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+async-trait = "0.1"
+libc = "0.2"
+empath-common = { path = "../empath-common" }
+empath-smtp-proto = { path = "../empath-smtp-proto" }
+futures = "0.3"
+mailparse = "0.14"
+rustls = "0.21"
+rustls-pemfile = "1.0"
+serde = "1"
+smol = "1"
+smol-timeout = "0.6"
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+    "std",
+] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "fmt",
+    "parking_lot",
+    "tracing-log",
+] }
+trust-dns-resolver = "0.22"
+typetag = "0.2"
+
+[build-dependencies]
+cbindgen = "0.24.5"

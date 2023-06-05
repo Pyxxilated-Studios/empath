@@ -1,5 +1,8 @@
 use std::fmt::Display;
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone)]
 pub enum Extension {
     STARTTLS,
 }
