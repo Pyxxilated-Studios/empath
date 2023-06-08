@@ -13,5 +13,5 @@ ctrlc = "3"
 empath-common = { path = "../empath-common" }
 empath-server = { path = "../empath-server" }
 empath-smtp-proto = { path = "../empath-smtp-proto" }
-libloading = "0.8"
 smol = "1"
+toml = "0.7"

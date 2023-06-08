@@ -1,30 +1,8 @@
-use std::{ffi::CString, fmt::Debug};
+use std::fmt::Debug;
 
 use mailparse::MailAddrList;
 
-#[repr(C)]
-pub struct FFIString {
-    len: usize,
-    data: *const i8,
-}
-
-impl Drop for FFIString {
-    fn drop(&mut self) {
-        unsafe { std::mem::drop(CString::from_raw(self.data.cast_mut())) }
-    }
-}
-
-#[repr(C)]
-pub struct FFIStringVector {
-    len: usize,
-    data: *const FFIString,
-}
-
-impl Drop for FFIStringVector {
-    fn drop(&mut self) {
-        let _ = unsafe { Vec::from_raw_parts(self.data.cast_mut(), self.len, self.len) };
-    }
-}
+use crate::ffi::string::{FFIString, FFIStringVector};
 
 #[derive(Default, Debug)]
 pub struct ValidationContext {
@@ -84,29 +62,12 @@ impl ValidationContext {
 ///
 #[no_mangle]
 pub extern "C" fn validation_context_get_id(vctx: &ValidationContext) -> FFIString {
-    let id = CString::new(vctx.id()).expect("Invalid CString");
-    let len = vctx.id().len();
-    let data = id.into_raw();
-
-    FFIString { len, data }
+    vctx.id().into()
 }
 
 #[no_mangle]
 pub extern "C" fn validation_context_get_recipients(vctx: &ValidationContext) -> FFIStringVector {
-    let rcpts = vctx
-        .recipients()
-        .iter()
-        .map(|rcpt| {
-            let len = rcpt.len();
-            let rcpt = CString::new(rcpt.as_str()).expect("Invalid string");
-            let data = rcpt.into_raw();
-            FFIString { len, data }
-        })
-        .collect::<Vec<_>>();
-
-    let (data, len, _) = rcpts.into_raw_parts();
-
-    FFIStringVector { len, data }
+    vctx.recipients().into()
 }
 
 #[no_mangle]

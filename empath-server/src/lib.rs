@@ -1,21 +1,49 @@
-mod log;
 pub mod smtp;
 
-use empath_common::listener::Listener;
+use std::{
+    fs::File,
+    io::{BufReader, Read},
+    path::Path,
+};
+
+use empath_common::{
+    ffi::module::{Module, ModuleError},
+    listener::Listener,
+    log::Logger,
+};
 use futures::future::join_all;
-use log::Logger;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 // use trust_dns_resolver::{
 //     config::{ResolverConfig, ResolverOpts},
 //     Resolver,
 // };
 
+#[derive(Error, Debug)]
+pub enum ServerError {
+    #[error(transparent)]
+    ModuleError(#[from] ModuleError),
+
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
+}
+
 #[derive(Serialize, Deserialize, Default)]
 pub struct Server {
     listeners: Vec<Box<dyn Listener>>,
+    modules: Vec<Module>,
 }
 
 impl Server {
+    pub fn from_config(file: &str) -> std::io::Result<Server> {
+        let file = Path::new(file);
+        let mut reader = BufReader::new(File::open(file)?);
+        let mut config = String::new();
+        reader.read_to_string(&mut config)?;
+
+        toml::from_str(&config).map_err(|_| std::io::ErrorKind::InvalidData.into())
+    }
+
     /// Run the server, which will accept connections on the
     /// port it is asked to (or the default if not chosen).
     ///
@@ -32,8 +60,10 @@ impl Server {
     ///
     /// This function will return an error if there is an issue accepting a connection,
     /// or if there is an issue binding to the specific address and port combination.
-    pub async fn run(self) -> std::io::Result<()> {
+    pub async fn run(self) -> Result<(), ServerError> {
         Logger::init();
+
+        Module::init(&self.modules)?;
 
         join_all(self.listeners.iter().map(|listener| listener.spawn())).await;
 
@@ -42,6 +72,12 @@ impl Server {
 
     pub fn with_listener(mut self, listener: Box<dyn Listener>) -> Server {
         self.listeners.push(listener);
+
+        self
+    }
+
+    pub fn with_module(mut self, module: Module) -> Server {
+        self.modules.push(module);
 
         self
     }

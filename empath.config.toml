@@ -1,0 +1,19 @@
+[[listeners]]
+
+[listeners.SmtpListener]
+address = "::"
+port = 1025
+extensions = ["STARTTLS"]
+
+[[listeners]]
+
+[listeners.SmtpListener]
+address = "::"
+port = 1026
+extensions = ["STARTTLS"]
+
+[[modules]]
+
+[modules.SharedLibrary]
+name = "./examples/libdll.so"
+arguments = []

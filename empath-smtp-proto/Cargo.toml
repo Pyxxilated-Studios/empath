@@ -16,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 empath-common = { path = "../empath-common" }
 mailparse = "0.14"
-serde = "1"
+serde.workspace = true
 
 [build-dependencies]
-cbindgen = "0.24.5"
+cbindgen.workspace = true
