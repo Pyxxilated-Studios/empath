@@ -16,9 +16,22 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 async-trait = "0.1"
 libc = "0.2"
+libloading = "0.8"
 mailparse = "0.14"
+serde.workspace = true
+thiserror = "1"
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+    "std",
+] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "fmt",
+    "parking_lot",
+    "tracing-log",
+] }
 typetag = "0.2"
 
 
 [build-dependencies]
-cbindgen = "0.24.5"
+cbindgen.workspace = true

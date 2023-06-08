@@ -20,21 +20,13 @@ futures = "0.3"
 mailparse = "0.14"
 rustls = "0.21"
 rustls-pemfile = "1.0"
-serde = "1"
+serde.workspace = true
 smol = "1"
 smol-timeout = "0.6"
-tracing = { version = "0.1", default-features = false, features = [
-    "attributes",
-    "std",
-] }
-tracing-subscriber = { version = "0.3", default-features = false, features = [
-    "ansi",
-    "fmt",
-    "parking_lot",
-    "tracing-log",
-] }
+thiserror = "1"
+toml = "0.7"
 trust-dns-resolver = "0.22"
 typetag = "0.2"
 
 [build-dependencies]
-cbindgen = "0.24.5"
+cbindgen.workspace = true

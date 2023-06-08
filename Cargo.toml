@@ -14,6 +14,10 @@ license = "Apache-2.0"
 readme = "README.md"
 categories = ["command-line-utilities", "email", "network-programming"]
 
+[workspace.dependencies]
+cbindgen = "0.24.5"
+serde = "1"
+
 [profile.release]
 lto = "thin"
 opt-level = 2

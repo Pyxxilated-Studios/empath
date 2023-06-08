@@ -13,7 +13,7 @@ void test(ValidationContext *vctx) {
   free_string(id);
 }
 
-int init(ValidationContext *vctx) {
+int validate_data(ValidationContext *vctx) {
   test(vctx);
   FFIStringVector buff = validation_context_get_recipients(vctx);
 
@@ -23,5 +23,10 @@ int init(ValidationContext *vctx) {
 
   free_string_vector(buff);
 
-  return buff.len;
+  return 0;
+}
+
+int init() {
+  printf("INIT CALLED\n");
+  return 0;
 }

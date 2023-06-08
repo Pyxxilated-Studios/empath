@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use empath_common::{context::ValidationContext, listener::Listener};
+use empath_common::{context::ValidationContext, listener::Listener, log::Logger};
 use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
 use mailparse::MailParseError;
 use rustls::{
@@ -18,8 +18,6 @@ use rustls::{
 use serde::{Deserialize, Serialize};
 use smol::{io::AsyncWriteExt, Async};
 use smol_timeout::TimeoutExt;
-
-use crate::log::Logger;
 
 #[repr(C)]
 #[derive(PartialEq, Eq)]
@@ -67,6 +65,7 @@ impl From<MailParseError> for SMTPError {
 pub struct SmtpListener {
     address: IpAddr,
     port: u16,
+    #[serde(skip)]
     context: Context,
     #[serde(skip)]
     handlers: Handles,
@@ -77,6 +76,11 @@ pub struct SmtpListener {
 #[async_trait::async_trait]
 impl Listener for SmtpListener {
     async fn spawn(&self) {
+        Logger::internal(&format!(
+            "Starting SMTP Listener on: {}:{}",
+            self.address, self.port
+        ));
+
         let smtplistener = self.clone();
         let listener =
             Async::<TcpListener>::bind(SocketAddr::new(smtplistener.address, smtplistener.port))
@@ -102,7 +106,6 @@ impl Listener for SmtpListener {
 pub struct Connection {
     stream: Async<TcpStream>,
     tls: Option<ServerConnection>,
-    peer: SocketAddr,
 }
 
 async fn with_timeout<F, T>(timeout: Duration, af: F) -> io::Result<T>
@@ -240,16 +243,10 @@ impl SmtpListener {
         stream: Async<TcpStream>,
         peer: SocketAddr,
     ) -> std::io::Result<()> {
-        let mut connection = Connection {
-            stream,
-            tls: None,
-            peer,
-        };
-        let id = connection.peer.to_string();
-        let logger = Logger::with_id(&id);
+        let mut connection = Connection { stream, tls: None };
         let mut vctx = ValidationContext::default();
 
-        logger.internal(&format!("Connected to {}", peer));
+        Logger::internal(&format!("Connected to {}", peer));
 
         loop {
             match self.response(&queue, &mut vctx) {
@@ -257,10 +254,10 @@ impl SmtpListener {
                     self.context.sent = true;
 
                     for response in response.unwrap_or_default() {
-                        logger.outgoing(&response);
+                        Logger::outgoing(&response);
 
                         connection.send(&response).await.map_err(|err| {
-                            logger.internal(&format!("Error: {err}"));
+                            Logger::internal(&format!("Error: {err}"));
                             io::Error::new(io::ErrorKind::ConnectionAborted, err.to_string())
                         })?;
                     }
@@ -271,7 +268,7 @@ impl SmtpListener {
                 }
                 Err(SMTPError { status, message }) => {
                     let response = format!("{status} {message}");
-                    logger.outgoing(&response);
+                    Logger::outgoing(&response);
                     connection.send(&response).await?;
                 }
             }
@@ -284,12 +281,12 @@ impl SmtpListener {
                 };
             } else {
                 let connection_closed = matches!(
-                    self.receive(&mut connection, &logger, &mut vctx).await,
+                    self.receive(&mut connection, &mut vctx).await,
                     Ok(true) | Err(_)
                 );
 
                 if connection_closed {
-                    logger.internal("Connection closed");
+                    Logger::internal("Connection closed");
                     connection.stream.flush().await?;
                     return Ok(());
                 }
@@ -391,7 +388,6 @@ impl SmtpListener {
     async fn receive(
         &mut self,
         connection: &mut Connection,
-        logger: &Logger<'_>,
         vctx: &mut ValidationContext,
     ) -> std::io::Result<bool> {
         let mut received_data = vec![0; 4096];
@@ -399,7 +395,7 @@ impl SmtpListener {
         match connection.receive(&mut received_data).await {
             // Consider any errors received here to be fatal
             Err(err) => {
-                logger.internal(&format!("Error: {err}"));
+                Logger::internal(&format!("Error: {err}"));
                 Err(err)
             }
             Ok(0) => {
@@ -426,7 +422,7 @@ impl SmtpListener {
                     let command = Command::from(received);
                     let message = command.inner().into_bytes();
 
-                    logger.incoming(&command.to_string());
+                    Logger::incoming(&command.to_string());
 
                     self.context = Context {
                         state: self.context.state.transition(command, vctx),

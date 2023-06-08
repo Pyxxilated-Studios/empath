@@ -4,11 +4,9 @@ use tracing_subscriber::{
 };
 
 #[derive(Default)]
-pub struct Logger<'a> {
-    id: &'a str,
-}
+pub struct Logger;
 
-impl<'a> Logger<'a> {
+impl Logger {
     pub fn init() {
         let level = if let Ok(level) = std::env::var("LOG_LEVEL") {
             match level.to_ascii_lowercase().as_str() {
@@ -39,32 +37,27 @@ impl<'a> Logger<'a> {
             .init();
     }
 
-    /// Create a logger with an id
-    pub fn with_id(id: &'a str) -> Logger {
-        Logger { id }
-    }
-
     ///
     /// Log an incoming request/response -- e.g. from a client to the server
     ///
-    #[tracing::instrument(skip(self, message), fields(id = self.id))]
-    pub fn incoming(&self, message: &str) {
+    #[tracing::instrument(skip(message))]
+    pub fn incoming(message: &str) {
         trace!(message);
     }
 
     ///
     /// Log an outgoing response/request -- e.g. from the server to a client
     ///
-    #[tracing::instrument(skip(self, message), fields(id = self.id))]
-    pub fn outgoing(&self, message: &str) {
+    #[tracing::instrument(skip(message))]
+    pub fn outgoing(message: &str) {
         trace!(message);
     }
 
     ///
     /// Log an internal message
     ///
-    #[tracing::instrument(skip(self, message), fields(id = self.id))]
-    pub fn internal(&self, message: &str) {
+    #[tracing::instrument(skip(message))]
+    pub fn internal(message: &str) {
         trace!(message);
     }
 }
