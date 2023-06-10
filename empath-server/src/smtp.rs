@@ -9,7 +9,13 @@ use std::{
     time::Duration,
 };
 
-use empath_common::{context::ValidationContext, listener::Listener, log::Logger};
+use empath_common::{
+    context::ValidationContext,
+    ffi::module::{self, ModuleError},
+    incoming, internal,
+    listener::Listener,
+    outgoing,
+};
 use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
 use mailparse::MailParseError;
 use rustls::{
@@ -61,6 +67,21 @@ impl From<MailParseError> for SMTPError {
     }
 }
 
+impl From<ModuleError> for SMTPError {
+    fn from(value: ModuleError) -> Self {
+        SMTPError {
+            status: Status::Error,
+            message: format!("{}", value),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct TlsContext {
+    certificate: String,
+    key: String,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SmtpListener {
     address: IpAddr,
@@ -69,17 +90,24 @@ pub struct SmtpListener {
     context: Context,
     #[serde(skip)]
     handlers: Handles,
+    #[serde(default)]
     extensions: Vec<Extension>,
+    #[serde(default)]
+    banner: String,
+    #[serde(default)]
+    tls_certificate: TlsContext,
 }
 
 #[typetag::serde]
 #[async_trait::async_trait]
 impl Listener for SmtpListener {
     async fn spawn(&self) {
-        Logger::internal(&format!(
+        internal!(
+            level = INFO,
             "Starting SMTP Listener on: {}:{}",
-            self.address, self.port
-        ));
+            self.address,
+            self.port
+        );
 
         let smtplistener = self.clone();
         let listener =
@@ -106,6 +134,7 @@ impl Listener for SmtpListener {
 pub struct Connection {
     stream: Async<TcpStream>,
     tls: Option<ServerConnection>,
+    tls_certificate: TlsContext,
 }
 
 async fn with_timeout<F, T>(timeout: Duration, af: F) -> io::Result<T>
@@ -141,7 +170,15 @@ impl Connection {
     }
 
     async fn upgrade(&mut self) -> io::Result<()> {
-        let certfile = fs::File::open("certificate.crt").expect("cannot open certificate file");
+        if self.tls_certificate.certificate.is_empty() || self.tls_certificate.key.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "No tls certificate or key provided",
+            ));
+        }
+
+        let certfile = fs::File::open(&self.tls_certificate.certificate)
+            .expect("cannot open certificate file");
         let mut reader = BufReader::new(certfile);
         let certs = rustls_pemfile::certs(&mut reader)
             .unwrap()
@@ -149,7 +186,8 @@ impl Connection {
             .map(|v| rustls::Certificate(v.clone()))
             .collect::<Vec<_>>();
 
-        let keyfile = fs::File::open("private.key").expect("cannot open private key file");
+        let keyfile =
+            fs::File::open(&self.tls_certificate.key).expect("cannot open private key file");
         let mut reader = BufReader::new(keyfile);
 
         let key =
@@ -232,6 +270,8 @@ impl Default for SmtpListener {
             context: Context::default(),
             handlers: Default::default(),
             extensions: Default::default(),
+            banner: Default::default(),
+            tls_certificate: Default::default(),
         }
     }
 }
@@ -243,10 +283,14 @@ impl SmtpListener {
         stream: Async<TcpStream>,
         peer: SocketAddr,
     ) -> std::io::Result<()> {
-        let mut connection = Connection { stream, tls: None };
+        let mut connection = Connection {
+            stream,
+            tls: None,
+            tls_certificate: self.tls_certificate.clone(),
+        };
         let mut vctx = ValidationContext::default();
 
-        Logger::internal(&format!("Connected to {}", peer));
+        internal!("Connected to {peer}");
 
         loop {
             match self.response(&queue, &mut vctx) {
@@ -254,10 +298,10 @@ impl SmtpListener {
                     self.context.sent = true;
 
                     for response in response.unwrap_or_default() {
-                        Logger::outgoing(&response);
+                        outgoing!("{response}");
 
                         connection.send(&response).await.map_err(|err| {
-                            Logger::internal(&format!("Error: {err}"));
+                            internal!("Error: {err}");
                             io::Error::new(io::ErrorKind::ConnectionAborted, err.to_string())
                         })?;
                     }
@@ -268,7 +312,7 @@ impl SmtpListener {
                 }
                 Err(SMTPError { status, message }) => {
                     let response = format!("{status} {message}");
-                    Logger::outgoing(&response);
+                    outgoing!("{response}");
                     connection.send(&response).await?;
                 }
             }
@@ -286,7 +330,7 @@ impl SmtpListener {
                 );
 
                 if connection_closed {
-                    Logger::internal("Connection closed");
+                    internal!("Connection closed");
                     connection.stream.flush().await?;
                     return Ok(());
                 }
@@ -301,15 +345,28 @@ impl SmtpListener {
             return Ok((None, Event::ConnectionKeepAlive));
         }
 
-        if let Some(handlers) = self.handlers.get(&self.context.state) {
-            for handler in handlers {
-                handler(vctx)?;
-            }
-        }
+        match self.context.state {
+            Phase::DataReceived => module::dispatch("validate_data", vctx),
+            _ => Ok(()),
+        }?;
+
+        // if let Some(handlers) = self.handlers.get(&self.context.state) {
+        //     for handler in handlers {
+        //         handler(vctx)?;
+        //     }
+        // }
 
         let status = match self.context.state {
             Phase::Connect => (
-                Some(vec![format!("{} localhost", Status::ServiceReady)]),
+                Some(vec![format!(
+                    "{} {}",
+                    Status::ServiceReady,
+                    if self.banner.is_empty() {
+                        "localhost"
+                    } else {
+                        &self.banner
+                    }
+                )]),
                 Event::ConnectionKeepAlive,
             ),
             Phase::Ehlo | Phase::Helo => {
@@ -395,7 +452,7 @@ impl SmtpListener {
         match connection.receive(&mut received_data).await {
             // Consider any errors received here to be fatal
             Err(err) => {
-                Logger::internal(&format!("Error: {err}"));
+                internal!("Error: {err}");
                 Err(err)
             }
             Ok(0) => {
@@ -422,7 +479,7 @@ impl SmtpListener {
                     let command = Command::from(received);
                     let message = command.inner().into_bytes();
 
-                    Logger::incoming(&command.to_string());
+                    incoming!("{command}");
 
                     self.context = Context {
                         state: self.context.state.transition(command, vctx),

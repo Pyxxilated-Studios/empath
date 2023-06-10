@@ -4,8 +4,8 @@
 
 #include <stdio.h>
 
-#include "../target/empath/common.h"
-#include "../target/empath/smtp/proto.h"
+#include "empath/common.h"
+#include "empath/smtp/proto.h"
 
 void test(ValidationContext *vctx) {
   FFIString id = validation_context_get_id(vctx);
