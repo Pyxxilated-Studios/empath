@@ -20,6 +20,9 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      RUSTFLAGS: -D warnings
+      CARGO_TERM_COLOR: always
 
     steps:
       - name: Checkout code
@@ -38,7 +41,7 @@ jobs:
 
       - name: Run rust-clippy
         run:
-          cargo clippy --all-features --message-format=json --
+          cargo -vv clippy --all-features --message-format=json --
             -D clippy::all
             -D clippy::pedantic
             -A clippy::must-use-candidate

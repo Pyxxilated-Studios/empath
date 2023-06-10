@@ -4,13 +4,19 @@
 address = "::"
 port = 1025
 extensions = ["STARTTLS"]
+banner = ""
+
+[listeners.SmtpListener.tls_certificate]
+certificate = "certificate.crt"
+key = "private.key"
 
 [[listeners]]
 
 [listeners.SmtpListener]
 address = "::"
 port = 1026
-extensions = ["STARTTLS"]
+extensions = []
+banner = "Other"
 
 [[modules]]
 

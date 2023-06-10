@@ -7,9 +7,9 @@ use std::{
 };
 
 use empath_common::{
-    ffi::module::{Module, ModuleError},
+    ffi::module::{self, Module, ModuleError},
     listener::Listener,
-    log::Logger,
+    logging,
 };
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -61,9 +61,9 @@ impl Server {
     /// This function will return an error if there is an issue accepting a connection,
     /// or if there is an issue binding to the specific address and port combination.
     pub async fn run(self) -> Result<(), ServerError> {
-        Logger::init();
+        logging::init();
 
-        Module::init(&self.modules)?;
+        module::init(self.modules)?;
 
         join_all(self.listeners.iter().map(|listener| listener.spawn())).await;
 
