@@ -58,18 +58,19 @@ macro_rules! internal {
 }
 
 pub fn init() {
-    let level = if let Ok(level) = std::env::var("LOG_LEVEL") {
-        match level.to_ascii_lowercase().as_str() {
+    let level = std::env::var("LOG_LEVEL").map_or(
+        if cfg!(debug_assertions) {
+            LevelFilter::TRACE
+        } else {
+            LevelFilter::INFO
+        },
+        |level| match level.to_ascii_lowercase().as_str() {
             "warn" => LevelFilter::WARN,
             "info" => LevelFilter::INFO,
             "trace" => LevelFilter::TRACE,
             _ => LevelFilter::ERROR,
-        }
-    } else if cfg!(debug_assertions) {
-        LevelFilter::TRACE
-    } else {
-        LevelFilter::INFO
-    };
+        },
+    );
 
     tracing_subscriber::Registry::default()
         .with(

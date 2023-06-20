@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    context::ValidationContext,
+    context::Context,
     ffi::{InitFunc, ValidateData},
     internal,
 };
 
 #[derive(Error, Debug)]
-pub enum ModuleError {
+pub enum Error {
     #[error("Module load error: {0}")]
     Load(#[from] libloading::Error),
 
@@ -44,7 +44,7 @@ impl Display for SharedLibrary {
 }
 
 impl SharedLibrary {
-    fn init(&mut self) -> Result<(), ModuleError> {
+    fn init(&mut self) -> Result<(), Error> {
         unsafe {
             let lib = Library::new(&self.name)?;
 
@@ -55,9 +55,20 @@ impl SharedLibrary {
                     self.library = Some(lib);
                     Ok(())
                 }
-                Err(err) => Err(ModuleError::Init(format!("{err:#?}"))),
+                Err(err) => Err(Error::Init(format!("{err:#?}"))),
             }
         }
+    }
+
+    fn emit(&self, event: &str, vctx: &Context) -> Result<(), Error> {
+        if let Some(ref lib) = self.library {
+            unsafe {
+                lib.get::<ValidateData>(event.as_bytes())
+                    .map(|handler| handler(vctx))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -71,7 +82,15 @@ static MODULE_STORE: LazyLock<RwLock<Vec<Module>>> = LazyLock::new(RwLock::defau
 impl Display for Module {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Module::SharedLibrary(lib) => f.write_fmt(format_args!("{lib}")),
+            Self::SharedLibrary(lib) => f.write_fmt(format_args!("{lib}")),
+        }
+    }
+}
+
+impl Module {
+    fn emit(&self, event: &str, vctx: &Context) -> Result<(), Error> {
+        match self {
+            Self::SharedLibrary(ref lib) => lib.emit(event, vctx),
         }
     }
 }
@@ -83,7 +102,7 @@ impl Display for Module {
 ///   1. The module is invalid (e.g. the shared library cannot be found/has issues)
 ///   2. The modules init has an issue
 ///
-pub fn init(modules: Vec<Module>) -> Result<(), ModuleError> {
+pub fn init(modules: Vec<Module>) -> Result<(), Error> {
     internal!(level = INFO, "Initialising modules ...");
     let mut store = MODULE_STORE.write().expect("Unable to write modules");
 
@@ -109,27 +128,10 @@ pub fn init(modules: Vec<Module>) -> Result<(), ModuleError> {
 /// catch some possible errors. If these are caught, they are returned to the
 /// caller to handle.
 ///
-pub fn dispatch(event: &str, vctx: &ValidationContext) -> Result<(), ModuleError> {
+pub fn dispatch(event: &str, vctx: &Context) -> Result<(), Error> {
     let store = MODULE_STORE.read().expect("Unable to load modules");
 
-    for module in &*store {
-        match module {
-            Module::SharedLibrary(ref lib) => {
-                if let Some(ref lib) = lib.library {
-                    unsafe {
-                        if let Ok(handler) = lib.get::<ValidateData>(event.as_bytes()) {
-                            match std::panic::catch_unwind(|| handler(vctx)) {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    return Err(ModuleError::Validation(format!("{err:#?}")))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    internal!("Dispatching: {}", event);
 
-    Ok(())
+    store.iter().try_for_each(|module| module.emit(event, vctx))
 }

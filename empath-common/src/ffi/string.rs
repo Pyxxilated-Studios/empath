@@ -1,53 +1,54 @@
 use std::ffi::CString;
 
 #[repr(C)]
-pub struct FFIString {
+pub struct String {
     pub len: usize,
     pub data: *const i8,
 }
 
-impl Drop for FFIString {
+impl Drop for String {
     fn drop(&mut self) {
         let _ = unsafe { CString::from_raw(self.data.cast_mut()) };
     }
 }
 
 #[repr(C)]
-pub struct FFIStringVector {
+#[allow(clippy::module_name_repetitions)]
+pub struct StringVector {
     pub len: usize,
-    pub data: *const FFIString,
+    pub data: *const String,
 }
 
-impl Drop for FFIStringVector {
+impl Drop for StringVector {
     fn drop(&mut self) {
         let _ = unsafe { Vec::from_raw_parts(self.data.cast_mut(), self.len, self.len) };
     }
 }
 
-impl From<&str> for FFIString {
+impl From<&str> for String {
     fn from(value: &str) -> Self {
         let len = value.len();
         let id = CString::new(value).expect("Invalid CString");
         let data = id.into_raw();
 
-        FFIString { len, data }
+        Self { len, data }
     }
 }
 
-impl From<&String> for FFIString {
-    fn from(value: &String) -> Self {
-        FFIString::from(value.as_str())
+impl From<&std::string::String> for String {
+    fn from(value: &std::string::String) -> Self {
+        Self::from(value.as_str())
     }
 }
 
-impl From<String> for FFIString {
-    fn from(value: String) -> Self {
-        FFIString::from(value.as_str())
+impl From<std::string::String> for String {
+    fn from(value: std::string::String) -> Self {
+        Self::from(value.as_str())
     }
 }
 
-impl From<&Vec<String>> for FFIStringVector {
-    fn from(value: &Vec<String>) -> Self {
+impl From<&Vec<std::string::String>> for StringVector {
+    fn from(value: &Vec<std::string::String>) -> Self {
         let rcpts = value
             .iter()
             .map(std::convert::Into::into)
@@ -55,12 +56,24 @@ impl From<&Vec<String>> for FFIStringVector {
 
         let (data, len, _) = rcpts.into_raw_parts();
 
-        FFIStringVector { len, data }
+        Self { len, data }
     }
 }
 
-impl From<Vec<String>> for FFIStringVector {
-    fn from(value: Vec<String>) -> Self {
-        FFIStringVector::from(&value)
+impl From<Vec<std::string::String>> for StringVector {
+    fn from(value: Vec<std::string::String>) -> Self {
+        Self::from(&value)
     }
+}
+
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn free_string(ffi_string: String) {
+    std::mem::drop(ffi_string);
+}
+
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn free_string_vector(ffi_vector: StringVector) {
+    std::mem::drop(ffi_vector);
 }

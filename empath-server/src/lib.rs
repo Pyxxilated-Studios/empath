@@ -7,7 +7,8 @@ use std::{
 };
 
 use empath_common::{
-    ffi::module::{self, Module, ModuleError},
+    ffi::module::{self, Error, Module},
+    internal,
     listener::Listener,
     logging,
 };
@@ -22,7 +23,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum ServerError {
     #[error(transparent)]
-    ModuleError(#[from] ModuleError),
+    ModuleError(#[from] Error),
 
     #[error(transparent)]
     IO(#[from] std::io::Error),
@@ -34,8 +35,16 @@ pub struct Server {
     modules: Vec<Module>,
 }
 
+unsafe impl Send for Server {}
+
 impl Server {
-    pub fn from_config(file: &str) -> std::io::Result<Server> {
+    ///
+    /// # Errors
+    ///
+    /// If the configuration file doesn't exist, or is not readable,
+    /// or if the configuration file is invalid.
+    ///
+    pub fn from_config(file: &str) -> std::io::Result<Self> {
         let file = Path::new(file);
         let mut reader = BufReader::new(File::open(file)?);
         let mut config = String::new();
@@ -63,20 +72,28 @@ impl Server {
     pub async fn run(self) -> Result<(), ServerError> {
         logging::init();
 
+        internal!(
+            "{}",
+            toml::to_string(&self).expect("Invalid Server Configuration")
+        );
+
         module::init(self.modules)?;
 
-        join_all(self.listeners.iter().map(|listener| listener.spawn())).await;
+        let iter = self.listeners.iter();
+        join_all(iter.map(|listener| listener.spawn())).await;
 
         Ok(())
     }
 
-    pub fn with_listener(mut self, listener: Box<dyn Listener>) -> Server {
+    #[must_use]
+    pub fn with_listener(mut self, listener: Box<dyn Listener>) -> Self {
         self.listeners.push(listener);
 
         self
     }
 
-    pub fn with_module(mut self, module: Module) -> Server {
+    #[must_use]
+    pub fn with_module(mut self, module: Module) -> Self {
         self.modules.push(module);
 
         self

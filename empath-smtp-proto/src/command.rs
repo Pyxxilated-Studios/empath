@@ -3,6 +3,7 @@ use std::{
     str::FromStr,
 };
 
+use empath_common::tracing::error;
 use mailparse::MailAddrList;
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
@@ -14,13 +15,13 @@ pub enum HeloVariant {
 impl Display for HeloVariant {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            HeloVariant::Ehlo(_) => "EHLO",
-            HeloVariant::Helo(_) => "HELO",
+            Self::Ehlo(_) => "EHLO",
+            Self::Helo(_) => "HELO",
         })
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug)]
 pub enum Command {
     Helo(HeloVariant),
     /// If this is `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
@@ -36,10 +37,10 @@ pub enum Command {
 impl Command {
     pub fn inner(&self) -> String {
         match self {
-            Command::MailFrom(from) => from.clone().map(|f| f.to_string()).unwrap_or_default(),
-            Command::RcptTo(to) => to.to_string(),
-            Command::Invalid(command) => command.clone(),
-            Command::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => id.clone(),
+            Self::MailFrom(from) => from.clone().map(|f| f.to_string()).unwrap_or_default(),
+            Self::RcptTo(to) => to.to_string(),
+            Self::Invalid(command) => command.clone(),
+            Self::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => id.clone(),
             _ => String::default(),
         }
     }
@@ -48,16 +49,16 @@ impl Command {
 impl Display for Command {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            Command::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
-            Command::MailFrom(s) => fmt.write_fmt(format_args!(
+            Self::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
+            Self::MailFrom(s) => fmt.write_fmt(format_args!(
                 "MAIL FROM:{}",
                 s.clone().map(|f| f.to_string()).unwrap_or_default()
             )),
-            Command::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{rcpt}")),
-            Command::Data => fmt.write_str("DATA"),
-            Command::Quit => fmt.write_str("QUIT"),
-            Command::StartTLS => fmt.write_str("STARTTLS"),
-            Command::Invalid(s) => fmt.write_str(s),
+            Self::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{rcpt}")),
+            Self::Data => fmt.write_str("DATA"),
+            Self::Quit => fmt.write_str("QUIT"),
+            Self::StartTLS => fmt.write_str("STARTTLS"),
+            Self::Invalid(s) => fmt.write_str(s),
         }
     }
 }
@@ -72,11 +73,11 @@ impl FromStr for Command {
         if comm.starts_with("MAIL FROM:") {
             let from = mailparse::addrparse(command[command.find(':').unwrap() + 1..].trim())
                 .map_err(|e| {
-                    println!("ERROR: {e}");
+                    error!("{e}");
                     e.to_string()
                 })?;
 
-            Ok(Command::MailFrom(if from.is_empty() {
+            Ok(Self::MailFrom(if from.is_empty() {
                 None
             } else {
                 Some(from)
@@ -84,9 +85,9 @@ impl FromStr for Command {
         } else if comm.starts_with("RCPT TO:") {
             let to = mailparse::addrparse(command[command.find(':').unwrap() + 1..].trim())
                 .map_err(|e| e.to_string())?;
-            Ok(Command::RcptTo(to))
+            Ok(Self::RcptTo(to))
         } else if comm.starts_with("EHLO") {
-            Ok(Command::Helo(HeloVariant::Ehlo(
+            Ok(Self::Helo(HeloVariant::Ehlo(
                 command
                     .split(' ')
                     .nth(1)
@@ -95,7 +96,7 @@ impl FromStr for Command {
                     .to_string(),
             )))
         } else if comm.starts_with("HELO") {
-            Ok(Command::Helo(HeloVariant::Helo(
+            Ok(Self::Helo(HeloVariant::Helo(
                 command
                     .split(' ')
                     .nth(1)
@@ -105,10 +106,10 @@ impl FromStr for Command {
             )))
         } else {
             match comm {
-                "DATA" => Ok(Command::Data),
-                "QUIT" => Ok(Command::Quit),
-                "STARTTLS" => Ok(Command::StartTLS),
-                _ => Err(Command::Invalid(command.to_owned())),
+                "DATA" => Ok(Self::Data),
+                "QUIT" => Ok(Self::Quit),
+                "STARTTLS" => Ok(Self::StartTLS),
+                _ => Err(Self::Invalid(command.to_owned())),
             }
         }
     }
@@ -116,21 +117,21 @@ impl FromStr for Command {
 
 impl From<&str> for Command {
     fn from(val: &str) -> Self {
-        Command::from_str(val).unwrap_or_else(|e| e)
+        Self::from_str(val).unwrap_or_else(|e| e)
     }
 }
 
 impl From<String> for Command {
     fn from(val: String) -> Self {
-        Command::from(val.as_str())
+        Self::from(val.as_str())
     }
 }
 
 impl From<&[u8]> for Command {
     fn from(val: &[u8]) -> Self {
-        match std::str::from_utf8(val) {
-            Ok(s) => Command::from_str(s).unwrap_or_else(|e| e),
-            Err(_) => Command::Invalid("Unable to interpret command".to_string()),
-        }
+        std::str::from_utf8(val).map_or(
+            Self::Invalid("Unable to interpret command".to_string()),
+            |s| Self::from_str(s).unwrap_or_else(|e| e),
+        )
     }
 }

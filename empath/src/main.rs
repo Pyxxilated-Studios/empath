@@ -1,3 +1,4 @@
+use empath_common::{internal, tracing::error};
 use empath_server::Server;
 
 use smol::future;
@@ -15,7 +16,6 @@ fn main() -> std::io::Result<()> {
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
 
         let server = Server::from_config("./empath.config.toml")?;
-        println!("{}", toml::to_string(&server).unwrap());
         if let Err(err) = future::race(server.run(), async {
             ctrl_c
                 .recv()
@@ -24,10 +24,10 @@ fn main() -> std::io::Result<()> {
         })
         .await
         {
-            eprintln!("{err:#?}",);
+            error!("{err:#?}",);
         }
 
-        println!("Shutting down...");
+        internal!("Shutting down...");
 
         Ok(())
     })
