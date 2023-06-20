@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
     fs,
     future::Future,
@@ -10,11 +9,12 @@ use std::{
 };
 
 use empath_common::{
-    context::ValidationContext,
-    ffi::module::{self, ModuleError},
+    context,
+    ffi::module::{self, Error},
     incoming, internal,
     listener::Listener,
     outgoing,
+    tracing::error,
 };
 use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
 use mailparse::MailParseError;
@@ -41,7 +41,7 @@ pub struct Context {
 
 impl Default for Context {
     fn default() -> Self {
-        Context {
+        Self {
             state: Phase::Connect,
             message: Vec::default(),
             sent: false,
@@ -54,24 +54,22 @@ pub struct SMTPError {
     pub message: String,
 }
 
-pub(crate) type Handle = fn(&mut ValidationContext) -> Result<(), SMTPError>;
-pub(crate) type Handles = HashMap<Phase, Vec<Handle>>;
 pub(crate) type Response = Result<(Option<Vec<String>>, Event), SMTPError>;
 
 impl From<MailParseError> for SMTPError {
     fn from(err: MailParseError) -> Self {
-        SMTPError {
+        Self {
             status: Status::Error,
             message: err.to_string(),
         }
     }
 }
 
-impl From<ModuleError> for SMTPError {
-    fn from(value: ModuleError) -> Self {
-        SMTPError {
+impl From<Error> for SMTPError {
+    fn from(value: Error) -> Self {
+        Self {
             status: Status::Error,
-            message: format!("{}", value),
+            message: format!("{value}"),
         }
     }
 }
@@ -83,13 +81,11 @@ pub struct TlsContext {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct SmtpListener {
+pub struct Smtp {
     address: IpAddr,
     port: u16,
     #[serde(skip)]
     context: Context,
-    #[serde(skip)]
-    handlers: Handles,
     #[serde(default)]
     extensions: Vec<Extension>,
     #[serde(default)]
@@ -100,7 +96,7 @@ pub struct SmtpListener {
 
 #[typetag::serde]
 #[async_trait::async_trait]
-impl Listener for SmtpListener {
+impl Listener for Smtp {
     async fn spawn(&self) {
         internal!(
             level = INFO,
@@ -139,7 +135,7 @@ pub struct Connection {
 
 async fn with_timeout<F, T>(timeout: Duration, af: F) -> io::Result<T>
 where
-    F: Future<Output = io::Result<T>>,
+    F: Future<Output = io::Result<T>> + Send + Sync,
 {
     af.timeout(timeout).await.unwrap_or_else(|| {
         Err(io::Error::new(
@@ -150,7 +146,7 @@ where
 }
 
 impl Connection {
-    async fn send<S: Display>(&mut self, response: &S) -> io::Result<()> {
+    async fn send<S: Display + Send + Sync>(&mut self, response: &S) -> io::Result<()> {
         with_timeout(Duration::from_secs(30), self.stream.writable()).await?;
 
         with_timeout(
@@ -225,7 +221,7 @@ impl Connection {
                     }
                 }
                 Err(err) => {
-                    eprintln!("ERROR WHILE READING PACKETS: {}", err);
+                    error!("ERROR WHILE READING PACKETS: {}", err);
                     return Err(io::Error::new(
                         io::ErrorKind::ConnectionAborted,
                         err.to_string(),
@@ -262,21 +258,20 @@ impl Connection {
     }
 }
 
-impl Default for SmtpListener {
+impl Default for Smtp {
     fn default() -> Self {
-        SmtpListener {
+        Self {
             address: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             port: 1025,
             context: Context::default(),
-            handlers: Default::default(),
-            extensions: Default::default(),
-            banner: Default::default(),
-            tls_certificate: Default::default(),
+            extensions: Vec::default(),
+            banner: String::default(),
+            tls_certificate: TlsContext::default(),
         }
     }
 }
 
-impl SmtpListener {
+impl Smtp {
     async fn connect(
         mut self,
         queue: Arc<AtomicU64>,
@@ -288,7 +283,7 @@ impl SmtpListener {
             tls: None,
             tls_certificate: self.tls_certificate.clone(),
         };
-        let mut vctx = ValidationContext::default();
+        let mut vctx = context::Context::default();
 
         internal!("Connected to {peer}");
 
@@ -340,7 +335,7 @@ impl SmtpListener {
 
     /// Generate the response(s) that should be sent back to the client
     /// depending on the servers state
-    fn response(&mut self, queue: &Arc<AtomicU64>, vctx: &mut ValidationContext) -> Response {
+    fn response(&mut self, queue: &Arc<AtomicU64>, vctx: &mut context::Context) -> Response {
         if self.context.sent {
             return Ok((None, Event::ConnectionKeepAlive));
         }
@@ -445,7 +440,7 @@ impl SmtpListener {
     async fn receive(
         &mut self,
         connection: &mut Connection,
-        vctx: &mut ValidationContext,
+        vctx: &mut context::Context,
     ) -> std::io::Result<bool> {
         let mut received_data = vec![0; 4096];
 
@@ -494,39 +489,8 @@ impl SmtpListener {
     }
 
     #[must_use]
-    pub fn on_port(mut self, port: u16) -> SmtpListener {
+    pub const fn on_port(mut self, port: u16) -> Self {
         self.port = port;
-
-        self
-    }
-
-    /// Add a handler for a specific `State`. This is useful for doing specific
-    /// checks at certain points, e.g. on `Connect` you can check the IP against
-    /// a block list and abort the connection due to suspected spam.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use empath_server::smtp::SmtpListener;
-    /// use empath_smtp_proto::phase::Phase;
-    ///
-    /// let server = SmtpListener::default()
-    ///     .handle(Phase::Connect, |vctx| {
-    ///         println!("Connected!");
-    ///         Ok(())
-    ///     });
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the server is unable to obtain a write lock on the internal handles
-    /// it has
-    #[must_use]
-    pub fn handle(mut self, command: Phase, handler: Handle) -> SmtpListener {
-        self.handlers
-            .entry(command)
-            .and_modify(|hdlr| hdlr.push(handler))
-            .or_insert(vec![handler]);
 
         self
     }
@@ -538,11 +502,11 @@ impl SmtpListener {
     /// # Examples
     ///
     /// ```
-    /// use empath_server::smtp::SmtpListener;
+    /// use empath_server::smtp::Smtp;
     /// use empath_common::listener::Listener;
     /// use empath_smtp_proto::extensions::Extension::STARTTLS;
     ///
-    /// let server = SmtpListener::default().extension(STARTTLS);
+    /// let server = Smtp::default().extension(STARTTLS);
     /// server.spawn(); // The server will now advertise that it supports the
     ///                 // STARTTLS extension, and will also accept it as a
     ///                 // command
@@ -553,7 +517,7 @@ impl SmtpListener {
     /// Panics if the server is unable to obtain a write lock on the internal
     /// extensions it has
     #[must_use]
-    pub fn extension(mut self, extension: Extension) -> SmtpListener {
+    pub fn extension(mut self, extension: Extension) -> Self {
         self.extensions.push(extension);
 
         self

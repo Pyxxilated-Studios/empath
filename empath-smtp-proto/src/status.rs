@@ -8,6 +8,7 @@ pub enum Status {
     Ok = 250,
     StartMailInput = 354,
     Unavailable = 421,
+    ActionUnavailable = 451,
     InvalidCommandSequence = 503,
     Error = 550,
 }
