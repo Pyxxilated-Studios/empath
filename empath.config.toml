@@ -1,18 +1,18 @@
 [[listeners]]
 
-[listeners.SmtpListener]
+[listeners.Smtp]
 address = "::"
 port = 1025
 extensions = ["STARTTLS"]
 banner = ""
 
-[listeners.SmtpListener.tls_certificate]
+[listeners.Smtp.tls_certificate]
 certificate = "certificate.crt"
 key = "private.key"
 
 [[listeners]]
 
-[listeners.SmtpListener]
+[listeners.Smtp]
 address = "::"
 port = 1026
 extensions = []

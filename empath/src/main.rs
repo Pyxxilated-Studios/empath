@@ -1,34 +1,22 @@
-use empath_common::{internal, tracing::error};
+use empath_common::internal;
 use empath_server::Server;
-
-use smol::future;
 
 #[cfg(not(any(target_os = "macos", unix)))]
 compile_error!("Only macos and unix are currently supported");
 
-fn main() -> std::io::Result<()> {
-    let (s, ctrl_c) = async_channel::bounded(100);
-
-    smol::block_on(async {
-        ctrlc::set_handler(move || {
-            s.try_send(()).ok();
-        })
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
-
-        let server = Server::from_config("./empath.config.toml")?;
-        if let Err(err) = future::race(server.run(), async {
-            ctrl_c
-                .recv()
-                .await
-                .map_err(|_| std::io::Error::from(std::io::ErrorKind::ConnectionAborted).into())
-        })
-        .await
-        {
-            error!("{err:#?}",);
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    #[allow(clippy::redundant_pub_crate)]
+    let resp = tokio::select! {
+        rc = Server::from_config("./empath.config.toml")?.run() => {
+            rc.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
         }
+        rc = tokio::signal::ctrl_c() => {
+            rc
+        }
+    };
 
-        internal!("Shutting down...");
+    internal!("Shutting down...");
 
-        Ok(())
-    })
+    resp
 }

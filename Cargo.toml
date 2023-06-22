@@ -15,8 +15,16 @@ readme = "README.md"
 categories = ["command-line-utilities", "email", "network-programming"]
 
 [workspace.dependencies]
-cbindgen = "0.24.5"
+cbindgen = "0.24"
 serde = "1"
+tokio = { version = "1", default-features = false, features = [
+    "net",
+    "macros",
+    "parking_lot",
+    "rt-multi-thread",
+    "signal",
+    "tracing",
+] }
 
 [profile.release]
 lto = "thin"

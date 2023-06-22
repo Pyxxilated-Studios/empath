@@ -73,6 +73,7 @@ impl Server {
         logging::init();
 
         internal!(
+            level = TRACE,
             "{}",
             toml::to_string(&self).expect("Invalid Server Configuration")
         );
