@@ -90,6 +90,7 @@ impl Phase {
             (Self::RcptTo, Command::Data) => Self::Data,
             (Self::Data, comm) if comm != Command::Quit => Self::Connect,
             (_, Command::Quit) => Self::Quit,
+            (Self::Invalid, _) => Self::Invalid,
             _ => Self::InvalidCommandSequence,
         }
     }

@@ -8,10 +8,8 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
-async-channel = "1"
-ctrlc = "3"
 empath-common = { path = "../empath-common" }
 empath-server = { path = "../empath-server" }
 empath-smtp-proto = { path = "../empath-smtp-proto" }
-smol = "1"
+tokio.workspace = true
 toml = "0.7"
