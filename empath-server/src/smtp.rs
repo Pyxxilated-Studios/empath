@@ -182,14 +182,12 @@ impl Connection {
 
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
-        let connection = Self::Tls {
+        Ok(Self::Tls {
             stream: match self {
                 Self::Plain { stream } => acceptor.accept(stream).await?,
                 Self::Tls { stream } => stream,
             },
-        };
-
-        Ok(connection)
+        })
     }
 
     async fn receive(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -417,40 +415,5 @@ impl Smtp {
                 Ok(false)
             }
         }
-    }
-
-    #[must_use]
-    pub const fn on_port(mut self, port: u16) -> Self {
-        self.port = port;
-
-        self
-    }
-
-    /// Add an `Extension` to advertise that the server supports, as well
-    /// as request the server to actually handle the command the extension
-    /// pertains to.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use empath_server::smtp::Smtp;
-    /// use empath_common::listener::Listener;
-    /// use empath_smtp_proto::extensions::Extension::STARTTLS;
-    ///
-    /// let server = Smtp::default().extension(STARTTLS);
-    /// server.spawn(); // The server will now advertise that it supports the
-    ///                 // STARTTLS extension, and will also accept it as a
-    ///                 // command
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the server is unable to obtain a write lock on the internal
-    /// extensions it has
-    #[must_use]
-    pub fn extension(mut self, extension: Extension) -> Self {
-        self.extensions.push(extension);
-
-        self
     }
 }
