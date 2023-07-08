@@ -1,11 +1,12 @@
 // Compile with
-//   gcc dll.c -shared -o libdll.so -l empath -L ../target/debug
+//   gcc example.c -fpic -shared -o libexample.so -l empath_common -L \
+//     ../target/debug
 //
 
 #include <stdio.h>
 
-#include "empath/common.h"
-#include "empath/smtp/proto.h"
+#include "../target/empath/common.h"
+#include "../target/empath/smtp/proto.h"
 
 int something = 1;
 
@@ -33,14 +34,32 @@ int validate_data(Context *vctx) {
   String sender = context_get_sender(vctx);
   printf("Sender: %s\n", sender.data);
 
+  String data = context_get_data(vctx);
+  printf("Data:\n%s\n", data.data);
+
+  if (context_set_data_response(vctx, "Test Response") != 0) {
+    printf("Unable to set data response\n");
+  }
+
   free_string(sender);
+  free_string(data);
   free_string_vector(buff);
 
   return 0;
 }
 
-int init() {
+int init(StringVector arguments) {
   printf("INIT CALLED\n");
   something = 2;
+
+  for (int i = 0; i < arguments.len; i++) {
+    printf("Arg: %*s\n", (int)arguments.data[i].len, arguments.data[i].data);
+  }
+
   return 0;
 }
+
+EM_DECLARE_MODULE("dll", init,
+                  {
+                      validate_data,
+                  });

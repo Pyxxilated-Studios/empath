@@ -1,27 +1,30 @@
 use std::{
     fmt::Display,
-    fs,
-    io::{self, BufReader},
+    fs::File,
+    io::BufReader,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{atomic::AtomicU64, Arc},
 };
 
 use empath_common::{
     context,
-    ffi::module::{self, Error},
+    ffi::module::{self, dispatch, Error},
     incoming, internal,
     listener::Listener,
     outgoing,
 };
 use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
 use mailparse::MailParseError;
-use rustls::{server::AllowAnyAnonymousOrAuthenticatedClient, RootCertStore, ServerConfig};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpListener,
 };
-use tokio_rustls::{server::TlsStream, TlsAcceptor};
+use tokio_rustls::{
+    rustls::{server::AllowAnyAnonymousOrAuthenticatedClient, RootCertStore, ServerConfig},
+    server::TlsStream,
+    TlsAcceptor,
+};
 
 #[repr(C)]
 #[derive(PartialEq, Eq)]
@@ -52,7 +55,7 @@ pub struct SMTPError {
     pub message: String,
 }
 
-pub type Response = Result<(Option<Vec<String>>, Event), SMTPError>;
+pub type Response = (Option<Vec<String>>, Event);
 
 impl From<MailParseError> for SMTPError {
     fn from(err: MailParseError) -> Self {
@@ -78,18 +81,24 @@ pub struct TlsContext {
     key: String,
 }
 
+impl TlsContext {
+    fn is_enabled(&self) -> bool {
+        !self.certificate.is_empty() && !self.key.is_empty()
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Smtp {
     address: IpAddr,
     port: u16,
     #[serde(skip)]
     context: Context,
-    #[serde(default)]
+    #[serde(skip)]
     extensions: Vec<Extension>,
     #[serde(default)]
     banner: String,
     #[serde(default)]
-    tls_certificate: TlsContext,
+    tls_context: TlsContext,
 }
 
 #[typetag::serde]
@@ -124,37 +133,36 @@ impl Listener for Smtp {
     }
 }
 
-pub enum Connection {
-    Plain { stream: TcpStream },
-    Tls { stream: TlsStream<TcpStream> },
+pub enum Connection<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
+    Plain { stream: Stream },
+    Tls { stream: Box<TlsStream<Stream>> },
 }
 
-impl Connection {
-    async fn send<S: Display + Send + Sync>(&mut self, response: &S) -> io::Result<usize> {
+impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
+    async fn send<S: Display + Send + Sync>(&mut self, response: &S) -> std::io::Result<usize> {
         match self {
             Self::Plain { stream } => stream.write(format!("{response}\r\n").as_bytes()).await,
             Self::Tls { stream } => stream.write(format!("{response}\r\n").as_bytes()).await,
         }
     }
 
-    async fn upgrade(self, tls_context: &TlsContext) -> io::Result<Self> {
-        if tls_context.certificate.is_empty() || tls_context.key.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+    async fn upgrade(self, tls_context: &TlsContext) -> std::io::Result<Self> {
+        if !tls_context.is_enabled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
                 "No tls certificate or key provided",
             ));
         }
 
-        let certfile =
-            fs::File::open(&tls_context.certificate).expect("cannot open certificate file");
+        let certfile = File::open(&tls_context.certificate).expect("cannot open certificate file");
         let mut reader = BufReader::new(certfile);
         let certs = rustls_pemfile::certs(&mut reader)
             .unwrap()
             .iter()
-            .map(|v| rustls::Certificate(v.clone()))
+            .map(|v| tokio_rustls::rustls::Certificate(v.clone()))
             .collect::<Vec<_>>();
 
-        let keyfile = fs::File::open(&tls_context.key).expect("cannot open private key file");
+        let keyfile = File::open(&tls_context.key).expect("cannot open private key file");
         let mut reader = BufReader::new(keyfile);
 
         let key =
@@ -163,7 +171,7 @@ impl Connection {
                     rustls_pemfile::Item::RSAKey(key)
                     | rustls_pemfile::Item::PKCS8Key(key)
                     | rustls_pemfile::Item::ECKey(key),
-                ) => rustls::PrivateKey(key),
+                ) => tokio_rustls::rustls::PrivateKey(key),
                 _ => panic!("Unable to determine key file"),
             };
 
@@ -184,13 +192,13 @@ impl Connection {
 
         Ok(Self::Tls {
             stream: match self {
-                Self::Plain { stream } => acceptor.accept(stream).await?,
-                Self::Tls { stream } => stream,
+                Self::Plain { stream } => Box::new(acceptor.accept(stream).await?),
+                Self::Tls { stream } => Box::new(acceptor.accept(stream.into_inner().0).await?),
             },
         })
     }
 
-    async fn receive(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    async fn receive(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Self::Plain { stream } => stream.read(buf).await,
             Self::Tls { stream } => stream.read(buf).await,
@@ -206,50 +214,46 @@ impl Default for Smtp {
             context: Context::default(),
             extensions: Vec::default(),
             banner: String::default(),
-            tls_certificate: TlsContext::default(),
+            tls_context: TlsContext::default(),
         }
     }
 }
 
 impl Smtp {
-    async fn connect(
+    async fn connect<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
         mut self,
         queue: Arc<AtomicU64>,
-        stream: TcpStream,
+        stream: Stream,
         peer: SocketAddr,
     ) -> std::io::Result<()> {
         let mut connection = Connection::Plain { stream };
         let mut vctx = context::Context::default();
 
+        if self.tls_context.is_enabled() {
+            self.extensions.push(Extension::STARTTLS);
+        }
+
         internal!("Connected to {peer}");
 
         loop {
-            match self.response(&queue, &mut vctx) {
-                Ok((response, ev)) => {
-                    self.context.sent = true;
+            let (response, ev) = self.response(&queue, &mut vctx);
+            self.context.sent = true;
 
-                    for response in response.unwrap_or_default() {
-                        outgoing!("{response}");
+            for response in response.unwrap_or_default() {
+                outgoing!("{response}");
 
-                        connection.send(&response).await.map_err(|err| {
-                            internal!("Error: {err}");
-                            io::Error::new(io::ErrorKind::ConnectionAborted, err.to_string())
-                        })?;
-                    }
-
-                    if Event::ConnectionClose == ev {
-                        return Ok(());
-                    }
-                }
-                Err(SMTPError { status, message }) => {
-                    let response = format!("{status} {message}");
-                    outgoing!("{response}");
-                    connection.send(&response).await?;
-                }
+                connection.send(&response).await.map_err(|err| {
+                    internal!("Error: {err}");
+                    std::io::Error::new(std::io::ErrorKind::ConnectionAborted, err.to_string())
+                })?;
             }
 
-            if self.context.state == Phase::StartTLS {
-                connection = connection.upgrade(&self.tls_certificate).await?;
+            if Event::ConnectionClose == ev {
+                return Ok(());
+            }
+
+            if self.tls_context.is_enabled() && self.context.state == Phase::StartTLS {
+                connection = connection.upgrade(&self.tls_context).await?;
                 self.context = Context {
                     sent: true,
                     ..Default::default()
@@ -272,13 +276,12 @@ impl Smtp {
     /// depending on the servers state
     fn response(&mut self, queue: &Arc<AtomicU64>, vctx: &mut context::Context) -> Response {
         if self.context.sent {
-            return Ok((None, Event::ConnectionKeepAlive));
+            return (None, Event::ConnectionKeepAlive);
         }
 
-        match self.context.state {
-            Phase::DataReceived => module::dispatch("validate_data", vctx),
-            _ => Ok(()),
-        }?;
+        if Phase::DataReceived == self.context.state {
+            dispatch(module::Event::ValidateData, vctx);
+        }
 
         let status = match self.context.state {
             Phase::Connect => (
@@ -315,7 +318,7 @@ impl Smtp {
                 }
                 (Some(response), Event::ConnectionKeepAlive)
             }
-            Phase::StartTLS => (
+            Phase::StartTLS if self.tls_context.is_enabled() => (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
                 Event::ConnectionKeepAlive,
             ),
@@ -335,21 +338,16 @@ impl Smtp {
             }
             Phase::DataReceived => {
                 let queue = queue.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let default = format!("Ok: queued as {queue}");
+                let response = vctx.data_response.as_ref().unwrap_or(&default);
+
                 (
-                    Some(vec![format!("{} Ok: queued as {}", Status::Ok, queue)]),
+                    Some(vec![format!("{} {}", Status::Ok, response)]),
                     Event::ConnectionKeepAlive,
                 )
             }
             Phase::Quit => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
-                Event::ConnectionClose,
-            ),
-            Phase::Invalid => (
-                Some(vec![format!(
-                    "{} Invalid command '{}'",
-                    Status::InvalidCommandSequence,
-                    std::str::from_utf8(&self.context.message).unwrap()
-                )]),
                 Event::ConnectionClose,
             ),
             Phase::Reading | Phase::Close => (None, Event::ConnectionKeepAlive),
@@ -361,17 +359,25 @@ impl Smtp {
                 )]),
                 Event::ConnectionClose,
             ),
+            _ => (
+                Some(vec![format!(
+                    "{} Invalid command '{}'",
+                    Status::InvalidCommandSequence,
+                    std::str::from_utf8(&self.context.message).unwrap()
+                )]),
+                Event::ConnectionClose,
+            ),
         };
 
-        Ok(status)
+        status
     }
 
-    async fn receive(
+    async fn receive<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
         &mut self,
-        connection: &mut Connection,
+        connection: &mut Connection<Stream>,
         vctx: &mut context::Context,
     ) -> std::io::Result<bool> {
-        let mut received_data = vec![0; 4096];
+        let mut received_data = [0; 4096];
 
         match connection.receive(&mut received_data).await {
             // Consider any errors received here to be fatal

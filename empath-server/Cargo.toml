@@ -7,26 +7,26 @@ documentation.workspace = true
 license.workspace = true
 edition.workspace = true
 
+build = "../build.rs"
+
 [lib]
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-async-trait = "0.1"
-libc = "0.2"
-empath-common = { path = "../empath-common" }
-empath-smtp-proto = { path = "../empath-smtp-proto" }
-futures = "0.3"
-mailparse = "0.14"
-rustls = "0.21"
+async-trait.workspace = true
+libc.workspace = true
+empath-common.workspace = true
+empath-smtp-proto.workspace = true
+futures-util = "0.3"
+mailparse.workspace = true
 rustls-pemfile = "1.0"
 serde.workspace = true
-thiserror = "1"
-toml = "0.7"
+thiserror.workspace = true
+toml.workspace = true
 tokio.workspace = true
 tokio-rustls = "0.24"
-trust-dns-resolver = "0.22"
-typetag = "0.2"
+typetag.workspace = true
 
 [build-dependencies]
 cbindgen.workspace = true

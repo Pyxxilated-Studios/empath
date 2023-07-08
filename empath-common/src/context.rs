@@ -2,17 +2,15 @@ use std::{ffi::CStr, fmt::Debug};
 
 use mailparse::MailAddrList;
 
-use crate::{
-    ffi::string::{String, StringVector},
-    internal,
-};
+use crate::{ffi, internal};
 
 #[derive(Default, Debug)]
 pub struct Context {
-    pub id: std::string::String,
+    pub id: String,
     pub mail_from: Option<MailAddrList>,
     pub rcpt_to: Option<MailAddrList>,
     pub data: Option<Vec<u8>>,
+    pub data_response: Option<String>,
 }
 
 impl Context {
@@ -20,20 +18,20 @@ impl Context {
         &self.id
     }
 
-    pub fn message(&self) -> std::string::String {
+    pub fn message(&self) -> String {
         self.data.as_deref().map_or_else(Default::default, |data| {
             std::str::from_utf8(data).map_or_else(|_| format!("{:#?}", self.data), str::to_string)
         })
     }
 
-    pub fn sender(&self) -> std::string::String {
+    pub fn sender(&self) -> String {
         self.mail_from
             .clone()
-            .map(|f| f.to_string())
+            .map(|sender| sender.to_string())
             .unwrap_or_default()
     }
 
-    pub fn recipients(&self) -> Vec<std::string::String> {
+    pub fn recipients(&self) -> Vec<String> {
         self.rcpt_to
             .clone()
             .map(|addrs| {
@@ -65,19 +63,19 @@ impl Context {
 ///
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn context_get_id(vctx: &Context) -> String {
+pub extern "C" fn context_get_id(vctx: &Context) -> ffi::string::String {
     vctx.id().into()
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn context_get_recipients(vctx: &Context) -> StringVector {
+pub extern "C" fn context_get_recipients(vctx: &Context) -> ffi::string::StringVector {
     vctx.recipients().into()
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn context_get_sender(vctx: &Context) -> String {
+pub extern "C" fn context_get_sender(vctx: &Context) -> ffi::string::String {
     vctx.sender().into()
 }
 
@@ -121,15 +119,53 @@ pub unsafe extern "C" fn context_set_sender(
     }
 }
 
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn context_get_data(vctx: &Context) -> ffi::string::String {
+    vctx.data.as_ref().map_or_else(Default::default, |data| {
+        ffi::string::String::try_from(data.as_slice()).unwrap_or_default()
+    })
+}
+
+///
+/// # Safety
+///
+/// Even if provided with a null pointer, that would simply set the response to `None`
+///
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn context_set_data_response(
+    vctx: &mut Context,
+    response: *const libc::c_char,
+) -> i32 {
+    if response.is_null() {
+        vctx.data_response = None;
+    } else {
+        let response = CStr::from_ptr(response);
+        vctx.data_response = Some(response.to_owned().to_string_lossy().to_string());
+    }
+
+    0
+}
+
 #[cfg(test)]
 mod test {
-    use crate::context::{context_get_id, context_get_recipients, Context};
+    use crate::context::{
+        context_get_data, context_get_id, context_get_recipients, context_set_data_response,
+        Context,
+    };
     use std::{
         ffi::{CStr, CString},
         ptr::null,
     };
 
     use super::context_set_sender;
+
+    macro_rules! cstr {
+        ($st:literal) => {
+            concat!($st, "\0").as_ptr().cast()
+        };
+    }
 
     #[test]
     fn test_id() {
@@ -187,10 +223,7 @@ mod test {
         };
 
         unsafe {
-            assert_eq!(
-                context_set_sender(&mut vctx, "test@test.com\0".as_ptr().cast()),
-                0
-            );
+            assert_eq!(context_set_sender(&mut vctx, cstr!("test@test.com")), 0);
             assert_eq!(
                 vctx.mail_from,
                 Some(mailparse::addrparse("test@test.com").unwrap())
@@ -223,8 +256,56 @@ mod test {
         };
 
         unsafe {
-            assert_eq!(context_set_sender(&mut vctx, "---\0".as_ptr().cast()), 1);
+            assert_eq!(context_set_sender(&mut vctx, cstr!("---")), 1);
             assert_eq!(vctx.mail_from, Some(sender));
         }
+    }
+
+    #[test]
+    fn test_data() {
+        let data = b"Testing Data".to_vec();
+
+        let vctx = Context {
+            data: Some(data.clone()),
+            ..Default::default()
+        };
+
+        unsafe {
+            assert_eq!(
+                CStr::from_ptr(context_get_data(&vctx).data).to_owned(),
+                CString::from_vec_unchecked(data)
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_data() {
+        let vctx = Context {
+            data: None,
+            ..Default::default()
+        };
+
+        assert_eq!(context_get_data(&vctx).data, null());
+    }
+
+    #[test]
+    fn test_set_data_response() {
+        let mut vctx = Context::default();
+
+        let ans = unsafe { context_set_data_response(&mut vctx, cstr!("Test Response")) };
+        assert_eq!(ans, 0);
+        assert_eq!(vctx.data_response, Some("Test Response".to_string()));
+    }
+
+    #[test]
+    fn test_set_null_data_response() {
+        let mut vctx = Context {
+            data_response: Some("Test".to_string()),
+            ..Default::default()
+        };
+
+        let ans = unsafe { context_set_data_response(&mut vctx, null()) };
+        assert_eq!(ans, 0);
+        assert_eq!(vctx.data_response, None);
     }
 }

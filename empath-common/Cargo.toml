@@ -7,20 +7,20 @@ documentation.workspace = true
 license.workspace = true
 edition.workspace = true
 
-build = "build.rs"
+build = "../build.rs"
 
 [lib]
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-async-trait = "0.1"
+async-trait.workspace = true
 chrono = "0.4"
-libc = "0.2"
+libc.workspace = true
 libloading = "0.8"
-mailparse = "0.14"
+mailparse.workspace = true
 serde.workspace = true
-thiserror = "1"
+thiserror.workspace = true
 tracing = { version = "0.1", default-features = false, features = [
     "attributes",
     "std",
@@ -30,10 +30,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
     "parking_lot",
     "tracing-log",
-    "time"
+    "time",
 ] }
-typetag = "0.2"
-
+typetag.workspace = true
 
 [build-dependencies]
 cbindgen.workspace = true
