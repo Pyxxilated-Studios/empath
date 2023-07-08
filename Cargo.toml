@@ -15,9 +15,17 @@ readme = "README.md"
 categories = ["command-line-utilities", "email", "network-programming"]
 
 [workspace.dependencies]
-cbindgen = "0.24"
+async-trait = "0.1"
+cbindgen = { version = "0.24", default-features = false }
+empath-common = { path = "./empath-common" }
+empath-server = { path = "./empath-server" }
+empath-smtp-proto = { path = "./empath-smtp-proto" }
+libc = "0.2"
+mailparse = "0.14"
 serde = "1"
+thiserror = "1"
 tokio = { version = "1", default-features = false, features = [
+    "io-util",
     "net",
     "macros",
     "parking_lot",
@@ -25,9 +33,10 @@ tokio = { version = "1", default-features = false, features = [
     "signal",
     "tracing",
 ] }
+toml = "0.7"
+typetag = "0.2"
 
 [profile.release]
 lto = "thin"
 opt-level = 2
-strip = "symbols"
 codegen-units = 1

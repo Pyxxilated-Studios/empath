@@ -84,7 +84,6 @@ pub fn init() {
             .compact()
             .with_ansi(true)
             .with_timer(Time)
-            .with_target(false)
             .with_level(false)
             .with_filter(level)
             .with_filter(FilterFn::new(|metadata| {

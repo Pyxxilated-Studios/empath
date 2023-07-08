@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::{ffi::CString, ptr::null, str::Utf8Error};
 
 #[repr(C)]
 pub struct String {
@@ -8,7 +8,18 @@ pub struct String {
 
 impl Drop for String {
     fn drop(&mut self) {
-        let _ = unsafe { CString::from_raw(self.data.cast_mut()) };
+        if !self.data.is_null() {
+            let _ = unsafe { CString::from_raw(self.data.cast_mut()) };
+        }
+    }
+}
+
+impl Default for String {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            data: null(),
+        }
     }
 }
 
@@ -21,7 +32,17 @@ pub struct StringVector {
 
 impl Drop for StringVector {
     fn drop(&mut self) {
-        let _ = unsafe { Vec::from_raw_parts(self.data.cast_mut(), self.len, self.len) };
+        if !self.data.is_null() {
+            let _ = unsafe { Vec::from_raw_parts(self.data.cast_mut(), self.len, self.len) };
+        }
+    }
+}
+
+impl TryFrom<&[u8]> for String {
+    type Error = Utf8Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from(std::str::from_utf8(value)?))
     }
 }
 

@@ -7,12 +7,12 @@ use std::{
 };
 
 use empath_common::{
-    ffi::module::{self, Error, Module},
+    ffi::module::{Error, Module},
     internal,
     listener::Listener,
     logging,
 };
-use futures::future::join_all;
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 // use trust_dns_resolver::{
@@ -69,6 +69,11 @@ impl Server {
     ///
     /// This function will return an error if there is an issue accepting a connection,
     /// or if there is an issue binding to the specific address and port combination.
+    ///
+    /// # Panics
+    /// This will panic if it is unable to convert itself to its original configuration,
+    /// which should not be possible
+    ///
     pub async fn run(self) -> Result<(), ServerError> {
         logging::init();
 
@@ -78,7 +83,7 @@ impl Server {
             toml::to_string(&self).expect("Invalid Server Configuration")
         );
 
-        module::init(self.modules)?;
+        empath_common::ffi::module::init(self.modules)?;
 
         let iter = self.listeners.iter();
         join_all(iter.map(|listener| listener.spawn())).await;

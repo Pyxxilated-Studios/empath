@@ -3,15 +3,65 @@ use std::{
     sync::{LazyLock, RwLock},
 };
 
-use libloading::{Library, Symbol};
+use libloading::Library;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{
-    context::Context,
-    ffi::{InitFunc, ValidateData},
-    internal,
-};
+use crate::{context::Context, internal};
+
+use super::string::StringVector;
+
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Event {
+    ValidateData,
+}
+
+impl Display for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ValidateData => f.write_str("validate_data"),
+        }
+    }
+}
+
+#[repr(C)]
+pub struct Validators {
+    pub validate_data: Option<unsafe extern "C" fn(&mut Context) -> i32>,
+}
+
+#[repr(C)]
+#[allow(clippy::module_name_repetitions)]
+pub struct ValidationModule {
+    pub module_name: *const libc::c_char,
+    pub init: unsafe extern "C" fn(StringVector) -> i32,
+    pub validators: Validators,
+}
+
+unsafe impl Send for ValidationModule {}
+unsafe impl Sync for ValidationModule {}
+
+impl ValidationModule {
+    ///
+    /// Emit an event to this library's validation module
+    ///
+    pub fn emit(&self, event: Event, context: &mut Context) {
+        match event {
+            Event::ValidateData => {
+                unsafe { self.validators.validate_data.map(|func| func(context)) };
+            }
+        }
+    }
+}
+
+///
+/// This solely exists in order to have the `ValidationModule` be parsed
+/// by cbindgen. Perhaps in future it will be done in a better way.
+///
+#[no_mangle]
+pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut ValidationModule {
+    std::ptr::null_mut()
+}
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -34,8 +84,13 @@ pub struct SharedLibrary {
     pub name: String,
     pub arguments: Vec<String>,
     #[serde(skip)]
+    module: Option<ValidationModule>,
+    #[serde(skip)]
     library: Option<Library>,
 }
+
+unsafe impl Send for SharedLibrary {}
+unsafe impl Sync for SharedLibrary {}
 
 impl Display for SharedLibrary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -48,10 +103,12 @@ impl SharedLibrary {
         unsafe {
             let lib = Library::new(&self.name)?;
 
-            let init: Symbol<InitFunc> = lib.get(b"init")?;
-            match std::panic::catch_unwind(|| init()) {
+            let module = lib.get::<unsafe extern "C" fn() -> ValidationModule>(b"create_module")?();
+            let arguments = self.arguments.clone();
+            match std::panic::catch_unwind(|| (module.init)(arguments.into())) {
                 Ok(response) => {
-                    internal!("init: {response}");
+                    internal!("init: {response:#?}");
+                    self.module = Some(module);
                     self.library = Some(lib);
                     Ok(())
                 }
@@ -60,15 +117,10 @@ impl SharedLibrary {
         }
     }
 
-    fn emit(&self, event: &str, vctx: &Context) -> Result<(), Error> {
-        if let Some(ref lib) = self.library {
-            unsafe {
-                lib.get::<ValidateData>(event.as_bytes())
-                    .map(|handler| handler(vctx))?;
-            }
+    fn emit(&self, event: Event, vctx: &mut Context) {
+        if let Some(ref module) = self.module {
+            module.emit(event, vctx);
         }
-
-        Ok(())
     }
 }
 
@@ -88,7 +140,7 @@ impl Display for Module {
 }
 
 impl Module {
-    fn emit(&self, event: &str, vctx: &Context) -> Result<(), Error> {
+    fn emit(&self, event: Event, vctx: &mut Context) {
         match self {
             Self::SharedLibrary(ref lib) => lib.emit(event, vctx),
         }
@@ -102,9 +154,11 @@ impl Module {
 ///   1. The module is invalid (e.g. the shared library cannot be found/has issues)
 ///   2. The modules init has an issue
 ///
+/// # Panics
+/// This will panic if it is unable to write to the module store
+///
 pub fn init(modules: Vec<Module>) -> Result<(), Error> {
     internal!(level = INFO, "Initialising modules ...");
-    let mut store = MODULE_STORE.write().expect("Unable to write modules");
 
     for mut module in modules {
         internal!("Init: {module}");
@@ -113,7 +167,10 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
             Module::SharedLibrary(ref mut lib) => lib.init()?,
         }
 
-        store.push(module);
+        MODULE_STORE
+            .write()
+            .expect("Unable to write module")
+            .push(module);
     }
 
     internal!(level = INFO, "Modules initialised");
@@ -128,10 +185,13 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
 /// catch some possible errors. If these are caught, they are returned to the
 /// caller to handle.
 ///
-pub fn dispatch(event: &str, vctx: &Context) -> Result<(), Error> {
+/// # Panics
+/// This will panic if it fails to read the Module Store
+///
+pub fn dispatch(event: Event, vctx: &mut Context) {
     let store = MODULE_STORE.read().expect("Unable to load modules");
 
     internal!("Dispatching: {}", event);
 
-    store.iter().try_for_each(|module| module.emit(event, vctx))
+    store.iter().for_each(|module| module.emit(event, vctx));
 }

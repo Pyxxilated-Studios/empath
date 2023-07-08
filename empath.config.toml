@@ -3,10 +3,9 @@
 [listeners.Smtp]
 address = "::"
 port = 1025
-extensions = ["STARTTLS"]
 banner = ""
 
-[listeners.Smtp.tls_certificate]
+[listeners.Smtp.tls_context]
 certificate = "certificate.crt"
 key = "private.key"
 
@@ -21,5 +20,5 @@ banner = "Other"
 [[modules]]
 
 [modules.SharedLibrary]
-name = "./examples/libdll.so"
-arguments = []
+name = "./examples/libexample.so"
+arguments = ["arg1"]
