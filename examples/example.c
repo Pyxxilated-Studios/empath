@@ -59,7 +59,8 @@ int init(StringVector arguments) {
   return 0;
 }
 
-EM_DECLARE_MODULE("dll", init,
-                  {
-                      validate_data,
-                  });
+EM_DECLARE_MODULE(Validation, .validation_listener = {"dll",
+                                                      init,
+                                                      {
+                                                          validate_data,
+                                                      }});

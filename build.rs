@@ -21,10 +21,14 @@ fn main() {
  * Instead, alter build.rs, or the respective rust item.
  **/",
         )),
-        after_includes: Some(
-            "#define EM_DECLARE_MODULE(...) ValidationModule create_module() { return (ValidationModule) {__VA_ARGS__}; }"
+        after_includes: if package_name.ends_with("common") {
+            Some(
+            "#define EM_DECLARE_MODULE(ty, ...) Mod declare_module() { return (Mod){ty ## Listener, {__VA_ARGS__}}; }"
                 .to_string(),
-        ),
+        )
+        } else {
+            None
+        },
         ..Default::default()
     };
 

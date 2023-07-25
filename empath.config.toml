@@ -17,8 +17,12 @@ port = 1026
 extensions = []
 banner = "Other"
 
-[[modules]]
-
-[modules.SharedLibrary]
+[[module]]
+type = "SharedLibrary"
 name = "./examples/libexample.so"
 arguments = ["arg1"]
+
+[[module]]
+type = "SharedLibrary"
+name = "./examples/libevent.so"
+arguments = ["arg1", "arg2"]
