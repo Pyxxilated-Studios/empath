@@ -11,16 +11,62 @@ use crate::{context::Context, internal};
 
 use super::string::StringVector;
 
+type Init = unsafe extern "C" fn(StringVector) -> i32;
+type DeclareModule = unsafe extern "C" fn() -> Mod;
+
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Event {
-    ValidateData,
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum ValidateEvent {
+    Data,
 }
 
-impl Display for Event {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Ev {
+    ConnectionOpened,
+    ConnectionClosed,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Event {
+    Validate(ValidateEvent),
+    Event(Ev),
+}
+
+#[repr(C)]
+pub enum Mod {
+    ValidationListener(Validation),
+    EventListener {
+        module_name: *const libc::c_char,
+        init: Init,
+        emit: unsafe extern "C" fn(Ev, &mut Context) -> i32,
+    },
+}
+
+unsafe impl Send for Mod {}
+unsafe impl Sync for Mod {}
+
+impl Mod {
+    pub fn emit(&self, event: Event, context: &mut Context) {
         match self {
-            Self::ValidateData => f.write_str("validate_data"),
+            Self::ValidationListener(validator) => validator.emit(event, context),
+            Self::EventListener { emit, .. } => {
+                if let Event::Event(ev) = event {
+                    unsafe {
+                        emit(ev, context);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn init(&self, arguments: &[String]) -> i32 {
+        unsafe {
+            match self {
+                Self::ValidationListener(validator) => (validator.init)(arguments.into()),
+                Self::EventListener { init, .. } => init(arguments.into()),
+            }
         }
     }
 }
@@ -32,34 +78,32 @@ pub struct Validators {
 
 #[repr(C)]
 #[allow(clippy::module_name_repetitions)]
-pub struct ValidationModule {
+pub struct Validation {
     pub module_name: *const libc::c_char,
-    pub init: unsafe extern "C" fn(StringVector) -> i32,
+    pub init: Init,
     pub validators: Validators,
 }
 
-unsafe impl Send for ValidationModule {}
-unsafe impl Sync for ValidationModule {}
+unsafe impl Send for Validation {}
+unsafe impl Sync for Validation {}
 
-impl ValidationModule {
+impl Validation {
     ///
     /// Emit an event to this library's validation module
     ///
     pub fn emit(&self, event: Event, context: &mut Context) {
-        match event {
-            Event::ValidateData => {
-                unsafe { self.validators.validate_data.map(|func| func(context)) };
-            }
+        if matches!(event, Event::Validate(ValidateEvent::Data)) {
+            unsafe { self.validators.validate_data.map(|func| func(context)) };
         }
     }
 }
 
 ///
-/// This solely exists in order to have the `ValidationModule` be parsed
+/// This solely exists in order to have the `Validation` be parsed
 /// by cbindgen. Perhaps in future it will be done in a better way.
 ///
 #[no_mangle]
-pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut ValidationModule {
+pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut Mod {
     std::ptr::null_mut()
 }
 
@@ -84,7 +128,7 @@ pub struct SharedLibrary {
     pub name: String,
     pub arguments: Vec<String>,
     #[serde(skip)]
-    module: Option<ValidationModule>,
+    module: Option<Mod>,
     #[serde(skip)]
     library: Option<Library>,
 }
@@ -103,17 +147,13 @@ impl SharedLibrary {
         unsafe {
             let lib = Library::new(&self.name)?;
 
-            let module = lib.get::<unsafe extern "C" fn() -> ValidationModule>(b"create_module")?();
-            let arguments = self.arguments.clone();
-            match std::panic::catch_unwind(|| (module.init)(arguments.into())) {
-                Ok(response) => {
-                    internal!("init: {response:#?}");
-                    self.module = Some(module);
-                    self.library = Some(lib);
-                    Ok(())
-                }
-                Err(err) => Err(Error::Init(format!("{err:#?}"))),
-            }
+            let module = lib.get::<DeclareModule>(b"declare_module")?();
+            let response = module.init(&self.arguments);
+            internal!("init: {response:#?}");
+            self.module = Some(module);
+            self.library = Some(lib);
+
+            Ok(())
         }
     }
 
@@ -125,6 +165,7 @@ impl SharedLibrary {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(SharedLibrary),
 }
@@ -191,7 +232,7 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
 pub fn dispatch(event: Event, vctx: &mut Context) {
     let store = MODULE_STORE.read().expect("Unable to load modules");
 
-    internal!("Dispatching: {}", event);
+    internal!("Dispatching: {event:?}");
 
     store.iter().for_each(|module| module.emit(event, vctx));
 }

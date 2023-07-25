@@ -68,8 +68,8 @@ impl From<std::string::String> for String {
     }
 }
 
-impl From<&Vec<std::string::String>> for StringVector {
-    fn from(value: &Vec<std::string::String>) -> Self {
+impl From<&[std::string::String]> for StringVector {
+    fn from(value: &[std::string::String]) -> Self {
         let rcpts = value
             .iter()
             .map(std::convert::Into::into)
@@ -83,7 +83,7 @@ impl From<&Vec<std::string::String>> for StringVector {
 
 impl From<Vec<std::string::String>> for StringVector {
     fn from(value: Vec<std::string::String>) -> Self {
-        Self::from(&value)
+        Self::from(value.as_slice())
     }
 }
 

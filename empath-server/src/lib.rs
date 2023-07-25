@@ -32,6 +32,7 @@ pub enum ServerError {
 #[derive(Serialize, Deserialize, Default)]
 pub struct Server {
     listeners: Vec<Box<dyn Listener>>,
+    #[serde(alias = "module")]
     modules: Vec<Module>,
 }
 
@@ -50,7 +51,8 @@ impl Server {
         let mut config = String::new();
         reader.read_to_string(&mut config)?;
 
-        toml::from_str(&config).map_err(|_| std::io::ErrorKind::InvalidData.into())
+        toml::from_str(&config)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))
     }
 
     /// Run the server, which will accept connections on the
