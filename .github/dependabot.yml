@@ -8,3 +8,7 @@ updates:
     labels:
       - "server"
       - "dependencies"
+    groups:
+      dependencies:
+        patterns:
+          - "*"
