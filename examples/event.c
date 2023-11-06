@@ -8,7 +8,7 @@
 #include "../target/empath/common.h"
 #include "../target/empath/smtp/proto.h"
 
-int emit(Ev event, Context *vctx) {
+int emit(Ev event, Context *validate_context) {
   if (event == ConnectionOpened) {
     printf("Opened connection!\n");
   } else if (event == ConnectionClosed) {
@@ -17,7 +17,13 @@ int emit(Ev event, Context *vctx) {
     printf("Unknown event! %d\n", event);
   }
 
-  return event;
+  if (em_context_exists(validate_context, "test")) {
+    String value = em_context_get(validate_context, "test");
+    printf("Existing value: %*s\n", (int)value.len, value.data);
+    free_string(value);
+  }
+
+  return 0;
 }
 
 int init(StringVector arguments) {

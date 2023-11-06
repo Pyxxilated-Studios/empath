@@ -1,8 +1,8 @@
 use chrono::Utc;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{
-    filter::FilterFn, fmt::time::FormatTime, prelude::__tracing_subscriber_SubscriberExt,
-    util::SubscriberInitExt, Layer,
+    filter::FilterFn, fmt::time::FormatTime, Layer,
+    prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
 };
 
 struct Time;
@@ -81,14 +81,14 @@ pub fn init() {
                     .with_file(false)
                     .with_line_number(false)
             })
-            .compact()
-            .with_ansi(true)
-            .with_timer(Time)
-            .with_level(false)
-            .with_filter(level)
-            .with_filter(FilterFn::new(|metadata| {
-                metadata.target().starts_with("empath")
-            })),
+                .compact()
+                .with_ansi(true)
+                .with_timer(Time)
+                .with_level(false)
+                .with_filter(level)
+                .with_filter(FilterFn::new(|metadata| {
+                    metadata.target().starts_with("empath")
+                })),
         )
         .init();
 }

@@ -54,7 +54,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Unable to determine key file",
-                ))
+                ));
             }
         };
 

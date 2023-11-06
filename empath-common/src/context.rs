@@ -1,4 +1,5 @@
-use std::{ffi::CStr, fmt::Debug};
+use core::slice::SlicePattern;
+use std::{collections::HashMap, ffi::CStr, fmt::Debug, sync::Arc};
 
 use mailparse::MailAddrList;
 
@@ -9,11 +10,13 @@ pub struct Context {
     pub id: String,
     pub mail_from: Option<MailAddrList>,
     pub rcpt_to: Option<MailAddrList>,
-    pub data: Option<Vec<u8>>,
+    pub data: Option<Arc<[u8]>>,
     pub data_response: Option<String>,
+    pub context: HashMap<String, String>,
 }
 
 impl Context {
+    #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -24,6 +27,7 @@ impl Context {
         })
     }
 
+    #[must_use]
     pub fn sender(&self) -> String {
         self.mail_from
             .clone()
@@ -31,6 +35,7 @@ impl Context {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn recipients(&self) -> Vec<String> {
         self.rcpt_to
             .clone()
@@ -63,20 +68,22 @@ impl Context {
 ///
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn context_get_id(vctx: &Context) -> ffi::string::String {
-    vctx.id().into()
+pub extern "C" fn em_context_get_id(validate_context: &Context) -> ffi::string::String {
+    validate_context.id().into()
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn context_get_recipients(vctx: &Context) -> ffi::string::StringVector {
-    vctx.recipients().into()
+pub extern "C" fn em_context_get_recipients(
+    validate_context: &Context,
+) -> ffi::string::StringVector {
+    validate_context.recipients().into()
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn context_get_sender(vctx: &Context) -> ffi::string::String {
-    vctx.sender().into()
+pub extern "C" fn em_context_get_sender(validate_context: &Context) -> ffi::string::String {
+    validate_context.sender().into()
 }
 
 ///
@@ -85,17 +92,17 @@ pub extern "C" fn context_get_sender(vctx: &Context) -> ffi::string::String {
 ///
 /// # Safety
 ///
-/// This should be able to be passed any valid pointer, and a valid vctx, to
+/// This should be able to be passed any valid pointer, and a valid `validate_context`, to
 /// set the sender
 ///
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub unsafe extern "C" fn context_set_sender(
-    vctx: &mut Context,
+pub unsafe extern "C" fn em_context_set_sender(
+    validate_context: &mut Context,
     sender: *const libc::c_char,
 ) -> i32 {
     if sender.is_null() {
-        vctx.mail_from = None;
+        validate_context.mail_from = None;
         return 0;
     }
 
@@ -104,7 +111,7 @@ pub unsafe extern "C" fn context_set_sender(
     match sender.to_str() {
         Ok(sender) => match mailparse::addrparse(sender) {
             Ok(sender) => {
-                vctx.mail_from = Some(sender);
+                validate_context.mail_from = Some(sender);
                 0
             }
             Err(err) => {
@@ -121,10 +128,13 @@ pub unsafe extern "C" fn context_set_sender(
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn context_get_data(vctx: &Context) -> ffi::string::String {
-    vctx.data.as_ref().map_or_else(Default::default, |data| {
-        ffi::string::String::try_from(data.as_slice()).unwrap_or_default()
-    })
+pub extern "C" fn em_context_get_data(validate_context: &Context) -> ffi::string::String {
+    validate_context
+        .data
+        .as_ref()
+        .map_or_else(Default::default, |data| {
+            ffi::string::String::try_from(data.as_slice()).unwrap_or_default()
+        })
 }
 
 ///
@@ -134,32 +144,101 @@ pub extern "C" fn context_get_data(vctx: &Context) -> ffi::string::String {
 ///
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub unsafe extern "C" fn context_set_data_response(
-    vctx: &mut Context,
+pub unsafe extern "C" fn em_context_set_data_response(
+    validate_context: &mut Context,
     response: *const libc::c_char,
 ) -> i32 {
     if response.is_null() {
-        vctx.data_response = None;
+        validate_context.data_response = None;
     } else {
         let response = CStr::from_ptr(response);
-        vctx.data_response = Some(response.to_owned().to_string_lossy().to_string());
+        validate_context.data_response = Some(response.to_owned().to_string_lossy().to_string());
     }
 
     0
 }
 
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false
+///
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_exists(
+    validate_context: &Context,
+    key: *const libc::c_char,
+) -> bool {
+    if key.is_null() {
+        false
+    } else {
+        CStr::from_ptr(key)
+            .to_str()
+            .map_or(false, |key| validate_context.context.contains_key(key))
+    }
+}
+
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false
+///
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_set(
+    validate_context: &mut Context,
+    key: *const libc::c_char,
+    value: *const libc::c_char,
+) -> bool {
+    if key.is_null() || value.is_null() {
+        false
+    } else {
+        CStr::from_ptr(key).to_str().map_or(false, |key| {
+            let value = CStr::from_ptr(value)
+                .to_str()
+                .map(String::from)
+                .unwrap_or_default();
+            *validate_context.context.entry(key.to_string()).or_default() = value;
+            true
+        })
+    }
+}
+
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return a default value
+///
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_get(
+    validate_context: &Context,
+    key: *const libc::c_char,
+) -> ffi::string::String {
+    if key.is_null() {
+        ffi::string::String::default()
+    } else {
+        CStr::from_ptr(key)
+            .to_str()
+            .ok()
+            .and_then(|key| validate_context.context.get(key))
+            .map_or_else(ffi::string::String::default, std::convert::Into::into)
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::context::{
-        context_get_data, context_get_id, context_get_recipients, context_set_data_response,
-        Context,
-    };
     use std::{
         ffi::{CStr, CString},
         ptr::null,
     };
 
-    use super::context_set_sender;
+    use crate::context::{
+        em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
+        em_context_get_recipients, em_context_set, em_context_set_data_response, Context,
+    };
+
+    use super::em_context_set_sender;
 
     macro_rules! cstr {
         ($st:literal) => {
@@ -169,30 +248,30 @@ mod test {
 
     #[test]
     fn test_id() {
-        let vctx = Context {
+        let validate_context = Context {
             id: String::from("Testing"),
             ..Default::default()
         };
 
         unsafe {
-            let ffi_string = std::mem::ManuallyDrop::new(context_get_id(&vctx));
+            let ffi_string = std::mem::ManuallyDrop::new(em_context_get_id(&validate_context));
 
             assert_eq!(
                 CString::from_raw(ffi_string.data.cast_mut()),
-                CString::new(vctx.id()).unwrap()
+                CString::new(validate_context.id()).unwrap()
             );
         }
     }
 
     #[test]
     fn test_recipients() {
-        let mut vctx = Context::default();
+        let mut validate_context = Context::default();
 
         let mut recipients = mailparse::addrparse("test@gmail.com").unwrap();
         recipients.extend_from_slice(&mailparse::addrparse("test@test.com").unwrap()[..]);
-        vctx.rcpt_to = Some(recipients);
+        validate_context.rcpt_to = Some(recipients);
 
-        let buffer = context_get_recipients(&vctx);
+        let buffer = em_context_get_recipients(&validate_context);
         assert_eq!(buffer.len, 2);
 
         unsafe {
@@ -216,16 +295,19 @@ mod test {
 
     #[test]
     fn test_set_sender() {
-        let mut vctx = Context {
+        let mut validate_context = Context {
             id: String::from("Testing"),
             mail_from: None,
             ..Default::default()
         };
 
         unsafe {
-            assert_eq!(context_set_sender(&mut vctx, cstr!("test@test.com")), 0);
             assert_eq!(
-                vctx.mail_from,
+                em_context_set_sender(&mut validate_context, cstr!("test@test.com")),
+                0
+            );
+            assert_eq!(
+                validate_context.mail_from,
                 Some(mailparse::addrparse("test@test.com").unwrap())
             );
         }
@@ -233,15 +315,15 @@ mod test {
 
     #[test]
     fn test_null_sender() {
-        let mut vctx = Context {
+        let mut validate_context = Context {
             id: String::from("Testing"),
             mail_from: Some(mailparse::addrparse("test@test.com").unwrap()),
             ..Default::default()
         };
 
         unsafe {
-            assert_eq!(context_set_sender(&mut vctx, null()), 0);
-            assert_eq!(vctx.mail_from, None);
+            assert_eq!(em_context_set_sender(&mut validate_context, null()), 0);
+            assert_eq!(validate_context.mail_from, None);
         }
     }
 
@@ -249,15 +331,18 @@ mod test {
     fn test_invalid_sender() {
         let sender = mailparse::addrparse("test@test.com").unwrap();
 
-        let mut vctx = Context {
+        let mut validate_context = Context {
             id: String::from("Testing"),
             mail_from: Some(sender.clone()),
             ..Default::default()
         };
 
         unsafe {
-            assert_eq!(context_set_sender(&mut vctx, cstr!("---")), 1);
-            assert_eq!(vctx.mail_from, Some(sender));
+            assert_eq!(
+                em_context_set_sender(&mut validate_context, cstr!("---")),
+                1
+            );
+            assert_eq!(validate_context.mail_from, Some(sender));
         }
     }
 
@@ -265,47 +350,73 @@ mod test {
     fn test_data() {
         let data = b"Testing Data".to_vec();
 
-        let vctx = Context {
-            data: Some(data.clone()),
+        let validate_context = Context {
+            data: Some(data.clone().into()),
             ..Default::default()
         };
 
         unsafe {
             assert_eq!(
-                CStr::from_ptr(context_get_data(&vctx).data).to_owned(),
+                CStr::from_ptr(em_context_get_data(&validate_context).data).to_owned(),
                 CString::from_vec_unchecked(data)
             );
         }
-    }
 
-    #[test]
-    fn test_no_data() {
-        let vctx = Context {
+        let validate_context = Context {
             data: None,
             ..Default::default()
         };
 
-        assert_eq!(context_get_data(&vctx).data, null());
+        assert_eq!(em_context_get_data(&validate_context).data, null());
     }
 
     #[test]
     fn test_set_data_response() {
-        let mut vctx = Context::default();
+        let mut validate_context = Context::default();
 
-        let ans = unsafe { context_set_data_response(&mut vctx, cstr!("Test Response")) };
+        let ans =
+            unsafe { em_context_set_data_response(&mut validate_context, cstr!("Test Response")) };
         assert_eq!(ans, 0);
-        assert_eq!(vctx.data_response, Some("Test Response".to_string()));
-    }
+        assert_eq!(
+            validate_context.data_response,
+            Some("Test Response".to_string())
+        );
 
-    #[test]
-    fn test_set_null_data_response() {
-        let mut vctx = Context {
+        let mut validate_context = Context {
             data_response: Some("Test".to_string()),
             ..Default::default()
         };
 
-        let ans = unsafe { context_set_data_response(&mut vctx, null()) };
+        let ans = unsafe { em_context_set_data_response(&mut validate_context, null()) };
         assert_eq!(ans, 0);
-        assert_eq!(vctx.data_response, None);
+        assert_eq!(validate_context.data_response, None);
+    }
+
+    #[test]
+    fn test_context() {
+        let mut validate_context = Context::default();
+
+        let ans = unsafe { em_context_set(&mut validate_context, cstr!("test"), cstr!("true")) };
+        unsafe {
+            assert!(ans);
+            assert!(em_context_exists(&validate_context, cstr!("test")));
+            assert_eq!(
+                CStr::from_ptr(em_context_get(&validate_context, cstr!("test")).data).to_owned(),
+                CString::from_vec_unchecked(b"true".to_vec())
+            );
+        }
+
+        let ans = unsafe { em_context_set(&mut validate_context, null(), null()) };
+        assert!(!ans);
+
+        let ans = unsafe { em_context_set(&mut validate_context, cstr!("null"), null()) };
+        unsafe {
+            assert!(!ans);
+            assert!(!em_context_exists(&validate_context, cstr!("null")));
+        }
+
+        unsafe {
+            assert!(!em_context_exists(&validate_context, null()));
+        }
     }
 }

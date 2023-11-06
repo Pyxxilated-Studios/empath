@@ -1,4 +1,4 @@
-use std::{ffi::CString, ptr::null, str::Utf8Error};
+use std::{ffi::CString, ptr::null, str::Utf8Error, sync::Arc};
 
 #[repr(C)]
 pub struct String {
@@ -56,6 +56,16 @@ impl From<&str> for String {
     }
 }
 
+impl From<&Arc<str>> for String {
+    fn from(value: &Arc<str>) -> Self {
+        let len = value.len();
+        let id = CString::new(value.as_bytes()).expect("Invalid CString");
+        let data = id.into_raw();
+
+        Self { len, data }
+    }
+}
+
 impl From<&std::string::String> for String {
     fn from(value: &std::string::String) -> Self {
         Self::from(value.as_str())
@@ -70,12 +80,12 @@ impl From<std::string::String> for String {
 
 impl From<&[std::string::String]> for StringVector {
     fn from(value: &[std::string::String]) -> Self {
-        let rcpts = value
+        let recipients = value
             .iter()
             .map(std::convert::Into::into)
             .collect::<Vec<_>>();
 
-        let (data, len, _) = rcpts.into_raw_parts();
+        let (data, len, _) = recipients.into_raw_parts();
 
         Self { len, data }
     }
@@ -87,14 +97,84 @@ impl From<Vec<std::string::String>> for StringVector {
     }
 }
 
+impl From<&[Arc<str>]> for StringVector {
+    fn from(value: &[Arc<str>]) -> Self {
+        let recipients = value
+            .iter()
+            .map(std::convert::Into::into)
+            .collect::<Vec<_>>();
+
+        let (data, len, _) = recipients.into_raw_parts();
+
+        Self { len, data }
+    }
+}
+
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn free_string(ffi_string: String) {
-    std::mem::drop(ffi_string);
+    drop(ffi_string);
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn free_string_vector(ffi_vector: StringVector) {
-    std::mem::drop(ffi_vector);
+    drop(ffi_vector);
+}
+
+#[cfg(test)]
+mod test {
+    use std::{ptr::null, sync::Arc};
+
+    use crate::ffi::string::{free_string, free_string_vector, String, StringVector};
+
+    const TEST: &str = "test";
+
+    #[test]
+    fn string_vector() {
+        let sv = StringVector::from(vec![]);
+        assert_eq!(sv.len, 0);
+        assert_ne!(sv.data, null());
+
+        free_string_vector(sv);
+
+        let sv = StringVector::from(&[TEST.to_string()][..]);
+        assert_eq!(sv.len, 1);
+        assert_ne!(sv.data, null());
+
+        free_string_vector(sv);
+
+        let sv = StringVector::from(&[Arc::from(TEST)][..]);
+        assert_eq!(sv.len, 1);
+        assert_ne!(sv.data, null());
+
+        free_string_vector(sv);
+
+        let sv = StringVector::from(vec![TEST.to_string()]);
+        assert_eq!(sv.len, 1);
+        assert_ne!(sv.data, null());
+
+        free_string_vector(sv);
+    }
+
+    #[test]
+    fn string() {
+        let s = String::from("");
+        assert_eq!(s.len, 0);
+        assert_ne!(s.data, null());
+
+        free_string(s);
+
+        let s = String::from(TEST);
+        assert_eq!(s.len, TEST.len());
+        assert_ne!(s.data, null());
+
+        free_string(s);
+
+        let s = String::from(&Arc::from(TEST));
+        assert_eq!(s.len, TEST.len());
+        assert_ne!(s.data, null());
+
+        free_string(s);
+    }
 }

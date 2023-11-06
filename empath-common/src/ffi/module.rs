@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{
     fmt::Display,
     sync::{LazyLock, RwLock},
@@ -17,6 +18,8 @@ type DeclareModule = unsafe extern "C" fn() -> Mod;
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ValidateEvent {
+    Connect,
+    MailFrom,
     Data,
 }
 
@@ -48,7 +51,7 @@ unsafe impl Send for Mod {}
 unsafe impl Sync for Mod {}
 
 impl Mod {
-    pub fn emit(&self, event: Event, context: &mut Context) {
+    pub fn emit(&self, event: Event, context: &mut Context) -> i32 {
         match self {
             Self::ValidationListener(validator) => validator.emit(event, context),
             Self::EventListener { emit, .. } => {
@@ -57,11 +60,13 @@ impl Mod {
                         emit(ev, context);
                     }
                 }
+                0
             }
         }
     }
 
-    pub fn init(&self, arguments: &[String]) -> i32 {
+    #[must_use]
+    pub fn init(&self, arguments: &[Arc<str>]) -> i32 {
         unsafe {
             match self {
                 Self::ValidationListener(validator) => (validator.init)(arguments.into()),
@@ -73,6 +78,8 @@ impl Mod {
 
 #[repr(C)]
 pub struct Validators {
+    pub validate_connect: Option<unsafe extern "C" fn(&mut Context) -> i32>,
+    pub validate_mail_from: Option<unsafe extern "C" fn(&mut Context) -> i32>,
     pub validate_data: Option<unsafe extern "C" fn(&mut Context) -> i32>,
 }
 
@@ -85,16 +92,28 @@ pub struct Validation {
 }
 
 unsafe impl Send for Validation {}
+
 unsafe impl Sync for Validation {}
 
 impl Validation {
     ///
     /// Emit an event to this library's validation module
     ///
-    pub fn emit(&self, event: Event, context: &mut Context) {
-        if matches!(event, Event::Validate(ValidateEvent::Data)) {
-            unsafe { self.validators.validate_data.map(|func| func(context)) };
+    pub fn emit(&self, event: Event, context: &mut Context) -> i32 {
+        match event {
+            Event::Validate(ValidateEvent::Data) => unsafe {
+                self.validators.validate_data.map(|func| func(context))
+            },
+            Event::Validate(ValidateEvent::MailFrom) => unsafe {
+                self.validators.validate_mail_from.map(|func| func(context))
+            },
+            Event::Validate(ValidateEvent::Connect) => unsafe {
+                self.validators.validate_connect.map(|func| func(context))
+            },
+            _ => None,
         }
+        .inspect(|v| internal!("{event:?} = {v}"))
+        .unwrap_or_default()
     }
 }
 
@@ -126,7 +145,7 @@ pub enum Error {
 #[derive(Serialize, Deserialize)]
 pub struct SharedLibrary {
     pub name: String,
-    pub arguments: Vec<String>,
+    pub arguments: Arc<[Arc<str>]>,
     #[serde(skip)]
     module: Option<Mod>,
     #[serde(skip)]
@@ -134,6 +153,7 @@ pub struct SharedLibrary {
 }
 
 unsafe impl Send for SharedLibrary {}
+
 unsafe impl Sync for SharedLibrary {}
 
 impl Display for SharedLibrary {
@@ -157,10 +177,11 @@ impl SharedLibrary {
         }
     }
 
-    fn emit(&self, event: Event, vctx: &mut Context) {
-        if let Some(ref module) = self.module {
-            module.emit(event, vctx);
-        }
+    fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
+        self.module
+            .as_ref()
+            .map(|module| module.emit(event, validate_context))
+            .unwrap_or_default()
     }
 }
 
@@ -181,9 +202,9 @@ impl Display for Module {
 }
 
 impl Module {
-    fn emit(&self, event: Event, vctx: &mut Context) {
+    fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
         match self {
-            Self::SharedLibrary(ref lib) => lib.emit(event, vctx),
+            Self::SharedLibrary(ref lib) => lib.emit(event, validate_context),
         }
     }
 }
@@ -229,10 +250,13 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
 /// # Panics
 /// This will panic if it fails to read the Module Store
 ///
-pub fn dispatch(event: Event, vctx: &mut Context) {
+pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
     let store = MODULE_STORE.read().expect("Unable to load modules");
 
     internal!("Dispatching: {event:?}");
 
-    store.iter().for_each(|module| module.emit(event, vctx));
+    store
+        .iter()
+        .inspect(|m| internal!(level = DEBUG, "{m}"))
+        .all(|module| module.emit(event, validate_context) == 0)
 }

@@ -3,8 +3,9 @@ use std::{
     str::FromStr,
 };
 
-use empath_common::tracing::error;
 use mailparse::MailAddrList;
+
+use empath_common::tracing::error;
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum HeloVariant {
@@ -35,6 +36,7 @@ pub enum Command {
 }
 
 impl Command {
+    #[must_use]
     pub fn inner(&self) -> String {
         match self {
             Self::MailFrom(from) => from.clone().map(|f| f.to_string()).unwrap_or_default(),

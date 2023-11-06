@@ -1,17 +1,17 @@
-[[listeners]]
+[[listener]]
 
-[listeners.Smtp]
+[listener.Smtp]
 address = "::"
 port = 1025
 banner = ""
 
-[listeners.Smtp.tls_context]
+[listener.Smtp.tls_context]
 certificate = "certificate.crt"
 key = "private.key"
 
-[[listeners]]
+[[listener]]
 
-[listeners.Smtp]
+[listener.Smtp]
 address = "::"
 port = 1026
 extensions = []

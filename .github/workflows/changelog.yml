@@ -2,7 +2,7 @@ name: Generate Changelog
 
 on:
   push:
-    tags: ["v*"]
+    tags: [ "v*" ]
 
 jobs:
   changelog:
