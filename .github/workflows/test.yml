@@ -2,13 +2,13 @@ name: Analyze - Server
 
 on:
   push:
-    branches: ["master"]
+    branches: [ "master" ]
     paths:
       - "**/*.rs"
       - "Cargo.toml"
       - "Cargo.lock"
   pull_request:
-    branches: ["master"]
+    branches: [ "master" ]
     paths:
       - "**/*.rs"
       - "Cargo.toml"
@@ -42,11 +42,11 @@ jobs:
       - name: Run rust-clippy
         run:
           cargo -vv clippy --all-features --message-format=json --
-            -D clippy::all
-            -D clippy::pedantic
-            -A clippy::must-use-candidate
-            -A clippy::cast-precision-loss
-            -A clippy::module-name-repetitions | clippy-sarif | tee
+          -D clippy::all
+          -D clippy::pedantic
+          -A clippy::must-use-candidate
+          -A clippy::cast-precision-loss
+          -A clippy::module-name-repetitions | clippy-sarif | tee
           rust-clippy-results.sarif | sarif-fmt
         continue-on-error: true
 

@@ -1,10 +1,12 @@
-pub mod smtp;
-
 use std::{
     fs::File,
     io::{BufReader, Read},
     path::Path,
 };
+
+use futures_util::future::join_all;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use empath_common::{
     ffi::module::{Error, Module},
@@ -12,13 +14,8 @@ use empath_common::{
     listener::Listener,
     logging,
 };
-use futures_util::future::join_all;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-// use trust_dns_resolver::{
-//     config::{ResolverConfig, ResolverOpts},
-//     Resolver,
-// };
+
+pub mod smtp;
 
 #[derive(Error, Debug)]
 pub enum ServerError {
@@ -31,6 +28,7 @@ pub enum ServerError {
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Server {
+    #[serde(rename = "listener")]
     listeners: Vec<Box<dyn Listener>>,
     #[serde(alias = "module")]
     modules: Vec<Module>,
@@ -107,84 +105,3 @@ impl Server {
         self
     }
 }
-
-// async fn forward(vctx: &ValidationContext) -> std::io::Result<()> {
-//     println!("{vctx:#?}");
-
-//     let from = vctx.mail_from.as_ref().unwrap().split(':').nth(1).unwrap();
-//     let to = vctx
-//         .rcpt_to
-//         .as_ref()
-//         .unwrap()
-//         .iter()
-//         .map(|to| to.split(':').nth(1).unwrap())
-//         .collect::<Vec<_>>();
-
-//     let from = if let MailAddr::Single(SingleInfo { addr, .. }) =
-//         mailparse::addrparse(from).unwrap().first().unwrap()
-//     {
-//         addr.clone()
-//     } else {
-//         String::default()
-//     };
-//     let to = mailparse::addrparse(to.join(",").as_str()).unwrap();
-
-//     println!("{from:#?} --> {to:#?}");
-
-//     let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default()).unwrap();
-
-//     if let MailAddr::Single(SingleInfo { addr, .. }) = to.first().unwrap() {
-//         let response = resolver.mx_lookup(addr.split('@').nth(1).unwrap()).unwrap();
-//         let response = response.iter().next().unwrap();
-
-//         println!("{}", response.exchange());
-
-//         let response = resolver.lookup_ip(response.exchange().to_string()).unwrap();
-
-//         let address = response.iter().next().expect("no addresses returned!");
-
-//         println!("{address}");
-
-//         let conn = Async::<TcpStream>::connect((address, 25)).await?;
-
-//         println!("{conn:#?}");
-
-//         let mut buffer = [0; 4096];
-
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "EHLO test-local\r\n"))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "MAIL FROM:<{from}>\r\n"))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "RCPT TO:<{to}>\r\n"))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "DATA\r\n")).await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         let mut buffer = [0; 4096];
-//         conn.write_with(|mut conn| write!(conn, "{}\r\n", vctx.data.as_ref().unwrap()))
-//             .await?;
-//         conn.read_with(|mut conn| conn.read(&mut buffer)).await?;
-//         println!("RESPONSE: {}", std::str::from_utf8(&buffer).unwrap());
-
-//         conn.write_with(|mut conn| write!(conn, "QUIT\r\n")).await?;
-//     }
-
-//     Ok(())
-// }

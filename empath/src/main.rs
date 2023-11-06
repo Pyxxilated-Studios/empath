@@ -8,6 +8,7 @@ compile_error!("Only macos and unix are currently supported");
 async fn main() -> std::io::Result<()> {
     #[allow(clippy::redundant_pub_crate)]
     let resp = tokio::select! {
+        biased;
         rc = Server::from_config("./empath.config.toml")?.run() => {
             rc.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
         }

@@ -1,4 +1,12 @@
-#![feature(lazy_cell, lint_reasons, vec_into_raw_parts)]
+#![feature(
+    lazy_cell,
+    lint_reasons,
+    result_option_inspect,
+    slice_pattern,
+    vec_into_raw_parts
+)]
+
+extern crate core;
 
 pub use tracing;
 

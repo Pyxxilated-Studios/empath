@@ -4,9 +4,12 @@ use std::{
     str::FromStr,
 };
 
-use crate::command::{Command, HeloVariant};
-use empath_common::context::Context;
 use serde::{Deserialize, Serialize};
+
+use empath_common::context::Context;
+use empath_common::ffi::module;
+
+use crate::command::{Command, HeloVariant};
 
 #[repr(C)]
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
@@ -23,6 +26,7 @@ pub enum Phase {
     Quit,
     InvalidCommandSequence,
     Invalid,
+    Reject,
     Close,
 }
 
@@ -41,6 +45,7 @@ impl Display for Phase {
             Self::Quit => "QUIT",
             Self::Invalid => "INVALID",
             Self::InvalidCommandSequence => "Invalid Command Sequence",
+            Self::Reject => "Rejected",
         })
     }
 }
@@ -64,26 +69,30 @@ impl FromStr for Phase {
 
 impl Phase {
     #[must_use]
-    pub fn transition(self, command: Command, vctx: &mut Context) -> Self {
+    pub fn transition(self, command: Command, validate_context: &mut Context) -> Self {
         match (self, command) {
             (Self::Connect, Command::Helo(HeloVariant::Ehlo(id))) => {
-                vctx.id = id;
+                validate_context.id = id;
                 Self::Ehlo
             }
             (Self::Connect, Command::Helo(HeloVariant::Helo(id))) => {
-                vctx.id = id;
+                validate_context.id = id;
                 Self::Helo
             }
             (Self::Ehlo | Self::Helo, Command::StartTLS) => Self::StartTLS,
             (Self::Ehlo | Self::Helo | Self::StartTLS, Command::MailFrom(from)) => {
-                vctx.mail_from = from;
+                module::dispatch(
+                    module::Event::Validate(module::ValidateEvent::MailFrom),
+                    validate_context,
+                );
+                validate_context.mail_from = from;
                 Self::MailFrom
             }
             (Self::RcptTo | Self::MailFrom, Command::RcptTo(to)) => {
-                if let Some(rcpts) = vctx.rcpt_to.borrow_mut() {
+                if let Some(rcpts) = validate_context.rcpt_to.borrow_mut() {
                     rcpts.extend_from_slice(&to[..]);
                 } else {
-                    vctx.rcpt_to = Some(to);
+                    validate_context.rcpt_to = Some(to);
                 }
                 Self::RcptTo
             }

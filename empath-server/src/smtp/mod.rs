@@ -1,14 +1,13 @@
-use std::{
-    net::{IpAddr, Ipv6Addr, SocketAddr},
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 
-use empath_common::{internal, listener::Listener};
-use empath_smtp_proto::extensions::Extension;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 use crate::smtp::session::Session;
+use empath_common::{internal, listener::Listener};
+use empath_smtp_proto::extensions::Extension;
 
 use self::session::TlsContext;
 

@@ -3,7 +3,12 @@ name = "examples"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
+[workspace]
+
+[[bin]]
 name = "dll"
-crate-type = ["cdylib"]
 path = "dll.rs"
+
+[dependencies]
+cached = "*"
+serde_json = "*"

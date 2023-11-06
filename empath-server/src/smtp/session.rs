@@ -3,11 +3,12 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use empath_common::{context, ffi::module, incoming, internal, outgoing};
-use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
 use mailparse::MailParseError;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use empath_common::{context, ffi::module, incoming, internal, outgoing};
+use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
 
 use super::connection::Connection;
 
@@ -76,7 +77,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     queue: Arc<AtomicU64>,
     peer: SocketAddr,
     context: Context,
-    extensions: Vec<Extension>,
+    extensions: Arc<[Extension]>,
     banner: String,
     tls_context: TlsContext,
     connection: Connection<Stream>,
@@ -100,19 +101,23 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             peer,
             connection: Connection::Plain { stream },
             context: Context::default(),
-            extensions,
+            extensions: extensions.into(),
             tls_context,
-            banner,
+            banner: if banner.is_empty() {
+                "localhost".to_string()
+            } else {
+                banner
+            },
         }
     }
 
-    pub(crate) async fn run(self) -> std::io::Result<()> {
+    pub(crate) async fn run(mut self) -> std::io::Result<()> {
         async fn run_inner<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
             mut session: Session<Stream>,
-            vctx: &mut context::Context,
+            validate_context: &mut context::Context,
         ) -> std::io::Result<()> {
             loop {
-                let (response, ev) = session.response(vctx);
+                let (response, ev) = session.response(validate_context);
                 session.context.sent = true;
 
                 for response in response.unwrap_or_default() {
@@ -134,25 +139,32 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         sent: true,
                         ..Default::default()
                     };
-                } else if session.receive(vctx).await.unwrap_or(true) {
+                } else if session.receive(validate_context).await.unwrap_or(true) {
                     return Ok(());
                 }
             }
         }
 
-        let mut vctx = context::Context::default();
+        let mut validate_context = context::Context::default();
 
         internal!("Connected to {}", self.peer);
         module::dispatch(
             module::Event::Event(module::Ev::ConnectionOpened),
-            &mut vctx,
+            &mut validate_context,
         );
 
-        let result = run_inner(self, &mut vctx).await;
+        if !module::dispatch(
+            module::Event::Validate(module::ValidateEvent::Connect),
+            &mut validate_context,
+        ) {
+            self.context.state = Phase::Reject;
+        }
+
+        let result = run_inner(self, &mut validate_context).await;
 
         module::dispatch(
             module::Event::Event(module::Ev::ConnectionClosed),
-            &mut vctx,
+            &mut validate_context,
         );
         internal!("Connection closed");
 
@@ -161,49 +173,52 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
     /// Generate the response(s) that should be sent back to the client
     /// depending on the servers state
-    fn response(&mut self, vctx: &mut context::Context) -> Response {
+    #[allow(clippy::too_many_lines)]
+    fn response(&mut self, validate_context: &mut context::Context) -> Response {
         if self.context.sent {
             return (None, Event::ConnectionKeepAlive);
         }
 
         if Phase::DataReceived == self.context.state {
-            module::dispatch(module::Event::Validate(module::ValidateEvent::Data), vctx);
+            module::dispatch(
+                module::Event::Validate(module::ValidateEvent::Data),
+                validate_context,
+            );
         }
 
         let status = match self.context.state {
             Phase::Connect => (
-                Some(vec![format!(
-                    "{} {}",
-                    Status::ServiceReady,
-                    if self.banner.is_empty() {
-                        "localhost"
-                    } else {
-                        &self.banner
-                    }
-                )]),
+                Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
                 Event::ConnectionKeepAlive,
             ),
             Phase::Ehlo | Phase::Helo => {
-                let mut response = vec![format!(
+                let response = vec![format!(
                     "{}{}Hello {}",
                     Status::Ok,
                     if self.extensions.is_empty() { ' ' } else { '-' },
                     std::str::from_utf8(&self.context.message).unwrap()
                 )];
 
-                for (idx, extension) in self.extensions.iter().enumerate() {
-                    response.push(format!(
-                        "{}{}{}",
-                        Status::Ok,
-                        if idx == self.extensions.len() - 1 {
-                            ' '
-                        } else {
-                            '-'
+                (
+                    Some(self.extensions.iter().enumerate().fold(
+                        response,
+                        |mut response, (idx, extension)| {
+                            response.push(format!(
+                                "{}{}{}",
+                                Status::Ok,
+                                if idx == self.extensions.len() - 1 {
+                                    ' '
+                                } else {
+                                    '-'
+                                },
+                                extension
+                            ));
+
+                            response
                         },
-                        extension
-                    ));
-                }
-                (Some(response), Event::ConnectionKeepAlive)
+                    )),
+                    Event::ConnectionKeepAlive,
+                )
             }
             Phase::StartTLS if self.tls_context.is_available() => (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
@@ -228,7 +243,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     .queue
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let default = format!("Ok: queued as {queue}");
-                let response = vctx.data_response.as_ref().unwrap_or(&default);
+                let response = validate_context.data_response.as_ref().unwrap_or(&default);
 
                 (
                     Some(vec![format!("{} {}", Status::Ok, response)]),
@@ -248,6 +263,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionClose,
             ),
+            Phase::Reject => (
+                Some(vec![format!(
+                    "{} {}",
+                    Status::Unavailable,
+                    validate_context.data_response.clone().unwrap_or_default()
+                )]),
+                Event::ConnectionClose,
+            ),
             _ => (
                 Some(vec![format!(
                     "{} Invalid command '{}'",
@@ -261,7 +284,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         status
     }
 
-    async fn receive(&mut self, vctx: &mut context::Context) -> std::io::Result<bool> {
+    async fn receive(&mut self, validate_context: &mut context::Context) -> std::io::Result<bool> {
         let mut received_data = [0; 4096];
 
         match self.connection.receive(&mut received_data).await {
@@ -288,7 +311,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                             sent: false,
                         };
 
-                        vctx.data = Some(self.context.message.clone());
+                        validate_context.data = Some(self.context.message.clone().into());
                     }
                 } else {
                     let command = Command::from(received);
@@ -297,7 +320,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     incoming!("{command}");
 
                     self.context = Context {
-                        state: self.context.state.transition(command, vctx),
+                        state: self.context.state.transition(command, validate_context),
                         message,
                         sent: false,
                     };
