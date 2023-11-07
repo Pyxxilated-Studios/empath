@@ -31,6 +31,7 @@ tokio = { version = "1", default-features = false, features = [
     "parking_lot",
     "rt-multi-thread",
     "signal",
+    "sync",
     "tracing",
 ] }
 toml = "0.8.0"

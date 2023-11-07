@@ -6,18 +6,25 @@ compile_error!("Only macos and unix are currently supported");
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    #[allow(clippy::redundant_pub_crate)]
+    let server_handle = tokio::spawn(Server::from_config("./empath.config.toml")?.run());
+
+    tokio::signal::ctrl_c().await?;
+    internal!(
+        level = INFO,
+        "Shutting down... (Send SIGINT again to force shut down)"
+    );
+
     let resp = tokio::select! {
         biased;
-        rc = Server::from_config("./empath.config.toml")?.run() => {
-            rc.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
-        }
-        rc = tokio::signal::ctrl_c() => {
-            rc
+        rc = server_handle => { rc?.map_err(|err| std::io::Error::new(std::io::ErrorKind::Interrupted, err.to_string())) }
+        _ = Server::shutdown() => { Ok(()) }
+        _ = tokio::signal::ctrl_c() => {
+            internal!(level = INFO, "Forcefully shutting down");
+           Ok(())
         }
     };
 
-    internal!("Shutting down...");
+    internal!(level = INFO, "Reached target shutdown");
 
     resp
 }

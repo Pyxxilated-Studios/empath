@@ -1,12 +1,14 @@
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::{
+    net::{IpAddr, Ipv6Addr, SocketAddr},
+    sync::{atomic::AtomicU64, Arc},
+};
 
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-use crate::smtp::session::Session;
-use empath_common::{internal, listener::Listener};
+use crate::{smtp::session::Session, SHUTDOWN_BROADCAST};
+use empath_common::{internal, listener::Listener, tracing::debug};
 use empath_smtp_proto::extensions::Extension;
 
 use self::session::TlsContext;
@@ -55,23 +57,44 @@ impl Listener for Smtp {
             .expect("Unable to start smtp session");
         let queue = Arc::new(AtomicU64::default());
 
-        loop {
-            let (stream, address) = listener
-                .accept()
-                .await
-                .expect("Unable to accept connection");
+        let mut sessions = vec![];
 
-            tokio::spawn(
-                Session::create(
-                    Arc::clone(&queue),
-                    stream,
-                    address,
-                    self.extensions.clone(),
-                    self.tls_context.clone(),
-                    self.banner.clone(),
-                )
-                .run(),
-            );
+        let mut receiver = SHUTDOWN_BROADCAST.subscribe();
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = receiver.recv() => {
+                    internal!(level = INFO, "SMTP Listener {}:{} Received Shutdown signal, finishing sessions ...", self.address, self.port);
+                    join_all(sessions).await;
+                    SHUTDOWN_BROADCAST.send(crate::Signal::Finalised).expect("Failed to shutdown");
+                    break;
+                }
+
+                connection = listener.accept() => {
+                    debug!("Connection received");
+                    let (stream, address) = connection.expect("Unable to accept connection");
+
+                    sessions.push(tokio::spawn(
+                        Session::create(
+                            Arc::clone(&queue),
+                            stream,
+                            address,
+                            self.extensions.clone(),
+                            self.tls_context.clone(),
+                            self.banner.clone(),
+                        )
+                        .run(),
+                    ));
+                }
+            }
         }
+
+        internal!(
+            level = INFO,
+            "SMTP Listener {}:{} Shutdown",
+            self.address,
+            self.port
+        );
     }
 }

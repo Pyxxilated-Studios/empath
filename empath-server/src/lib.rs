@@ -1,7 +1,10 @@
+#![feature(lazy_cell)]
+
 use std::{
     fs::File,
     io::{BufReader, Read},
     path::Path,
+    sync::LazyLock,
 };
 
 use futures_util::future::join_all;
@@ -13,7 +16,9 @@ use empath_common::{
     internal,
     listener::Listener,
     logging,
+    tracing::debug,
 };
+use tokio::sync::broadcast::{self, error::RecvError};
 
 pub mod smtp;
 
@@ -35,6 +40,17 @@ pub struct Server {
 }
 
 unsafe impl Send for Server {}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Signal {
+    Shutdown,
+    Finalised,
+}
+
+pub static SHUTDOWN_BROADCAST: LazyLock<broadcast::Sender<Signal>> = LazyLock::new(|| {
+    let (sender, _receiver) = broadcast::channel(64);
+    sender
+});
 
 impl Server {
     ///
@@ -85,8 +101,9 @@ impl Server {
 
         empath_common::ffi::module::init(self.modules)?;
 
-        let iter = self.listeners.iter();
-        join_all(iter.map(|listener| listener.spawn())).await;
+        join_all(self.listeners.iter().map(|listener| listener.spawn())).await;
+
+        debug!("Finished with Server::run");
 
         Ok(())
     }
@@ -103,5 +120,30 @@ impl Server {
         self.modules.push(module);
 
         self
+    }
+
+    /// Shutdown all listeners
+    ///
+    /// # Errors
+    /// If all receivers for the channel have dropped (should be unlikely, and should have bubbled up
+    /// before reaching this point)
+    ///
+    pub async fn shutdown() -> std::io::Result<()> {
+        let mut receiver = SHUTDOWN_BROADCAST.subscribe();
+
+        SHUTDOWN_BROADCAST
+            .send(Signal::Shutdown)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Interrupted, e.to_string()))?;
+        debug!("Shutdown Signal sent. Waiting for responses...");
+
+        loop {
+            match receiver.recv().await {
+                Ok(s) => debug!("Received {s:?}"),
+                Err(RecvError::Closed) => break,
+                Err(e) => debug!("Received: {e:?}"),
+            }
+        }
+
+        Ok(())
     }
 }
