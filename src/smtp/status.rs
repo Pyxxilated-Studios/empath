@@ -1,7 +1,8 @@
-use std::fmt::{Display, Formatter};
+use core::fmt::{self, Display, Formatter};
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd)]
 #[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[allow(dead_code)]
 pub enum Status {
     ServiceReady = 220,
     GoodBye = 221,
@@ -14,7 +15,7 @@ pub enum Status {
 }
 
 impl Display for Status {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         write!(fmt, "{}", *self as i32)
     }
 }

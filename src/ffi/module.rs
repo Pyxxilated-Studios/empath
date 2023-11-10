@@ -8,7 +8,7 @@ use libloading::Library;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{context::Context, internal};
+use crate::{internal, smtp::context::Context};
 
 use super::string::StringVector;
 
@@ -38,6 +38,7 @@ pub enum Event {
 }
 
 #[repr(C)]
+#[allow(dead_code)]
 pub enum Mod {
     ValidationListener(Validation),
     EventListener {
@@ -77,6 +78,7 @@ impl Mod {
 }
 
 #[repr(C)]
+#[allow(clippy::struct_field_names)]
 pub struct Validators {
     pub validate_connect: Option<unsafe extern "C" fn(&mut Context) -> i32>,
     pub validate_mail_from: Option<unsafe extern "C" fn(&mut Context) -> i32>,
@@ -127,6 +129,7 @@ pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut Mod {
 }
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum Error {
     #[error("Module load error: {0}")]
     Load(#[from] libloading::Error),
@@ -163,7 +166,7 @@ impl Display for SharedLibrary {
 }
 
 impl SharedLibrary {
-    fn init(&mut self) -> Result<(), Error> {
+    fn init(&mut self) -> anyhow::Result<()> {
         unsafe {
             let lib = Library::new(&self.name)?;
 
@@ -219,7 +222,7 @@ impl Module {
 /// # Panics
 /// This will panic if it is unable to write to the module store
 ///
-pub fn init(modules: Vec<Module>) -> Result<(), Error> {
+pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
     internal!(level = INFO, "Initialising modules ...");
 
     for mut module in modules {

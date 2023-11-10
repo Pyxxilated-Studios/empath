@@ -1,11 +1,9 @@
-use std::{
-    fmt::{Display, Formatter},
-    str::FromStr,
-};
+use core::fmt::{self, Display, Formatter};
+use std::str::FromStr;
 
 use mailparse::MailAddrList;
 
-use empath_common::tracing::error;
+use tracing::error;
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum HeloVariant {
@@ -14,7 +12,7 @@ pub enum HeloVariant {
 }
 
 impl Display for HeloVariant {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Ehlo(_) => "EHLO",
             Self::Helo(_) => "HELO",
@@ -49,7 +47,7 @@ impl Command {
 }
 
 impl Display for Command {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
             Self::MailFrom(s) => fmt.write_fmt(format_args!(
@@ -73,11 +71,10 @@ impl FromStr for Command {
         let comm = comm.trim();
 
         if comm.starts_with("MAIL FROM:") {
-            let from = mailparse::addrparse(command[command.find(':').unwrap() + 1..].trim())
-                .map_err(|e| {
-                    error!("{e}");
-                    e.to_string()
-                })?;
+            let from = mailparse::addrparse(command[10..].trim()).map_err(|e| {
+                error!("{e}");
+                e.to_string()
+            })?;
 
             Ok(Self::MailFrom(if from.is_empty() {
                 None
@@ -85,8 +82,7 @@ impl FromStr for Command {
                 Some(from)
             }))
         } else if comm.starts_with("RCPT TO:") {
-            let to = mailparse::addrparse(command[command.find(':').unwrap() + 1..].trim())
-                .map_err(|e| e.to_string())?;
+            let to = mailparse::addrparse(command[8..].trim()).map_err(|e| e.to_string())?;
             Ok(Self::RcptTo(to))
         } else if comm.starts_with("EHLO") {
             Ok(Self::Helo(HeloVariant::Ehlo(

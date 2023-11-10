@@ -12,22 +12,27 @@ pub struct Context {
     pub rcpt_to: Option<MailAddrList>,
     pub data: Option<Arc<[u8]>>,
     pub data_response: Option<String>,
+    #[allow(clippy::struct_field_names)]
     pub context: HashMap<String, String>,
 }
 
 impl Context {
-    #[must_use]
+    /// Returns a reference to the id of this [`Context`].
+    #[inline]
     pub fn id(&self) -> &str {
         &self.id
     }
 
+    #[allow(dead_code)]
+    #[inline]
     pub fn message(&self) -> String {
         self.data.as_deref().map_or_else(Default::default, |data| {
             std::str::from_utf8(data).map_or_else(|_| format!("{:#?}", self.data), str::to_string)
         })
     }
 
-    #[must_use]
+    /// Returns the sender of this [`Context`].
+    #[inline]
     pub fn sender(&self) -> String {
         self.mail_from
             .clone()
@@ -35,7 +40,7 @@ impl Context {
             .unwrap_or_default()
     }
 
-    #[must_use]
+    /// Returns the recipients of this [`Context`].
     pub fn recipients(&self) -> Vec<String> {
         self.rcpt_to
             .clone()
@@ -233,7 +238,7 @@ mod test {
         ptr::null,
     };
 
-    use crate::context::{
+    use crate::smtp::context::{
         em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
         em_context_get_recipients, em_context_set, em_context_set_data_response, Context,
     };

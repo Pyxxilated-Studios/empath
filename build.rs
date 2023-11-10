@@ -4,11 +4,8 @@ use std::path::PathBuf;
 use cbindgen::Config;
 
 fn main() {
-    let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-
     let package_name = env::var("CARGO_PKG_NAME").unwrap();
-    let package_name = package_name.split('-').collect::<Vec<_>>().join("/");
-    let output_file = PathBuf::from(&crate_dir).join(format!("../target/{package_name}.h"));
+    let output_file = PathBuf::from(&format!("target/{package_name}.h"));
 
     let mut config = Config::default();
     config.language = cbindgen::Language::C;
@@ -20,16 +17,11 @@ fn main() {
  * Instead, alter build.rs, or the respective rust item.
  **/",
     ));
-    config.after_includes = if package_name.ends_with("common") {
-        Some(
-                "#define EM_DECLARE_MODULE(ty, ...) Mod declare_module() { return (Mod){ty ## Listener, {__VA_ARGS__}}; }"
-                    .to_string(),
-            )
-    } else {
-        None
-    };
+    config.after_includes = Some(
+        "#define EM_DECLARE_MODULE(ty, ...) Mod declare_module() { return (Mod){ty ## Listener, {__VA_ARGS__}}; }".to_string(),
+    );
 
-    cbindgen::generate_with_config(crate_dir, config)
+    cbindgen::generate_with_config(".", config)
         .unwrap()
         .write_to_file(output_file);
 }

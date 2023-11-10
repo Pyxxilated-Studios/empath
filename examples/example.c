@@ -1,12 +1,10 @@
 // Compile with
-//   gcc example.c -fpic -shared -o libexample.so -l empath_common -L \
-//     ../target/debug
+//   gcc example.c -fpic -shared -o libexample.so -l empath -L ../target/debug
 //
 
 #include <stdio.h>
 
-#include "../target/empath/common.h"
-#include "../target/empath/smtp/proto.h"
+#include "../target/empath.h"
 
 int something = 1;
 
