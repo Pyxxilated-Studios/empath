@@ -1,19 +1,61 @@
-use std::{
-    borrow::BorrowMut,
-    fmt::{Display, Formatter},
-    str::FromStr,
-};
+pub mod command;
+pub mod connection;
+pub mod context;
+pub mod extensions;
+pub mod session;
+pub mod status;
+
+use core::fmt::{self, Display, Formatter};
+use std::{borrow::BorrowMut, net::SocketAddr, sync::Arc};
 
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpStream;
 
-use empath_common::context::Context;
-use empath_common::ffi::module;
+use crate::{
+    ffi,
+    traits::{
+        fsm::FiniteStateMachine,
+        protocol::{Protocol, SessionHandler},
+    },
+};
 
-use crate::command::{Command, HeloVariant};
+use self::{
+    command::{Command, HeloVariant},
+    context::Context,
+    session::{Session, TlsContext},
+};
+
+#[derive(Default, Deserialize, Serialize)]
+pub struct Smtp {
+    state: State,
+}
+
+impl Protocol for Smtp {
+    type Session = Session<TcpStream>;
+
+    fn handle(&self, stream: TcpStream, peer: SocketAddr) -> Self::Session {
+        Session::create(
+            Arc::default(),
+            stream,
+            peer,
+            Vec::default(),
+            TlsContext::default(),
+            String::default(),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionHandler for Session<TcpStream> {
+    async fn run(self) -> anyhow::Result<()> {
+        Ok(Self::run(self).await?)
+    }
+}
 
 #[repr(C)]
-#[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum Phase {
+#[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub enum State {
+    #[default]
     Connect,
     Ehlo,
     Helo,
@@ -30,8 +72,8 @@ pub enum Phase {
     Close,
 }
 
-impl Display for Phase {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+impl Display for State {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         fmt.write_str(match self {
             Self::Reading | Self::DataReceived => "",
             Self::Connect => "Connect",
@@ -50,11 +92,11 @@ impl Display for Phase {
     }
 }
 
-impl FromStr for Phase {
-    type Err = Self;
+impl TryFrom<&str> for State {
+    type Error = Self;
 
-    fn from_str(command: &str) -> Result<Self, <Self as FromStr>::Err> {
-        match command.to_ascii_uppercase().trim() {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.to_ascii_uppercase().trim() {
             "EHLO" => Ok(Self::Ehlo),
             "HELO" => Ok(Self::Helo),
             "STARTTLS" => Ok(Self::StartTLS),
@@ -67,10 +109,12 @@ impl FromStr for Phase {
     }
 }
 
-impl Phase {
-    #[must_use]
-    pub fn transition(self, command: Command, validate_context: &mut Context) -> Self {
-        match (self, command) {
+impl FiniteStateMachine for State {
+    type Input = Command;
+    type Context = Context;
+
+    fn transition(self, input: Self::Input, validate_context: &mut Self::Context) -> Self {
+        match (self, input) {
             (Self::Connect, Command::Helo(HeloVariant::Ehlo(id))) => {
                 validate_context.id = id;
                 Self::Ehlo
@@ -81,8 +125,8 @@ impl Phase {
             }
             (Self::Ehlo | Self::Helo, Command::StartTLS) => Self::StartTLS,
             (Self::Ehlo | Self::Helo | Self::StartTLS, Command::MailFrom(from)) => {
-                module::dispatch(
-                    module::Event::Validate(module::ValidateEvent::MailFrom),
+                ffi::module::dispatch(
+                    ffi::module::Event::Validate(ffi::module::ValidateEvent::MailFrom),
                     validate_context,
                 );
                 validate_context.mail_from = from;

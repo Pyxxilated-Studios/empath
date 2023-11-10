@@ -18,27 +18,26 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
     pub(crate) async fn send<S: Display + Send + Sync>(
         &mut self,
         response: &S,
-    ) -> std::io::Result<usize> {
-        match self {
-            Self::Plain { stream } => stream.write(format!("{response}\r\n").as_bytes()).await,
-            Self::Tls { stream } => stream.write(format!("{response}\r\n").as_bytes()).await,
-        }
+    ) -> anyhow::Result<usize> {
+        Ok(match self {
+            Self::Plain { stream } => stream.write(format!("{response}\r\n").as_bytes()).await?,
+            Self::Tls { stream } => stream.write(format!("{response}\r\n").as_bytes()).await?,
+        })
     }
 
-    pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> std::io::Result<Self> {
+    pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> anyhow::Result<Self> {
         if !tls_context.is_available() {
-            return Err(std::io::Error::new(
+            return Err(anyhow::Error::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "No tls certificate or key provided",
-            ));
+            )));
         }
 
         let certfile = File::open(&tls_context.certificate)?;
         let mut reader = BufReader::new(certfile);
-        let certs = rustls_pemfile::certs(&mut reader)
-            .unwrap()
-            .iter()
-            .map(|v| tokio_rustls::rustls::Certificate(v.clone()))
+        let certs = rustls_pemfile::certs(&mut reader)?
+            .into_iter()
+            .map(tokio_rustls::rustls::Certificate)
             .collect::<Vec<_>>();
 
         let keyfile = File::open(&tls_context.key)?;
@@ -51,25 +50,23 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                 | rustls_pemfile::Item::ECKey(key),
             ) => tokio_rustls::rustls::PrivateKey(key),
             _ => {
-                return Err(std::io::Error::new(
+                return Err(anyhow::Error::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Unable to determine key file",
-                ));
+                )));
             }
         };
 
         let config = ServerConfig::builder()
             .with_safe_default_cipher_suites()
             .with_safe_default_kx_groups()
-            .with_safe_default_protocol_versions()
-            .expect("Invalid TLS Configuration")
+            .with_safe_default_protocol_versions()?
             .with_client_cert_verifier(Arc::new(AllowAnyAnonymousOrAuthenticatedClient::new({
                 let mut cert_store = RootCertStore::empty();
-                cert_store.add(certs.first().unwrap()).unwrap();
+                cert_store.add(&certs[0])?;
                 cert_store
             })))
-            .with_single_cert_with_ocsp_and_sct(certs, key, Vec::new(), Vec::new())
-            .expect("Invalid Cert Configuration");
+            .with_single_cert_with_ocsp_and_sct(certs, key, Vec::new(), Vec::new())?;
 
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
@@ -81,10 +78,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         })
     }
 
-    pub(crate) async fn receive(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            Self::Plain { stream } => stream.read(buf).await,
-            Self::Tls { stream } => stream.read(buf).await,
-        }
+    pub(crate) async fn receive(&mut self, buf: &mut [u8]) -> anyhow::Result<usize> {
+        Ok(match self {
+            Self::Plain { stream } => stream.read(buf).await?,
+            Self::Tls { stream } => stream.read(buf).await?,
+        })
     }
 }

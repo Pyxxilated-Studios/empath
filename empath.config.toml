@@ -1,21 +1,8 @@
-[[listener]]
+[[smtp.listener]]
+socket = "[::]:1025"
 
-[listener.Smtp]
-address = "::"
-port = 1025
-banner = ""
-
-[listener.Smtp.tls_context]
-certificate = "certificate.crt"
-key = "private.key"
-
-[[listener]]
-
-[listener.Smtp]
-address = "::"
-port = 1026
-extensions = []
-banner = "Other"
+[[smtp.listener]]
+socket = "[::]:1026"
 
 [[module]]
 type = "SharedLibrary"
@@ -25,4 +12,4 @@ arguments = ["arg1"]
 [[module]]
 type = "SharedLibrary"
 name = "./examples/libevent.so"
-arguments = ["arg1", "arg2"]
+arguments = [ "arg1", "arg2"]

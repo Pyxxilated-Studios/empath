@@ -7,10 +7,12 @@ use mailparse::MailParseError;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use empath_common::{context, ffi::module, incoming, internal, outgoing};
-use empath_smtp_proto::{command::Command, extensions::Extension, phase::Phase, status::Status};
+use crate::{
+    ffi::module, incoming, internal, outgoing, smtp::command::Command,
+    traits::fsm::FiniteStateMachine,
+};
 
-use super::connection::Connection;
+use super::{connection::Connection, context, extensions::Extension, status::Status, State};
 
 #[repr(C)]
 #[derive(PartialEq, Eq)]
@@ -21,7 +23,7 @@ pub enum Event {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Context {
-    pub state: Phase,
+    pub state: State,
     pub message: Vec<u8>,
     pub sent: bool,
 }
@@ -29,7 +31,7 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
-            state: Phase::Connect,
+            state: State::Connect,
             message: Vec::default(),
             sent: false,
         }
@@ -93,7 +95,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         banner: String,
     ) -> Self {
         if tls_context.is_available() {
-            extensions.push(Extension::STARTTLS);
+            extensions.push(Extension::Starttls);
         }
 
         Self {
@@ -111,11 +113,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         }
     }
 
-    pub(crate) async fn run(mut self) -> std::io::Result<()> {
+    pub(crate) async fn run(mut self) -> anyhow::Result<()> {
         async fn run_inner<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
             mut session: Session<Stream>,
             validate_context: &mut context::Context,
-        ) -> std::io::Result<()> {
+        ) -> anyhow::Result<()> {
             loop {
                 let (response, ev) = session.response(validate_context);
                 session.context.sent = true;
@@ -132,7 +134,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 if Event::ConnectionClose == ev {
                     return Ok(());
                 } else if session.tls_context.is_available()
-                    && session.context.state == Phase::StartTLS
+                    && session.context.state == State::StartTLS
                 {
                     session.connection = session.connection.upgrade(&session.tls_context).await?;
                     session.context = Context {
@@ -157,7 +159,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             module::Event::Validate(module::ValidateEvent::Connect),
             &mut validate_context,
         ) {
-            self.context.state = Phase::Reject;
+            self.context.state = State::Reject;
         }
 
         let result = run_inner(self, &mut validate_context).await;
@@ -179,19 +181,19 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             return (None, Event::ConnectionKeepAlive);
         }
 
-        if Phase::DataReceived == self.context.state {
+        if State::DataReceived == self.context.state {
             module::dispatch(
                 module::Event::Validate(module::ValidateEvent::Data),
                 validate_context,
             );
         }
 
-        let status = match self.context.state {
-            Phase::Connect => (
+        let response = match self.context.state {
+            State::Connect => (
                 Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
                 Event::ConnectionKeepAlive,
             ),
-            Phase::Ehlo | Phase::Helo => {
+            State::Ehlo | State::Helo => {
                 let response = vec![format!(
                     "{}{}Hello {}",
                     Status::Ok,
@@ -220,16 +222,16 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            Phase::StartTLS if self.tls_context.is_available() => (
+            State::StartTLS if self.tls_context.is_available() => (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
                 Event::ConnectionKeepAlive,
             ),
-            Phase::MailFrom | Phase::RcptTo => (
+            State::MailFrom | State::RcptTo => (
                 Some(vec![format!("{} Ok", Status::Ok)]),
                 Event::ConnectionKeepAlive,
             ),
-            Phase::Data => {
-                self.context.state = Phase::Reading;
+            State::Data => {
+                self.context.state = State::Reading;
                 (
                     Some(vec![format!(
                         "{} End data with <CR><LF>.<CR><LF>",
@@ -238,7 +240,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            Phase::DataReceived => {
+            State::DataReceived => {
                 let queue = self
                     .queue
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -250,12 +252,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            Phase::Quit => (
+            State::Quit => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
                 Event::ConnectionClose,
             ),
-            Phase::Reading | Phase::Close => (None, Event::ConnectionKeepAlive),
-            Phase::InvalidCommandSequence => (
+            State::Reading | State::Close => (None, Event::ConnectionKeepAlive),
+            State::InvalidCommandSequence => (
                 Some(vec![format!(
                     "{} {}",
                     Status::InvalidCommandSequence,
@@ -263,7 +265,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionClose,
             ),
-            Phase::Reject => (
+            State::Reject => (
                 Some(vec![format!(
                     "{} {}",
                     Status::Unavailable,
@@ -281,10 +283,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             ),
         };
 
-        status
+        response
     }
 
-    async fn receive(&mut self, validate_context: &mut context::Context) -> std::io::Result<bool> {
+    async fn receive(&mut self, validate_context: &mut context::Context) -> anyhow::Result<bool> {
         let mut received_data = [0; 4096];
 
         match self.connection.receive(&mut received_data).await {
@@ -301,12 +303,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             Ok(bytes_read) => {
                 let received = &received_data[..bytes_read];
 
-                if self.context.state == Phase::Reading {
+                if self.context.state == State::Reading {
                     self.context.message.extend(received);
 
                     if self.context.message.ends_with(b"\r\n.\r\n") {
                         self.context = Context {
-                            state: Phase::DataReceived,
+                            state: State::DataReceived,
                             message: self.context.message.clone(),
                             sent: false,
                         };

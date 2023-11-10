@@ -1,8 +1,5 @@
-[workspace]
-members = ["empath", "empath-common", "empath-server", "empath-smtp-proto"]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "empath"
 version = "0.0.2"
 edition = "2021"
 authors = ["Pyxxil"]
@@ -13,15 +10,26 @@ homepage = "https://github.com/Pyxxilated-Studios/empath"
 license = "Apache-2.0"
 readme = "README.md"
 categories = ["command-line-utilities", "email", "network-programming"]
+build = "build.rs"
 
-[workspace.dependencies]
+[lib]
+name = "empath"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "empath"
+path = "bin/main.rs"
+
+[dependencies]
+anyhow = "1.0.75"
 async-trait = "0.1"
-cbindgen = { version = "0.26.0", default-features = false }
-empath-common = { path = "./empath-common" }
-empath-server = { path = "./empath-server" }
-empath-smtp-proto = { path = "./empath-smtp-proto" }
+chrono = "0.4"
+futures-util = "0.3"
 libc = "0.2"
+libloading = "0.8"
 mailparse = "0.14"
+rustls-pemfile = "1.0"
 serde = { version = "1", features = ["rc"] }
 thiserror = "1"
 tokio = { version = "1", default-features = false, features = [
@@ -31,10 +39,27 @@ tokio = { version = "1", default-features = false, features = [
     "parking_lot",
     "rt-multi-thread",
     "signal",
+    "sync",
+    "time",
     "tracing",
 ] }
+tokio-rustls = "0.24"
 toml = "0.8.8"
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+    "std",
+] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "fmt",
+    "parking_lot",
+    "tracing-log",
+    "time",
+] }
 typetag = "0.2"
+
+[build-dependencies]
+cbindgen = { version = "0.26.0", default-features = false }
 
 [profile.release]
 lto = "thin"
