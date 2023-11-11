@@ -1,6 +1,6 @@
 use crate::smtp::context::Context;
 
-pub mod module;
+pub mod modules;
 pub mod string;
 
 #[allow(dead_code)]

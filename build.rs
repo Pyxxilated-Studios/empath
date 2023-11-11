@@ -18,7 +18,7 @@ fn main() {
  **/",
     ));
     config.after_includes = Some(
-        "#define EM_DECLARE_MODULE(ty, ...) Mod declare_module() { return (Mod){ty ## Listener, {__VA_ARGS__}}; }".to_string(),
+        "\n#define EM_DECLARE_MODULE(ty, ...) Mod declare_module() { return (Mod){ty ## Listener, {__VA_ARGS__}}; }\n".to_string(),
     );
 
     cbindgen::generate_with_config(".", config)

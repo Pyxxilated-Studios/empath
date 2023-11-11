@@ -1,10 +1,9 @@
-use std::sync::Arc;
-use std::{
-    fmt::Display,
-    sync::{LazyLock, RwLock},
-};
+use core::fmt::{self, Display};
+#[cfg(test)]
+use std::sync::Mutex;
+use std::sync::{Arc, LazyLock, RwLock};
 
-use libloading::Library;
+#[cfg(not(test))]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -12,16 +11,11 @@ use crate::{internal, smtp::context::Context};
 
 use super::string::StringVector;
 
+pub mod library;
+pub mod validate;
+
 type Init = unsafe extern "C" fn(StringVector) -> i32;
 type DeclareModule = unsafe extern "C" fn() -> Mod;
-
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum ValidateEvent {
-    Connect,
-    MailFrom,
-    Data,
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -33,14 +27,14 @@ pub enum Ev {
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Event {
-    Validate(ValidateEvent),
+    Validate(validate::Event),
     Event(Ev),
 }
 
 #[repr(C)]
 #[allow(dead_code)]
 pub enum Mod {
-    ValidationListener(Validation),
+    ValidationListener(validate::Validation),
     EventListener {
         module_name: *const libc::c_char,
         init: Init,
@@ -77,48 +71,6 @@ impl Mod {
     }
 }
 
-#[repr(C)]
-#[allow(clippy::struct_field_names)]
-pub struct Validators {
-    pub validate_connect: Option<unsafe extern "C" fn(&mut Context) -> i32>,
-    pub validate_mail_from: Option<unsafe extern "C" fn(&mut Context) -> i32>,
-    pub validate_data: Option<unsafe extern "C" fn(&mut Context) -> i32>,
-}
-
-#[repr(C)]
-#[allow(clippy::module_name_repetitions)]
-pub struct Validation {
-    pub module_name: *const libc::c_char,
-    pub init: Init,
-    pub validators: Validators,
-}
-
-unsafe impl Send for Validation {}
-
-unsafe impl Sync for Validation {}
-
-impl Validation {
-    ///
-    /// Emit an event to this library's validation module
-    ///
-    pub fn emit(&self, event: Event, context: &mut Context) -> i32 {
-        match event {
-            Event::Validate(ValidateEvent::Data) => unsafe {
-                self.validators.validate_data.map(|func| func(context))
-            },
-            Event::Validate(ValidateEvent::MailFrom) => unsafe {
-                self.validators.validate_mail_from.map(|func| func(context))
-            },
-            Event::Validate(ValidateEvent::Connect) => unsafe {
-                self.validators.validate_connect.map(|func| func(context))
-            },
-            _ => None,
-        }
-        .inspect(|v| internal!("{event:?} = {v}"))
-        .unwrap_or_default()
-    }
-}
-
 ///
 /// This solely exists in order to have the `Validation` be parsed
 /// by cbindgen. Perhaps in future it will be done in a better way.
@@ -141,65 +93,32 @@ pub enum Error {
     Validation(String),
 }
 
-#[allow(
-    clippy::unsafe_derive_deserialize,
-    reason = "The unsafe aspects have nothing to do with the struct"
-)]
-#[derive(Serialize, Deserialize)]
-pub struct SharedLibrary {
-    pub name: String,
-    pub arguments: Arc<[Arc<str>]>,
-    #[serde(skip)]
-    module: Option<Mod>,
-    #[serde(skip)]
-    library: Option<Library>,
+#[cfg(test)]
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Test {
+    pub(crate) validate_connect_called: bool,
+    pub(crate) validate_mail_from_called: bool,
+    pub(crate) validate_data_called: bool,
+    pub(crate) event_called: bool,
 }
 
-unsafe impl Send for SharedLibrary {}
-
-unsafe impl Sync for SharedLibrary {}
-
-impl Display for SharedLibrary {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}: {:?}", self.name, self.arguments))
-    }
-}
-
-impl SharedLibrary {
-    fn init(&mut self) -> anyhow::Result<()> {
-        unsafe {
-            let lib = Library::new(&self.name)?;
-
-            let module = lib.get::<DeclareModule>(b"declare_module")?();
-            let response = module.init(&self.arguments);
-            internal!("init: {response:#?}");
-            self.module = Some(module);
-            self.library = Some(lib);
-
-            Ok(())
-        }
-    }
-
-    fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
-        self.module
-            .as_ref()
-            .map(|module| module.emit(event, validate_context))
-            .unwrap_or_default()
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[cfg_attr(not(test), derive(Serialize, Deserialize))]
+#[cfg_attr(not(test), serde(tag = "type"))]
+#[cfg_attr(test, allow(dead_code))]
 pub enum Module {
-    SharedLibrary(SharedLibrary),
+    SharedLibrary(library::Shared),
+    #[cfg(test)]
+    TestModule(Arc<Mutex<Test>>),
 }
 
-static MODULE_STORE: LazyLock<RwLock<Vec<Module>>> = LazyLock::new(RwLock::default);
+pub static MODULE_STORE: LazyLock<RwLock<Vec<Module>>> = LazyLock::new(RwLock::default);
 
 impl Display for Module {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SharedLibrary(lib) => f.write_fmt(format_args!("{lib}")),
+            #[cfg(test)]
+            Self::TestModule { .. } => f.write_str("Test Module"),
         }
     }
 }
@@ -208,6 +127,8 @@ impl Module {
     fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
         match self {
             Self::SharedLibrary(ref lib) => lib.emit(event, validate_context),
+            #[cfg(test)]
+            Self::TestModule { .. } => test::emit(self, event, validate_context),
         }
     }
 }
@@ -230,6 +151,8 @@ pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
 
         match module {
             Module::SharedLibrary(ref mut lib) => lib.init()?,
+            #[cfg(test)]
+            Module::TestModule { .. } => {}
         }
 
         MODULE_STORE
@@ -254,12 +177,40 @@ pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
 /// This will panic if it fails to read the Module Store
 ///
 pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
-    let store = MODULE_STORE.read().expect("Unable to load modules");
+    let mut store = MODULE_STORE.write().expect("Unable to load modules");
 
     internal!("Dispatching: {event:?}");
 
     store
-        .iter()
+        .iter_mut()
         .inspect(|m| internal!(level = DEBUG, "{m}"))
         .all(|module| module.emit(event, validate_context) == 0)
+}
+
+#[cfg(test)]
+pub(crate) mod test {
+    use std::sync::Arc;
+
+    use crate::smtp::context::Context;
+
+    use super::{validate, Event, Module};
+
+    pub(crate) fn test_module() -> Module {
+        Module::TestModule(Arc::default())
+    }
+
+    pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
+        if let Module::TestModule(ref mute) = module {
+            let mut inner = mute.lock().unwrap();
+            match event {
+                Event::Validate(validate::Event::Connect) => inner.validate_connect_called = true,
+                Event::Validate(validate::Event::MailFrom) => {
+                    inner.validate_mail_from_called = true
+                }
+                Event::Validate(validate::Event::Data) => inner.validate_data_called = true,
+                Event::Event(_) => inner.event_called = true,
+            }
+        }
+        0
+    }
 }

@@ -1,21 +1,22 @@
 use std::sync::LazyLock;
 
+#[cfg(not(test))]
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::{
-    ffi::module::{self, Module},
-    internal,
+    ffi::modules::{self, Module},
+    internal, logging,
     server::Server,
     smtp::Smtp,
 };
 
 #[allow(clippy::unsafe_derive_deserialize)]
-#[derive(Default, Deserialize, Serialize)]
+#[cfg_attr(not(test), derive(Default, Deserialize, Serialize))]
 pub struct Controller {
-    #[serde(alias = "smtp")]
+    #[cfg_attr(not(test), serde(alias = "smtp"))]
     smtp_server: Server<Smtp>,
-    #[serde(alias = "module")]
+    #[cfg_attr(not(test), serde(alias = "module"))]
     modules: Vec<Module>,
 }
 
@@ -49,6 +50,7 @@ async fn shutdown() -> anyhow::Result<()> {
                     Err(e) => tracing::debug!("Received: {e:?}"),
                 }
             }
+
             _ = tokio::signal::ctrl_c() => {
                 break;
             }
@@ -66,11 +68,11 @@ impl Controller {
     /// This function will return an error if any of the configured modules fail
     /// to initialise.
     pub async fn run(self) -> anyhow::Result<()> {
-        crate::logging::init();
+        logging::init();
 
         internal!("Controller running");
 
-        module::init(self.modules)?;
+        modules::init(self.modules)?;
 
         tokio::select! {
             _ = self.smtp_server.serve() => {}

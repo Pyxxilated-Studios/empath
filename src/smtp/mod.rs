@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 
 use crate::{
-    ffi,
+    ffi::modules::{self, validate},
     traits::{
         fsm::FiniteStateMachine,
         protocol::{Protocol, SessionHandler},
@@ -125,8 +125,8 @@ impl FiniteStateMachine for State {
             }
             (Self::Ehlo | Self::Helo, Command::StartTLS) => Self::StartTLS,
             (Self::Ehlo | Self::Helo | Self::StartTLS, Command::MailFrom(from)) => {
-                ffi::module::dispatch(
-                    ffi::module::Event::Validate(ffi::module::ValidateEvent::MailFrom),
+                modules::dispatch(
+                    modules::Event::Validate(validate::Event::MailFrom),
                     validate_context,
                 );
                 validate_context.mail_from = from;

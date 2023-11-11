@@ -1,4 +1,4 @@
-use std::{fmt::Display, fs::File, io::BufReader, sync::Arc};
+use std::{fs::File, io::BufReader, sync::Arc};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{
@@ -15,7 +15,7 @@ pub enum Connection<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
-    pub(crate) async fn send<S: Display + Send + Sync>(
+    pub(crate) async fn send<S: core::fmt::Display + Send + Sync>(
         &mut self,
         response: &S,
     ) -> anyhow::Result<usize> {

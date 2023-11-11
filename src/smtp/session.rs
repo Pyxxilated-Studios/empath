@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    ffi::module, incoming, internal, outgoing, smtp::command::Command,
+    ffi::modules,
+    incoming, internal, outgoing,
+    smtp::{command::Command, session::modules::validate},
     traits::fsm::FiniteStateMachine,
 };
 
@@ -54,8 +56,8 @@ impl From<MailParseError> for SMTPError {
     }
 }
 
-impl From<module::Error> for SMTPError {
-    fn from(value: module::Error) -> Self {
+impl From<modules::Error> for SMTPError {
+    fn from(value: modules::Error) -> Self {
         Self {
             status: Status::Error,
             message: format!("{value}"),
@@ -150,13 +152,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         let mut validate_context = context::Context::default();
 
         internal!("Connected to {}", self.peer);
-        module::dispatch(
-            module::Event::Event(module::Ev::ConnectionOpened),
+        modules::dispatch(
+            modules::Event::Event(modules::Ev::ConnectionOpened),
             &mut validate_context,
         );
 
-        if !module::dispatch(
-            module::Event::Validate(module::ValidateEvent::Connect),
+        if !modules::dispatch(
+            modules::Event::Validate(validate::Event::Connect),
             &mut validate_context,
         ) {
             self.context.state = State::Reject;
@@ -164,8 +166,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
         let result = run_inner(self, &mut validate_context).await;
 
-        module::dispatch(
-            module::Event::Event(module::Ev::ConnectionClosed),
+        modules::dispatch(
+            modules::Event::Event(modules::Ev::ConnectionClosed),
             &mut validate_context,
         );
         internal!("Connection closed");
@@ -182,8 +184,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         }
 
         if State::DataReceived == self.context.state {
-            module::dispatch(
-                module::Event::Validate(module::ValidateEvent::Data),
+            modules::dispatch(
+                modules::Event::Validate(validate::Event::Data),
                 validate_context,
             );
         }
@@ -193,7 +195,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Ehlo | State::Helo => {
+            State::Helo => (
+                Some(vec![format!(
+                    "{} Hello {}",
+                    Status::Ok,
+                    std::str::from_utf8(&self.context.message).unwrap()
+                )]),
+                Event::ConnectionKeepAlive,
+            ),
+            State::Ehlo => {
                 let response = vec![format!(
                     "{}{}Hello {}",
                     Status::Ok,
@@ -298,7 +308,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             Ok(0) => {
                 // Reading 0 bytes means the other side has closed the
                 // connection or is done writing, then so are we.
-                Ok(false)
+                Ok(true)
             }
             Ok(bytes_read) => {
                 let received = &received_data[..bytes_read];
@@ -316,7 +326,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         validate_context.data = Some(self.context.message.clone().into());
                     }
                 } else {
-                    let command = Command::from(received);
+                    let command = Command::try_from(received).map_or_else(|e| e, |c| c);
                     let message = command.inner().into_bytes();
 
                     incoming!("{command}");
@@ -330,6 +340,137 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                 Ok(false)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{io::Cursor, sync::Arc};
+
+    use crate::{
+        ffi::modules::{self, test::test_module, Module, Test, MODULE_STORE},
+        smtp::{context::Context, session::Session, status::Status, State},
+    };
+
+    use super::TlsContext;
+
+    #[tokio::test]
+    #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    async fn session() {
+        let banner = "testing";
+        let mut context = Context::default();
+        let cursor = Cursor::<Vec<u8>>::default();
+
+        let mut session = Session::create(
+            Arc::default(),
+            cursor,
+            "[::]:25".parse().unwrap(),
+            Vec::default(),
+            TlsContext::default(),
+            banner.to_string(),
+        );
+
+        let response = session.response(&mut context);
+        assert!(response.0.is_some());
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} {banner}", Status::ServiceReady)
+        );
+
+        let response = session.receive(&mut context).await;
+        assert!(response.is_ok_and(|v| v));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    async fn helo() {
+        let banner = "testing";
+        let mut context = Context::default();
+        let host = "Test";
+        let mut cursor = Cursor::<Vec<u8>>::default();
+        cursor
+            .get_mut()
+            .extend_from_slice(format!("HELO {host}").as_bytes());
+
+        let mut session = Session::create(
+            Arc::default(),
+            cursor,
+            "[::]:25".parse().unwrap(),
+            Vec::default(),
+            TlsContext::default(),
+            banner.to_string(),
+        );
+
+        let _ = session.response(&mut context);
+        let response = session.receive(&mut context).await;
+        assert!(response.is_ok());
+        assert!(!response.unwrap());
+
+        let response = session.response(&mut context);
+        assert!(response.0.is_some());
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} Hello {host}", Status::Ok)
+        );
+
+        let response = session.receive(&mut context).await;
+        assert!(response.is_ok_and(|v| v));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    async fn modules() {
+        let banner = "testing";
+        let mut context = Context::default();
+        let mut cursor = Cursor::<Vec<u8>>::default();
+        cursor
+            .get_mut()
+            .extend_from_slice("MAIL FROM: test@gmail.com".as_bytes());
+
+        let module = test_module();
+        let inited = modules::init(vec![module]);
+        assert!(inited.is_ok());
+
+        let mut session = Session::create(
+            Arc::default(),
+            cursor,
+            "[::]:25".parse().unwrap(),
+            Vec::default(),
+            TlsContext::default(),
+            banner.to_string(),
+        );
+
+        session.context.state = State::Helo;
+
+        let _ = session.response(&mut context);
+        let response = session.receive(&mut context).await;
+        assert!(response.is_ok());
+        assert!(!response.unwrap());
+
+        let response = session.response(&mut context);
+        assert!(response.0.is_some());
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} Ok", Status::Ok)
+        );
+
+        let response = session.receive(&mut context).await;
+        assert!(response.is_ok_and(|v| v));
+
+        let store = MODULE_STORE.read().unwrap();
+        let module = store.first().unwrap();
+        if let Module::TestModule(mute) = module {
+            let test = mute.lock().unwrap();
+            assert_eq!(
+                *test,
+                Test {
+                    validate_mail_from_called: true,
+                    ..Test::default()
+                }
+            );
+        } else {
+            panic!("Expected TestModule to exist");
         }
     }
 }
