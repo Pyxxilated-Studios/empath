@@ -1,4 +1,4 @@
-use std::{ffi::CString, ptr::null, str::Utf8Error, sync::Arc};
+use std::{ffi::CString, ptr::null, rc::Rc, str::Utf8Error, sync::Arc};
 
 #[repr(C)]
 pub struct String {
@@ -66,6 +66,16 @@ impl From<&Arc<str>> for String {
     }
 }
 
+impl From<&Rc<str>> for String {
+    fn from(value: &Rc<str>) -> Self {
+        let len = value.len();
+        let id = CString::new(value.as_bytes()).expect("Invalid CString");
+        let data = id.into_raw();
+
+        Self { len, data }
+    }
+}
+
 impl From<&std::string::String> for String {
     fn from(value: &std::string::String) -> Self {
         Self::from(value.as_str())
@@ -99,6 +109,19 @@ impl From<Vec<std::string::String>> for StringVector {
 
 impl From<&[Arc<str>]> for StringVector {
     fn from(value: &[Arc<str>]) -> Self {
+        let recipients = value
+            .iter()
+            .map(std::convert::Into::into)
+            .collect::<Vec<_>>();
+
+        let (data, len, _) = recipients.into_raw_parts();
+
+        Self { len, data }
+    }
+}
+
+impl From<&[Rc<str>]> for StringVector {
+    fn from(value: &[Rc<str>]) -> Self {
         let recipients = value
             .iter()
             .map(std::convert::Into::into)

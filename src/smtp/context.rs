@@ -105,10 +105,10 @@ pub extern "C" fn em_context_get_sender(validate_context: &Context) -> ffi::stri
 pub unsafe extern "C" fn em_context_set_sender(
     validate_context: &mut Context,
     sender: *const libc::c_char,
-) -> i32 {
+) -> bool {
     if sender.is_null() {
         validate_context.mail_from = None;
-        return 0;
+        return true;
     }
 
     let sender = CStr::from_ptr(sender);
@@ -117,16 +117,16 @@ pub unsafe extern "C" fn em_context_set_sender(
         Ok(sender) => match mailparse::addrparse(sender) {
             Ok(sender) => {
                 validate_context.mail_from = Some(sender);
-                0
+                true
             }
             Err(err) => {
                 internal!("Invalid sender: {:?} :: {}", sender, err.to_string());
-                1
+                false
             }
         },
         Err(err) => {
             internal!("Invalid sender: {:?} :: {}", sender, err.to_string());
-            1
+            false
         }
     }
 }
@@ -152,7 +152,7 @@ pub extern "C" fn em_context_get_data(validate_context: &Context) -> ffi::string
 pub unsafe extern "C" fn em_context_set_data_response(
     validate_context: &mut Context,
     response: *const libc::c_char,
-) -> i32 {
+) -> bool {
     if response.is_null() {
         validate_context.data_response = None;
     } else {
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn em_context_set_data_response(
         validate_context.data_response = Some(response.to_owned().to_string_lossy().to_string());
     }
 
-    0
+    true
 }
 
 ///
@@ -307,10 +307,10 @@ mod test {
         };
 
         unsafe {
-            assert_eq!(
-                em_context_set_sender(&mut validate_context, cstr!("test@test.com")),
-                0
-            );
+            assert!(em_context_set_sender(
+                &mut validate_context,
+                cstr!("test@test.com")
+            ));
             assert_eq!(
                 validate_context.mail_from,
                 Some(mailparse::addrparse("test@test.com").unwrap())
@@ -327,7 +327,7 @@ mod test {
         };
 
         unsafe {
-            assert_eq!(em_context_set_sender(&mut validate_context, null()), 0);
+            assert!(em_context_set_sender(&mut validate_context, null()));
             assert_eq!(validate_context.mail_from, None);
         }
     }
@@ -343,10 +343,7 @@ mod test {
         };
 
         unsafe {
-            assert_eq!(
-                em_context_set_sender(&mut validate_context, cstr!("---")),
-                1
-            );
+            assert!(!em_context_set_sender(&mut validate_context, cstr!("---")));
             assert_eq!(validate_context.mail_from, Some(sender));
         }
     }
@@ -381,7 +378,7 @@ mod test {
 
         let ans =
             unsafe { em_context_set_data_response(&mut validate_context, cstr!("Test Response")) };
-        assert_eq!(ans, 0);
+        assert!(ans);
         assert_eq!(
             validate_context.data_response,
             Some("Test Response".to_string())
@@ -393,7 +390,7 @@ mod test {
         };
 
         let ans = unsafe { em_context_set_data_response(&mut validate_context, null()) };
-        assert_eq!(ans, 0);
+        assert!(ans);
         assert_eq!(validate_context.data_response, None);
     }
 
