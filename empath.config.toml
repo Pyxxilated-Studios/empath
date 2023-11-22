@@ -1,6 +1,10 @@
 [[smtp.listener]]
 socket = "[::]:1025"
 
+[smtp.listener.tls]
+certificate = "certificate.crt"
+key = "private.key"
+
 [[smtp.listener]]
 socket = "[::]:1026"
 

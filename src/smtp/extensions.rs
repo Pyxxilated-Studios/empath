@@ -2,7 +2,7 @@ use core::fmt::{self, Display};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Extension {
     Starttls,
 }

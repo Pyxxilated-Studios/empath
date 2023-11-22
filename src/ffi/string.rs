@@ -9,7 +9,8 @@ pub struct String {
 impl Drop for String {
     fn drop(&mut self) {
         if !self.data.is_null() {
-            let _ = unsafe { CString::from_raw(self.data.cast_mut()) };
+            let _ =
+                unsafe { CString::from_raw((self.data.cast::<core::ffi::c_char>()).cast_mut()) };
         }
     }
 }
@@ -50,7 +51,7 @@ impl From<&str> for String {
     fn from(value: &str) -> Self {
         let len = value.len();
         let id = CString::new(value).expect("Invalid CString");
-        let data = id.into_raw();
+        let data = id.into_raw().cast::<i8>();
 
         Self { len, data }
     }
@@ -60,7 +61,7 @@ impl From<&Arc<str>> for String {
     fn from(value: &Arc<str>) -> Self {
         let len = value.len();
         let id = CString::new(value.as_bytes()).expect("Invalid CString");
-        let data = id.into_raw();
+        let data = id.into_raw().cast::<i8>();
 
         Self { len, data }
     }
@@ -70,7 +71,7 @@ impl From<&Rc<str>> for String {
     fn from(value: &Rc<str>) -> Self {
         let len = value.len();
         let id = CString::new(value.as_bytes()).expect("Invalid CString");
-        let data = id.into_raw();
+        let data = id.into_raw().cast::<i8>();
 
         Self { len, data }
     }

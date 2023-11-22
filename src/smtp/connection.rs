@@ -26,6 +26,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
     }
 
     pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> anyhow::Result<Self> {
+        tracing::debug!("Upgrading connection ...");
         if !tls_context.is_available() {
             return Err(anyhow::Error::new(std::io::Error::new(
                 std::io::ErrorKind::Other,

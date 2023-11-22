@@ -11,6 +11,7 @@ pub struct Server<Proto: Protocol> {
 impl<Proto: Protocol> Server<Proto> {
     pub async fn serve(&self) -> anyhow::Result<()> {
         internal!("Server::serve");
+
         futures_util::future::join_all(self.listeners.iter().map(Listener::serve)).await;
 
         Ok(())

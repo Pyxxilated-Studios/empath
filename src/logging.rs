@@ -1,18 +1,7 @@
-use chrono::Utc;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{
-    filter::FilterFn, fmt::time::FormatTime, prelude::__tracing_subscriber_SubscriberExt,
-    util::SubscriberInitExt, Layer,
+    filter::FilterFn, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
 };
-
-struct Time;
-
-impl FormatTime for Time {
-    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
-        let time = Utc::now();
-        w.write_str(&time.to_rfc3339())
-    }
-}
 
 #[macro_export]
 macro_rules! log {
@@ -74,21 +63,16 @@ pub fn init() {
 
     tracing_subscriber::Registry::default()
         .with(
-            (if cfg!(debug_assertions) {
-                tracing_subscriber::fmt::layer()
-            } else {
-                tracing_subscriber::fmt::layer()
-                    .with_file(false)
-                    .with_line_number(false)
-            })
-            .compact()
-            .with_ansi(true)
-            .with_timer(Time)
-            .with_level(false)
-            .with_filter(level)
-            .with_filter(FilterFn::new(|metadata| {
-                metadata.target().starts_with("empath")
-            })),
+            tracing_subscriber::fmt::layer()
+                .with_file(false)
+                .with_line_number(false)
+                .compact()
+                .with_ansi(true)
+                .with_timer(tracing_subscriber::fmt::time::ChronoUtc::rfc_3339())
+                .with_filter(level)
+                .with_filter(FilterFn::new(
+                    |metadata| cfg!(debug_assertions) || metadata.target().starts_with("empath")
+                )),
         )
         .init();
 }

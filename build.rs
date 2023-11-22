@@ -1,14 +1,14 @@
 use std::env;
 use std::path::PathBuf;
 
-use cbindgen::Config;
+use cbindgen::{Config, Language};
 
-fn main() {
-    let package_name = env::var("CARGO_PKG_NAME").unwrap();
+fn main() -> anyhow::Result<()> {
+    let package_name = env::var("CARGO_PKG_NAME")?;
     let output_file = PathBuf::from(&format!("target/{package_name}.h"));
 
     let mut config = Config::default();
-    config.language = cbindgen::Language::C;
+    config.language = Language::C;
     config.cpp_compat = true;
     config.pragma_once = true;
     config.autogen_warning = Some(String::from(
@@ -18,10 +18,10 @@ fn main() {
  **/",
     ));
     config.after_includes = Some(
-        "\n#define EM_DECLARE_MODULE(ty, ...) Mod declare_module() { return (Mod){ty ## Listener, {__VA_ARGS__}}; }\n".to_string(),
+        "\n#define EM_DECLARE_MODULE(ty, ...) Mod declare_module() { return (Mod){ty ## Listener, {__VA_ARGS__}}; }\n".to_owned(),
     );
 
-    cbindgen::generate_with_config(".", config)
-        .unwrap()
-        .write_to_file(output_file);
+    cbindgen::generate_with_config(".", config)?.write_to_file(output_file);
+
+    Ok(())
 }

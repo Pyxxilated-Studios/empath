@@ -100,6 +100,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             extensions.push(Extension::Starttls);
         }
 
+        tracing::debug!("Extensions ({peer}): {extensions:#?}");
+
         Self {
             queue,
             peer,
@@ -143,6 +145,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         sent: true,
                         ..Default::default()
                     };
+
+                    tracing::debug!("Connection successfully upgraded");
                 } else if session.receive(validate_context).await.unwrap_or(true) {
                     return Ok(());
                 }
@@ -166,24 +170,24 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
         let result = run_inner(self, &mut validate_context).await;
 
+        internal!("Connection closed");
         modules::dispatch(
             modules::Event::Event(modules::Ev::ConnectionClosed),
             &mut validate_context,
         );
-        internal!("Connection closed");
 
         result
     }
 
     /// Generate the response(s) that should be sent back to the client
     /// depending on the servers state
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn response(&mut self, validate_context: &mut context::Context) -> Response {
         if self.context.sent {
             return (None, Event::ConnectionKeepAlive);
         }
 
-        if State::DataReceived == self.context.state {
+        if State::PostDot == self.context.state {
             modules::dispatch(
                 modules::Event::Validate(validate::Event::Data),
                 validate_context,
@@ -250,7 +254,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::DataReceived => {
+            State::PostDot => {
                 let queue = self
                     .queue
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -285,9 +289,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             ),
             _ => (
                 Some(vec![format!(
-                    "{} Invalid command '{}'",
+                    "{} Invalid command",
                     Status::InvalidCommandSequence,
-                    std::str::from_utf8(&self.context.message).unwrap()
                 )]),
                 Event::ConnectionClose,
             ),
@@ -318,7 +321,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                     if self.context.message.ends_with(b"\r\n.\r\n") {
                         self.context = Context {
-                            state: State::DataReceived,
+                            state: State::PostDot,
                             message: self.context.message.clone(),
                             sent: false,
                         };
@@ -336,6 +339,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         message,
                         sent: false,
                     };
+
+                    tracing::debug!("Transitioned to {:#?}", self.context);
                 }
 
                 Ok(false)
