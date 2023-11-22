@@ -3,7 +3,6 @@ use core::fmt::{self, Display};
 use std::sync::Mutex;
 use std::sync::{Arc, LazyLock, RwLock};
 
-#[cfg(not(test))]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -32,7 +31,7 @@ pub enum Event {
 }
 
 #[repr(C)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub enum Mod {
     ValidationListener(validate::Validation),
     EventListener {
@@ -81,7 +80,7 @@ pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut Mod {
 }
 
 #[derive(Error, Debug)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub enum Error {
     #[error("Module load error: {0}")]
     Load(#[from] libloading::Error),
@@ -94,7 +93,7 @@ pub enum Error {
 }
 
 #[cfg(test)]
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Test {
     pub(crate) validate_connect_called: bool,
     pub(crate) validate_mail_from_called: bool,
@@ -102,9 +101,8 @@ pub(crate) struct Test {
     pub(crate) event_called: bool,
 }
 
-#[cfg_attr(not(test), derive(Serialize, Deserialize))]
-#[cfg_attr(not(test), serde(tag = "type"))]
-#[cfg_attr(test, allow(dead_code))]
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(library::Shared),
     #[cfg(test)]

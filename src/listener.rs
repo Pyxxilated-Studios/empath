@@ -7,15 +7,23 @@ use tokio::net::TcpListener;
 use crate::{
     controller::{Signal, SHUTDOWN_BROADCAST},
     internal,
+    smtp::{extensions::Extension, session::TlsContext},
     traits::protocol::{Protocol, SessionHandler},
 };
 
-#[allow(clippy::unsafe_derive_deserialize)]
+#[allow(
+    clippy::unsafe_derive_deserialize,
+    reason = "The unsafe aspects have nothing to do with the struct"
+)]
 #[derive(Deserialize, Serialize)]
 pub struct Listener<Proto: Protocol> {
     #[serde(skip)]
     handler: Proto,
     socket: SocketAddr,
+    #[serde(default)]
+    extensions: Vec<Extension>,
+    #[serde(default)]
+    pub(crate) tls: Option<TlsContext>,
 }
 
 impl<Proto: Protocol> Listener<Proto> {
@@ -40,10 +48,14 @@ impl<Proto: Protocol> Listener<Proto> {
                 }
 
                 connection = listener.accept() => {
-                    tracing::debug!("Connection received");
+                    tracing::debug!("Connection received on {}", self.socket);
                     let (stream, address) = connection?;
-                    let handler = self.handler.handle(stream, address);
-                    sessions.push(tokio::spawn(async move { handler.run().await }));
+                    let handler = self.handler.handle(stream, address, &self.extensions, self.tls.clone());
+                    sessions.push(tokio::spawn(async move {
+                        if let Err(err) = handler.run().await {
+                            internal!(level = ERROR, "Error: {err}");
+                        }
+                    }));
                 }
             }
         }
@@ -56,6 +68,8 @@ impl<Proto: Protocol> From<SocketAddr> for Listener<Proto> {
     fn from(socket: SocketAddr) -> Self {
         Self {
             handler: Proto::default(),
+            extensions: Vec::default(),
+            tls: None,
             socket,
         }
     }

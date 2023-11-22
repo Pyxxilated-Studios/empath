@@ -2,7 +2,7 @@ use core::fmt::{self, Display, Formatter};
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub enum Status {
     ServiceReady = 220,
     GoodBye = 221,

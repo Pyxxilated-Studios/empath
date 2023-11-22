@@ -22,6 +22,7 @@ use crate::{
 use self::{
     command::{Command, HeloVariant},
     context::Context,
+    extensions::Extension,
     session::{Session, TlsContext},
 };
 
@@ -33,13 +34,19 @@ pub struct Smtp {
 impl Protocol for Smtp {
     type Session = Session<TcpStream>;
 
-    fn handle(&self, stream: TcpStream, peer: SocketAddr) -> Self::Session {
+    fn handle(
+        &self,
+        stream: TcpStream,
+        peer: SocketAddr,
+        extensions: &[Extension],
+        tls_context: Option<TlsContext>,
+    ) -> Self::Session {
         Session::create(
             Arc::default(),
             stream,
             peer,
-            Vec::default(),
-            TlsContext::default(),
+            extensions.to_vec(),
+            tls_context.unwrap_or_default(),
             String::default(),
         )
     }
@@ -64,7 +71,7 @@ pub enum State {
     RcptTo,
     Data,
     Reading,
-    DataReceived,
+    PostDot,
     Quit,
     InvalidCommandSequence,
     Invalid,
@@ -75,7 +82,7 @@ pub enum State {
 impl Display for State {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         fmt.write_str(match self {
-            Self::Reading | Self::DataReceived => "",
+            Self::Reading | Self::PostDot => "",
             Self::Connect => "Connect",
             Self::Close => "Close",
             Self::Ehlo => "EHLO",
@@ -117,14 +124,17 @@ impl FiniteStateMachine for State {
         match (self, input) {
             (Self::Connect, Command::Helo(HeloVariant::Ehlo(id))) => {
                 validate_context.id = id;
+                validate_context.extended = true;
                 Self::Ehlo
             }
             (Self::Connect, Command::Helo(HeloVariant::Helo(id))) => {
                 validate_context.id = id;
                 Self::Helo
             }
-            (Self::Ehlo | Self::Helo, Command::StartTLS) => Self::StartTLS,
-            (Self::Ehlo | Self::Helo | Self::StartTLS, Command::MailFrom(from)) => {
+            (Self::Ehlo | Self::Helo, Command::StartTLS) if validate_context.extended => {
+                Self::StartTLS
+            }
+            (Self::Ehlo | Self::Helo | Self::StartTLS | Self::PostDot, Command::MailFrom(from)) => {
                 modules::dispatch(
                     modules::Event::Validate(validate::Event::MailFrom),
                     validate_context,

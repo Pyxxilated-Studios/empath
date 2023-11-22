@@ -7,6 +7,7 @@ use crate::{ffi, internal};
 
 #[derive(Default, Debug)]
 pub struct Context {
+    pub extended: bool,
     pub id: String,
     pub mail_from: Option<MailAddrList>,
     pub rcpt_to: Option<MailAddrList>,
@@ -23,11 +24,14 @@ impl Context {
         &self.id
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     #[inline]
     pub fn message(&self) -> String {
         self.data.as_deref().map_or_else(Default::default, |data| {
-            std::str::from_utf8(data).map_or_else(|_| format!("{:#?}", self.data), str::to_string)
+            charset::Charset::for_encoding(encoding_rs::UTF_8)
+                .decode(data)
+                .0
+                .to_string()
         })
     }
 

@@ -2,8 +2,6 @@ use core::fmt::{self, Display, Formatter};
 
 use mailparse::MailAddrList;
 
-use tracing::error;
-
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum HeloVariant {
     Ehlo(String),
@@ -80,34 +78,33 @@ impl TryFrom<&str> for Command {
                 return Ok(Self::MailFrom(None));
             }
 
-            let from = mailparse::addrparse(addr).map_err(|e| {
-                error!("{e}");
-                Self::Invalid(command.to_owned())
-            })?;
-
-            Ok(Self::MailFrom(if from.is_empty() {
-                None
-            } else {
-                Some(from)
-            }))
+            mailparse::addrparse(addr).map_or_else(
+                |err| Err(Self::Invalid(err.to_string())),
+                |from| {
+                    Ok(Self::MailFrom(if from.is_empty() {
+                        None
+                    } else {
+                        Some(from)
+                    }))
+                },
+            )
         } else if comm.starts_with("RCPT TO:") {
             if comm.len() < 9 {
                 return Err(Self::Invalid(command.to_owned()));
             }
 
-            let to = mailparse::addrparse(command[8..].trim())
-                .map_err(|e| Self::Invalid(e.to_string()))?;
-            Ok(Self::RcptTo(to))
+            mailparse::addrparse(command[8..].trim()).map_or_else(
+                |e| Err(Self::Invalid(e.to_string())),
+                |to| Ok(Self::RcptTo(to)),
+            )
         } else if comm.starts_with("EHLO") || comm.starts_with("HELO") {
-            let Some((command, host)) = command.split_once(' ') else {
-                return Err(Self::Invalid(format!("Expected hostname in {comm}")));
-            };
-
-            Ok(if command.starts_with('H') {
-                Self::Helo(HeloVariant::Helo(host.to_string()))
-            } else {
-                Self::Helo(HeloVariant::Ehlo(host.to_string()))
-            })
+            match command.split_once(' ') {
+                None => Err(Self::Invalid(format!("Expected hostname in {comm}"))),
+                Some((_, host)) if comm.starts_with('H') => {
+                    Ok(Self::Helo(HeloVariant::Helo(host.to_string())))
+                }
+                Some((_, host)) => Ok(Self::Helo(HeloVariant::Ehlo(host.to_string()))),
+            }
         } else {
             match comm {
                 "DATA" => Ok(Self::Data),
@@ -140,7 +137,7 @@ impl TryFrom<String> for Command {
 
 #[cfg(test)]
 mod test {
-    use crate::smtp::command::Command;
+    use crate::smtp::command::{Command, HeloVariant};
 
     // Idea copied from https://gitlab.com/erichdongubler-experiments/rust_case_permutations/blob/master/src/lib.rs#L97
     fn string_casing(string: &str) -> impl Iterator<Item = String> {
@@ -216,7 +213,7 @@ mod test {
     }
 
     #[test]
-    fn ehlo_command() {
+    fn helo_ehlo_command() {
         assert!(Command::try_from("EHLO").is_err());
         assert!(Command::try_from("HELO").is_err());
 
@@ -235,22 +232,28 @@ mod test {
         );
 
         for comm in string_casing("ehlo") {
-            assert!(matches!(
-                Command::try_from(format!("{comm} test")),
-                Ok(Command::Helo(_))
-            ));
+            assert!(
+                matches!(
+                    Command::try_from(format!("{comm} test")),
+                    Ok(Command::Helo(HeloVariant::Ehlo(_)))
+                ),
+                "'{comm}' should map to Ehlo"
+            );
         }
 
         for comm in string_casing("helo") {
-            assert!(matches!(
-                Command::try_from(format!("{comm} test")),
-                Ok(Command::Helo(_))
-            ));
+            assert!(
+                matches!(
+                    Command::try_from(format!("{comm} test")),
+                    Ok(Command::Helo(HeloVariant::Helo(_))),
+                ),
+                "'{comm}' should map to Helo"
+            );
         }
     }
 
     #[test]
-    fn rest() {
+    fn other_commands() {
         assert_eq!(Command::try_from("DATA"), Ok(Command::Data));
         for comm in string_casing("data") {
             assert_eq!(Command::try_from(comm), Ok(Command::Data));

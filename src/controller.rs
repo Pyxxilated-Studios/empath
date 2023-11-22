@@ -1,6 +1,5 @@
 use std::sync::LazyLock;
 
-#[cfg(not(test))]
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -11,12 +10,15 @@ use crate::{
     smtp::Smtp,
 };
 
-#[allow(clippy::unsafe_derive_deserialize)]
-#[cfg_attr(not(test), derive(Default, Deserialize, Serialize))]
+#[allow(
+    clippy::unsafe_derive_deserialize,
+    reason = "The unsafe aspects have nothing to do with the struct"
+)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Controller {
-    #[cfg_attr(not(test), serde(alias = "smtp"))]
+    #[serde(alias = "smtp")]
     smtp_server: Server<Smtp>,
-    #[cfg_attr(not(test), serde(alias = "module"))]
+    #[serde(alias = "module")]
     modules: Vec<Module>,
 }
 
