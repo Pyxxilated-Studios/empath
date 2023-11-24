@@ -3,6 +3,7 @@
 //
 
 #include <stdio.h>
+#include <string.h>
 
 #include "../target/empath.h"
 
@@ -14,11 +15,7 @@ void test(Context *validate_context) {
   free_string(id);
 }
 
-int validate_connect(Context *validate_context) {
-  em_context_set_data_response(validate_context, "4.2.1 Failure!");
-
-  return 0;
-}
+int validate_connect(Context *validate_context) { return 0; }
 
 int validate_data(Context *validate_context) {
   test(validate_context);
@@ -43,8 +40,14 @@ int validate_data(Context *validate_context) {
   String data = em_context_get_data(validate_context);
   printf("Data:\n%s\n", data.data);
 
-  if (em_context_set_data_response(validate_context, "Test Response") != 0) {
+  if (em_context_set_response(validate_context, 250, "Test Response") != 0) {
     printf("Unable to set data response\n");
+  }
+
+  if (!strcmp((const char *)em_context_get_sender(validate_context).data,
+              "test@gmail.com")) {
+    em_context_set_response(validate_context, 421, "4.2.1 Failure!");
+    return 1;
   }
 
   if (em_context_exists(validate_context, "test")) {

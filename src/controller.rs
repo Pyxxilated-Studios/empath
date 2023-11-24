@@ -34,8 +34,16 @@ pub static SHUTDOWN_BROADCAST: LazyLock<broadcast::Sender<Signal>> = LazyLock::n
 });
 
 async fn shutdown() -> anyhow::Result<()> {
-    let _ = tokio::signal::ctrl_c().await;
-    internal!("CTRL+C entered -- Enter it again to force shutdown");
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            internal!("CTRL+C entered -- Enter it again to force shutdown");
+        }
+        _ = terminate.recv() => {
+            internal!("Terminate Signal received, shutting down");
+        }
+    };
 
     let mut receiver = SHUTDOWN_BROADCAST.subscribe();
 
@@ -76,13 +84,18 @@ impl Controller {
 
         modules::init(self.modules)?;
 
-        tokio::select! {
-            _ = self.smtp_server.serve() => {}
-            _ = shutdown() => {}
-        };
+        let ret =
+            tokio::select! {
+                r = self.smtp_server.serve() => {
+                    r
+                }
+                r = shutdown() => {
+                    r
+                }
+            };
 
         internal!("Shutting down...");
 
-        Ok(())
+        ret
     }
 }

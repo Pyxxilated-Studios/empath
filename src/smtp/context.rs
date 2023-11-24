@@ -1,18 +1,19 @@
 use core::slice::SlicePattern;
 use std::{collections::HashMap, ffi::CStr, fmt::Debug, sync::Arc};
 
-use mailparse::MailAddrList;
+use mailparse::MailAddr;
 
 use crate::{ffi, internal};
+
+use super::{envelope::Envelope, status::Status};
 
 #[derive(Default, Debug)]
 pub struct Context {
     pub extended: bool,
+    pub envelope: Envelope,
     pub id: String,
-    pub mail_from: Option<MailAddrList>,
-    pub rcpt_to: Option<MailAddrList>,
     pub data: Option<Arc<[u8]>>,
-    pub data_response: Option<String>,
+    pub response: Option<(Status, String)>,
     #[allow(clippy::struct_field_names)]
     pub context: HashMap<String, String>,
 }
@@ -38,15 +39,20 @@ impl Context {
     /// Returns the sender of this [`Context`].
     #[inline]
     pub fn sender(&self) -> String {
-        self.mail_from
+        self.envelope
+            .sender()
             .clone()
-            .map(|sender| sender.to_string())
+            .map(|sender| match sender {
+                MailAddr::Single(addr) => addr.to_string(),
+                MailAddr::Group(_) => String::default(),
+            })
             .unwrap_or_default()
     }
 
     /// Returns the recipients of this [`Context`].
     pub fn recipients(&self) -> Vec<String> {
-        self.rcpt_to
+        self.envelope
+            .recipients()
             .clone()
             .map(|addrs| {
                 addrs
@@ -111,7 +117,7 @@ pub unsafe extern "C" fn em_context_set_sender(
     sender: *const libc::c_char,
 ) -> bool {
     if sender.is_null() {
-        validate_context.mail_from = None;
+        *validate_context.envelope.sender_mut() = None;
         return true;
     }
 
@@ -120,7 +126,7 @@ pub unsafe extern "C" fn em_context_set_sender(
     match sender.to_str() {
         Ok(sender) => match mailparse::addrparse(sender) {
             Ok(sender) => {
-                validate_context.mail_from = Some(sender);
+                *validate_context.envelope.sender_mut() = Some(sender[0].clone());
                 true
             }
             Err(err) => {
@@ -153,16 +159,22 @@ pub extern "C" fn em_context_get_data(validate_context: &Context) -> ffi::string
 ///
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub unsafe extern "C" fn em_context_set_data_response(
+pub unsafe extern "C" fn em_context_set_response(
     validate_context: &mut Context,
+    status: u32,
     response: *const libc::c_char,
 ) -> bool {
-    if response.is_null() {
-        validate_context.data_response = None;
+    validate_context.response = if response.is_null() {
+        None
     } else {
-        let response = CStr::from_ptr(response);
-        validate_context.data_response = Some(response.to_owned().to_string_lossy().to_string());
-    }
+        Some((
+            Status::from(status),
+            CStr::from_ptr(response)
+                .to_owned()
+                .to_string_lossy()
+                .to_string(),
+        ))
+    };
 
     true
 }
@@ -242,9 +254,13 @@ mod test {
         ptr::null,
     };
 
-    use crate::smtp::context::{
-        em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
-        em_context_get_recipients, em_context_set, em_context_set_data_response, Context,
+    use crate::smtp::{
+        context::{
+            em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
+            em_context_get_recipients, em_context_set, em_context_set_response, Context,
+        },
+        envelope::Envelope,
+        status::Status,
     };
 
     use super::em_context_set_sender;
@@ -278,7 +294,7 @@ mod test {
 
         let mut recipients = mailparse::addrparse("test@gmail.com").unwrap();
         recipients.extend_from_slice(&mailparse::addrparse("test@test.com").unwrap()[..]);
-        validate_context.rcpt_to = Some(recipients);
+        *validate_context.envelope.recipients_mut() = Some(recipients);
 
         let buffer = em_context_get_recipients(&validate_context);
         assert_eq!(buffer.len, 2);
@@ -306,49 +322,53 @@ mod test {
     fn test_set_sender() {
         let mut validate_context = Context {
             id: String::from("Testing"),
-            mail_from: None,
+            envelope: Envelope::default(),
             ..Default::default()
         };
 
         unsafe {
-            assert!(em_context_set_sender(
-                &mut validate_context,
-                cstr!("test@test.com")
-            ));
+            assert!(em_context_set_sender(&mut validate_context, cstr!("test@test.com")));
             assert_eq!(
-                validate_context.mail_from,
-                Some(mailparse::addrparse("test@test.com").unwrap())
+                validate_context.envelope.sender(),
+                &Some(mailparse::addrparse("test@test.com").unwrap()[0].clone())
             );
         }
     }
 
     #[test]
     fn test_null_sender() {
-        let mut validate_context = Context {
-            id: String::from("Testing"),
-            mail_from: Some(mailparse::addrparse("test@test.com").unwrap()),
-            ..Default::default()
-        };
+        let mut envelope = Envelope::default();
+        *envelope.sender_mut() = Some(mailparse::addrparse("test@test.com").unwrap()[0].clone());
+
+        let mut validate_context =
+            Context {
+                id: String::from("Testing"),
+                envelope,
+                ..Default::default()
+            };
 
         unsafe {
             assert!(em_context_set_sender(&mut validate_context, null()));
-            assert_eq!(validate_context.mail_from, None);
+            assert_eq!(validate_context.envelope.sender(), &None);
         }
     }
 
     #[test]
     fn test_invalid_sender() {
         let sender = mailparse::addrparse("test@test.com").unwrap();
+        let mut envelope = Envelope::default();
+        *envelope.sender_mut() = Some(sender[0].clone());
 
-        let mut validate_context = Context {
-            id: String::from("Testing"),
-            mail_from: Some(sender.clone()),
-            ..Default::default()
-        };
+        let mut validate_context =
+            Context {
+                id: String::from("Testing"),
+                envelope,
+                ..Default::default()
+            };
 
         unsafe {
             assert!(!em_context_set_sender(&mut validate_context, cstr!("---")));
-            assert_eq!(validate_context.mail_from, Some(sender));
+            assert_eq!(validate_context.envelope.sender(), &Some(sender[0].clone()));
         }
     }
 
@@ -380,22 +400,28 @@ mod test {
     fn test_set_data_response() {
         let mut validate_context = Context::default();
 
-        let ans =
-            unsafe { em_context_set_data_response(&mut validate_context, cstr!("Test Response")) };
+        let ans = unsafe {
+            em_context_set_response(
+                &mut validate_context,
+                Status::Ok.into(),
+                cstr!("Test Response"),
+            )
+        };
         assert!(ans);
         assert_eq!(
-            validate_context.data_response,
-            Some("Test Response".to_string())
+            validate_context.response,
+            Some((Status::Ok, "Test Response".to_owned()))
         );
 
         let mut validate_context = Context {
-            data_response: Some("Test".to_string()),
+            response: Some((Status::Ok, "Test".to_owned())),
             ..Default::default()
         };
 
-        let ans = unsafe { em_context_set_data_response(&mut validate_context, null()) };
+        let ans =
+            unsafe { em_context_set_response(&mut validate_context, Status::Ok.into(), null()) };
         assert!(ans);
-        assert_eq!(validate_context.data_response, None);
+        assert_eq!(validate_context.response, None);
     }
 
     #[test]
