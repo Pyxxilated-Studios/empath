@@ -124,6 +124,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         ) -> anyhow::Result<()> {
             loop {
                 let (response, ev) = session.response(validate_context);
+                validate_context.response = None;
                 session.context.sent = true;
 
                 for response in response.unwrap_or_default() {
@@ -194,6 +195,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             );
         }
 
+        if let Some((status, ref response)) = validate_context.response {
+            return (
+                Some(vec![format!("{} {}", status, response)]),
+                Event::ConnectionKeepAlive,
+            );
+        }
+
         let response = match self.context.state {
             State::Connect => (
                 Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
@@ -258,40 +266,37 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 let queue = self
                     .queue
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let default = format!("Ok: queued as {queue}");
-                let response = validate_context.data_response.as_ref().unwrap_or(&default);
+                let default = (Status::Ok, format!("Ok: queued as {queue}"));
+                let response = validate_context.response.as_ref().unwrap_or(&default);
 
                 (
-                    Some(vec![format!("{} {}", Status::Ok, response)]),
+                    Some(vec![format!("{} {}", response.0, response.1)]),
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::Quit => (
-                Some(vec![format!("{} Bye", Status::GoodBye)]),
-                Event::ConnectionClose,
-            ),
+            State::Quit => {
+                (
+                    Some(vec![format!("{} Bye", Status::GoodBye)]),
+                    Event::ConnectionClose,
+                )
+            }
             State::Reading | State::Close => (None, Event::ConnectionKeepAlive),
             State::InvalidCommandSequence => (
-                Some(vec![format!(
-                    "{} {}",
-                    Status::InvalidCommandSequence,
-                    self.context.state
-                )]),
+                Some(vec![format!("{} {}", Status::InvalidCommandSequence, self.context.state)]),
                 Event::ConnectionClose,
             ),
-            State::Reject => (
-                Some(vec![format!(
-                    "{} {}",
-                    Status::Unavailable,
-                    validate_context.data_response.clone().unwrap_or_default()
-                )]),
-                Event::ConnectionClose,
-            ),
+            State::Reject => {
+                let default = (Status::Unavailable, "Unavailable".to_owned());
+                let (status, response) = validate_context.response.as_ref().unwrap_or(&default);
+                (
+                    Some(vec![format!("{} {}", status, response)]),
+                    Event::ConnectionClose,
+                )
+            }
             _ => (
-                Some(vec![format!(
-                    "{} Invalid command",
-                    Status::InvalidCommandSequence,
-                )]),
+                Some(vec![
+                    format!("{} Invalid command", Status::InvalidCommandSequence,)
+                ]),
                 Event::ConnectionClose,
             ),
         };
@@ -334,11 +339,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                     incoming!("{command}");
 
-                    self.context = Context {
-                        state: self.context.state.transition(command, validate_context),
-                        message,
-                        sent: false,
-                    };
+                    self.context =
+                        Context {
+                            state: self.context.state.transition(command, validate_context),
+                            message,
+                            sent: false,
+                        };
 
                     tracing::debug!("Transitioned to {:#?}", self.context);
                 }

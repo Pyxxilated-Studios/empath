@@ -1,6 +1,6 @@
 use core::fmt::{self, Display, Formatter};
 
-use mailparse::MailAddrList;
+use mailparse::{MailAddr, MailAddrList};
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum HeloVariant {
@@ -22,7 +22,7 @@ pub enum Command {
     Helo(HeloVariant),
     /// If this is `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
     /// from [RFC-5321](https://www.ietf.org/rfc/rfc5321.txt).
-    MailFrom(Option<MailAddrList>),
+    MailFrom(Option<MailAddr>),
     RcptTo(MailAddrList),
     Data,
     Quit,
@@ -34,7 +34,13 @@ impl Command {
     #[must_use]
     pub fn inner(&self) -> String {
         match self {
-            Self::MailFrom(from) => from.clone().map(|f| f.to_string()).unwrap_or_default(),
+            Self::MailFrom(from) => from
+                .clone()
+                .map(|f| match f {
+                    MailAddr::Group(_) => String::default(),
+                    MailAddr::Single(s) => s.to_string(),
+                })
+                .unwrap_or_default(),
             Self::RcptTo(to) => to.to_string(),
             Self::Invalid(command) => command.clone(),
             Self::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => id.clone(),
@@ -49,7 +55,12 @@ impl Display for Command {
             Self::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
             Self::MailFrom(s) => fmt.write_fmt(format_args!(
                 "MAIL FROM:{}",
-                s.clone().map(|f| f.to_string()).unwrap_or_default()
+                s.clone()
+                    .map(|f| match f {
+                        MailAddr::Group(_) => String::default(),
+                        MailAddr::Single(s) => s.to_string(),
+                    })
+                    .unwrap_or_default()
             )),
             Self::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{rcpt}")),
             Self::Data => fmt.write_str("DATA"),
@@ -84,7 +95,7 @@ impl TryFrom<&str> for Command {
                     Ok(Self::MailFrom(if from.is_empty() {
                         None
                     } else {
-                        Some(from)
+                        Some(from[0].clone())
                     }))
                 },
             )
@@ -169,9 +180,7 @@ mod test {
     fn mail_from_command() {
         assert_eq!(
             Command::try_from("Mail From: test@gmail.com"),
-            Ok(Command::MailFrom(
-                mailparse::addrparse("test@gmail.com").ok()
-            ))
+            Ok(Command::MailFrom(Some(mailparse::addrparse("test@gmail.com").unwrap()[0].clone())))
         );
 
         assert!(Command::try_from("Mail From:").is_err());
@@ -195,9 +204,7 @@ mod test {
     fn rcpt_to_command() {
         assert_eq!(
             Command::try_from("Rcpt To: test@gmail.com"),
-            Ok(Command::RcptTo(
-                mailparse::addrparse("test@gmail.com").unwrap()
-            ))
+            Ok(Command::RcptTo(mailparse::addrparse("test@gmail.com").unwrap()))
         );
 
         assert!(Command::try_from("Rcpt To:").is_err());
@@ -219,16 +226,16 @@ mod test {
 
         assert_eq!(
             Command::try_from("EHLO Testing things"),
-            Ok(Command::Helo(crate::smtp::command::HeloVariant::Ehlo(
-                String::from("Testing things")
-            )))
+            Ok(Command::Helo(
+                crate::smtp::command::HeloVariant::Ehlo(String::from("Testing things"))
+            ))
         );
 
         assert_eq!(
             Command::try_from("HELO Testing things"),
-            Ok(Command::Helo(crate::smtp::command::HeloVariant::Helo(
-                String::from("Testing things")
-            )))
+            Ok(Command::Helo(
+                crate::smtp::command::HeloVariant::Helo(String::from("Testing things"))
+            ))
         );
 
         for comm in string_casing("ehlo") {

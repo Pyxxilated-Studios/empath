@@ -1,12 +1,13 @@
 pub mod command;
 pub mod connection;
 pub mod context;
+pub mod envelope;
 pub mod extensions;
 pub mod session;
 pub mod status;
 
 use core::fmt::{self, Display, Formatter};
-use std::{borrow::BorrowMut, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
@@ -139,14 +140,14 @@ impl FiniteStateMachine for State {
                     modules::Event::Validate(validate::Event::MailFrom),
                     validate_context,
                 );
-                validate_context.mail_from = from;
+                *validate_context.envelope.sender_mut() = from;
                 Self::MailFrom
             }
             (Self::RcptTo | Self::MailFrom, Command::RcptTo(to)) => {
-                if let Some(rcpts) = validate_context.rcpt_to.borrow_mut() {
+                if let Some(rcpts) = validate_context.envelope.recipients_mut() {
                     rcpts.extend_from_slice(&to[..]);
                 } else {
-                    validate_context.rcpt_to = Some(to);
+                    *validate_context.envelope.recipients_mut() = Some(to);
                 }
                 Self::RcptTo
             }
