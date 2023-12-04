@@ -36,20 +36,28 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
 
         let certfile = File::open(&tls_context.certificate)?;
         let mut reader = BufReader::new(certfile);
-        let certs = rustls_pemfile::certs(&mut reader)?
-            .into_iter()
-            .map(tokio_rustls::rustls::Certificate)
+        let certs = rustls_pemfile::certs(&mut reader)
+            .filter_map(Result::ok)
+            .map(|cert| tokio_rustls::rustls::Certificate(cert.to_vec()))
             .collect::<Vec<_>>();
 
         let keyfile = File::open(&tls_context.key)?;
         let mut reader = BufReader::new(keyfile);
 
         let key = match rustls_pemfile::read_one(&mut reader)? {
-            Some(
-                rustls_pemfile::Item::RSAKey(key)
-                | rustls_pemfile::Item::PKCS8Key(key)
-                | rustls_pemfile::Item::ECKey(key),
-            ) => tokio_rustls::rustls::PrivateKey(key),
+            Some(rustls_pemfile::Item::Crl(key)) => tokio_rustls::rustls::PrivateKey(key.to_vec()),
+            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
+                tokio_rustls::rustls::PrivateKey(key.secret_pkcs1_der().to_vec())
+            }
+            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
+                tokio_rustls::rustls::PrivateKey(key.secret_pkcs8_der().to_vec())
+            }
+            Some(rustls_pemfile::Item::Sec1Key(key)) => {
+                tokio_rustls::rustls::PrivateKey(key.secret_sec1_der().to_vec())
+            }
+            Some(rustls_pemfile::Item::X509Certificate(key)) => {
+                tokio_rustls::rustls::PrivateKey(key.to_vec())
+            }
             _ => {
                 return Err(anyhow::Error::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
