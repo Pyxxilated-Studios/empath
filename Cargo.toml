@@ -43,7 +43,7 @@ tokio = { version = "1", default-features = false, features = [
     "signal",
     "sync",
 ] }
-tokio-rustls = "0.24"
+tokio-rustls = "0.25"
 toml = "0.8.8"
 tracing = { version = "0.1", default-features = false, features = [
     "std",
