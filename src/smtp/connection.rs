@@ -2,7 +2,10 @@ use std::{fs::File, io::BufReader, sync::Arc};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{
-    rustls::{server::AllowAnyAnonymousOrAuthenticatedClient, RootCertStore, ServerConfig},
+    rustls::{
+        pki_types::{CertificateDer, PrivateKeyDer},
+        ServerConfig,
+    },
     server::TlsStream,
     TlsAcceptor,
 };
@@ -25,6 +28,26 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         })
     }
 
+    fn load_certs<P: AsRef<std::path::Path>>(
+        path: &P,
+    ) -> std::io::Result<Vec<CertificateDer<'static>>> {
+        rustls_pemfile::certs(&mut BufReader::new(File::open(path)?)).collect()
+    }
+
+    fn load_keys<P: AsRef<std::path::Path>>(path: &P) -> anyhow::Result<PrivateKeyDer<'static>> {
+        let mut reader = BufReader::new(File::open(path)?);
+
+        match rustls_pemfile::read_one(&mut reader)?.map(Into::into) {
+            Some(rustls_pemfile::Item::Pkcs1Key(key)) => Ok(PrivateKeyDer::Pkcs1(key)),
+            Some(rustls_pemfile::Item::Pkcs8Key(key)) => Ok(PrivateKeyDer::Pkcs8(key)),
+            Some(rustls_pemfile::Item::Sec1Key(key)) => Ok(PrivateKeyDer::Sec1(key)),
+            _ => Err(anyhow::Error::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Unable to determine key file",
+            ))),
+        }
+    }
+
     pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> anyhow::Result<Self> {
         tracing::debug!("Upgrading connection ...");
         if !tls_context.is_available() {
@@ -34,48 +57,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
             )));
         }
 
-        let certfile = File::open(&tls_context.certificate)?;
-        let mut reader = BufReader::new(certfile);
-        let certs = rustls_pemfile::certs(&mut reader)
-            .filter_map(Result::ok)
-            .map(|cert| tokio_rustls::rustls::Certificate(cert.to_vec()))
-            .collect::<Vec<_>>();
-
-        let keyfile = File::open(&tls_context.key)?;
-        let mut reader = BufReader::new(keyfile);
-
-        let key = match rustls_pemfile::read_one(&mut reader)? {
-            Some(rustls_pemfile::Item::Crl(key)) => tokio_rustls::rustls::PrivateKey(key.to_vec()),
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                tokio_rustls::rustls::PrivateKey(key.secret_pkcs1_der().to_vec())
-            }
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                tokio_rustls::rustls::PrivateKey(key.secret_pkcs8_der().to_vec())
-            }
-            Some(rustls_pemfile::Item::Sec1Key(key)) => {
-                tokio_rustls::rustls::PrivateKey(key.secret_sec1_der().to_vec())
-            }
-            Some(rustls_pemfile::Item::X509Certificate(key)) => {
-                tokio_rustls::rustls::PrivateKey(key.to_vec())
-            }
-            _ => {
-                return Err(anyhow::Error::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Unable to determine key file",
-                )));
-            }
-        };
+        let certs = Self::load_certs(&tls_context.certificate)?;
+        let keys = Self::load_keys(&tls_context.key)?;
 
         let config = ServerConfig::builder()
-            .with_safe_default_cipher_suites()
-            .with_safe_default_kx_groups()
-            .with_safe_default_protocol_versions()?
-            .with_client_cert_verifier(Arc::new(AllowAnyAnonymousOrAuthenticatedClient::new({
-                let mut cert_store = RootCertStore::empty();
-                cert_store.add(&certs[0])?;
-                cert_store
-            })))
-            .with_single_cert_with_ocsp_and_sct(certs, key, Vec::new(), Vec::new())?;
+            .with_no_client_auth()
+            .with_single_cert(certs, keys)?;
 
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
