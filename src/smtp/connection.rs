@@ -4,13 +4,44 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{
     rustls::{
         pki_types::{CertificateDer, PrivateKeyDer},
-        ServerConfig,
+        ProtocolVersion, ServerConfig, ServerConnection, SupportedCipherSuite,
     },
     server::TlsStream,
     TlsAcceptor,
 };
 
 use super::session::TlsContext;
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TlsInfo {
+    version: ProtocolVersion,
+    ciphers: SupportedCipherSuite,
+}
+
+impl TlsInfo {
+    fn of(conn: &ServerConnection) -> Self {
+        Self {
+            version: conn.protocol_version().unwrap(),
+            ciphers: conn.negotiated_cipher_suite().unwrap(),
+        }
+    }
+
+    pub fn proto(&self) -> String {
+        self.version
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_default()
+    }
+
+    pub fn cipher(&self) -> String {
+        self.ciphers
+            .suite()
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_default()
+    }
+}
 
 pub enum Connection<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     Plain { stream: Stream },
@@ -24,7 +55,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
     ) -> anyhow::Result<usize> {
         Ok(match self {
             Self::Plain { stream } => stream.write(format!("{response}\r\n").as_bytes()).await?,
-            Self::Tls { stream } => stream.write(format!("{response}\r\n").as_bytes()).await?,
+            Self::Tls { stream, .. } => stream.write(format!("{response}\r\n").as_bytes()).await?,
         })
     }
 
@@ -48,7 +79,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         }
     }
 
-    pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> anyhow::Result<Self> {
+    pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> anyhow::Result<(Self, TlsInfo)> {
         tracing::debug!("Upgrading connection ...");
         if !tls_context.is_available() {
             return Err(anyhow::Error::new(std::io::Error::new(
@@ -66,18 +97,30 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
 
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
-        Ok(Self::Tls {
-            stream: match self {
-                Self::Plain { stream } => Box::new(acceptor.accept(stream).await?),
-                Self::Tls { stream } => Box::new(acceptor.accept(stream.into_inner().0).await?),
-            },
+        Ok(match self {
+            Self::Plain { stream } => {
+                let stream = acceptor.accept(stream).await?;
+                let info = TlsInfo::of(stream.get_ref().1);
+
+                (
+                    Self::Tls {
+                        stream: Box::new(stream),
+                    },
+                    info,
+                )
+            }
+            Self::Tls { stream, .. } => {
+                let (stream, connection) = acceptor.accept(stream).await?.into_inner();
+
+                (Self::Tls { stream }, TlsInfo::of(&connection))
+            }
         })
     }
 
     pub(crate) async fn receive(&mut self, buf: &mut [u8]) -> anyhow::Result<usize> {
         Ok(match self {
             Self::Plain { stream } => stream.read(buf).await?,
-            Self::Tls { stream } => stream.read(buf).await?,
+            Self::Tls { stream, .. } => stream.read(buf).await?,
         })
     }
 }

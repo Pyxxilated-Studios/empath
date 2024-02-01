@@ -136,13 +136,13 @@ impl From<&[Rc<str>]> for StringVector {
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn free_string(ffi_string: String) {
+pub extern "C" fn em_free_string(ffi_string: String) {
     drop(ffi_string);
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn free_string_vector(ffi_vector: StringVector) {
+pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
     drop(ffi_vector);
 }
 
@@ -150,7 +150,7 @@ pub extern "C" fn free_string_vector(ffi_vector: StringVector) {
 mod test {
     use std::{ptr::null, sync::Arc};
 
-    use crate::ffi::string::{free_string, free_string_vector, String, StringVector};
+    use crate::ffi::string::{em_free_string, em_free_string_vector, String, StringVector};
 
     const TEST: &str = "test";
 
@@ -160,25 +160,25 @@ mod test {
         assert_eq!(sv.len, 0);
         assert_ne!(sv.data, null());
 
-        free_string_vector(sv);
+        em_free_string_vector(sv);
 
         let sv = StringVector::from(&[TEST.to_string()][..]);
         assert_eq!(sv.len, 1);
         assert_ne!(sv.data, null());
 
-        free_string_vector(sv);
+        em_free_string_vector(sv);
 
         let sv = StringVector::from(&[Arc::from(TEST)][..]);
         assert_eq!(sv.len, 1);
         assert_ne!(sv.data, null());
 
-        free_string_vector(sv);
+        em_free_string_vector(sv);
 
         let sv = StringVector::from(vec![TEST.to_string()]);
         assert_eq!(sv.len, 1);
         assert_ne!(sv.data, null());
 
-        free_string_vector(sv);
+        em_free_string_vector(sv);
     }
 
     #[test]
@@ -187,18 +187,18 @@ mod test {
         assert_eq!(s.len, 0);
         assert_ne!(s.data, null());
 
-        free_string(s);
+        em_free_string(s);
 
         let s = String::from(TEST);
         assert_eq!(s.len, TEST.len());
         assert_ne!(s.data, null());
 
-        free_string(s);
+        em_free_string(s);
 
         let s = String::from(&Arc::from(TEST));
         assert_eq!(s.len, TEST.len());
         assert_ne!(s.data, null());
 
-        free_string(s);
+        em_free_string(s);
     }
 }

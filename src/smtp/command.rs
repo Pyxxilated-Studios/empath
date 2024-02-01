@@ -112,9 +112,9 @@ impl TryFrom<&str> for Command {
             match command.split_once(' ') {
                 None => Err(Self::Invalid(format!("Expected hostname in {comm}"))),
                 Some((_, host)) if comm.starts_with('H') => {
-                    Ok(Self::Helo(HeloVariant::Helo(host.to_string())))
+                    Ok(Self::Helo(HeloVariant::Helo(host.trim().to_string())))
                 }
-                Some((_, host)) => Ok(Self::Helo(HeloVariant::Ehlo(host.to_string()))),
+                Some((_, host)) => Ok(Self::Helo(HeloVariant::Ehlo(host.trim().to_string()))),
             }
         } else {
             match comm {
@@ -180,7 +180,9 @@ mod test {
     fn mail_from_command() {
         assert_eq!(
             Command::try_from("Mail From: test@gmail.com"),
-            Ok(Command::MailFrom(Some(mailparse::addrparse("test@gmail.com").unwrap()[0].clone())))
+            Ok(Command::MailFrom(Some(
+                mailparse::addrparse("test@gmail.com").unwrap()[0].clone()
+            )))
         );
 
         assert!(Command::try_from("Mail From:").is_err());
@@ -204,7 +206,9 @@ mod test {
     fn rcpt_to_command() {
         assert_eq!(
             Command::try_from("Rcpt To: test@gmail.com"),
-            Ok(Command::RcptTo(mailparse::addrparse("test@gmail.com").unwrap()))
+            Ok(Command::RcptTo(
+                mailparse::addrparse("test@gmail.com").unwrap()
+            ))
         );
 
         assert!(Command::try_from("Rcpt To:").is_err());
@@ -226,16 +230,16 @@ mod test {
 
         assert_eq!(
             Command::try_from("EHLO Testing things"),
-            Ok(Command::Helo(
-                crate::smtp::command::HeloVariant::Ehlo(String::from("Testing things"))
-            ))
+            Ok(Command::Helo(crate::smtp::command::HeloVariant::Ehlo(
+                String::from("Testing things")
+            )))
         );
 
         assert_eq!(
             Command::try_from("HELO Testing things"),
-            Ok(Command::Helo(
-                crate::smtp::command::HeloVariant::Helo(String::from("Testing things"))
-            ))
+            Ok(Command::Helo(crate::smtp::command::HeloVariant::Helo(
+                String::from("Testing things")
+            )))
         );
 
         for comm in string_casing("ehlo") {
