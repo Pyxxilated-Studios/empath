@@ -70,9 +70,9 @@ pub fn init() {
                 .with_ansi(true)
                 .with_timer(tracing_subscriber::fmt::time::ChronoUtc::rfc_3339())
                 .with_filter(level)
-                .with_filter(FilterFn::new(
-                    |metadata| cfg!(debug_assertions) || metadata.target().starts_with("empath")
-                )),
+                .with_filter(FilterFn::new(|metadata| {
+                    metadata.target().starts_with("empath")
+                })),
         )
         .init();
 }

@@ -141,13 +141,36 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 } else if session.tls_context.is_available()
                     && session.context.state == State::StartTLS
                 {
-                    session.connection = session.connection.upgrade(&session.tls_context).await?;
+                    let (conn, info) = session.connection.upgrade(&session.tls_context).await?;
+
+                    session.connection = conn;
+
+                    validate_context
+                        .context
+                        .insert("tls".to_string(), "true".to_string());
+                    validate_context
+                        .context
+                        .insert("protocol".to_string(), info.proto());
+                    validate_context
+                        .context
+                        .insert("cipher".to_string(), info.cipher());
+
                     session.context = Context {
                         sent: true,
                         ..Default::default()
                     };
 
-                    tracing::debug!("Connection successfully upgraded");
+                    if modules::dispatch(
+                        modules::Event::Validate(validate::Event::StartTls),
+                        validate_context,
+                    ) {
+                        tracing::debug!("Connection successfully upgraded with {info:#?}");
+                    } else {
+                        session.context.sent = false;
+                        session.context.state = State::Reject;
+                        validate_context.response =
+                            Some((Status::Error, String::from("STARTTLS failed")));
+                    }
                 } else if session.receive(validate_context).await.unwrap_or(true) {
                     return Ok(());
                 }
@@ -198,7 +221,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         if let Some((status, ref response)) = validate_context.response {
             return (
                 Some(vec![format!("{} {}", status, response)]),
-                Event::ConnectionKeepAlive,
+                if status.is_permanent() {
+                    Event::ConnectionClose
+                } else {
+                    Event::ConnectionKeepAlive
+                },
             );
         }
 
@@ -274,15 +301,17 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::Quit => {
-                (
-                    Some(vec![format!("{} Bye", Status::GoodBye)]),
-                    Event::ConnectionClose,
-                )
-            }
+            State::Quit => (
+                Some(vec![format!("{} Bye", Status::GoodBye)]),
+                Event::ConnectionClose,
+            ),
             State::Reading | State::Close => (None, Event::ConnectionKeepAlive),
             State::InvalidCommandSequence => (
-                Some(vec![format!("{} {}", Status::InvalidCommandSequence, self.context.state)]),
+                Some(vec![format!(
+                    "{} {}",
+                    Status::InvalidCommandSequence,
+                    self.context.state
+                )]),
                 Event::ConnectionClose,
             ),
             State::Reject => {
@@ -294,9 +323,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )
             }
             _ => (
-                Some(vec![
-                    format!("{} Invalid command", Status::InvalidCommandSequence,)
-                ]),
+                Some(vec![format!(
+                    "{} Invalid command",
+                    Status::InvalidCommandSequence,
+                )]),
                 Event::ConnectionClose,
             ),
         };
@@ -339,12 +369,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                     incoming!("{command}");
 
-                    self.context =
-                        Context {
-                            state: self.context.state.transition(command, validate_context),
-                            message,
-                            sent: false,
-                        };
+                    self.context = Context {
+                        state: self.context.state.transition(command, validate_context),
+                        message,
+                        sent: false,
+                    };
 
                     tracing::debug!("Transitioned to {:#?}", self.context);
                 }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, ffi::CStr, fmt::Debug, sync::Arc};
 
 use mailparse::MailAddr;
 
-use crate::{ffi, internal};
+use crate::ffi;
 
 use super::{envelope::Envelope, status::Status};
 
@@ -129,15 +129,9 @@ pub unsafe extern "C" fn em_context_set_sender(
                 *validate_context.envelope.sender_mut() = Some(sender[0].clone());
                 true
             }
-            Err(err) => {
-                internal!("Invalid sender: {:?} :: {}", sender, err.to_string());
-                false
-            }
+            Err(_err) => false,
         },
-        Err(err) => {
-            internal!("Invalid sender: {:?} :: {}", sender, err.to_string());
-            false
-        }
+        Err(_err) => false,
     }
 }
 
@@ -179,6 +173,32 @@ pub unsafe extern "C" fn em_context_set_response(
     true
 }
 
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_context_is_tls(validate_context: &Context) -> bool {
+    validate_context.context.contains_key("tls")
+}
+
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> ffi::string::String {
+    validate_context
+        .context
+        .get("protocol")
+        .map(ffi::string::String::from)
+        .unwrap_or_default()
+}
+
+#[no_mangle]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> ffi::string::String {
+    validate_context
+        .context
+        .get("cipher")
+        .map(ffi::string::String::from)
+        .unwrap_or_default()
+}
+
 ///
 /// # Safety
 ///
@@ -193,9 +213,13 @@ pub unsafe extern "C" fn em_context_exists(
     if key.is_null() {
         false
     } else {
-        CStr::from_ptr(key)
-            .to_str()
-            .map_or(false, |key| validate_context.context.contains_key(key))
+        CStr::from_ptr(key).to_str().map_or(false, |key| {
+            println!(
+                "{key} exists? {}",
+                validate_context.context.contains_key(key)
+            );
+            validate_context.context.contains_key(key)
+        })
     }
 }
 
@@ -327,7 +351,10 @@ mod test {
         };
 
         unsafe {
-            assert!(em_context_set_sender(&mut validate_context, cstr!("test@test.com")));
+            assert!(em_context_set_sender(
+                &mut validate_context,
+                cstr!("test@test.com")
+            ));
             assert_eq!(
                 validate_context.envelope.sender(),
                 &Some(mailparse::addrparse("test@test.com").unwrap()[0].clone())
@@ -340,12 +367,11 @@ mod test {
         let mut envelope = Envelope::default();
         *envelope.sender_mut() = Some(mailparse::addrparse("test@test.com").unwrap()[0].clone());
 
-        let mut validate_context =
-            Context {
-                id: String::from("Testing"),
-                envelope,
-                ..Default::default()
-            };
+        let mut validate_context = Context {
+            id: String::from("Testing"),
+            envelope,
+            ..Default::default()
+        };
 
         unsafe {
             assert!(em_context_set_sender(&mut validate_context, null()));
@@ -359,12 +385,11 @@ mod test {
         let mut envelope = Envelope::default();
         *envelope.sender_mut() = Some(sender[0].clone());
 
-        let mut validate_context =
-            Context {
-                id: String::from("Testing"),
-                envelope,
-                ..Default::default()
-            };
+        let mut validate_context = Context {
+            id: String::from("Testing"),
+            envelope,
+            ..Default::default()
+        };
 
         unsafe {
             assert!(!em_context_set_sender(&mut validate_context, cstr!("---")));

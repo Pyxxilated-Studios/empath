@@ -175,12 +175,12 @@ pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
 /// This will panic if it fails to read the Module Store
 ///
 pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
-    let mut store = MODULE_STORE.write().expect("Unable to load modules");
+    let store = MODULE_STORE.read().expect("Unable to load modules");
 
     internal!("Dispatching: {event:?}");
 
     store
-        .iter_mut()
+        .iter()
         .inspect(|m| internal!(level = DEBUG, "{m}"))
         .all(|module| module.emit(event, validate_context) == 0)
 }
@@ -206,6 +206,7 @@ pub(crate) mod test {
                     inner.validate_mail_from_called = true
                 }
                 Event::Validate(validate::Event::Data) => inner.validate_data_called = true,
+                Event::Validate(_) => todo!(),
                 Event::Event(_) => inner.event_called = true,
             }
         }

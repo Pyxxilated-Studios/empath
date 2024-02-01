@@ -7,14 +7,16 @@ pub enum Event {
     Connect,
     MailFrom,
     Data,
+    StartTls,
 }
 
 #[repr(C)]
 #[allow(clippy::struct_field_names)]
 pub struct Validators {
-    pub validate_connect: Option<unsafe extern "C" fn(&mut Context) -> i32>,
-    pub validate_mail_from: Option<unsafe extern "C" fn(&mut Context) -> i32>,
-    pub validate_data: Option<unsafe extern "C" fn(&mut Context) -> i32>,
+    pub validate_connect: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
+    pub validate_mail_from: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
+    pub validate_data: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
+    pub validate_starttls: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
 }
 
 #[repr(C)]
@@ -43,6 +45,9 @@ impl Validation {
             },
             super::Event::Validate(Event::Connect) => unsafe {
                 self.validators.validate_connect.map(|func| func(context))
+            },
+            super::Event::Validate(Event::StartTls) => unsafe {
+                self.validators.validate_starttls.map(|func| func(context))
             },
             _ => None,
         }

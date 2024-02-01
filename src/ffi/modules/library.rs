@@ -34,7 +34,7 @@ impl Shared {
         unsafe {
             let lib = Library::new(&self.name)?;
 
-            let module = lib.get::<super::DeclareModule>(b"declare_module")?();
+            let module = lib.get::<super::DeclareModule>(b"declare_module\0")?();
             let response = module.init(&self.arguments);
             internal!("init: {response:#?}");
             self.module = Some(module);

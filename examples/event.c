@@ -18,7 +18,7 @@ int emit(Ev event, Context *validate_context) {
   if (em_context_exists(validate_context, "test")) {
     String value = em_context_get(validate_context, "test");
     printf("Existing value: %*s\n", (int)value.len, value.data);
-    free_string(value);
+    em_free_string(value);
   }
 
   return 0;
