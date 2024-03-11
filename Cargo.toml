@@ -44,7 +44,7 @@ tokio = { version = "1", default-features = false, features = [
     "sync",
 ] }
 tokio-rustls = "0.25"
-toml = "0.8.10"
+toml = "0.8.11"
 tracing = { version = "0.1", default-features = false, features = [
     "std",
 ] }
