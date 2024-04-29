@@ -30,7 +30,7 @@ encoding_rs = "0.8.34"
 futures-util = "0.3"
 libc = "0.2"
 libloading = "0.8"
-mailparse = "0.14"
+mailparse = "0.15"
 rustls-pemfile = "2.1"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "1"
