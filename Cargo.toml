@@ -58,7 +58,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 
 [build-dependencies]
 anyhow = "1.0.86"
-cbindgen = { version = "0.26.0", default-features = false }
+cbindgen = { version = "0.27.0", default-features = false }
 
 [profile.release]
 lto = "thin"
