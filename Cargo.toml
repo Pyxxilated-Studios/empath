@@ -23,10 +23,10 @@ name = "empath"
 path = "bin/main.rs"
 
 [dependencies]
-anyhow = "1.0.90"
+anyhow = "1.0.91"
 async-trait = "0.1"
 charset = "0.1.5"
-encoding_rs = "0.8.34"
+encoding_rs = "0.8.35"
 futures-util = "0.3"
 libc = "0.2"
 libloading = "0.8"
@@ -57,7 +57,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 
 [build-dependencies]
-anyhow = "1.0.90"
+anyhow = "1.0.91"
 cbindgen = { version = "0.27.0", default-features = false }
 
 [profile.release]
