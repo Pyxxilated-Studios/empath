@@ -23,7 +23,7 @@ name = "empath"
 path = "bin/main.rs"
 
 [dependencies]
-anyhow = "1.0.92"
+anyhow = "1.0.93"
 async-trait = "0.1"
 charset = "0.1.5"
 encoding_rs = "0.8.35"
@@ -33,7 +33,7 @@ libloading = "0.8"
 mailparse = "0.15"
 rustls-pemfile = "2.2"
 serde = { version = "1", features = ["derive", "rc"] }
-thiserror = "1"
+thiserror = "2"
 tokio = { version = "1", default-features = false, features = [
     "io-util",
     "net",
@@ -57,7 +57,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 
 [build-dependencies]
-anyhow = "1.0.92"
+anyhow = "1.0.93"
 cbindgen = { version = "0.27.0", default-features = false }
 
 [profile.release]
