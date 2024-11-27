@@ -9,8 +9,8 @@ pub struct Envelope {
 impl Envelope {
     /// Returns a reference to [`Envelope`] the sender for this message
     #[inline]
-    pub const fn sender(&self) -> &Option<MailAddr> {
-        &self.sender
+    pub const fn sender(&self) -> Option<&MailAddr> {
+        self.sender.as_ref()
     }
 
     /// Returns a mutable reference to the [`Envelope`] sender for this message
@@ -21,8 +21,8 @@ impl Envelope {
 
     /// Returns a reference to the [`Envelope`] recipients for this message
     #[inline]
-    pub const fn recipients(&self) -> &Option<MailAddrList> {
-        &self.recipients
+    pub const fn recipients(&self) -> Option<&MailAddrList> {
+        self.recipients.as_ref()
     }
 
     /// Returns a mutable reference to the [`Envelope`] recipients for this message

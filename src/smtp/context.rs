@@ -25,8 +25,8 @@ impl Context {
         &self.id
     }
 
-    #[expect(dead_code)]
     #[inline]
+    #[allow(dead_code)]
     pub fn message(&self) -> String {
         self.data.as_deref().map_or_else(Default::default, |data| {
             charset::Charset::for_encoding(encoding_rs::UTF_8)
@@ -41,7 +41,6 @@ impl Context {
     pub fn sender(&self) -> String {
         self.envelope
             .sender()
-            .clone()
             .map(|sender| match sender {
                 MailAddr::Single(addr) => addr.to_string(),
                 MailAddr::Group(_) => String::default(),
@@ -53,7 +52,6 @@ impl Context {
     pub fn recipients(&self) -> Vec<String> {
         self.envelope
             .recipients()
-            .clone()
             .map(|addrs| {
                 addrs
                     .iter()
@@ -213,7 +211,7 @@ pub unsafe extern "C" fn em_context_exists(
     if key.is_null() {
         false
     } else {
-        CStr::from_ptr(key).to_str().map_or(false, |key| {
+        CStr::from_ptr(key).to_str().is_ok_and(|key| {
             println!(
                 "{key} exists? {}",
                 validate_context.context.contains_key(key)
@@ -238,7 +236,7 @@ pub unsafe extern "C" fn em_context_set(
     if key.is_null() || value.is_null() {
         false
     } else {
-        CStr::from_ptr(key).to_str().map_or(false, |key| {
+        CStr::from_ptr(key).to_str().is_ok_and(|key| {
             let value = CStr::from_ptr(value)
                 .to_str()
                 .map(String::from)
@@ -357,7 +355,7 @@ mod test {
             ));
             assert_eq!(
                 validate_context.envelope.sender(),
-                &Some(mailparse::addrparse("test@test.com").unwrap()[0].clone())
+                Some(&mailparse::addrparse("test@test.com").unwrap()[0].clone())
             );
         }
     }
@@ -375,7 +373,7 @@ mod test {
 
         unsafe {
             assert!(em_context_set_sender(&mut validate_context, null()));
-            assert_eq!(validate_context.envelope.sender(), &None);
+            assert_eq!(validate_context.envelope.sender(), None);
         }
     }
 
@@ -393,7 +391,7 @@ mod test {
 
         unsafe {
             assert!(!em_context_set_sender(&mut validate_context, cstr!("---")));
-            assert_eq!(validate_context.envelope.sender(), &Some(sender[0].clone()));
+            assert_eq!(validate_context.envelope.sender(), Some(&sender[0]));
         }
     }
 

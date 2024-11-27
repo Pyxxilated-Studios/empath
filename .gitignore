@@ -5,3 +5,5 @@ examples/target
 *.key
 *.so
 *.dylib
+
+.DS_Store

@@ -1,0 +1,48 @@
+name: Analyze - Code Coverage
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    paths:
+      - "**/*.rs"
+  pull_request:
+    branches: [ "master", "main" ]
+    paths:
+      - "**/*.rs"
+
+jobs:
+  coverage:
+    name: Analyze - Code Coverage
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: rui314/setup-mold@v1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/      
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install required cargo
+        run: cargo install --force cargo-tarpaulin
+
+      - name: Generate code coverage
+        run: |
+          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120

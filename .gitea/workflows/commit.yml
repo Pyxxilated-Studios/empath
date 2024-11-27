@@ -1,6 +1,6 @@
 name: Analyze - Commits
 
-on: [ pull_request ]
+on: [pull_request]
 
 jobs:
   committed:
@@ -9,9 +9,10 @@ jobs:
 
     steps:
       - name: Checkout Actions Repository
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v4
 
       - name: Lint Commits
         uses: crate-ci/committed@master
+        with:
+          args: "-vv"
+          commits: "HEAD"

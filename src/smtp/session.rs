@@ -40,6 +40,7 @@ impl Default for Context {
     }
 }
 
+#[allow(dead_code)]
 pub struct SMTPError {
     pub status: Status,
     pub message: String,
@@ -364,7 +365,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         validate_context.data = Some(self.context.message.clone().into());
                     }
                 } else {
-                    let command = Command::try_from(received).map_or_else(|e| e, |c| c);
+                    let command = Command::try_from(received).unwrap_or_else(|e| e);
                     let message = command.inner().into_bytes();
 
                     incoming!("{command}");

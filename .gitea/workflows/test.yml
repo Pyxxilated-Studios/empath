@@ -1,0 +1,86 @@
+name: Analyze - Server
+
+on:
+  push:
+    branches: ["master","main"]
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    branches: ["master","main"]
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+jobs:
+  analyze-clippy:
+    env:
+      RUNNER_TOOL_CACHE: /toolcache
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: rui314/setup-mold@v1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/      
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run rust-clippy
+        run: |
+          cargo clippy --all-features --message-format=json -- \
+            -D clippy::all -D clippy::pedantic -D clippy::nursery \
+            -A clippy::must-use-candidate -A clippy::cast-precision-loss \
+            -A clippy::redundant-pub-crate
+        continue-on-error: true
+
+  test-server:
+    env:
+      RUNNER_TOOL_CACHE: /toolcache
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: rui314/setup-mold@v1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/      
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Test Server
+        run: cargo nextest run
