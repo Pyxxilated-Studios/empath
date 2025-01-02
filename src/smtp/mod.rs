@@ -7,7 +7,7 @@ pub mod session;
 pub mod status;
 
 use core::fmt::{self, Display, Formatter};
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
@@ -41,6 +41,7 @@ impl Protocol for Smtp {
         peer: SocketAddr,
         extensions: &[Extension],
         tls_context: Option<TlsContext>,
+        init_context: HashMap<String, String>,
     ) -> Self::Session {
         Session::create(
             Arc::default(),
@@ -49,14 +50,14 @@ impl Protocol for Smtp {
             extensions.to_vec(),
             tls_context.unwrap_or_default(),
             String::default(),
+            init_context,
         )
     }
 }
 
-#[async_trait::async_trait]
 impl SessionHandler for Session<TcpStream> {
     async fn run(self) -> anyhow::Result<()> {
-        Ok(Self::run(self).await?)
+        Self::run(self).await
     }
 }
 

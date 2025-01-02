@@ -24,11 +24,15 @@ pub struct Listener<Proto: Protocol> {
     extensions: Vec<Extension>,
     #[serde(default)]
     pub(crate) tls: Option<TlsContext>,
+    #[serde(skip_serializing, default)]
+    context: Proto::Context,
 }
 
 impl<Proto: Protocol> Listener<Proto> {
     pub async fn serve(&self) -> anyhow::Result<()> {
-        internal!("Listener::serve");
+        internal!("Listener::serve on {:#?}", self.socket);
+        internal!("Listener::context: {:#?}", self.context);
+
         let mut sessions = Vec::default();
 
         let (address, port) = (self.socket.ip(), self.socket.port());
@@ -50,7 +54,7 @@ impl<Proto: Protocol> Listener<Proto> {
                 connection = listener.accept() => {
                     tracing::debug!("Connection received on {}", self.socket);
                     let (stream, address) = connection?;
-                    let handler = self.handler.handle(stream, address, &self.extensions, self.tls.clone());
+                    let handler = self.handler.handle(stream, address, &self.extensions, self.tls.clone(), self.context.clone());
                     sessions.push(tokio::spawn(async move {
                         if let Err(err) = handler.run().await {
                             internal!(level = ERROR, "Error: {err}");
@@ -71,6 +75,7 @@ impl<Proto: Protocol> From<SocketAddr> for Listener<Proto> {
             extensions: Vec::default(),
             tls: None,
             socket,
+            context: Proto::Context::default(),
         }
     }
 }

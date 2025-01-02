@@ -24,7 +24,6 @@ path = "bin/main.rs"
 
 [dependencies]
 anyhow = "1.0.93"
-async-trait = "0.1"
 charset = "0.1.5"
 encoding_rs = "0.8.35"
 futures-util = "0.3"

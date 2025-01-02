@@ -84,15 +84,14 @@ impl Controller {
 
         modules::init(self.modules)?;
 
-        let ret =
-            tokio::select! {
-                r = self.smtp_server.serve() => {
-                    r
-                }
-                r = shutdown() => {
-                    r
-                }
-            };
+        let ret = tokio::select! {
+            r = self.smtp_server.serve() => {
+                r
+            }
+            r = shutdown() => {
+                r
+            }
+        };
 
         internal!("Shutting down...");
 

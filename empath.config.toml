@@ -5,8 +5,14 @@ socket = "[::]:1025"
 certificate = "certificate.crt"
 key = "private.key"
 
+[smtp.listener.context]
+service = "smtp"
+
 [[smtp.listener]]
 socket = "[::]:1026"
+
+[smtp.listener.context]
+service = "smtps"
 
 [[module]]
 type = "SharedLibrary"

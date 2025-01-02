@@ -2,6 +2,7 @@
 
 typedef struct Line {
   const char *id;
+  const char *service;
   const char *message;
 } Line;
 

@@ -68,7 +68,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
     fn load_keys<P: AsRef<std::path::Path>>(path: &P) -> anyhow::Result<PrivateKeyDer<'static>> {
         let mut reader = BufReader::new(File::open(path)?);
 
-        match rustls_pemfile::read_one(&mut reader)?.map(Into::into) {
+        match rustls_pemfile::read_one(&mut reader)? {
             Some(rustls_pemfile::Item::Pkcs1Key(key)) => Ok(PrivateKeyDer::Pkcs1(key)),
             Some(rustls_pemfile::Item::Pkcs8Key(key)) => Ok(PrivateKeyDer::Pkcs8(key)),
             Some(rustls_pemfile::Item::Sec1Key(key)) => Ok(PrivateKeyDer::Sec1(key)),

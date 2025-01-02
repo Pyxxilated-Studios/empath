@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::{atomic::AtomicU64, Arc},
 };
@@ -86,6 +87,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     banner: String,
     tls_context: TlsContext,
     connection: Connection<Stream>,
+    init_context: HashMap<String, String>,
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
@@ -96,6 +98,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         mut extensions: Vec<Extension>,
         tls_context: TlsContext,
         banner: String,
+        init_context: HashMap<String, String>,
     ) -> Self {
         if tls_context.is_available() {
             extensions.push(Extension::Starttls);
@@ -115,6 +118,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             } else {
                 banner
             },
+            init_context,
         }
     }
 
@@ -179,6 +183,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         }
 
         let mut validate_context = context::Context::default();
+        self.init_context.clone_into(&mut validate_context.context);
 
         internal!("Connected to {}", self.peer);
         modules::dispatch(
@@ -387,7 +392,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
 #[cfg(test)]
 mod test {
-    use std::{io::Cursor, sync::Arc};
+    use std::{collections::HashMap, io::Cursor, sync::Arc};
 
     use crate::{
         ffi::modules::{self, test::test_module, Module, Test, MODULE_STORE},
@@ -410,6 +415,7 @@ mod test {
             Vec::default(),
             TlsContext::default(),
             banner.to_string(),
+            HashMap::default(),
         );
 
         let response = session.response(&mut context);
@@ -441,6 +447,7 @@ mod test {
             Vec::default(),
             TlsContext::default(),
             banner.to_string(),
+            HashMap::default(),
         );
 
         let _ = session.response(&mut context);
@@ -480,6 +487,7 @@ mod test {
             Vec::default(),
             TlsContext::default(),
             banner.to_string(),
+            HashMap::default(),
         );
 
         session.context.state = State::Helo;
