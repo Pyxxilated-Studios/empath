@@ -63,3 +63,20 @@ impl Display for Status {
         write!(fmt, "{}", u32::from(*self))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::Status;
+
+    #[test]
+    fn status() {
+        assert!(Status::Error.is_permanent());
+        assert!(!Status::Error.is_temporary());
+
+        assert!(Status::Unavailable.is_temporary());
+        assert!(!Status::Unavailable.is_permanent());
+
+        assert_eq!(Status::from(550), Status::Error);
+        assert_eq!(u32::from(Status::Error), 550);
+    }
+}

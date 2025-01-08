@@ -1,6 +1,7 @@
 use core::fmt::{self, Display};
 use std::sync::Arc;
 
+use empath_tracing::traced;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 
@@ -25,11 +26,12 @@ unsafe impl Sync for Shared {}
 
 impl Display for Shared {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("{}: {:?}", self.name, self.arguments))
+        f.write_fmt(format_args!("{}({:?})", self.name, self.arguments))
     }
 }
 
 impl Shared {
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "us"))]
     pub(super) fn init(&mut self) -> anyhow::Result<()> {
         unsafe {
             let lib = Library::new(&self.name)?;
@@ -44,6 +46,7 @@ impl Shared {
         }
     }
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip(self, validate_context), ret), timing(precision = "us"))]
     pub(super) fn emit(&self, event: super::Event, validate_context: &mut Context) -> i32 {
         self.module
             .as_ref()

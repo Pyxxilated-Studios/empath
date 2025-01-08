@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use empath_tracing::traced;
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -29,10 +30,9 @@ pub struct Listener<Proto: Protocol> {
 }
 
 impl<Proto: Protocol> Listener<Proto> {
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all))]
     pub async fn serve(&self) -> anyhow::Result<()> {
-        internal!("Listener::serve on {:#?}", self.socket);
-        internal!("Listener::context: {:#?}", self.context);
-
+        internal!("Serving {:?} with {:?}", self.socket, self.context);
         let mut sessions = Vec::default();
 
         let (address, port) = (self.socket.ip(), self.socket.port());

@@ -20,7 +20,7 @@ impl Display for HeloVariant {
 #[derive(Eq, PartialEq, Debug)]
 pub enum Command {
     Helo(HeloVariant),
-    /// If this is `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
+    /// If this contains `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
     /// from [RFC-5321](https://www.ietf.org/rfc/rfc5321.txt).
     MailFrom(Option<MailAddr>),
     RcptTo(MailAddrList),

@@ -16,10 +16,10 @@ service = "smtps"
 
 [[module]]
 type = "SharedLibrary"
-name = "./examples/libexample.so"
+name = "./empath/examples/libexample.so"
 arguments = ["arg1"]
 
 [[module]]
 type = "SharedLibrary"
-name = "./examples/libevent.so"
+name = "./empath/examples/libevent.so"
 arguments = [ "arg1", "arg2"]

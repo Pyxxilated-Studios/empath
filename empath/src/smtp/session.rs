@@ -4,6 +4,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
+use empath_tracing::traced;
 use mailparse::MailParseError;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -18,7 +19,7 @@ use crate::{
 use super::{connection::Connection, context, extensions::Extension, status::Status, State};
 
 #[repr(C)]
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum Event {
     ConnectionClose,
     ConnectionKeepAlive,
@@ -91,6 +92,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) fn create(
         queue: Arc<AtomicU64>,
         stream: Stream,
@@ -104,7 +106,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             extensions.push(Extension::Starttls);
         }
 
-        tracing::debug!("Extensions ({peer}): {extensions:#?}");
+        tracing::debug!("Extensions: {extensions:?}");
 
         Self {
             queue,
@@ -122,7 +124,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         }
     }
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all, fields(?peer = self.peer), ret), timing(precision = "us"))]
     pub(crate) async fn run(mut self) -> anyhow::Result<()> {
+        internal!("Connected");
+
         async fn run_inner<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
             mut session: Session<Stream>,
             validate_context: &mut context::Context,
@@ -169,7 +174,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         modules::Event::Validate(validate::Event::StartTls),
                         validate_context,
                     ) {
-                        tracing::debug!("Connection successfully upgraded with {info:#?}");
+                        internal!(
+                            level = DEBUG,
+                            "Connection successfully upgraded with {info:#?}"
+                        );
                     } else {
                         session.context.sent = false;
                         session.context.state = State::Reject;
@@ -185,7 +193,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         let mut validate_context = context::Context::default();
         self.init_context.clone_into(&mut validate_context.context);
 
-        internal!("Connected to {}", self.peer);
         modules::dispatch(
             modules::Event::Event(modules::Ev::ConnectionOpened),
             &mut validate_context,
@@ -211,7 +218,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
     /// Generate the response(s) that should be sent back to the client
     /// depending on the servers state
-    #[expect(clippy::too_many_lines)]
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "ns"))]
     fn response(&mut self, validate_context: &mut context::Context) -> Response {
         if self.context.sent {
             return (None, Event::ConnectionKeepAlive);
@@ -340,6 +347,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         response
     }
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing)]
     async fn receive(&mut self, validate_context: &mut context::Context) -> anyhow::Result<bool> {
         let mut received_data = [0; 4096];
 

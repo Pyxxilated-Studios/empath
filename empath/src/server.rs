@@ -1,6 +1,7 @@
+use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
 
-use crate::{internal, listener::Listener, traits::protocol::Protocol};
+use crate::{listener::Listener, traits::protocol::Protocol};
 
 #[derive(Default, Deserialize, Serialize)]
 pub struct Server<Proto: Protocol> {
@@ -9,9 +10,8 @@ pub struct Server<Proto: Protocol> {
 }
 
 impl<Proto: Protocol> Server<Proto> {
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing(precision = "us"))]
     pub async fn serve(&self) -> anyhow::Result<()> {
-        internal!("Server::serve");
-
         futures_util::future::join_all(self.listeners.iter().map(Listener::serve)).await;
 
         Ok(())

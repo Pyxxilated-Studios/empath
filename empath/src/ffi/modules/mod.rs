@@ -3,6 +3,7 @@ use core::fmt::{self, Display};
 use std::sync::Mutex;
 use std::sync::{Arc, LazyLock, RwLock};
 
+use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -122,6 +123,7 @@ impl Display for Module {
 }
 
 impl Module {
+    #[traced(instrument(level = tracing::Level::TRACE, ret, skip(self, validate_context)), timing(precision = "us"))]
     fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
         match self {
             Self::SharedLibrary(ref lib) => lib.emit(event, validate_context),
@@ -141,6 +143,7 @@ impl Module {
 /// # Panics
 /// This will panic if it is unable to write to the module store
 ///
+#[traced(instrument(level = tracing::Level::TRACE, ret, skip_all), timing)]
 pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
     internal!(level = INFO, "Initialising modules ...");
 

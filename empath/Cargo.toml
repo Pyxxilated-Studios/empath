@@ -1,0 +1,62 @@
+[package]
+name = "empath"
+version = "0.0.2"
+edition = "2021"
+authors = ["Pyxxil"]
+description = "An MTA written in Rust"
+documentation = "https://docs.rs/empath"
+repository = "https://github.com/Pyxxilated-Studios/empath"
+homepage = "https://github.com/Pyxxilated-Studios/empath"
+license = "Apache-2.0"
+readme = "README.md"
+categories = ["command-line-utilities", "email", "network-programming"]
+keywords = ["email"]
+build = "build.rs"
+
+[lib]
+name = "empath"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "empath"
+path = "bin/main.rs"
+
+[dependencies]
+anyhow = "1.0.93"
+charset = "0.1.5"
+encoding_rs = "0.8.35"
+futures-util = "0.3"
+libc = "0.2"
+libloading = "0.8"
+mailparse = "0.15"
+rustls-pemfile = "2.2"
+serde = { version = "1", features = ["derive", "rc"] }
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = [
+    "io-util",
+    "net",
+    "macros",
+    "parking_lot",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+] }
+tokio-rustls = "0.26"
+toml = "0.8.19"
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+    "std",
+] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "chrono",
+    "fmt",
+    "parking_lot",
+    "tracing-log",
+] }
+empath-tracing = { path = "../empath-tracing", version = "0.0.1" }
+
+[build-dependencies]
+anyhow = "1.0.93"
+cbindgen = { version = "0.27.0", default-features = false }

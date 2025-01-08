@@ -1,0 +1,22 @@
+[package]
+name = "empath-tracing"
+version = "0.0.1"
+edition = "2021"
+authors = ["Pyxxil"]
+description = "An MTA written in Rust"
+documentation = "https://docs.rs/empath"
+repository = "https://github.com/Pyxxilated-Studios/empath"
+homepage = "https://github.com/Pyxxilated-Studios/empath"
+license = "Apache-2.0"
+readme = "README.md"
+categories = ["command-line-utilities", "email", "network-programming"]
+keywords = ["email"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+log = "0.4.20"
+proc-macro2 = "1.0.66"
+quote = "1.0.33"
+syn = { version = "2.0.29", features = ["full", "extra-traits"] }

@@ -6,10 +6,10 @@ use tracing_subscriber::{
 #[macro_export]
 macro_rules! log {
     ($level:expr, $span:expr, $($msg:expr),*) => {{
-        let span = $crate::tracing::span!(target: "empath", $level, $span);
+        let span = $crate::tracing::span!($level, $span);
         let _enter = span.enter();
 
-        $crate::tracing::event!(target: "empath", $level, $($msg),*)
+        $crate::tracing::event!($level, $($msg),*)
     }};
 }
 

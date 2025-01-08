@@ -1,3 +1,5 @@
+use empath_tracing::traced;
+
 use crate::{internal, smtp::context::Context};
 
 #[repr(C)]
@@ -35,6 +37,7 @@ impl Validation {
     ///
     /// Emit an event to this library's validation module
     ///
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub fn emit(&self, event: super::Event, context: &mut Context) -> i32 {
         match event {
             super::Event::Validate(Event::Data) => unsafe {

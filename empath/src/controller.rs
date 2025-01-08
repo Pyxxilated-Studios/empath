@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 
+use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -33,6 +34,7 @@ pub static SHUTDOWN_BROADCAST: LazyLock<broadcast::Sender<Signal>> = LazyLock::n
     sender
 });
 
+#[traced(instrument(level = tracing::Level::TRACE))]
 async fn shutdown() -> anyhow::Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
@@ -77,6 +79,7 @@ impl Controller {
     ///
     /// This function will return an error if any of the configured modules fail
     /// to initialise.
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing(precision = "s"))]
     pub async fn run(self) -> anyhow::Result<()> {
         logging::init();
 

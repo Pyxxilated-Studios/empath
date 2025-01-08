@@ -1,5 +1,6 @@
 use std::{fs::File, io::BufReader, sync::Arc};
 
+use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{
     rustls::{
@@ -49,6 +50,7 @@ pub enum Connection<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn send<S: core::fmt::Display + Send + Sync>(
         &mut self,
         response: &S,
@@ -59,12 +61,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         })
     }
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     fn load_certs<P: AsRef<std::path::Path>>(
         path: &P,
     ) -> std::io::Result<Vec<CertificateDer<'static>>> {
         rustls_pemfile::certs(&mut BufReader::new(File::open(path)?)).collect()
     }
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     fn load_keys<P: AsRef<std::path::Path>>(path: &P) -> anyhow::Result<PrivateKeyDer<'static>> {
         let mut reader = BufReader::new(File::open(path)?);
 
@@ -79,6 +83,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         }
     }
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> anyhow::Result<(Self, TlsInfo)> {
         tracing::debug!("Upgrading connection ...");
         if !tls_context.is_available() {
@@ -117,6 +122,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         })
     }
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn receive(&mut self, buf: &mut [u8]) -> anyhow::Result<usize> {
         Ok(match self {
             Self::Plain { stream } => stream.read(buf).await?,

@@ -9,6 +9,7 @@ pub mod status;
 use core::fmt::{self, Display, Formatter};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
+use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 
@@ -35,6 +36,7 @@ pub struct Smtp {
 impl Protocol for Smtp {
     type Session = Session<TcpStream>;
 
+    #[traced(instrument(level = tracing::Level::TRACE, skip(self, stream, extensions, tls_context, init_context)), timing(precision = "ns"))]
     fn handle(
         &self,
         stream: TcpStream,
