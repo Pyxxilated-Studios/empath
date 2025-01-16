@@ -59,4 +59,4 @@ empath-tracing = { path = "../empath-tracing", version = "0.0.1" }
 
 [build-dependencies]
 anyhow = "1.0.93"
-cbindgen = { version = "0.27.0", default-features = false }
+cbindgen = { version = "0.28.0", default-features = false }
