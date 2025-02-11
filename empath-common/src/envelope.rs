@@ -15,7 +15,7 @@ impl Envelope {
 
     /// Returns a mutable reference to the [`Envelope`] sender for this message
     #[inline]
-    pub fn sender_mut(&mut self) -> &mut Option<MailAddr> {
+    pub const fn sender_mut(&mut self) -> &mut Option<MailAddr> {
         &mut self.sender
     }
 
@@ -27,7 +27,7 @@ impl Envelope {
 
     /// Returns a mutable reference to the [`Envelope`] recipients for this message
     #[inline]
-    pub fn recipients_mut(&mut self) -> &mut Option<MailAddrList> {
+    pub const fn recipients_mut(&mut self) -> &mut Option<MailAddrList> {
         &mut self.recipients
     }
 }

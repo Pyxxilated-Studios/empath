@@ -1,5 +1,6 @@
 use std::{fs::File, io::BufReader, sync::Arc};
 
+use empath_common::tracing;
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{
@@ -86,12 +87,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> anyhow::Result<(Self, TlsInfo)> {
         tracing::debug!("Upgrading connection ...");
-        if !tls_context.is_available() {
-            return Err(anyhow::Error::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "No tls certificate or key provided",
-            )));
-        }
 
         let certs = Self::load_certs(&tls_context.certificate)?;
         let keys = Self::load_keys(&tls_context.key)?;

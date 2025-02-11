@@ -5,7 +5,7 @@ use empath_tracing::traced;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 
-use crate::{internal, smtp::context::Context};
+use empath_common::{context::Context, internal};
 
 #[allow(
     clippy::unsafe_derive_deserialize,

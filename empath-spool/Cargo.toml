@@ -1,5 +1,5 @@
 [package]
-name = "empath-tracing"
+name = "empath-spool"
 version = "0.0.1"
 edition = "2021"
 authors = ["Pyxxil"]
@@ -13,9 +13,13 @@ categories = ["command-line-utilities", "email", "network-programming"]
 keywords = ["email"]
 
 [lib]
-proc-macro = true
+name = "empath_spool"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-proc-macro2 = "1.0.66"
-quote = "1.0.33"
-syn = { version = "2.0.29", features = ["full", "extra-traits"] }
+anyhow = "1.0.93"
+empath-common = { path = "../empath-common", version = "*" }
+notify = "8"
+serde = { version = "1", features = ["derive", "rc"] }
+tokio = { version = "1", default-features = false, features = ["sync"] }

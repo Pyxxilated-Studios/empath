@@ -1,77 +1,15 @@
+#![feature(slice_pattern, vec_into_raw_parts)]
+
 use core::slice::SlicePattern;
-use std::{collections::HashMap, ffi::CStr, fmt::Debug, sync::Arc};
+use std::ffi::CStr;
 
-use mailparse::MailAddr;
+use empath_common::{context::Context, status::Status};
 
-use crate::ffi;
+pub mod modules;
+pub mod string;
 
-use super::{envelope::Envelope, status::Status};
-
-#[derive(Default, Debug)]
-pub struct Context {
-    pub extended: bool,
-    pub envelope: Envelope,
-    pub id: String,
-    pub data: Option<Arc<[u8]>>,
-    pub response: Option<(Status, String)>,
-    #[allow(clippy::struct_field_names)]
-    pub context: HashMap<String, String>,
-}
-
-impl Context {
-    /// Returns a reference to the id of this [`Context`].
-    #[inline]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub fn message(&self) -> String {
-        self.data.as_deref().map_or_else(Default::default, |data| {
-            charset::Charset::for_encoding(encoding_rs::UTF_8)
-                .decode(data)
-                .0
-                .to_string()
-        })
-    }
-
-    /// Returns the sender of this [`Context`].
-    #[inline]
-    pub fn sender(&self) -> String {
-        self.envelope
-            .sender()
-            .map(|sender| match sender {
-                MailAddr::Single(addr) => addr.to_string(),
-                MailAddr::Group(_) => String::default(),
-            })
-            .unwrap_or_default()
-    }
-
-    /// Returns the recipients of this [`Context`].
-    pub fn recipients(&self) -> Vec<String> {
-        self.envelope
-            .recipients()
-            .map(|addrs| {
-                addrs
-                    .iter()
-                    .map(|addr| match addr {
-                        mailparse::MailAddr::Group(group) => {
-                            format!("RCPT TO:{}", group.group_name)
-                        }
-                        mailparse::MailAddr::Single(single) => {
-                            format!(
-                                "RCPT TO:{}{}",
-                                single.display_name.clone().unwrap_or_default(),
-                                single.addr
-                            )
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
+pub type InitFunc = unsafe fn() -> isize;
+pub type ValidateData = unsafe fn(&Context) -> isize;
 
 /// Retrieve the id associated with this context
 ///
@@ -81,7 +19,7 @@ impl Context {
 ///
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_context_get_id(validate_context: &Context) -> ffi::string::String {
+pub extern "C" fn em_context_get_id(validate_context: &Context) -> crate::string::String {
     validate_context.id().into()
 }
 
@@ -89,13 +27,13 @@ pub extern "C" fn em_context_get_id(validate_context: &Context) -> ffi::string::
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_get_recipients(
     validate_context: &Context,
-) -> ffi::string::StringVector {
+) -> crate::string::StringVector {
     validate_context.recipients().into()
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_context_get_sender(validate_context: &Context) -> ffi::string::String {
+pub extern "C" fn em_context_get_sender(validate_context: &Context) -> crate::string::String {
     validate_context.sender().into()
 }
 
@@ -135,12 +73,12 @@ pub unsafe extern "C" fn em_context_set_sender(
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_context_get_data(validate_context: &Context) -> ffi::string::String {
+pub extern "C" fn em_context_get_data(validate_context: &Context) -> crate::string::String {
     validate_context
         .data
         .as_ref()
         .map_or_else(Default::default, |data| {
-            ffi::string::String::try_from(data.as_slice()).unwrap_or_default()
+            crate::string::String::try_from(data.as_slice()).unwrap_or_default()
         })
 }
 
@@ -179,21 +117,21 @@ pub extern "C" fn em_context_is_tls(validate_context: &Context) -> bool {
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> ffi::string::String {
+pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::string::String {
     validate_context
         .context
         .get("protocol")
-        .map(ffi::string::String::from)
+        .map(crate::string::String::from)
         .unwrap_or_default()
 }
 
 #[no_mangle]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> ffi::string::String {
+pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::string::String {
     validate_context
         .context
         .get("cipher")
-        .map(ffi::string::String::from)
+        .map(crate::string::String::from)
         .unwrap_or_default()
 }
 
@@ -257,15 +195,15 @@ pub unsafe extern "C" fn em_context_set(
 pub unsafe extern "C" fn em_context_get(
     validate_context: &Context,
     key: *const libc::c_char,
-) -> ffi::string::String {
+) -> crate::string::String {
     if key.is_null() {
-        ffi::string::String::default()
+        crate::string::String::default()
     } else {
         CStr::from_ptr(key)
             .to_str()
             .ok()
             .and_then(|key| validate_context.context.get(key))
-            .map_or_else(ffi::string::String::default, std::convert::Into::into)
+            .map_or_else(crate::string::String::default, std::convert::Into::into)
     }
 }
 
@@ -276,14 +214,12 @@ mod test {
         ptr::null,
     };
 
-    use crate::smtp::{
-        context::{
-            em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
-            em_context_get_recipients, em_context_set, em_context_set_response, Context,
-        },
-        envelope::Envelope,
-        status::Status,
+    use super::{
+        em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
+        em_context_get_recipients, em_context_set, em_context_set_response,
     };
+
+    use empath_common::{context::Context, envelope::Envelope, status::Status};
 
     use super::em_context_set_sender;
 

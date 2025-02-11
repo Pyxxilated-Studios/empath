@@ -1,20 +1,22 @@
+#![feature(let_chains)]
+
 pub mod command;
 pub mod connection;
-pub mod context;
-pub mod envelope;
 pub mod extensions;
+pub mod listener;
+pub mod server;
 pub mod session;
-pub mod status;
 
 use core::fmt::{self, Display, Formatter};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use empath_tracing::traced;
+use extensions::Extension;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 
-use crate::{
-    ffi::modules::{self, validate},
+use empath_common::{
+    context::Context,
     traits::{
         fsm::FiniteStateMachine,
         protocol::{Protocol, SessionHandler},
@@ -23,8 +25,6 @@ use crate::{
 
 use self::{
     command::{Command, HeloVariant},
-    context::Context,
-    extensions::Extension,
     session::{Session, TlsContext},
 };
 
@@ -35,22 +35,22 @@ pub struct Smtp {
 
 impl Protocol for Smtp {
     type Session = Session<TcpStream>;
+    type ExtraArgs = (Vec<Extension>, Option<TlsContext>);
 
-    #[traced(instrument(level = tracing::Level::TRACE, skip(self, stream, extensions, tls_context, init_context)), timing(precision = "ns"))]
+    #[traced(instrument(level = tracing::Level::TRACE, skip(self, stream, init_context, args)), timing(precision = "ns"))]
     fn handle(
         &self,
         stream: TcpStream,
         peer: SocketAddr,
-        extensions: &[Extension],
-        tls_context: Option<TlsContext>,
         init_context: HashMap<String, String>,
+        args: Self::ExtraArgs,
     ) -> Self::Session {
         Session::create(
             Arc::default(),
             stream,
             peer,
-            extensions.to_vec(),
-            tls_context.unwrap_or_default(),
+            args.0,
+            args.1,
             String::default(),
             init_context,
         )
@@ -70,6 +70,7 @@ pub enum State {
     Connect,
     Ehlo,
     Helo,
+    Help,
     StartTLS,
     MailFrom,
     RcptTo,
@@ -91,6 +92,7 @@ impl Display for State {
             Self::Close => "Close",
             Self::Ehlo => "EHLO",
             Self::Helo => "HELO",
+            Self::Help => "HELP",
             Self::StartTLS => "STARTTLS",
             Self::MailFrom => "MAIL",
             Self::RcptTo => "RCPT",
@@ -110,6 +112,7 @@ impl TryFrom<&str> for State {
         match value.to_ascii_uppercase().trim() {
             "EHLO" => Ok(Self::Ehlo),
             "HELO" => Ok(Self::Helo),
+            "HELP" => Ok(Self::Help),
             "STARTTLS" => Ok(Self::StartTLS),
             "MAIL" => Ok(Self::MailFrom),
             "RCPT" => Ok(Self::RcptTo),
@@ -138,11 +141,11 @@ impl FiniteStateMachine for State {
             (Self::Ehlo | Self::Helo, Command::StartTLS) if validate_context.extended => {
                 Self::StartTLS
             }
-            (Self::Ehlo | Self::Helo | Self::StartTLS | Self::PostDot, Command::MailFrom(from)) => {
-                modules::dispatch(
-                    modules::Event::Validate(validate::Event::MailFrom),
-                    validate_context,
-                );
+            (Self::Ehlo | Self::Helo, Command::Help) => Self::Help,
+            (
+                Self::Ehlo | Self::Helo | Self::StartTLS | Self::PostDot | Self::Help,
+                Command::MailFrom(from),
+            ) => {
                 *validate_context.envelope.sender_mut() = from;
                 Self::MailFrom
             }

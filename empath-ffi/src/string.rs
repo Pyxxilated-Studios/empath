@@ -150,7 +150,7 @@ pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
 mod test {
     use std::{ptr::null, sync::Arc};
 
-    use crate::ffi::string::{em_free_string, em_free_string_vector, String, StringVector};
+    use crate::string::{em_free_string, em_free_string_vector, String, StringVector};
 
     const TEST: &str = "test";
 

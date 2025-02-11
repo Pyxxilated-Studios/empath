@@ -1,22 +1,21 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
+    path::PathBuf,
     sync::{atomic::AtomicU64, Arc},
 };
 
-use empath_tracing::traced;
 use mailparse::MailParseError;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{
-    ffi::modules,
-    incoming, internal, outgoing,
-    smtp::{command::Command, session::modules::validate},
-    traits::fsm::FiniteStateMachine,
+use empath_common::{
+    context, incoming, internal, outgoing, status::Status, tracing, traits::fsm::FiniteStateMachine,
 };
+use empath_ffi::modules::{self, validate};
+use empath_tracing::traced;
 
-use super::{connection::Connection, context, extensions::Extension, status::Status, State};
+use crate::{command::Command, connection::Connection, extensions::Extension, State};
 
 #[repr(C)]
 #[derive(PartialEq, Eq, Debug)]
@@ -68,16 +67,10 @@ impl From<modules::Error> for SMTPError {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TlsContext {
-    pub(crate) certificate: String,
-    pub(crate) key: String,
-}
-
-impl TlsContext {
-    pub(crate) fn is_available(&self) -> bool {
-        !self.certificate.is_empty() && !self.key.is_empty()
-    }
+    pub(crate) certificate: PathBuf,
+    pub(crate) key: PathBuf,
 }
 
 pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
@@ -86,7 +79,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     context: Context,
     extensions: Arc<[Extension]>,
     banner: String,
-    tls_context: TlsContext,
+    tls_context: Option<TlsContext>,
     connection: Connection<Stream>,
     init_context: HashMap<String, String>,
 }
@@ -98,13 +91,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         stream: Stream,
         peer: SocketAddr,
         mut extensions: Vec<Extension>,
-        tls_context: TlsContext,
+        tls_context: Option<TlsContext>,
         banner: String,
         init_context: HashMap<String, String>,
     ) -> Self {
-        if tls_context.is_available() {
+        if tls_context.is_some() {
             extensions.push(Extension::Starttls);
         }
+        extensions.push(Extension::Help);
 
         tracing::debug!("Extensions: {extensions:?}");
 
@@ -148,10 +142,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                 if Event::ConnectionClose == ev {
                     return Ok(());
-                } else if session.tls_context.is_available()
+                } else if let Some(tls_context) = session.tls_context.as_ref()
                     && session.context.state == State::StartTLS
                 {
-                    let (conn, info) = session.connection.upgrade(&session.tls_context).await?;
+                    let (conn, info) = session.connection.upgrade(tls_context).await?;
 
                     session.connection = conn;
 
@@ -255,13 +249,17 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Ehlo => {
-                let response = vec![format!(
-                    "{}{}Hello {}",
-                    Status::Ok,
-                    if self.extensions.is_empty() { ' ' } else { '-' },
-                    std::str::from_utf8(&self.context.message).unwrap()
-                )];
+            State::Ehlo | State::Help => {
+                let response = if self.context.state == State::Ehlo {
+                    vec![format!(
+                        "{}{}Hello {}",
+                        Status::Ok,
+                        if self.extensions.is_empty() { ' ' } else { '-' },
+                        std::str::from_utf8(&self.context.message).unwrap()
+                    )]
+                } else {
+                    vec![]
+                };
 
                 (
                     Some(self.extensions.iter().enumerate().fold(
@@ -269,7 +267,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         |mut response, (idx, extension)| {
                             response.push(format!(
                                 "{}{}{}",
-                                Status::Ok,
+                                if self.context.state == State::Help {
+                                    Status::HelpMessage
+                                } else {
+                                    Status::Ok
+                                },
                                 if idx == self.extensions.len() - 1 {
                                     ' '
                                 } else {
@@ -284,11 +286,27 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::StartTLS if self.tls_context.is_available() => (
+            State::StartTLS if self.tls_context.is_some() => (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::MailFrom | State::RcptTo => (
+            State::MailFrom => {
+                if modules::dispatch(
+                    modules::Event::Validate(validate::Event::MailFrom),
+                    validate_context,
+                ) {
+                    (
+                        Some(vec![format!("{} Ok", Status::Ok)]),
+                        Event::ConnectionKeepAlive,
+                    )
+                } else {
+                    (
+                        Some(vec![format!("{} Goodbye", Status::Error)]),
+                        Event::ConnectionClose,
+                    )
+                }
+            }
+            State::RcptTo => (
                 Some(vec![format!("{} Ok", Status::Ok)]),
                 Event::ConnectionKeepAlive,
             ),
@@ -402,12 +420,9 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 mod test {
     use std::{collections::HashMap, io::Cursor, sync::Arc};
 
-    use crate::{
-        ffi::modules::{self, test::test_module, Module, Test, MODULE_STORE},
-        smtp::{context::Context, session::Session, status::Status, State},
-    };
-
-    use super::TlsContext;
+    use crate::{session::Session, State};
+    use empath_common::{context::Context, status::Status};
+    use empath_ffi::modules::{self, validate, Module, MODULE_STORE};
 
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]
@@ -421,7 +436,7 @@ mod test {
             cursor,
             "[::]:25".parse().unwrap(),
             Vec::default(),
-            TlsContext::default(),
+            None,
             banner.to_string(),
             HashMap::default(),
         );
@@ -453,7 +468,7 @@ mod test {
             cursor,
             "[::]:25".parse().unwrap(),
             Vec::default(),
-            TlsContext::default(),
+            None,
             banner.to_string(),
             HashMap::default(),
         );
@@ -484,7 +499,7 @@ mod test {
             .get_mut()
             .extend_from_slice("MAIL FROM: test@gmail.com".as_bytes());
 
-        let module = test_module();
+        let module = Module::TestModule(Arc::default());
         let inited = modules::init(vec![module]);
         assert!(inited.is_ok());
 
@@ -493,7 +508,7 @@ mod test {
             cursor,
             "[::]:25".parse().unwrap(),
             Vec::default(),
-            TlsContext::default(),
+            None,
             banner.to_string(),
             HashMap::default(),
         );
@@ -519,13 +534,7 @@ mod test {
         let module = store.first().unwrap();
         if let Module::TestModule(mute) = module {
             let test = mute.lock().unwrap();
-            assert_eq!(
-                *test,
-                Test {
-                    validate_mail_from_called: true,
-                    ..Test::default()
-                }
-            );
+            assert!(test.validators_called.contains(&validate::Event::MailFrom));
         } else {
             panic!("Expected TestModule to exist");
         }

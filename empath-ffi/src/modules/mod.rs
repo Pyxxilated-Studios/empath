@@ -1,5 +1,4 @@
 use core::fmt::{self, Display};
-#[cfg(test)]
 use std::sync::Mutex;
 use std::sync::{Arc, LazyLock, RwLock};
 
@@ -7,7 +6,7 @@ use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{internal, smtp::context::Context};
+use empath_common::{context::Context, internal};
 
 use super::string::StringVector;
 
@@ -18,21 +17,20 @@ type Init = unsafe extern "C" fn(StringVector) -> i32;
 type DeclareModule = unsafe extern "C" fn() -> Mod;
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum Ev {
     ConnectionOpened,
     ConnectionClosed,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum Event {
     Validate(validate::Event),
     Event(Ev),
 }
 
 #[repr(C)]
-#[expect(dead_code)]
 pub enum Mod {
     ValidationListener(validate::Validation),
     EventListener {
@@ -81,7 +79,6 @@ pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut Mod {
 }
 
 #[derive(Error, Debug)]
-#[expect(dead_code)]
 pub enum Error {
     #[error("Module load error: {0}")]
     Load(#[from] libloading::Error),
@@ -93,20 +90,16 @@ pub enum Error {
     Validation(String),
 }
 
-#[cfg(test)]
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Test {
-    pub(crate) validate_connect_called: bool,
-    pub(crate) validate_mail_from_called: bool,
-    pub(crate) validate_data_called: bool,
-    pub(crate) event_called: bool,
+pub struct Test {
+    pub events_called: Vec<Ev>,
+    pub validators_called: Vec<validate::Event>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(library::Shared),
-    #[cfg(test)]
     TestModule(Arc<Mutex<Test>>),
 }
 
@@ -116,7 +109,6 @@ impl Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SharedLibrary(lib) => f.write_fmt(format_args!("{lib}")),
-            #[cfg(test)]
             Self::TestModule { .. } => f.write_str("Test Module"),
         }
     }
@@ -127,7 +119,6 @@ impl Module {
     fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
         match self {
             Self::SharedLibrary(ref lib) => lib.emit(event, validate_context),
-            #[cfg(test)]
             Self::TestModule { .. } => test::emit(self, event, validate_context),
         }
     }
@@ -152,7 +143,6 @@ pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
 
         match module {
             Module::SharedLibrary(ref mut lib) => lib.init()?,
-            #[cfg(test)]
             Module::TestModule { .. } => {}
         }
 
@@ -188,29 +178,17 @@ pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
         .all(|module| module.emit(event, validate_context) == 0)
 }
 
-#[cfg(test)]
-pub(crate) mod test {
-    use std::sync::Arc;
+pub mod test {
+    use empath_common::context::Context;
 
-    use crate::smtp::context::Context;
-
-    use super::{validate, Event, Module};
-
-    pub(crate) fn test_module() -> Module {
-        Module::TestModule(Arc::default())
-    }
+    use super::{Event, Module};
 
     pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
         if let Module::TestModule(ref mute) = module {
             let mut inner = mute.lock().unwrap();
             match event {
-                Event::Validate(validate::Event::Connect) => inner.validate_connect_called = true,
-                Event::Validate(validate::Event::MailFrom) => {
-                    inner.validate_mail_from_called = true
-                }
-                Event::Validate(validate::Event::Data) => inner.validate_data_called = true,
-                Event::Validate(_) => todo!(),
-                Event::Event(_) => inner.event_called = true,
+                Event::Validate(ev) => inner.validators_called.push(ev),
+                Event::Event(ev) => inner.events_called.push(ev),
             }
         }
         0

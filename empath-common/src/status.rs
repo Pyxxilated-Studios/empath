@@ -3,6 +3,10 @@ use core::fmt::{self, Display, Formatter};
 #[repr(C, u32)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Debug)]
 pub enum Status {
+    ConnectionError = 101,
+    #[allow(clippy::enum_variant_names)]
+    SystemStatus = 211,
+    HelpMessage = 215,
     ServiceReady = 220,
     GoodBye = 221,
     Ok = 250,
@@ -29,6 +33,9 @@ impl Status {
 impl From<u32> for Status {
     fn from(value: u32) -> Self {
         match value {
+            101 => Self::ConnectionError,
+            211 => Self::SystemStatus,
+            215 => Self::HelpMessage,
             220 => Self::ServiceReady,
             221 => Self::GoodBye,
             250 => Self::Ok,
@@ -45,6 +52,9 @@ impl From<u32> for Status {
 impl From<Status> for u32 {
     fn from(value: Status) -> Self {
         match value {
+            Status::ConnectionError => 101,
+            Status::SystemStatus => 211,
+            Status::HelpMessage => 215,
             Status::ServiceReady => 220,
             Status::GoodBye => 221,
             Status::Ok => 250,

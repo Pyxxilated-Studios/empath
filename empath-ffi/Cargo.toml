@@ -1,5 +1,5 @@
 [package]
-name = "empath"
+name = "empath-ffi"
 version = "0.0.2"
 edition = "2021"
 authors = ["Pyxxil"]
@@ -11,41 +11,25 @@ license = "Apache-2.0"
 readme = "README.md"
 categories = ["command-line-utilities", "email", "network-programming"]
 keywords = ["email"]
-build = "build.rs"
 
 [lib]
-name = "empath"
+name = "empath_ffi"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
-
-[[bin]]
-name = "empath"
-path = "bin/main.rs"
 
 [dependencies]
 anyhow = "1.0.93"
 empath-common = { path = "../empath-common", version = "*" }
-empath-ffi = { path = "../empath-ffi", version = "*" }
-empath-smtp = { path = "../empath-smtp", version = "*" }
-empath-spool = { path = "../empath-spool", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
-futures-util = "0.3"
 libc = "0.2"
 libloading = "0.8"
 mailparse = "0.16"
-rustls-pemfile = "2.2"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
-tokio = { version = "1", default-features = false, features = [
-    "io-util",
-    "net",
-    "macros",
-    "parking_lot",
-    "rt-multi-thread",
-    "signal",
-    "sync",
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+    "std",
 ] }
-toml = "0.8.19"
 
 [build-dependencies]
 anyhow = "1.0.93"

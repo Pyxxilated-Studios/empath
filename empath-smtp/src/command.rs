@@ -22,8 +22,11 @@ pub enum Command {
     Helo(HeloVariant),
     /// If this contains `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
     /// from [RFC-5321](https://www.ietf.org/rfc/rfc5321.txt).
+    Help,
     MailFrom(Option<MailAddr>),
     RcptTo(MailAddrList),
+    Rset,
+    Auth,
     Data,
     Quit,
     StartTLS,
@@ -67,6 +70,9 @@ impl Display for Command {
             Self::Quit => fmt.write_str("QUIT"),
             Self::StartTLS => fmt.write_str("STARTTLS"),
             Self::Invalid(s) => fmt.write_str(s),
+            Self::Help => fmt.write_str("HELP"),
+            Self::Rset => fmt.write_str("Rset"),
+            Self::Auth => fmt.write_str("AUTH"),
         }
     }
 }
@@ -121,6 +127,9 @@ impl TryFrom<&str> for Command {
                 "DATA" => Ok(Self::Data),
                 "QUIT" => Ok(Self::Quit),
                 "STARTTLS" => Ok(Self::StartTLS),
+                "HELP" => Ok(Self::Help),
+                "AUTH" => Ok(Self::Auth),
+                "RSET" => Ok(Self::Rset),
                 _ => Err(Self::Invalid(command.to_owned())),
             }
         }
@@ -148,7 +157,7 @@ impl TryFrom<String> for Command {
 
 #[cfg(test)]
 mod test {
-    use crate::smtp::command::{Command, HeloVariant};
+    use crate::command::{Command, HeloVariant};
 
     // Idea copied from https://gitlab.com/erichdongubler-experiments/rust_case_permutations/blob/master/src/lib.rs#L97
     fn string_casing(string: &str) -> impl Iterator<Item = String> {
@@ -230,14 +239,14 @@ mod test {
 
         assert_eq!(
             Command::try_from("EHLO Testing things"),
-            Ok(Command::Helo(crate::smtp::command::HeloVariant::Ehlo(
+            Ok(Command::Helo(crate::command::HeloVariant::Ehlo(
                 String::from("Testing things")
             )))
         );
 
         assert_eq!(
             Command::try_from("HELO Testing things"),
-            Ok(Command::Helo(crate::smtp::command::HeloVariant::Helo(
+            Ok(Command::Helo(crate::command::HeloVariant::Helo(
                 String::from("Testing things")
             )))
         );
@@ -278,6 +287,21 @@ mod test {
         assert_eq!(Command::try_from("STARTTLS"), Ok(Command::StartTLS));
         for comm in string_casing("starttls") {
             assert_eq!(Command::try_from(comm), Ok(Command::StartTLS));
+        }
+
+        assert_eq!(Command::try_from("RSET"), Ok(Command::Rset));
+        for comm in string_casing("rset") {
+            assert_eq!(Command::try_from(comm), Ok(Command::Rset));
+        }
+
+        assert_eq!(Command::try_from("AUTH"), Ok(Command::Auth));
+        for comm in string_casing("auth") {
+            assert_eq!(Command::try_from(comm), Ok(Command::Auth));
+        }
+
+        assert_eq!(Command::try_from("HELP"), Ok(Command::Help));
+        for comm in string_casing("help") {
+            assert_eq!(Command::try_from(comm), Ok(Command::Help));
         }
     }
 }

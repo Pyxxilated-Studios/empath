@@ -1,15 +1,13 @@
 use std::sync::LazyLock;
 
+use empath_common::{tracing, Signal};
 use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use crate::{
-    ffi::modules::{self, Module},
-    internal, logging,
-    server::Server,
-    smtp::Smtp,
-};
+use empath_common::{internal, logging};
+use empath_ffi::modules::{self, Module};
+use empath_smtp::server::Server;
 
 #[allow(
     clippy::unsafe_derive_deserialize,
@@ -18,15 +16,11 @@ use crate::{
 #[derive(Default, Deserialize, Serialize)]
 pub struct Controller {
     #[serde(alias = "smtp")]
-    smtp_server: Server<Smtp>,
-    #[serde(alias = "module")]
+    smtp_server: Server,
+    #[serde(alias = "module", default)]
     modules: Vec<Module>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Signal {
-    Shutdown,
-    Finalised,
+    #[serde(alias = "spool")]
+    spool: empath_spool::Controller,
 }
 
 pub static SHUTDOWN_BROADCAST: LazyLock<broadcast::Sender<Signal>> = LazyLock::new(|| {
@@ -79,16 +73,20 @@ impl Controller {
     ///
     /// This function will return an error if any of the configured modules fail
     /// to initialise.
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing(precision = "s"))]
-    pub async fn run(self) -> anyhow::Result<()> {
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all, err), timing(precision = "s"))]
+    pub async fn run(mut self) -> anyhow::Result<()> {
         logging::init();
+        self.spool.init()?;
 
         internal!("Controller running");
 
         modules::init(self.modules)?;
 
         let ret = tokio::select! {
-            r = self.smtp_server.serve() => {
+            r = self.smtp_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                r
+            }
+            r = self.spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
                 r
             }
             r = shutdown() => {

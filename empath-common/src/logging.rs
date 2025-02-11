@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{
     filter::FilterFn, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
@@ -47,19 +49,18 @@ macro_rules! internal {
 }
 
 pub fn init() {
-    let level = std::env::var("LOG_LEVEL").map_or(
-        if cfg!(debug_assertions) {
-            LevelFilter::TRACE
-        } else {
-            LevelFilter::INFO
-        },
-        |level| match level.to_ascii_lowercase().as_str() {
-            "warn" => LevelFilter::WARN,
-            "info" => LevelFilter::INFO,
-            "trace" => LevelFilter::TRACE,
-            _ => LevelFilter::ERROR,
-        },
-    );
+    let default = if cfg!(debug_assertions) {
+        LevelFilter::TRACE
+    } else {
+        LevelFilter::INFO
+    };
+
+    let level = std::env::var("LOG_LEVEL").map_or(default, |level| {
+        LevelFilter::from_str(level.as_str()).unwrap_or_else(|_| {
+            println!("Invalid log level specified {level}, defaulting to {default}");
+            default
+        })
+    });
 
     tracing_subscriber::Registry::default()
         .with(

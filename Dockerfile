@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly-bookworm-slim as chef
+FROM rustlang/rust:nightly-bookworm-slim AS chef
 WORKDIR /empath
 
 RUN apt update && apt install -y git clang mold
@@ -14,7 +14,7 @@ FROM chef AS planner
 COPY . .
 RUN cargo +nightly chef prepare --recipe-path recipe.json
 
-FROM chef as empath
+FROM chef AS empath
 COPY --from=planner /empath/recipe.json recipe.json
 RUN cargo +nightly chef cook --release --recipe-path recipe.json
 
@@ -25,7 +25,7 @@ FROM debian:stable-slim
 
 WORKDIR /empath
 
-COPY --from=empath /empath/target/release/empath .
+COPY --from=empath /empath/target/release .
 
 VOLUME /config
 

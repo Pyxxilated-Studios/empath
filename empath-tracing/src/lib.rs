@@ -165,8 +165,7 @@ pub fn traced(
     item_fn.attrs.push(clippy_attr);
 
     if args.instrument.is_some() {
-        let fields = args.instrument.unwrap();
-        let fields = fields.to_token_stream();
+        let fields = args.instrument.unwrap().to_token_stream();
         let instrument_attr: syn::Attribute = parse_quote! {
             #[tracing::instrument(#fields)]
         };

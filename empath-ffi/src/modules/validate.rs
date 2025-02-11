@@ -1,9 +1,10 @@
 use empath_tracing::traced;
 
-use crate::{internal, smtp::context::Context};
+use empath_common::{context::Context, internal};
+use serde::{Deserialize, Serialize};
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 // cbindgen:prefix-with-name=Validate
 pub enum Event {
     Connect,
@@ -30,7 +31,6 @@ pub struct Validation {
 }
 
 unsafe impl Send for Validation {}
-
 unsafe impl Sync for Validation {}
 
 impl Validation {

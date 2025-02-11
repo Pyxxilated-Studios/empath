@@ -1,16 +1,17 @@
 use std::net::SocketAddr;
 
-use empath_tracing::traced;
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-use crate::{
-    controller::{Signal, SHUTDOWN_BROADCAST},
-    internal,
-    smtp::{extensions::Extension, session::TlsContext},
+use empath_common::{
+    internal, tracing,
     traits::protocol::{Protocol, SessionHandler},
+    Signal,
 };
+use empath_tracing::traced;
+
+use crate::{extensions::Extension, session::TlsContext};
 
 #[allow(
     clippy::unsafe_derive_deserialize,
@@ -29,24 +30,43 @@ pub struct Listener<Proto: Protocol> {
     context: Proto::Context,
 }
 
-impl<Proto: Protocol> Listener<Proto> {
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all))]
-    pub async fn serve(&self) -> anyhow::Result<()> {
+impl<Proto: Protocol<ExtraArgs = (Vec<Extension>, Option<TlsContext>)>> Listener<Proto> {
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all, err))]
+    pub async fn serve(
+        &self,
+        mut shutdown: tokio::sync::broadcast::Receiver<Signal>,
+    ) -> anyhow::Result<()> {
         internal!("Serving {:?} with {:?}", self.socket, self.context);
         let mut sessions = Vec::default();
 
         let (address, port) = (self.socket.ip(), self.socket.port());
         let listener = TcpListener::bind(self.socket).await?;
 
-        let mut receiver = SHUTDOWN_BROADCAST.subscribe();
+        if let Some(tls) = self.tls.as_ref() {
+            if !tls.certificate.try_exists()? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Unable to find TLS Certificate {:?}", tls.certificate),
+                )
+                .into());
+            }
+
+            if !tls.key.try_exists()? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Unable to find TLS Key {:?}", tls.key),
+                )
+                .into());
+            }
+        }
 
         loop {
             tokio::select! {
-                sig = receiver.recv() => {
+                sig = shutdown.recv() => {
                     if matches!(sig, Ok(Signal::Shutdown)) {
                         internal!(level = INFO, "SMTP Listener {}:{} Received Shutdown signal, finishing sessions ...", address, port);
                         join_all(sessions).await;
-                        SHUTDOWN_BROADCAST.send(Signal::Finalised)?;
+                        // SHUTDOWN_BROADCAST.send(Signal::Finalised)?;
                         break;
                     }
                 }
@@ -54,7 +74,7 @@ impl<Proto: Protocol> Listener<Proto> {
                 connection = listener.accept() => {
                     tracing::debug!("Connection received on {}", self.socket);
                     let (stream, address) = connection?;
-                    let handler = self.handler.handle(stream, address, &self.extensions, self.tls.clone(), self.context.clone());
+                    let handler = self.handler.handle(stream, address, self.context.clone(), (self.extensions.clone(), self.tls.clone()));
                     sessions.push(tokio::spawn(async move {
                         if let Err(err) = handler.run().await {
                             internal!(level = ERROR, "Error: {err}");
