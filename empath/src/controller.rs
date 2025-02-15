@@ -1,22 +1,20 @@
 use std::sync::LazyLock;
 
-use empath_common::{tracing, Signal};
-use empath_tracing::traced;
-use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
-
-use empath_common::{internal, logging};
+use empath_common::{controller::Controller, internal, logging, tracing, Signal};
 use empath_ffi::modules::{self, Module};
-use empath_smtp::server::Server;
+use empath_smtp::Smtp;
+use empath_tracing::traced;
+use serde::Deserialize;
+use tokio::sync::broadcast;
 
 #[allow(
     clippy::unsafe_derive_deserialize,
     reason = "The unsafe aspects have nothing to do with the struct"
 )]
-#[derive(Default, Deserialize, Serialize)]
-pub struct Controller {
+#[derive(Default, Deserialize)]
+pub struct Empath {
     #[serde(alias = "smtp")]
-    smtp_server: Server,
+    smtp_controller: Controller<Smtp>,
     #[serde(alias = "module", default)]
     modules: Vec<Module>,
     #[serde(alias = "spool")]
@@ -66,7 +64,7 @@ async fn shutdown() -> anyhow::Result<()> {
     Ok(())
 }
 
-impl Controller {
+impl Empath {
     /// Run this controller, and everything it controls
     ///
     /// # Errors
@@ -82,8 +80,10 @@ impl Controller {
 
         modules::init(self.modules)?;
 
+        self.smtp_controller.init()?;
+
         let ret = tokio::select! {
-            r = self.smtp_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+            r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
                 r
             }
             r = self.spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {

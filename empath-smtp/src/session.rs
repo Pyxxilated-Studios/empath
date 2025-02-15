@@ -5,15 +5,14 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use mailparse::MailParseError;
-use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
-
 use empath_common::{
-    context, incoming, internal, outgoing, status::Status, tracing, traits::fsm::FiniteStateMachine,
+    context, incoming, internal, outgoing, status::Status, tracing, traits::FiniteStateMachine,
 };
 use empath_ffi::modules::{self, validate};
 use empath_tracing::traced;
+use mailparse::MailParseError;
+use serde::Deserialize;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{command::Command, connection::Connection, extensions::Extension, State};
 
@@ -24,7 +23,7 @@ pub enum Event {
     ConnectionKeepAlive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Context {
     pub state: State,
     pub message: Vec<u8>,
@@ -67,7 +66,7 @@ impl From<modules::Error> for SMTPError {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct TlsContext {
     pub(crate) certificate: PathBuf,
     pub(crate) key: PathBuf,
@@ -420,9 +419,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 mod test {
     use std::{collections::HashMap, io::Cursor, sync::Arc};
 
-    use crate::{session::Session, State};
     use empath_common::{context::Context, status::Status};
     use empath_ffi::modules::{self, validate, Module, MODULE_STORE};
+
+    use crate::{session::Session, State};
 
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]

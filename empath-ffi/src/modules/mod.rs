@@ -1,12 +1,10 @@
 use core::fmt::{self, Display};
-use std::sync::Mutex;
-use std::sync::{Arc, LazyLock, RwLock};
-
-use empath_tracing::traced;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use empath_common::{context::Context, internal};
+use empath_tracing::traced;
+use serde::Deserialize;
+use thiserror::Error;
 
 use super::string::StringVector;
 
@@ -17,14 +15,14 @@ type Init = unsafe extern "C" fn(StringVector) -> i32;
 type DeclareModule = unsafe extern "C" fn() -> Mod;
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize)]
 pub enum Ev {
     ConnectionOpened,
     ConnectionClosed,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize)]
 pub enum Event {
     Validate(validate::Event),
     Event(Ev),
@@ -90,13 +88,13 @@ pub enum Error {
     Validation(String),
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Test {
     pub events_called: Vec<Ev>,
     pub validators_called: Vec<validate::Event>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(library::Shared),

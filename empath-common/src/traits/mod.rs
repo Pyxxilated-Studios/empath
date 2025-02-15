@@ -1,3 +1,4 @@
-pub mod controller;
 pub mod fsm;
 pub mod protocol;
+
+pub use self::{fsm::FiniteStateMachine, protocol::Protocol};

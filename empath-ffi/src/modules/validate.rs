@@ -1,10 +1,9 @@
-use empath_tracing::traced;
-
 use empath_common::{context::Context, internal};
-use serde::{Deserialize, Serialize};
+use empath_tracing::traced;
+use serde::Deserialize;
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize)]
 // cbindgen:prefix-with-name=Validate
 pub enum Event {
     Connect,

@@ -1,8 +1,8 @@
 use core::fmt::{self, Display};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub enum Extension {
     Starttls,
     Help,

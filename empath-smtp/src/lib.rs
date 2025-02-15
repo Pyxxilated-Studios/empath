@@ -3,17 +3,10 @@
 pub mod command;
 pub mod connection;
 pub mod extensions;
-pub mod listener;
-pub mod server;
 pub mod session;
 
 use core::fmt::{self, Display, Formatter};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-
-use empath_tracing::traced;
-use extensions::Extension;
-use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
 
 use empath_common::{
     context::Context,
@@ -22,38 +15,74 @@ use empath_common::{
         protocol::{Protocol, SessionHandler},
     },
 };
+use empath_tracing::traced;
+use serde::Deserialize;
+use tokio::net::TcpStream;
 
-use self::{
+use crate::{
     command::{Command, HeloVariant},
+    extensions::Extension,
     session::{Session, TlsContext},
 };
 
-#[derive(Default, Deserialize, Serialize)]
-pub struct Smtp {
-    state: State,
+#[derive(Default, Deserialize)]
+pub struct Smtp;
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SmtpArgs {
+    tls: Option<TlsContext>,
+    #[serde(default)]
+    extensions: Vec<Extension>,
 }
 
 impl Protocol for Smtp {
     type Session = Session<TcpStream>;
-    type ExtraArgs = (Vec<Extension>, Option<TlsContext>);
+    type Args = SmtpArgs;
 
-    #[traced(instrument(level = tracing::Level::TRACE, skip(self, stream, init_context, args)), timing(precision = "ns"))]
+    fn ty() -> &'static str {
+        "SMTP"
+    }
+
+    #[traced(instrument(level = tracing::Level::TRACE, skip(self, stream, init_context, args)), timing(precision = "ms"))]
     fn handle(
         &self,
         stream: TcpStream,
         peer: SocketAddr,
         init_context: HashMap<String, String>,
-        args: Self::ExtraArgs,
+        args: Self::Args,
     ) -> Self::Session {
         Session::create(
             Arc::default(),
             stream,
             peer,
-            args.0,
-            args.1,
+            args.extensions,
+            args.tls,
             String::default(),
             init_context,
         )
+    }
+
+    #[traced(instrument(skip(self, args)), timing(precision = "ns"))]
+    fn validate(&self, args: &Self::Args) -> anyhow::Result<()> {
+        if let Some(tls) = args.tls.as_ref() {
+            if !tls.certificate.try_exists()? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Unable to find TLS Certificate {:?}", tls.certificate),
+                )
+                .into());
+            }
+
+            if !tls.key.try_exists()? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Unable to find TLS Key {:?}", tls.key),
+                )
+                .into());
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -64,7 +93,7 @@ impl SessionHandler for Session<TcpStream> {
 }
 
 #[repr(C)]
-#[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy, Deserialize, Default)]
 pub enum State {
     #[default]
     Connect,

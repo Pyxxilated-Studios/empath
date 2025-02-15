@@ -1,17 +1,16 @@
 use core::fmt::{self, Display};
 use std::sync::Arc;
 
+use empath_common::{context::Context, internal};
 use empath_tracing::traced;
 use libloading::Library;
-use serde::{Deserialize, Serialize};
-
-use empath_common::{context::Context, internal};
+use serde::Deserialize;
 
 #[allow(
     clippy::unsafe_derive_deserialize,
     reason = "The unsafe aspects have nothing to do with the struct"
 )]
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct Shared {
     pub name: String,
     pub arguments: Arc<[Arc<str>]>,

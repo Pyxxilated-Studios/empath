@@ -21,6 +21,8 @@ crate-type = ["cdylib", "rlib"]
 anyhow = "1.0.93"
 charset = "0.1.5"
 encoding_rs = "0.8.35"
+empath-tracing = { path = "../empath-tracing", version = "*" }
+futures-util = "0.3"
 libc = "0.2"
 mailparse = "0.16"
 serde = { version = "1", features = ["derive", "rc"] }

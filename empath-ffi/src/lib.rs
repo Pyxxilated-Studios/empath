@@ -214,14 +214,12 @@ mod test {
         ptr::null,
     };
 
-    use super::{
-        em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
-        em_context_get_recipients, em_context_set, em_context_set_response,
-    };
-
     use empath_common::{context::Context, envelope::Envelope, status::Status};
 
-    use super::em_context_set_sender;
+    use super::{
+        em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
+        em_context_get_recipients, em_context_set, em_context_set_response, em_context_set_sender,
+    };
 
     macro_rules! cstr {
         ($st:literal) => {

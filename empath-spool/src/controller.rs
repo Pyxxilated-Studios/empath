@@ -3,17 +3,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use serde::{Deserialize, Serialize};
-
 use empath_common::{internal, Signal};
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Deserialize;
 use tokio::sync::mpsc::{channel, Receiver};
 
 #[allow(
     clippy::unsafe_derive_deserialize,
     reason = "The unsafe aspects have nothing to do with the struct"
 )]
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct Controller {
     path: std::path::PathBuf,
 }

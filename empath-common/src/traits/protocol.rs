@@ -11,13 +11,26 @@ pub trait Protocol: Default + Send + Sync {
     type Session: SessionHandler + Send + Sync + 'static;
     type Context: Default + Clone + Debug + Send + Sync + for<'a> Deserialize<'a> =
         HashMap<String, String>;
-    type ExtraArgs;
+    type Args: Default + Clone + Debug + Send + Sync + for<'a> Deserialize<'a>;
 
     fn handle(
         &self,
         stream: TcpStream,
         address: SocketAddr,
         context: Self::Context,
-        args: Self::ExtraArgs,
+        args: Self::Args,
     ) -> Self::Session;
+
+    ///
+    /// Validate the arguments being provided to the protocol
+    ///
+    /// # Errors
+    /// This really depends on what needs to be done in order to validate the protocols arguments.
+    ///
+    /// For example, when providing TLS certificates/keys it may be necessary to check that the
+    /// paths provided actually exist
+    ///
+    fn validate(&self, args: &Self::Args) -> anyhow::Result<()>;
+
+    fn ty() -> &'static str;
 }
