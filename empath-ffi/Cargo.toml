@@ -33,4 +33,4 @@ tracing = { version = "0.1", default-features = false, features = [
 
 [build-dependencies]
 anyhow = "1.0.93"
-cbindgen = { version = "0.28.0", default-features = false }
+cbindgen = { version = "0.29.0", default-features = false }
