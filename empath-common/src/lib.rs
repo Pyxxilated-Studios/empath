@@ -1,9 +1,4 @@
-#![feature(
-    associated_type_defaults,
-    const_vec_string_slice,
-    slice_pattern,
-    vec_into_raw_parts
-)]
+#![feature(associated_type_defaults, slice_pattern, vec_into_raw_parts)]
 
 pub mod context;
 pub mod controller;

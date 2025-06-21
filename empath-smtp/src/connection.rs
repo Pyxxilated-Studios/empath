@@ -77,8 +77,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
             Some(rustls_pemfile::Item::Pkcs1Key(key)) => Ok(PrivateKeyDer::Pkcs1(key)),
             Some(rustls_pemfile::Item::Pkcs8Key(key)) => Ok(PrivateKeyDer::Pkcs8(key)),
             Some(rustls_pemfile::Item::Sec1Key(key)) => Ok(PrivateKeyDer::Sec1(key)),
-            _ => Err(anyhow::Error::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            _ => Err(anyhow::Error::new(std::io::Error::other(
                 "Unable to determine key file",
             ))),
         }

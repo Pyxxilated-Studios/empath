@@ -68,7 +68,10 @@ impl Protocol for Smtp {
             if !tls.certificate.try_exists()? {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Unable to find TLS Certificate {:?}", tls.certificate),
+                    format!(
+                        "Unable to find TLS Certificate {}",
+                        tls.certificate.display()
+                    ),
                 )
                 .into());
             }
@@ -76,7 +79,7 @@ impl Protocol for Smtp {
             if !tls.key.try_exists()? {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Unable to find TLS Key {:?}", tls.key),
+                    format!("Unable to find TLS Key {}", tls.key.display()),
                 )
                 .into());
             }

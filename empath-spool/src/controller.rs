@@ -42,7 +42,10 @@ impl Controller {
             return anyhow::Result::Err(
                 Error::new(
                     ErrorKind::NotADirectory,
-                    format!("Expected {path:?} to be a Directory, but it is not"),
+                    format!(
+                        "Expected {} to be a Directory, but it is not",
+                        path.display()
+                    ),
                 )
                 .into(),
             );
