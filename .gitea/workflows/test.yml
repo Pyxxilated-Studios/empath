@@ -80,7 +80,9 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action
+        with: 
+          tool: nextest
 
       - name: Test Server
         run: cargo miri nextest run
