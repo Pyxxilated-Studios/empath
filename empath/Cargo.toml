@@ -1,7 +1,7 @@
 [package]
 name = "empath"
 version = "0.0.2"
-edition = "2021"
+edition = "2024"
 authors = ["Pyxxil"]
 description = "An MTA written in Rust"
 documentation = "https://docs.rs/empath"

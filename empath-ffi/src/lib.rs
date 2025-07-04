@@ -17,13 +17,13 @@ pub type ValidateData = unsafe fn(&Context) -> isize;
 /// ffi-compatible way. Any other way should be retrieved by
 /// accessing the id member directly.
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_get_id(validate_context: &Context) -> crate::string::String {
     validate_context.id().into()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_get_recipients(
     validate_context: &Context,
@@ -31,7 +31,7 @@ pub extern "C" fn em_context_get_recipients(
     validate_context.recipients().into()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_get_sender(validate_context: &Context) -> crate::string::String {
     validate_context.sender().into()
@@ -46,7 +46,7 @@ pub extern "C" fn em_context_get_sender(validate_context: &Context) -> crate::st
 /// This should be able to be passed any valid pointer, and a valid `validate_context`, to
 /// set the sender
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub unsafe extern "C" fn em_context_set_sender(
     validate_context: &mut Context,
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn em_context_set_sender(
         return true;
     }
 
-    let sender = CStr::from_ptr(sender);
+    let sender = unsafe { CStr::from_ptr(sender) };
 
     match sender.to_str() {
         Ok(sender) => match mailparse::addrparse(sender) {
@@ -71,7 +71,7 @@ pub unsafe extern "C" fn em_context_set_sender(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_get_data(validate_context: &Context) -> crate::string::String {
     validate_context
@@ -87,7 +87,7 @@ pub extern "C" fn em_context_get_data(validate_context: &Context) -> crate::stri
 ///
 /// Even if provided with a null pointer, that would simply set the response to `None`
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub unsafe extern "C" fn em_context_set_response(
     validate_context: &mut Context,
@@ -97,25 +97,24 @@ pub unsafe extern "C" fn em_context_set_response(
     validate_context.response = if response.is_null() {
         None
     } else {
-        Some((
-            Status::from(status),
+        Some((Status::from(status), unsafe {
             CStr::from_ptr(response)
                 .to_owned()
                 .to_string_lossy()
-                .to_string(),
-        ))
+                .to_string()
+        }))
     };
 
     true
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_is_tls(validate_context: &Context) -> bool {
     validate_context.context.contains_key("tls")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::string::String {
     validate_context
@@ -125,7 +124,7 @@ pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::
         .unwrap_or_default()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::string::String {
     validate_context
@@ -140,7 +139,7 @@ pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::st
 ///
 /// Provided with a null pointer, simply return false
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub unsafe extern "C" fn em_context_exists(
     validate_context: &Context,
@@ -149,13 +148,15 @@ pub unsafe extern "C" fn em_context_exists(
     if key.is_null() {
         false
     } else {
-        CStr::from_ptr(key).to_str().is_ok_and(|key| {
-            println!(
-                "{key} exists? {}",
+        unsafe {
+            CStr::from_ptr(key).to_str().is_ok_and(|key| {
+                println!(
+                    "{key} exists? {}",
+                    validate_context.context.contains_key(key)
+                );
                 validate_context.context.contains_key(key)
-            );
-            validate_context.context.contains_key(key)
-        })
+            })
+        }
     }
 }
 
@@ -164,7 +165,7 @@ pub unsafe extern "C" fn em_context_exists(
 ///
 /// Provided with a null pointer, simply return false
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub unsafe extern "C" fn em_context_set(
     validate_context: &mut Context,
@@ -174,14 +175,16 @@ pub unsafe extern "C" fn em_context_set(
     if key.is_null() || value.is_null() {
         false
     } else {
-        CStr::from_ptr(key).to_str().is_ok_and(|key| {
-            let value = CStr::from_ptr(value)
-                .to_str()
-                .map(String::from)
-                .unwrap_or_default();
-            *validate_context.context.entry(key.to_string()).or_default() = value;
-            true
-        })
+        unsafe {
+            CStr::from_ptr(key).to_str().is_ok_and(|key| {
+                let value = CStr::from_ptr(value)
+                    .to_str()
+                    .map(String::from)
+                    .unwrap_or_default();
+                *validate_context.context.entry(key.to_string()).or_default() = value;
+                true
+            })
+        }
     }
 }
 
@@ -190,7 +193,7 @@ pub unsafe extern "C" fn em_context_set(
 ///
 /// Provided with a null pointer, simply return a default value
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub unsafe extern "C" fn em_context_get(
     validate_context: &Context,
@@ -199,11 +202,13 @@ pub unsafe extern "C" fn em_context_get(
     if key.is_null() {
         crate::string::String::default()
     } else {
-        CStr::from_ptr(key)
-            .to_str()
-            .ok()
-            .and_then(|key| validate_context.context.get(key))
-            .map_or_else(crate::string::String::default, std::convert::Into::into)
+        unsafe {
+            CStr::from_ptr(key)
+                .to_str()
+                .ok()
+                .and_then(|key| validate_context.context.get(key))
+                .map_or_else(crate::string::String::default, std::convert::Into::into)
+        }
     }
 }
 

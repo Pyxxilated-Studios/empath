@@ -1,10 +1,18 @@
-#![feature(associated_type_defaults, slice_pattern, vec_into_raw_parts)]
+#![feature(
+    ascii_char,
+    associated_type_defaults,
+    iter_advance_by,
+    slice_pattern,
+    vec_into_raw_parts
+)]
 
 pub mod context;
 pub mod controller;
 pub mod envelope;
 pub mod listener;
 pub mod logging;
+pub mod message;
+pub mod mime;
 pub mod status;
 pub mod traits;
 

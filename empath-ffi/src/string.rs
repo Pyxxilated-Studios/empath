@@ -134,13 +134,13 @@ impl From<&[Rc<str>]> for StringVector {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_free_string(ffi_string: String) {
     drop(ffi_string);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
     drop(ffi_vector);
@@ -150,7 +150,7 @@ pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
 mod test {
     use std::{ptr::null, sync::Arc};
 
-    use crate::string::{em_free_string, em_free_string_vector, String, StringVector};
+    use crate::string::{String, StringVector, em_free_string, em_free_string_vector};
 
     const TEST: &str = "test";
 

@@ -1,6 +1,6 @@
 [workspace]
-members = ["empath", "empath-common", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing"]
-resolver = "2"
+members = ["empath", "empath-common", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing", "fuzz"]
+resolver = "3"
 
 [profile.release]
 lto = "thin"

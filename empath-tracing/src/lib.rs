@@ -4,8 +4,8 @@
 extern crate proc_macro;
 
 use proc_macro2::TokenStream;
-use quote::{quote, quote_spanned, ToTokens};
-use syn::{parse::Parse, parse_macro_input, parse_quote, ItemFn, Stmt};
+use quote::{ToTokens, quote, quote_spanned};
+use syn::{ItemFn, Stmt, parse::Parse, parse_macro_input, parse_quote};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Precision {
@@ -86,7 +86,7 @@ mod keywords {
 }
 
 impl Attributes {
-    pub(crate) fn warnings(&self) -> impl quote::ToTokens {
+    pub(crate) fn warnings(&self) -> impl quote::ToTokens + use<> {
         let warnings = self.warnings.iter().map(|err| {
             let msg = format!("found unrecognized input, {err}");
             let msg = syn::LitStr::new(&msg, err.span());

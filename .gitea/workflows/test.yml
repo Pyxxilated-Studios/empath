@@ -47,7 +47,7 @@ jobs:
 
       - name: Run rust-clippy
         run: |
-          cargo clippy --all-features --message-format=json -- \
+          cargo clippy --all-features -- \
             -D clippy::all -D clippy::pedantic -D clippy::nursery \
             -A clippy::must-use-candidate -A clippy::cast-precision-loss \
             -A clippy::redundant-pub-crate
@@ -86,3 +86,6 @@ jobs:
 
       - name: Test Server
         run: cargo miri nextest run
+
+      - name: Run Doctests
+        run: cargo test --doc

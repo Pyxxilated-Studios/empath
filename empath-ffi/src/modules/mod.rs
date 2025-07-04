@@ -71,7 +71,7 @@ impl Mod {
 /// This solely exists in order to have the `Validation` be parsed
 /// by cbindgen. Perhaps in future it will be done in a better way.
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut Mod {
     std::ptr::null_mut()
 }
@@ -116,7 +116,7 @@ impl Module {
     #[traced(instrument(level = tracing::Level::TRACE, ret, skip(self, validate_context)), timing(precision = "us"))]
     fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
         match self {
-            Self::SharedLibrary(ref lib) => lib.emit(event, validate_context),
+            Self::SharedLibrary(lib) => lib.emit(event, validate_context),
             Self::TestModule { .. } => test::emit(self, event, validate_context),
         }
     }
@@ -133,22 +133,21 @@ impl Module {
 /// This will panic if it is unable to write to the module store
 ///
 #[traced(instrument(level = tracing::Level::TRACE, ret, skip_all), timing)]
-pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
+pub fn init(mut modules: Vec<Module>) -> anyhow::Result<()> {
     internal!(level = INFO, "Initialising modules ...");
 
-    for mut module in modules {
-        internal!("Init: {module}");
+    modules
+        .iter_mut()
+        .inspect(|module| internal!("Init: {module}"))
+        .try_for_each(|module| match module {
+            Module::SharedLibrary(lib) => lib.init(),
+            Module::TestModule { .. } => Ok(()),
+        })?;
 
-        match module {
-            Module::SharedLibrary(ref mut lib) => lib.init()?,
-            Module::TestModule { .. } => {}
-        }
-
-        MODULE_STORE
-            .write()
-            .expect("Unable to write module")
-            .push(module);
-    }
+    MODULE_STORE
+        .write()
+        .expect("Unable to write module")
+        .extend(modules.into_iter());
 
     internal!(level = INFO, "Modules initialised");
 
@@ -182,7 +181,7 @@ pub mod test {
     use super::{Event, Module};
 
     pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
-        if let Module::TestModule(ref mute) = module {
+        if let Module::TestModule(mute) = module {
             let mut inner = mute.lock().unwrap();
             match event {
                 Event::Validate(ev) => inner.validators_called.push(ev),

@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     path::PathBuf,
-    sync::{atomic::AtomicU64, Arc},
+    sync::{Arc, atomic::AtomicU64},
 };
 
 use empath_common::{
@@ -14,7 +14,7 @@ use mailparse::MailParseError;
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{command::Command, connection::Connection, extensions::Extension, State};
+use crate::{State, command::Command, connection::Connection, extensions::Extension};
 
 #[repr(C)]
 #[derive(PartialEq, Eq, Debug)]
@@ -235,7 +235,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             );
         }
 
-        let response = match self.context.state {
+        match self.context.state {
             State::Connect => (
                 Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
                 Event::ConnectionKeepAlive,
@@ -359,9 +359,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionClose,
             ),
-        };
-
-        response
+        }
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing)]
@@ -420,9 +418,9 @@ mod test {
     use std::{collections::HashMap, io::Cursor, sync::Arc};
 
     use empath_common::{context::Context, status::Status};
-    use empath_ffi::modules::{self, validate, Module, MODULE_STORE};
+    use empath_ffi::modules::{self, MODULE_STORE, Module, validate};
 
-    use crate::{session::Session, State};
+    use crate::{State, session::Session};
 
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]

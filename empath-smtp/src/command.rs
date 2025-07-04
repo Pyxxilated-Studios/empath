@@ -140,8 +140,8 @@ impl TryFrom<&[u8]> for Command {
     type Error = Self;
 
     fn try_from(command: &[u8]) -> Result<Self, Self::Error> {
-        std::str::from_utf8(command).map_or(
-            Err(Self::Invalid("Unable to interpret command".to_string())),
+        std::str::from_utf8(command).map_or_else(
+            |_| Err(Self::Invalid("Unable to interpret command".to_string())),
             Self::try_from,
         )
     }
