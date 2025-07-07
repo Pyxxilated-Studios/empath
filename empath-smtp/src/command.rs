@@ -37,13 +37,10 @@ impl Command {
     #[must_use]
     pub fn inner(&self) -> String {
         match self {
-            Self::MailFrom(from) => from
-                .clone()
-                .map(|f| match f {
-                    MailAddr::Group(_) => String::default(),
-                    MailAddr::Single(s) => s.to_string(),
-                })
-                .unwrap_or_default(),
+            Self::MailFrom(from) => from.clone().map_or_default(|f| match f {
+                MailAddr::Group(_) => String::default(),
+                MailAddr::Single(s) => s.to_string(),
+            }),
             Self::RcptTo(to) => to.to_string(),
             Self::Invalid(command) => command.clone(),
             Self::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => id.clone(),
@@ -58,12 +55,10 @@ impl Display for Command {
             Self::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
             Self::MailFrom(s) => fmt.write_fmt(format_args!(
                 "MAIL FROM:{}",
-                s.clone()
-                    .map(|f| match f {
-                        MailAddr::Group(_) => String::default(),
-                        MailAddr::Single(s) => s.to_string(),
-                    })
-                    .unwrap_or_default()
+                s.clone().map_or_default(|f| match f {
+                    MailAddr::Group(_) => String::default(),
+                    MailAddr::Single(s) => s.to_string(),
+                })
             )),
             Self::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{rcpt}")),
             Self::Data => fmt.write_str("DATA"),

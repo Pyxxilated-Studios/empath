@@ -18,6 +18,7 @@ jobs:
   analyze-clippy:
     env:
       RUNNER_TOOL_CACHE: /toolcache
+      RUSTFLAS: "-Dwarnings"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -49,13 +50,13 @@ jobs:
         run: |
           cargo clippy --all-features -- \
             -D clippy::all -D clippy::pedantic -D clippy::nursery \
-            -A clippy::must-use-candidate -A clippy::cast-precision-loss \
-            -A clippy::redundant-pub-crate
+            -A clippy::must-use-candidate
         continue-on-error: true
 
   test-server:
     env:
       RUNNER_TOOL_CACHE: /toolcache
+      RUSTFLAS: -Dwarnings
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -85,7 +86,4 @@ jobs:
           tool: nextest
 
       - name: Test Server
-        run: cargo miri nextest run
-
-      - name: Run Doctests
-        run: cargo test --doc
+        run: cargo miri nextest run && cargo test --doc

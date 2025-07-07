@@ -1,3 +1,5 @@
+#![feature(result_option_map_or_default)]
+
 pub mod command;
 pub mod connection;
 pub mod extensions;

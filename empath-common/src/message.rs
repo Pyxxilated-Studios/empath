@@ -253,7 +253,7 @@ impl<'buf> Message<'buf> {
 mod test {
     use pretty_assertions::assert_eq;
 
-    use crate::message::{Body, Header, Headers, Message};
+    use crate::message::{Body, END_OF_BODY, Header, Headers, Message};
 
     #[test]
     fn headers() {
@@ -306,5 +306,12 @@ mod test {
                 body: Body::Basic(std::borrow::Cow::Borrowed(b"Body Here\r\n.\r\n")),
             }
         );
+    }
+
+    #[test]
+    fn parse_empty_message() {
+        assert!(Message::parse(b"").is_err());
+        assert!(Message::parse(b"\r\n").is_err());
+        assert!(Message::parse(END_OF_BODY).is_err());
     }
 }

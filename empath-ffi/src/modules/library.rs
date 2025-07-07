@@ -49,7 +49,6 @@ impl Shared {
     pub(super) fn emit(&self, event: super::Event, validate_context: &mut Context) -> i32 {
         self.module
             .as_ref()
-            .map(|module| module.emit(event, validate_context))
-            .unwrap_or_default()
+            .map_or_default(|module| module.emit(event, validate_context))
     }
 }

@@ -1,4 +1,4 @@
-#![feature(slice_pattern, vec_into_raw_parts)]
+#![feature(slice_pattern, result_option_map_or_default, vec_into_raw_parts)]
 
 use core::slice::SlicePattern;
 use std::ffi::CStr;
@@ -120,8 +120,7 @@ pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::
     validate_context
         .context
         .get("protocol")
-        .map(crate::string::String::from)
-        .unwrap_or_default()
+        .map_or_default(crate::string::String::from)
 }
 
 #[unsafe(no_mangle)]
@@ -130,8 +129,7 @@ pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::st
     validate_context
         .context
         .get("cipher")
-        .map(crate::string::String::from)
-        .unwrap_or_default()
+        .map_or_default(crate::string::String::from)
 }
 
 ///
@@ -177,10 +175,7 @@ pub unsafe extern "C" fn em_context_set(
     } else {
         unsafe {
             CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                let value = CStr::from_ptr(value)
-                    .to_str()
-                    .map(String::from)
-                    .unwrap_or_default();
+                let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
                 *validate_context.context.entry(key.to_string()).or_default() = value;
                 true
             })

@@ -1,5 +1,5 @@
 [workspace]
-members = ["empath", "empath-common", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing", "fuzz"]
+members = ["empath", "empath-common", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing"]
 resolver = "3"
 
 [profile.release]

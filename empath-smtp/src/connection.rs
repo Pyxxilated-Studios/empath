@@ -4,12 +4,12 @@ use empath_common::tracing;
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{
+    TlsAcceptor,
     rustls::{
-        pki_types::{CertificateDer, PrivateKeyDer},
         ProtocolVersion, ServerConfig, ServerConnection, SupportedCipherSuite,
+        pki_types::{CertificateDer, PrivateKeyDer},
     },
     server::TlsStream,
-    TlsAcceptor,
 };
 
 use super::session::TlsContext;
@@ -30,18 +30,11 @@ impl TlsInfo {
     }
 
     pub fn proto(&self) -> String {
-        self.version
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_default()
+        self.version.as_str().map_or_default(str::to_string)
     }
 
     pub fn cipher(&self) -> String {
-        self.ciphers
-            .suite()
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_default()
+        self.ciphers.suite().as_str().map_or_default(str::to_string)
     }
 }
 
