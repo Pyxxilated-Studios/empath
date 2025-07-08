@@ -26,6 +26,7 @@ libloading = "0.8"
 mailparse = "0.16"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
+tracing-attributes = "=0.1.28"
 tracing = { version = "0.1", default-features = false, features = [
     "attributes",
     "std",
