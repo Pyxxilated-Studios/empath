@@ -3,7 +3,7 @@ use futures_util::future::join_all;
 use serde::Deserialize;
 use tokio::sync::broadcast::Receiver;
 
-use crate::{internal, listener::Listener, traits::Protocol, Signal};
+use crate::{Signal, internal, listener::Listener, traits::Protocol};
 
 #[derive(Default, Deserialize)]
 pub struct Controller<Proto: Protocol> {

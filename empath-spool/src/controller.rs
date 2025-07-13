@@ -3,10 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use empath_common::{internal, Signal};
+use empath_common::{Signal, internal};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::{Receiver, channel};
 
 #[allow(
     clippy::unsafe_derive_deserialize,

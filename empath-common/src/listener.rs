@@ -6,9 +6,8 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 
 use crate::{
-    internal,
+    Signal, internal,
     traits::protocol::{Protocol, SessionHandler},
-    Signal,
 };
 
 #[allow(

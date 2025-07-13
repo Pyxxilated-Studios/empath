@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use empath_common::{controller::Controller, internal, logging, tracing, Signal};
+use empath_common::{Signal, controller::Controller, internal, logging, tracing};
 use empath_ffi::modules::{self, Module};
 use empath_smtp::Smtp;
 use empath_tracing::traced;

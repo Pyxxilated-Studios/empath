@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{
-    filter::FilterFn, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
+    Layer, filter::FilterFn, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
 };
 
 #[macro_export]

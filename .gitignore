@@ -4,5 +4,6 @@
 *.key
 *.so
 *.dylib
+spool/
 
 .DS_Store
