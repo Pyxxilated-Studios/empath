@@ -8,6 +8,12 @@ key = "private.key"
 [smtp.listener.context]
 service = "smtp"
 
+# Configure SMTP extensions for this listener
+[[smtp.listener.extensions]]
+# SIZE extension with 100MB maximum message size (in bytes)
+# Set to 0 for no limit, or omit this extension entirely
+size = 100000000
+
 [[smtp.listener]]
 socket = "[::]:1026"
 
