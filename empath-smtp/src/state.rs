@@ -205,7 +205,7 @@ impl State {
                 | Self::StartTls(_)
                 | Self::Help(_)
                 | Self::PostDot(_),
-                Command::MailFrom(sender),
+                Command::MailFrom(sender, _),
             ) => {
                 ctx.envelope.sender_mut().clone_from(&sender);
                 Self::MailFrom(MailFrom { sender })
@@ -355,7 +355,10 @@ mod test {
 
         // MAIL FROM
         let sender: AddressList = addrparse("sender@example.com").unwrap().into();
-        let state = state.transition(Command::MailFrom(sender.iter().next().cloned()), &mut ctx);
+        let state = state.transition(
+            Command::MailFrom(sender.iter().next().cloned(), None),
+            &mut ctx,
+        );
         assert!(matches!(state, State::MailFrom(_)));
 
         // RCPT TO

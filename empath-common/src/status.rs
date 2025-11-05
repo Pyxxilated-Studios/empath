@@ -15,6 +15,7 @@ pub enum Status {
     ActionUnavailable = 451,
     InvalidCommandSequence = 503,
     Error = 550,
+    ExceededStorage = 552,
     Unknown(u32),
 }
 
@@ -44,6 +45,7 @@ impl From<u32> for Status {
             451 => Self::ActionUnavailable,
             503 => Self::InvalidCommandSequence,
             550 => Self::Error,
+            552 => Self::ExceededStorage,
             _ => Self::Unknown(value),
         }
     }
@@ -63,6 +65,7 @@ impl From<Status> for u32 {
             Status::ActionUnavailable => 451,
             Status::InvalidCommandSequence => 503,
             Status::Error => 550,
+            Status::ExceededStorage => 552,
             Status::Unknown(v) => v,
         }
     }

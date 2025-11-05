@@ -6,17 +6,27 @@ pub mod extensions;
 pub mod session;
 pub mod state;
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::{self, Display, Formatter},
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use empath_common::{
     Signal,
-    traits::protocol::{Protocol, SessionHandler},
+    context::Context,
+    traits::{
+        FiniteStateMachine,
+        protocol::{Protocol, SessionHandler},
+    },
 };
 use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::net::TcpStream;
 
 use crate::{
+    command::{Command, HeloVariant},
     extensions::Extension,
     session::{Session, SessionConfig, TlsContext},
 };
@@ -134,5 +144,118 @@ impl SessionHandler for Session<TcpStream> {
     }
 }
 
-// Re-export the type-safe State enum from the state module
-pub use state::State;
+#[repr(C)]
+#[derive(PartialEq, PartialOrd, Eq, Hash, Debug, Clone, Copy, Deserialize, Default)]
+pub enum State {
+    #[default]
+    Connect,
+    Ehlo,
+    Helo,
+    Help,
+    StartTLS,
+    MailFrom,
+    RcptTo,
+    Data,
+    Reading,
+    PostDot,
+    Quit,
+    InvalidCommandSequence,
+    Invalid,
+    Reject,
+    Close,
+}
+
+impl Display for State {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        fmt.write_str(match self {
+            Self::Reading | Self::PostDot => "",
+            Self::Connect => "Connect",
+            Self::Close => "Close",
+            Self::Ehlo => "EHLO",
+            Self::Helo => "HELO",
+            Self::Help => "HELP",
+            Self::StartTLS => "STARTTLS",
+            Self::MailFrom => "MAIL",
+            Self::RcptTo => "RCPT",
+            Self::Data => "DATA",
+            Self::Quit => "QUIT",
+            Self::Invalid => "INVALID",
+            Self::InvalidCommandSequence => "Invalid Command Sequence",
+            Self::Reject => "Rejected",
+        })
+    }
+}
+
+impl TryFrom<&str> for State {
+    type Error = Self;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.to_ascii_uppercase().trim() {
+            "EHLO" => Ok(Self::Ehlo),
+            "HELO" => Ok(Self::Helo),
+            "HELP" => Ok(Self::Help),
+            "STARTTLS" => Ok(Self::StartTLS),
+            "MAIL" => Ok(Self::MailFrom),
+            "RCPT" => Ok(Self::RcptTo),
+            "DATA" => Ok(Self::Data),
+            "QUIT" => Ok(Self::Quit),
+            _ => Err(Self::Invalid),
+        }
+    }
+}
+
+impl FiniteStateMachine for State {
+    type Input = Command;
+    type Context = Context;
+
+    fn transition(self, input: Self::Input, validate_context: &mut Self::Context) -> Self {
+        match (self, input) {
+            (Self::Connect, Command::Helo(HeloVariant::Ehlo(id))) => {
+                validate_context.id = id;
+                validate_context.extended = true;
+                Self::Ehlo
+            }
+            (Self::Connect, Command::Helo(HeloVariant::Helo(id))) => {
+                validate_context.id = id;
+                Self::Helo
+            }
+            (Self::Ehlo | Self::Helo, Command::StartTLS) if validate_context.extended => {
+                Self::StartTLS
+            }
+            (Self::Ehlo | Self::Helo, Command::Help) => Self::Help,
+            (
+                Self::Ehlo | Self::Helo | Self::StartTLS | Self::PostDot | Self::Help,
+                Command::MailFrom(from, size),
+            ) => {
+                validate_context.envelope.sender_mut().clone_from(&from);
+                // Store the declared size in the context for validation
+                if let Some(size_val) = size {
+                    validate_context
+                        .context
+                        .insert(String::from("declared_size"), size_val.to_string());
+                }
+                Self::MailFrom
+            }
+            (Self::RcptTo | Self::MailFrom, Command::RcptTo(to)) => {
+                if let Some(rcpts) = validate_context.envelope.recipients_mut() {
+                    rcpts.extend_from_slice(&to[..]);
+                } else {
+                    *validate_context.envelope.recipients_mut() = Some(to);
+                }
+                Self::RcptTo
+            }
+            (Self::RcptTo, Command::Data) => Self::Data,
+            (Self::Data, comm) if comm != Command::Quit => Self::Connect,
+            (_, Command::Rset) => {
+                // RSET clears transaction state including declared size
+                validate_context.context.remove("declared_size");
+                *validate_context.envelope.sender_mut() = None;
+                *validate_context.envelope.recipients_mut() = None;
+                Self::Helo
+            }
+            (_, Command::Quit) => Self::Quit,
+            (Self::Invalid, _) => Self::Invalid,
+            _ => Self::InvalidCommandSequence,
+        }
+    }
+}
