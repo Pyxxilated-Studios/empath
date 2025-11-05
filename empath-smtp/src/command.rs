@@ -157,7 +157,7 @@ mod test {
     // Idea copied from https://gitlab.com/erichdongubler-experiments/rust_case_permutations/blob/master/src/lib.rs#L97
     fn string_casing(string: &str) -> impl Iterator<Item = String> {
         let len = string.len();
-        let num_cases = usize::pow(2, len as u32);
+        let num_cases = usize::pow(2, u32::try_from(len).unwrap_or(0));
 
         let (upper, lower) = string.chars().fold(
             (Vec::with_capacity(len), Vec::with_capacity(len)),
@@ -171,9 +171,9 @@ mod test {
         (0..num_cases).map(move |i| {
             (0..len).fold(String::with_capacity(len), |mut s, idx| {
                 if (i & (1 << idx)) == 0 {
-                    s.push(lower[idx])
+                    s.push(lower[idx]);
                 } else {
-                    s.push(upper[idx])
+                    s.push(upper[idx]);
                 }
                 s
             })

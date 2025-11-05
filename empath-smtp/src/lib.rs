@@ -9,6 +9,7 @@ use core::fmt::{self, Display, Formatter};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use empath_common::{
+    Signal,
     context::Context,
     traits::{
         fsm::FiniteStateMachine,
@@ -22,7 +23,7 @@ use tokio::net::TcpStream;
 use crate::{
     command::{Command, HeloVariant},
     extensions::Extension,
-    session::{Session, TlsContext},
+    session::{Session, SessionConfig, TlsContext},
 };
 
 #[derive(Default, Deserialize)]
@@ -33,6 +34,17 @@ pub struct SmtpArgs {
     tls: Option<TlsContext>,
     #[serde(default)]
     extensions: Vec<Extension>,
+    #[serde(skip)]
+    spool: Option<Arc<dyn empath_spool::Spool>>,
+}
+
+impl SmtpArgs {
+    /// Set the spool controller for this SMTP server
+    #[must_use]
+    pub fn with_spool(mut self, spool: Arc<dyn empath_spool::Spool>) -> Self {
+        self.spool = Some(spool);
+        self
+    }
 }
 
 impl Protocol for Smtp {
@@ -55,10 +67,13 @@ impl Protocol for Smtp {
             Arc::default(),
             stream,
             peer,
-            args.extensions,
-            args.tls,
-            String::default(),
-            init_context,
+            SessionConfig {
+                extensions: args.extensions,
+                tls_context: args.tls,
+                spool: args.spool,
+                banner: String::default(),
+                init_context,
+            },
         )
     }
 
@@ -90,8 +105,8 @@ impl Protocol for Smtp {
 }
 
 impl SessionHandler for Session<TcpStream> {
-    async fn run(self) -> anyhow::Result<()> {
-        Self::run(self).await
+    async fn run(self, signal: tokio::sync::broadcast::Receiver<Signal>) -> anyhow::Result<()> {
+        Self::run(self, signal).await
     }
 }
 

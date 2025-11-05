@@ -20,6 +20,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 anyhow = "1.0.93"
 empath-common = { path = "../empath-common", version = "*" }
+empath-tracing = { path = "../empath-tracing", version = "*" }
 notify = "8"
 serde = { version = "1", features = ["derive", "rc"] }
-tokio = { version = "1", default-features = false, features = ["sync"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["sync", "fs", "time"] }
+tracing = { version = "0.1", default-features = false }

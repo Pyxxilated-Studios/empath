@@ -21,6 +21,7 @@ crate-type = ["cdylib", "rlib"]
 anyhow = "1.0.93"
 empath-common = { path = "../empath-common", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
+empath-spool = { path = "../empath-spool", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 futures-util = "0.3"
 mailparse = "0.16"

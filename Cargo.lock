@@ -294,6 +294,7 @@ dependencies = [
  "anyhow",
  "empath-common",
  "empath-ffi",
+ "empath-spool",
  "empath-tracing",
  "futures-util",
  "mailparse",
@@ -310,9 +311,12 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "empath-common",
+ "empath-tracing",
  "notify",
  "serde",
+ "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -262,15 +262,15 @@ mod test {
             value: std::borrow::Cow::Borrowed(b"Test@test.com"),
         };
 
-        let hhead = Header {
+        let head_upper = Header {
             name: "FROM",
             value: std::borrow::Cow::Borrowed(b"Test@test.com"),
         };
 
-        assert_eq!(head, hhead);
+        assert_eq!(head, head_upper);
 
         let headers = Headers(vec![head]);
-        assert!(headers.contains(&hhead));
+        assert!(headers.contains(&head_upper));
     }
 
     #[test]
