@@ -1,6 +1,7 @@
 use std::{ffi::CString, ptr::null, rc::Rc, str::Utf8Error, sync::Arc};
 
 #[repr(C)]
+#[derive(Default)]
 pub struct String {
     pub len: usize,
     pub data: *const i8,
@@ -11,21 +12,14 @@ impl Drop for String {
         if !self.data.is_null() {
             let _ =
                 unsafe { CString::from_raw((self.data.cast::<core::ffi::c_char>()).cast_mut()) };
-        }
-    }
-}
-
-impl Default for String {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            data: null(),
+            self.data = null();
         }
     }
 }
 
 #[repr(C)]
 #[allow(clippy::module_name_repetitions)]
+#[derive(Default)]
 pub struct StringVector {
     pub len: usize,
     pub data: *const String,
@@ -35,6 +29,7 @@ impl Drop for StringVector {
     fn drop(&mut self) {
         if !self.data.is_null() {
             let _ = unsafe { Vec::from_raw_parts(self.data.cast_mut(), self.len, self.len) };
+            self.data = null();
         }
     }
 }
@@ -136,14 +131,14 @@ impl From<&[Rc<str>]> for StringVector {
 
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_free_string(ffi_string: String) {
-    drop(ffi_string);
+pub extern "C" fn em_free_string(_ffi_string: String) {
+    // drop(ffi_string);
 }
 
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
-    drop(ffi_vector);
+pub extern "C" fn em_free_string_vector(_ffi_vector: StringVector) {
+    // drop(ffi_vector);
 }
 
 #[cfg(test)]

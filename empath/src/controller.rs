@@ -80,13 +80,19 @@ impl Empath {
 
         modules::init(self.modules)?;
 
+        // Inject the spool into all SMTP listeners before initialization
+        // We need both: the concrete Arc<Controller> for serve() and Arc<dyn Spool> for sessions
+        let spool_controller = std::sync::Arc::new(self.spool);
+        self.smtp_controller
+            .map_args(|args| args.with_spool(spool_controller.clone()));
+
         self.smtp_controller.init()?;
 
         let ret = tokio::select! {
             r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
                 r
             }
-            r = self.spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+            r = spool_controller.serve(SHUTDOWN_BROADCAST.subscribe()) => {
                 r
             }
             r = shutdown() => {

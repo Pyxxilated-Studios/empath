@@ -12,6 +12,19 @@ pub struct Controller<Proto: Protocol> {
 }
 
 impl<Proto: Protocol> Controller<Proto> {
+    /// Map over the args of all listeners, allowing modification before initialization
+    ///
+    /// This is useful for injecting dependencies that cannot be deserialized from TOML,
+    /// such as shared spool controllers or other runtime resources.
+    pub fn map_args<F>(&mut self, f: F)
+    where
+        F: Fn(Proto::Args) -> Proto::Args,
+    {
+        for listener in &mut self.listeners {
+            listener.map_args(&f);
+        }
+    }
+
     ///
     /// Initialise this controller
     ///
@@ -24,6 +37,10 @@ impl<Proto: Protocol> Controller<Proto> {
         self.listeners.iter().try_for_each(Listener::init)
     }
 
+    ///
+    /// # Errors
+    /// If any of the listeners have a failure
+    ///
     #[traced(instrument(level = tracing::Level::TRACE, skip(self, signals)), timing(precision = "s"))]
     pub async fn control(self, signals: Vec<Receiver<Signal>>) -> anyhow::Result<()> {
         join_all(

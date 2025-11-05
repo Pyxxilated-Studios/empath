@@ -7,8 +7,9 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{ItemFn, Stmt, parse::Parse, parse_macro_input, parse_quote};
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Default)]
 enum Precision {
+    #[default]
     Nanos,
     Micros,
     Millis,
@@ -47,12 +48,6 @@ impl From<&str> for Precision {
             "s" | "sec" | "secs" | "seconds" => Self::Seconds,
             _ => Self::Unspecified,
         }
-    }
-}
-
-impl Default for Precision {
-    fn default() -> Self {
-        Self::Nanos
     }
 }
 

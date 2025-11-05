@@ -3,8 +3,13 @@ use std::{collections::HashMap, fmt::Debug, net::SocketAddr};
 use serde::Deserialize;
 use tokio::net::TcpStream;
 
+use crate::Signal;
+
 pub trait SessionHandler {
-    fn run(self) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+    fn run(
+        self,
+        signal: tokio::sync::broadcast::Receiver<Signal>,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
 }
 
 pub trait Protocol: Default + Send + Sync {

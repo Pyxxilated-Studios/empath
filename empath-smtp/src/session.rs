@@ -6,7 +6,8 @@ use std::{
 };
 
 use empath_common::{
-    context, incoming, internal, outgoing, status::Status, tracing, traits::FiniteStateMachine,
+    Signal, context, incoming, internal, outgoing, status::Status, tracing,
+    traits::FiniteStateMachine,
 };
 use empath_ffi::modules::{self, validate};
 use empath_tracing::traced;
@@ -72,6 +73,15 @@ pub struct TlsContext {
     pub(crate) key: PathBuf,
 }
 
+#[derive(Debug)]
+pub struct SessionConfig {
+    pub extensions: Vec<Extension>,
+    pub tls_context: Option<TlsContext>,
+    pub spool: Option<Arc<dyn empath_spool::Spool>>,
+    pub banner: String,
+    pub init_context: HashMap<String, String>,
+}
+
 pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     queue: Arc<AtomicU64>,
     peer: SocketAddr,
@@ -79,6 +89,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     extensions: Arc<[Extension]>,
     banner: String,
     tls_context: Option<TlsContext>,
+    spool: Option<Arc<dyn empath_spool::Spool>>,
     connection: Connection<Stream>,
     init_context: HashMap<String, String>,
 }
@@ -89,12 +100,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         queue: Arc<AtomicU64>,
         stream: Stream,
         peer: SocketAddr,
-        mut extensions: Vec<Extension>,
-        tls_context: Option<TlsContext>,
-        banner: String,
-        init_context: HashMap<String, String>,
+        config: SessionConfig,
     ) -> Self {
-        if tls_context.is_some() {
+        tracing::debug!("Config: {:?}", config);
+        let mut extensions = config.extensions;
+        if config.tls_context.is_some() {
             extensions.push(Extension::Starttls);
         }
         extensions.push(Extension::Help);
@@ -107,26 +117,40 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             connection: Connection::Plain { stream },
             context: Context::default(),
             extensions: extensions.into(),
-            tls_context,
-            banner: if banner.is_empty() {
+            tls_context: config.tls_context,
+            spool: config.spool,
+            banner: if config.banner.is_empty() {
                 "localhost".to_string()
             } else {
-                banner
+                config.banner
             },
-            init_context,
+            init_context: config.init_context,
         }
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, fields(?peer = self.peer), ret), timing(precision = "us"))]
-    pub(crate) async fn run(mut self) -> anyhow::Result<()> {
+    pub(crate) async fn run(
+        mut self,
+        signal: tokio::sync::broadcast::Receiver<Signal>,
+    ) -> anyhow::Result<()> {
         internal!("Connected");
 
         async fn run_inner<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
             mut session: Session<Stream>,
             validate_context: &mut context::Context,
+            mut signal: tokio::sync::broadcast::Receiver<Signal>,
         ) -> anyhow::Result<()> {
             loop {
-                let (response, ev) = session.response(validate_context);
+                let (mut response, mut ev) = session.response(validate_context).await;
+                if let Some((status, ref resp)) = validate_context.response {
+                    response = Some(vec![format!("{} {}", status, resp)]);
+                    ev = if status.is_permanent() {
+                        Event::ConnectionClose
+                    } else {
+                        Event::ConnectionKeepAlive
+                    }
+                }
+
                 validate_context.response = None;
                 session.context.sent = true;
 
@@ -177,8 +201,20 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         validate_context.response =
                             Some((Status::Error, String::from("STARTTLS failed")));
                     }
-                } else if session.receive(validate_context).await.unwrap_or(true) {
-                    return Ok(());
+                } else {
+                    tokio::select! {
+                        _ = signal.recv() => {
+                            session.context.sent = false;
+                            session.context.state = State::Close;
+                            validate_context.response =
+                                Some((Status::Unavailable, String::from("Server shutting down")));
+                        }
+                        close = session.receive(validate_context) => {
+                            if close.unwrap_or(true) {
+                                return Ok(());
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -198,7 +234,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             self.context.state = State::Reject;
         }
 
-        let result = run_inner(self, &mut validate_context).await;
+        let result = run_inner(self, &mut validate_context, signal).await;
 
         internal!("Connection closed");
         modules::dispatch(
@@ -209,10 +245,94 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         result
     }
 
+    /// Handle EHLO/HELP response generation with extensions
+    fn response_ehlo_help(&self) -> Response {
+        let response = if self.context.state == State::Ehlo {
+            vec![format!(
+                "{}{}Hello {}",
+                Status::Ok,
+                if self.extensions.is_empty() { ' ' } else { '-' },
+                std::str::from_utf8(&self.context.message).unwrap()
+            )]
+        } else {
+            vec![]
+        };
+
+        (
+            Some(self.extensions.iter().enumerate().fold(
+                response,
+                |mut response, (idx, extension)| {
+                    response.push(format!(
+                        "{}{}{}",
+                        if self.context.state == State::Help {
+                            Status::HelpMessage
+                        } else {
+                            Status::Ok
+                        },
+                        if idx == self.extensions.len() - 1 {
+                            ' '
+                        } else {
+                            '-'
+                        },
+                        extension
+                    ));
+
+                    response
+                },
+            )),
+            Event::ConnectionKeepAlive,
+        )
+    }
+
+    /// Handle `PostDot` state - queue message and optionally spool
+    #[traced]
+    async fn response_post_dot(&self, validate_context: &context::Context) -> Response {
+        internal!("PostDot: {validate_context:?}");
+        let queue = self
+            .queue
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Spool the message if a spool controller is configured
+        if let Some(spool) = &self.spool
+            && let Some(data) = &validate_context.data
+        {
+            let message = empath_spool::Message::new(
+                queue,
+                validate_context.envelope.clone(),
+                data.clone(),
+                validate_context.id.clone(),
+                validate_context.extended,
+                validate_context.context.clone(),
+            );
+
+            // Spawn a task to spool the message asynchronously
+            let spool_clone = spool.clone();
+            let _ = tokio::spawn(async move {
+                if let Err(e) = spool_clone.spool_message(&message).await {
+                    internal!(
+                        level = ERROR,
+                        "Failed to spool message {}: {}",
+                        message.id,
+                        e
+                    );
+                }
+            })
+            .await;
+        }
+
+        let default = (Status::Ok, format!("Ok: queued as {queue}"));
+        let response = validate_context.response.as_ref().unwrap_or(&default);
+
+        (
+            Some(vec![format!("{} {}", response.0, response.1)]),
+            Event::ConnectionKeepAlive,
+        )
+    }
+
     /// Generate the response(s) that should be sent back to the client
     /// depending on the servers state
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "ns"))]
-    fn response(&mut self, validate_context: &mut context::Context) -> Response {
+    async fn response(&mut self, validate_context: &mut context::Context) -> Response {
         if self.context.sent {
             return (None, Event::ConnectionKeepAlive);
         }
@@ -221,17 +341,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             modules::dispatch(
                 modules::Event::Validate(validate::Event::Data),
                 validate_context,
-            );
-        }
-
-        if let Some((status, ref response)) = validate_context.response {
-            return (
-                Some(vec![format!("{} {}", status, response)]),
-                if status.is_permanent() {
-                    Event::ConnectionClose
-                } else {
-                    Event::ConnectionKeepAlive
-                },
             );
         }
 
@@ -248,43 +357,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Ehlo | State::Help => {
-                let response = if self.context.state == State::Ehlo {
-                    vec![format!(
-                        "{}{}Hello {}",
-                        Status::Ok,
-                        if self.extensions.is_empty() { ' ' } else { '-' },
-                        std::str::from_utf8(&self.context.message).unwrap()
-                    )]
-                } else {
-                    vec![]
-                };
-
-                (
-                    Some(self.extensions.iter().enumerate().fold(
-                        response,
-                        |mut response, (idx, extension)| {
-                            response.push(format!(
-                                "{}{}{}",
-                                if self.context.state == State::Help {
-                                    Status::HelpMessage
-                                } else {
-                                    Status::Ok
-                                },
-                                if idx == self.extensions.len() - 1 {
-                                    ' '
-                                } else {
-                                    '-'
-                                },
-                                extension
-                            ));
-
-                            response
-                        },
-                    )),
-                    Event::ConnectionKeepAlive,
-                )
-            }
+            State::Ehlo | State::Help => self.response_ehlo_help(),
             State::StartTLS if self.tls_context.is_some() => (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
                 Event::ConnectionKeepAlive,
@@ -319,18 +392,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::PostDot => {
-                let queue = self
-                    .queue
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let default = (Status::Ok, format!("Ok: queued as {queue}"));
-                let response = validate_context.response.as_ref().unwrap_or(&default);
-
-                (
-                    Some(vec![format!("{} {}", response.0, response.1)]),
-                    Event::ConnectionKeepAlive,
-                )
-            }
+            State::PostDot => self.response_post_dot(validate_context).await,
             State::Quit => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
                 Event::ConnectionClose,
@@ -420,7 +482,10 @@ mod test {
     use empath_common::{context::Context, status::Status};
     use empath_ffi::modules::{self, MODULE_STORE, Module, validate};
 
-    use crate::{State, session::Session};
+    use crate::{
+        State,
+        session::{Session, SessionConfig},
+    };
 
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]
@@ -433,13 +498,16 @@ mod test {
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
-            Vec::default(),
-            None,
-            banner.to_string(),
-            HashMap::default(),
+            SessionConfig {
+                extensions: Vec::default(),
+                tls_context: None,
+                spool: None,
+                banner: banner.to_string(),
+                init_context: HashMap::default(),
+            },
         );
 
-        let response = session.response(&mut context);
+        let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(
             response.0.unwrap().first().unwrap(),
@@ -465,18 +533,21 @@ mod test {
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
-            Vec::default(),
-            None,
-            banner.to_string(),
-            HashMap::default(),
+            SessionConfig {
+                extensions: Vec::default(),
+                tls_context: None,
+                spool: None,
+                banner: banner.to_string(),
+                init_context: HashMap::default(),
+            },
         );
 
-        let _ = session.response(&mut context);
+        let _ = session.response(&mut context).await;
         let response = session.receive(&mut context).await;
         assert!(response.is_ok());
         assert!(!response.unwrap());
 
-        let response = session.response(&mut context);
+        let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(
             response.0.unwrap().first().unwrap(),
@@ -489,13 +560,76 @@ mod test {
 
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    async fn spool_integration() {
+        use std::sync::Arc;
+
+        let banner = "testing";
+        let mut context = Context::default();
+        let mut cursor = Cursor::<Vec<u8>>::default();
+        let test_data = b"Subject: Test\r\n\r\nHello World\r\n.\r\n";
+        cursor.get_mut().extend_from_slice(test_data);
+
+        // Create a mock spool controller
+        let mock_spool = Arc::new(empath_spool::MockController::new());
+
+        let mut session = Session::create(
+            Arc::default(),
+            cursor,
+            "[::]:25".parse().unwrap(),
+            SessionConfig {
+                extensions: Vec::default(),
+                tls_context: None,
+                spool: Some(mock_spool.clone() as Arc<dyn empath_spool::Spool>),
+                banner: banner.to_string(),
+                init_context: HashMap::default(),
+            },
+        );
+
+        // Simulate HELO state and receiving DATA
+        session.context.state = State::RcptTo;
+        let mut sender_addrs = mailparse::addrparse("test@example.com").unwrap();
+        context
+            .envelope
+            .sender_mut()
+            .replace(sender_addrs.remove(0));
+        context
+            .envelope
+            .recipients_mut()
+            .replace(mailparse::addrparse("recipient@example.com").unwrap());
+
+        // Process the data
+        let _ = session.response(&mut context).await;
+        let response = session.receive(&mut context).await;
+        assert!(response.is_ok());
+
+        // Simulate PostDot state
+        session.context.state = State::PostDot;
+        context.data = Some(test_data.to_vec().into());
+
+        let response = session.response(&mut context).await;
+        assert!(response.0.is_some());
+
+        // Wait for the spool operation to complete with a timeout
+        mock_spool
+            .wait_for_count(1, std::time::Duration::from_secs(5))
+            .await
+            .expect("Spool operation should complete within timeout");
+
+        // Verify message was spooled
+        assert_eq!(mock_spool.message_count(), 1);
+        let spooled_msg = mock_spool.get_message(0).unwrap();
+        assert_eq!(spooled_msg.data.as_ref(), test_data);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(all(target_os = "macos", miri), ignore)]
     async fn modules() {
         let banner = "testing";
         let mut context = Context::default();
         let mut cursor = Cursor::<Vec<u8>>::default();
         cursor
             .get_mut()
-            .extend_from_slice("MAIL FROM: test@gmail.com".as_bytes());
+            .extend_from_slice(b"MAIL FROM: test@gmail.com");
 
         let module = Module::TestModule(Arc::default());
         let inited = modules::init(vec![module]);
@@ -505,20 +639,23 @@ mod test {
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
-            Vec::default(),
-            None,
-            banner.to_string(),
-            HashMap::default(),
+            SessionConfig {
+                extensions: Vec::default(),
+                tls_context: None,
+                spool: None,
+                banner: banner.to_string(),
+                init_context: HashMap::default(),
+            },
         );
 
         session.context.state = State::Helo;
 
-        let _ = session.response(&mut context);
+        let _ = session.response(&mut context).await;
         let response = session.receive(&mut context).await;
         assert!(response.is_ok());
         assert!(!response.unwrap());
 
-        let response = session.response(&mut context);
+        let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(
             response.0.unwrap().first().unwrap(),
@@ -528,11 +665,13 @@ mod test {
         let response = session.receive(&mut context).await;
         assert!(response.is_ok_and(|v| v));
 
-        let store = MODULE_STORE.read().unwrap();
-        let module = store.first().unwrap();
-        if let Module::TestModule(mute) = module {
-            let test = mute.lock().unwrap();
-            assert!(test.validators_called.contains(&validate::Event::MailFrom));
+        if let Module::TestModule(mute) = MODULE_STORE.read().unwrap().first().unwrap() {
+            assert!(
+                mute.lock()
+                    .unwrap()
+                    .validators_called
+                    .contains(&validate::Event::MailFrom)
+            );
         } else {
             panic!("Expected TestModule to exist");
         }

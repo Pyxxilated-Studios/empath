@@ -28,25 +28,50 @@ unsafe impl<P: Protocol> Send for Listener<P> {}
 unsafe impl<P: Protocol> Sync for Listener<P> {}
 
 impl<Proto: Protocol> Listener<Proto> {
+    /// Apply a function to transform the args for this listener
+    ///
+    /// This allows injecting runtime dependencies before initialization
+    pub fn map_args<F>(&mut self, f: &F)
+    where
+        F: Fn(Proto::Args) -> Proto::Args,
+    {
+        self.args = f(self.args.clone());
+    }
+
+    ///
+    /// # Errors
+    /// Any error during initialisation of the listener may propogate here
+    ///
     #[traced(instrument(skip(self)), timing(precision = "ns"))]
     pub fn init(&self) -> anyhow::Result<()> {
         self.handler.validate(&self.args)
     }
 
+    ///
+    /// # Errors
+    /// This may fail to bind to the given socket
+    ///
     #[traced(instrument(level = tracing::Level::TRACE, skip(self, shutdown)), timing(precision = "s"))]
     pub async fn serve(
         &self,
-        mut shutdown: tokio::sync::broadcast::Receiver<Signal>,
+        shutdown: tokio::sync::broadcast::Receiver<Signal>,
     ) -> anyhow::Result<()> {
-        internal!("Serving {:?} with {:?}", self.socket, self.context);
+        internal!(
+            "Serving {:?} with {:?}, args: {:?}",
+            self.socket,
+            self.context,
+            self.args
+        );
 
         let mut sessions = Vec::default();
         let (address, port) = (self.socket.ip(), self.socket.port());
         let listener = TcpListener::bind(self.socket).await?;
 
+        let mut shutdown_signal = shutdown.resubscribe();
+
         loop {
             tokio::select! {
-                sig = shutdown.recv() => {
+                sig = shutdown_signal.recv() => {
                     if matches!(sig, Ok(Signal::Shutdown)) {
                         internal!(level = INFO, "{} Listener {}:{} Received Shutdown signal, finishing sessions ...", Proto::ty(), address, port);
                         join_all(sessions).await;
@@ -60,8 +85,9 @@ impl<Proto: Protocol> Listener<Proto> {
                     let (stream, address) = connection?;
                     let handler = self.handler.handle(stream, address, self.context.clone(), self.args.clone());
 
+                    let signal = shutdown.resubscribe();
                     sessions.push(tokio::spawn(async move {
-                        if let Err(err) = handler.run().await {
+                        if let Err(err) = handler.run(signal.resubscribe()).await {
                             internal!(level = ERROR, "Error: {err}");
                         }
                     }));
