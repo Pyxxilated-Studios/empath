@@ -28,6 +28,12 @@ impl Default for Controller {
 }
 
 impl Controller {
+    /// Create a new `Controller` builder
+    #[must_use]
+    pub fn builder() -> ControllerBuilder {
+        ControllerBuilder::default()
+    }
+
     ///
     ///
     /// # Errors
@@ -126,8 +132,6 @@ impl Spool for Controller {
         let message_clone = message.clone();
 
         Box::pin(async move {
-            use tokio::fs;
-
             // Write the email data
             fs::write(&temp_data_path, message_data.as_ref()).await?;
 
@@ -148,5 +152,26 @@ impl Spool for Controller {
 
             Ok(())
         })
+    }
+}
+
+/// Builder for `Controller`
+#[derive(Debug, Default)]
+pub struct ControllerBuilder {
+    path: PathBuf,
+}
+
+impl ControllerBuilder {
+    /// Set the spool directory path
+    #[must_use]
+    pub fn path(mut self, path: PathBuf) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Build the final `Controller`
+    #[must_use]
+    pub fn build(self) -> Controller {
+        Controller { path: self.path }
     }
 }

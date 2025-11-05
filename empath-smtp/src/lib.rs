@@ -39,6 +39,26 @@ pub struct SmtpArgs {
 }
 
 impl SmtpArgs {
+    /// Create a new `SmtpArgs` builder
+    #[must_use]
+    pub fn builder() -> Self {
+        Self::default()
+    }
+
+    /// Set the TLS context for STARTTLS support
+    #[must_use]
+    pub fn with_tls(mut self, tls: Option<TlsContext>) -> Self {
+        self.tls = tls;
+        self
+    }
+
+    /// Set the SMTP extensions supported by this server
+    #[must_use]
+    pub fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
+        self.extensions = extensions;
+        self
+    }
+
     /// Set the spool controller for this SMTP server
     #[must_use]
     pub fn with_spool(mut self, spool: Arc<dyn empath_spool::Spool>) -> Self {
@@ -67,13 +87,12 @@ impl Protocol for Smtp {
             Arc::default(),
             stream,
             peer,
-            SessionConfig {
-                extensions: args.extensions,
-                tls_context: args.tls,
-                spool: args.spool,
-                banner: String::default(),
-                init_context,
-            },
+            SessionConfig::builder()
+                .with_extensions(args.extensions)
+                .with_tls_context(args.tls)
+                .with_spool(args.spool)
+                .with_init_context(init_context)
+                .build(),
         )
     }
 
