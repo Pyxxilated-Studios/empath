@@ -82,6 +82,73 @@ pub struct SessionConfig {
     pub init_context: HashMap<String, String>,
 }
 
+impl SessionConfig {
+    /// Create a new `SessionConfig` builder
+    #[must_use]
+    pub fn builder() -> SessionConfigBuilder {
+        SessionConfigBuilder::default()
+    }
+}
+
+/// Builder for `SessionConfig`
+#[derive(Debug, Default)]
+pub struct SessionConfigBuilder {
+    extensions: Vec<Extension>,
+    tls_context: Option<TlsContext>,
+    spool: Option<Arc<dyn empath_spool::Spool>>,
+    banner: String,
+    init_context: HashMap<String, String>,
+}
+
+impl SessionConfigBuilder {
+    /// Set the SMTP extensions supported by this session
+    #[must_use]
+    pub fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
+        self.extensions = extensions;
+        self
+    }
+
+    /// Set the TLS context for STARTTLS support
+    #[must_use]
+    pub fn with_tls_context(mut self, tls_context: Option<TlsContext>) -> Self {
+        self.tls_context = tls_context;
+        self
+    }
+
+    /// Set the spool controller for message persistence
+    #[must_use]
+    pub fn with_spool(mut self, spool: Option<Arc<dyn empath_spool::Spool>>) -> Self {
+        self.spool = spool;
+        self
+    }
+
+    /// Set the server banner hostname
+    #[must_use]
+    pub fn with_banner(mut self, banner: String) -> Self {
+        self.banner = banner;
+        self
+    }
+
+    /// Set the initial context key-value pairs
+    #[must_use]
+    pub fn with_init_context(mut self, init_context: HashMap<String, String>) -> Self {
+        self.init_context = init_context;
+        self
+    }
+
+    /// Build the final `SessionConfig`
+    #[must_use]
+    pub fn build(self) -> SessionConfig {
+        SessionConfig {
+            extensions: self.extensions,
+            tls_context: self.tls_context,
+            spool: self.spool,
+            banner: self.banner,
+            init_context: self.init_context,
+        }
+    }
+}
+
 pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     queue: Arc<AtomicU64>,
     peer: SocketAddr,
@@ -296,14 +363,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         if let Some(spool) = &self.spool
             && let Some(data) = &validate_context.data
         {
-            let message = empath_spool::Message::new(
-                queue,
-                validate_context.envelope.clone(),
-                data.clone(),
-                validate_context.id.clone(),
-                validate_context.extended,
-                validate_context.context.clone(),
-            );
+            let message = empath_spool::Message::builder()
+                .id(queue)
+                .envelope(validate_context.envelope.clone())
+                .data(data.clone())
+                .helo_id(validate_context.id.clone())
+                .extended(validate_context.extended)
+                .context(validate_context.context.clone())
+                .build();
 
             // Spawn a task to spool the message asynchronously
             let spool_clone = spool.clone();
@@ -477,7 +544,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, io::Cursor, sync::Arc};
+    use std::{io::Cursor, sync::Arc};
 
     use empath_common::{context::Context, status::Status};
     use empath_ffi::modules::{self, MODULE_STORE, Module, validate};
@@ -498,13 +565,9 @@ mod test {
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
-            SessionConfig {
-                extensions: Vec::default(),
-                tls_context: None,
-                spool: None,
-                banner: banner.to_string(),
-                init_context: HashMap::default(),
-            },
+            SessionConfig::builder()
+                .with_banner(banner.to_string())
+                .build(),
         );
 
         let response = session.response(&mut context).await;
@@ -533,13 +596,9 @@ mod test {
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
-            SessionConfig {
-                extensions: Vec::default(),
-                tls_context: None,
-                spool: None,
-                banner: banner.to_string(),
-                init_context: HashMap::default(),
-            },
+            SessionConfig::builder()
+                .with_banner(banner.to_string())
+                .build(),
         );
 
         let _ = session.response(&mut context).await;
@@ -576,13 +635,10 @@ mod test {
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
-            SessionConfig {
-                extensions: Vec::default(),
-                tls_context: None,
-                spool: Some(mock_spool.clone() as Arc<dyn empath_spool::Spool>),
-                banner: banner.to_string(),
-                init_context: HashMap::default(),
-            },
+            SessionConfig::builder()
+                .with_spool(Some(mock_spool.clone() as Arc<dyn empath_spool::Spool>))
+                .with_banner(banner.to_string())
+                .build(),
         );
 
         // Simulate HELO state and receiving DATA
@@ -639,13 +695,9 @@ mod test {
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
-            SessionConfig {
-                extensions: Vec::default(),
-                tls_context: None,
-                spool: None,
-                banner: banner.to_string(),
-                init_context: HashMap::default(),
-            },
+            SessionConfig::builder()
+                .with_banner(banner.to_string())
+                .build(),
         );
 
         session.context.state = State::Helo;

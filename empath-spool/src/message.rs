@@ -47,6 +47,12 @@ impl Message {
         }
     }
 
+    /// Create a new `Message` builder
+    #[must_use]
+    pub fn builder() -> MessageBuilder {
+        MessageBuilder::default()
+    }
+
     /// Get the filename for this message's data
     pub fn data_filename(&self) -> String {
         format!("{}_{}.eml", self.timestamp, self.id)
@@ -55,5 +61,81 @@ impl Message {
     /// Get the filename for this message's metadata
     pub fn meta_filename(&self) -> String {
         format!("{}_{}.json", self.timestamp, self.id)
+    }
+}
+
+/// Builder for `Message`
+#[derive(Debug, Default)]
+pub struct MessageBuilder {
+    id: Option<u64>,
+    envelope: Option<Envelope>,
+    data: Option<Arc<[u8]>>,
+    helo_id: Option<String>,
+    extended: Option<bool>,
+    context: Option<HashMap<String, String>>,
+}
+
+impl MessageBuilder {
+    /// Set the unique identifier for this message
+    #[must_use]
+    pub const fn id(mut self, id: u64) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Set the envelope information (sender, recipients)
+    #[must_use]
+    pub fn envelope(mut self, envelope: Envelope) -> Self {
+        self.envelope = Some(envelope);
+        self
+    }
+
+    /// Set the raw message data
+    #[must_use]
+    pub fn data(mut self, data: Arc<[u8]>) -> Self {
+        self.data = Some(data);
+        self
+    }
+
+    /// Set the HELO/EHLO identifier from the session
+    #[must_use]
+    pub fn helo_id(mut self, helo_id: String) -> Self {
+        self.helo_id = Some(helo_id);
+        self
+    }
+
+    /// Set whether EHLO (extended SMTP) was used
+    #[must_use]
+    pub const fn extended(mut self, extended: bool) -> Self {
+        self.extended = Some(extended);
+        self
+    }
+
+    /// Set additional session context (e.g., TLS info, protocol, cipher)
+    #[must_use]
+    pub fn context(mut self, context: HashMap<String, String>) -> Self {
+        self.context = Some(context);
+        self
+    }
+
+    /// Build the final `Message` with auto-generated timestamp
+    ///
+    /// # Panics
+    ///
+    /// Panics if any required field is not set
+    #[must_use]
+    pub fn build(self) -> Message {
+        Message {
+            id: self.id.expect("id is required"),
+            envelope: self.envelope.expect("envelope is required"),
+            data: self.data.expect("data is required"),
+            helo_id: self.helo_id.expect("helo_id is required"),
+            extended: self.extended.expect("extended is required"),
+            context: self.context.expect("context is required"),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        }
     }
 }
