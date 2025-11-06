@@ -1,0 +1,49 @@
+Empath (
+    smtp_controller: (
+        listeners: [
+            {
+                socket: "[::]:1025",
+                context: {
+                    "service": "smtp",
+                },
+                extensions: [
+                    {
+                        "size": 10000,
+                    },
+                    {
+                        "starttls": {
+                            "key": "private.key",
+                            "certificate": "certificate.crt",
+                        }
+                    }
+                ]
+            },
+            {
+                socket: "[::]:1026",
+                context: {
+                    "service": "smtps",
+                },
+            },
+        ],
+    ),
+    modules: [
+        (
+            type: "SharedLibrary",
+            name: "./empath-ffi/examples/libexample.so",
+            arguments: [
+                "arg1",
+            ],
+        ),
+        (
+            type: "SharedLibrary",
+            name: "./empath-ffi/examples/libevent.so",
+            arguments: [
+                "arg1",
+                "arg2",
+            ],
+        ),
+    ],
+    spool: (
+        path: "./spool/empath/test",
+    ),
+)
