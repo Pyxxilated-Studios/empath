@@ -1,4 +1,4 @@
-use std::{ffi::CString, ptr::null, rc::Rc, str::Utf8Error, sync::Arc};
+use std::{bstr::ByteStr, ffi::CString, ptr::null, rc::Rc, str::Utf8Error, sync::Arc};
 
 #[repr(C)]
 #[derive(Default)]
@@ -38,7 +38,7 @@ impl TryFrom<&[u8]> for String {
     type Error = Utf8Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Self::from(std::str::from_utf8(value)?))
+        Ok(Self::from(ByteStr::new(value)))
     }
 }
 
@@ -49,6 +49,12 @@ impl From<&str> for String {
         let data = id.into_raw().cast::<i8>();
 
         Self { len, data }
+    }
+}
+
+impl From<&ByteStr> for String {
+    fn from(value: &ByteStr) -> Self {
+        Self::from(value.to_string())
     }
 }
 

@@ -1,3 +1,4 @@
+use core::bstr;
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -356,10 +357,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     fn response_ehlo_help(&self) -> Response {
         let response = if matches!(self.context.state, State::Ehlo) {
             vec![format!(
-                "{}{}Hello {}",
+                "{}{}{} says hello to {}",
                 Status::Ok,
                 if self.extensions.is_empty() { ' ' } else { '-' },
-                std::bstr::ByteStr::new(&self.context.message)
+                self.banner,
+                bstr::ByteStr::new(&self.context.message)
             )]
         } else {
             vec![]
@@ -452,9 +454,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             ),
             State::Helo => (
                 Some(vec![format!(
-                    "{} Hello {}",
+                    "{} {} says hello to {}",
                     Status::Ok,
-                    std::str::from_utf8(&self.context.message).unwrap_or("<invalid-hostname>")
+                    self.banner,
+                    bstr::ByteStr::new(&self.context.message)
                 )]),
                 Event::ConnectionKeepAlive,
             ),
