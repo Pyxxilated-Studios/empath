@@ -19,6 +19,8 @@ pub struct Empath {
     modules: Vec<Module>,
     #[serde(alias = "spool")]
     spool: empath_spool::Controller,
+    #[serde(alias = "delivery", default)]
+    delivery: empath_delivery::DeliveryProcessor,
 }
 
 pub static SHUTDOWN_BROADCAST: LazyLock<broadcast::Sender<Signal>> = LazyLock::new(|| {
@@ -88,11 +90,17 @@ impl Empath {
 
         self.smtp_controller.init()?;
 
+        // Initialize delivery controller with the same spool controller
+        self.delivery.init(spool_controller.clone())?;
+
         let ret = tokio::select! {
             r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
                 r
             }
             r = spool_controller.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                r
+            }
+            r = self.delivery.serve(SHUTDOWN_BROADCAST.subscribe()) => {
                 r
             }
             r = shutdown() => {

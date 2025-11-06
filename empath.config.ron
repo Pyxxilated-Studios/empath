@@ -46,4 +46,9 @@ Empath (
     spool: (
         path: "./spool/empath/test",
     ),
+    delivery: (
+        scan_interval_secs: 30,
+        process_interval_secs: 10,
+        max_attempts: 25,
+    ),
 )

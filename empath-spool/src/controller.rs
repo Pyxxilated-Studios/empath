@@ -1,11 +1,12 @@
 use std::{
     io::{Error, ErrorKind},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use empath_common::{Signal, internal};
 use empath_tracing::traced;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 
 use crate::spool::Spool;
@@ -173,5 +174,155 @@ impl ControllerBuilder {
     #[must_use]
     pub fn build(self) -> Controller {
         Controller { path: self.path }
+    }
+}
+
+/// Represents a message identifier in the spool
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SpooledMessageId {
+    /// The timestamp from the filename
+    pub timestamp: u64,
+    /// The message ID from the filename
+    pub id: u64,
+}
+
+impl SpooledMessageId {
+    /// Maximum reasonable timestamp (year 2100 in seconds)
+    const MAX_TIMESTAMP: u64 = 4_102_444_800;
+
+    /// Parse a message ID from a filename like `1234567890_42.json` or `1234567890_42.eml`
+    ///
+    /// Validates that the filename contains only numeric components to prevent
+    /// path traversal attacks.
+    fn from_filename(filename: &str) -> Option<Self> {
+        // Reject filenames with path separators
+        if filename.contains('/') || filename.contains('\\') {
+            return None;
+        }
+
+        // Reject filenames with directory traversal patterns
+        if filename.contains("..") {
+            return None;
+        }
+
+        let stem = filename.strip_suffix(".json").or_else(|| filename.strip_suffix(".eml"))?;
+        let (ts_str, id_str) = stem.split_once('_')?;
+
+        // Ensure both parts contain only digits
+        if !ts_str.chars().all(|c| c.is_ascii_digit()) || !id_str.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+
+        let timestamp = ts_str.parse().ok()?;
+        let id = id_str.parse().ok()?;
+
+        // Validate timestamp is reasonable (not in the far future)
+        if timestamp > Self::MAX_TIMESTAMP {
+            return None;
+        }
+
+        Some(Self { timestamp, id })
+    }
+
+    /// Create a new validated message ID
+    #[must_use]
+    pub const fn new(timestamp: u64, id: u64) -> Self {
+        Self { timestamp, id }
+    }
+}
+
+impl Controller {
+    /// List all message IDs in the spool directory
+    ///
+    /// Returns a vector of message identifiers found in the spool.
+    /// Messages are identified by their .json metadata files.
+    ///
+    /// # Errors
+    /// If the spool directory cannot be read
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self)), timing(precision = "ms"))]
+    pub async fn list_messages(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
+        let mut entries = fs::read_dir(&self.path).await?;
+        let mut message_ids = Vec::new();
+
+        while let Some(entry) = entries.next_entry().await? {
+            let filename = entry.file_name();
+            let filename_str = filename.to_string_lossy();
+
+            // Only look at .json metadata files
+            if filename_str.ends_with(".json")
+                && !filename_str.starts_with(".tmp_")
+                && let Some(msg_id) = SpooledMessageId::from_filename(&filename_str)
+            {
+                message_ids.push(msg_id);
+            }
+        }
+
+        // Sort by timestamp, then by ID
+        message_ids.sort_by_key(|id| (id.timestamp, id.id));
+
+        internal!(
+            level = DEBUG,
+            "Found {} messages in spool",
+            message_ids.len()
+        );
+
+        Ok(message_ids)
+    }
+
+    /// Read a specific message from the spool
+    ///
+    /// # Errors
+    /// If the message metadata or data cannot be read from disk
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(timestamp = msg_id.timestamp, id = msg_id.id)), timing(precision = "ms"))]
+    pub async fn read_message(&self, msg_id: &SpooledMessageId) -> anyhow::Result<crate::message::Message> {
+        let meta_filename = format!("{}_{}.json", msg_id.timestamp, msg_id.id);
+        let data_filename = format!("{}_{}.eml", msg_id.timestamp, msg_id.id);
+
+        let meta_path = self.path.join(&meta_filename);
+        let data_path = self.path.join(&data_filename);
+
+        // Read and deserialize metadata
+        let meta_content = fs::read_to_string(&meta_path).await?;
+        let mut message: crate::message::Message = serde_json::from_str(&meta_content)?;
+
+        // Read message data
+        let data_bytes = fs::read(&data_path).await?;
+        message.data = Arc::from(data_bytes);
+
+        internal!(
+            level = DEBUG,
+            "Read message {} from spool",
+            message.id
+        );
+
+        Ok(message)
+    }
+
+    /// Delete a message from the spool
+    ///
+    /// Removes both the data (.eml) and metadata (.json) files for the specified message.
+    ///
+    /// # Errors
+    /// If either file cannot be deleted
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(timestamp = msg_id.timestamp, id = msg_id.id)), timing(precision = "ms"))]
+    pub async fn delete_message(&self, msg_id: &SpooledMessageId) -> anyhow::Result<()> {
+        let meta_filename = format!("{}_{}.json", msg_id.timestamp, msg_id.id);
+        let data_filename = format!("{}_{}.eml", msg_id.timestamp, msg_id.id);
+
+        let meta_path = self.path.join(&meta_filename);
+        let data_path = self.path.join(&data_filename);
+
+        // Delete both files
+        fs::remove_file(&data_path).await?;
+        fs::remove_file(&meta_path).await?;
+
+        internal!(
+            level = DEBUG,
+            "Deleted message {}_{} from spool",
+            msg_id.timestamp,
+            msg_id.id
+        );
+
+        Ok(())
     }
 }

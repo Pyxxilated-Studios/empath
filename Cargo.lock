@@ -247,6 +247,7 @@ dependencies = [
  "anyhow",
  "cbindgen",
  "empath-common",
+ "empath-delivery",
  "empath-ffi",
  "empath-smtp",
  "empath-spool",
@@ -279,6 +280,22 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "empath-delivery"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "empath-common",
+ "empath-smtp",
+ "empath-spool",
+ "empath-tracing",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

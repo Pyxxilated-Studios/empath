@@ -84,14 +84,15 @@ Key clippy requirements:
 
 ### Workspace Structure
 
-6-crate workspace:
+7-crate workspace:
 
 1. **empath** - Main binary/library orchestrating all components
 2. **empath-common** - Core abstractions: `Protocol`, `FiniteStateMachine`, `Controller`, `Listener` traits
 3. **empath-smtp** - SMTP protocol implementation with FSM and session management
-4. **empath-ffi** - C-compatible API for embedding and dynamic module loading
-5. **empath-spool** - Message persistence to filesystem with watching
-6. **empath-tracing** - Procedural macros for `#[traced]` instrumentation
+4. **empath-delivery** - Outbound mail delivery queue and processor
+5. **empath-ffi** - C-compatible API for embedding and dynamic module loading
+6. **empath-spool** - Message persistence to filesystem with watching
+7. **empath-tracing** - Procedural macros for `#[traced]` instrumentation
 
 ### Key Architectural Patterns
 
@@ -182,35 +183,61 @@ Implementations:
 
 Runtime config via TOML (default: `empath.config.toml`):
 
-```toml
-# SMTP listeners with optional TLS
-[[smtp.listener]]
-socket = "[::]:1025"
-[smtp.listener.tls]
-certificate = "certificate.crt"
-key = "private.key"
-[smtp.listener.context]
-# Custom key-value pairs passed to sessions
-service = "smtp"
-
-# Dynamically loaded modules
-[[module]]
-type = "SharedLibrary"
-name = "./path/to/module.so"
-arguments = ["arg1", "arg2"]
-
-# Spool configuration
-[spool]
-path = "./spool/directory"
+```ron
+Empath (
+    // SMTP controller with listeners
+    smtp_controller: (
+        listeners: [
+            {
+                socket: "[::]:1025",
+                // Custom key-value pairs passed to sessions
+                context: {
+                    "service": "smtp",
+                },
+                // Optional extensions like SIZE and STARTTLS
+                extensions: [
+                    {
+                        "size": 10000,
+                    },
+                    {
+                        "starttls": {
+                            "key": "private.key",
+                            "certificate": "certificate.crt",
+                        }
+                    }
+                ]
+            },
+        ],
+    ),
+    // Dynamically loaded modules
+    modules: [
+        (
+            type: "SharedLibrary",
+            name: "./path/to/module.so",
+            arguments: ["arg1", "arg2"],
+        ),
+    ],
+    // Spool configuration
+    spool: (
+        path: "./spool/directory",
+    ),
+    // Delivery configuration (optional, defaults shown)
+    delivery: (
+        scan_interval_secs: 30,      // How often to scan spool
+        process_interval_secs: 10,   // How often to process queue
+        max_attempts: 25,             // Max delivery attempts
+    ),
+)
 ```
 
 ### Data Flow
 
-1. **Startup**: Load config → initialize modules → validate protocol args → start controllers
+1. **Startup**: Load config → initialize modules → validate protocol args → start controllers (SMTP, spool, delivery)
 2. **Connection**: Listener accepts → create Session → dispatch ConnectionOpened event
 3. **Transaction**: Session receives data → parse Command → FSM transition → module validation → generate response
 4. **Message Completion**: PostDot state → dispatch Data validation → spool message → respond to client
-5. **Shutdown**: Broadcast signal → sessions close gracefully → controllers exit
+5. **Delivery**: Delivery controller scans spool → reads messages → prepares for sending (handshake only, no DATA)
+6. **Shutdown**: Broadcast signal → sessions close gracefully → controllers exit
 
 ### Code Organization Patterns
 
