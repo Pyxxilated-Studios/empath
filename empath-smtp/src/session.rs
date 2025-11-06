@@ -405,24 +405,35 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         if let Some(spool) = &self.spool
             && let Some(data) = &validate_context.data
         {
-            let message = empath_spool::Message::builder()
+            match empath_spool::Message::builder()
                 .id(queue)
                 .envelope(validate_context.envelope.clone())
                 .data(data.clone())
                 .helo_id(validate_context.id.clone())
                 .extended(validate_context.extended)
                 .context(validate_context.context.clone())
-                .build();
-
-            // Spool the message to persistent storage
-            // We must complete spooling before clearing transaction context
-            if let Err(e) = spool.spool_message(&message).await {
-                internal!(
-                    level = ERROR,
-                    "Failed to spool message {}: {}",
-                    message.id,
-                    e
-                );
+                .build()
+            {
+                Ok(message) => {
+                    // Spool the message to persistent storage
+                    // We must complete spooling before clearing transaction context
+                    if let Err(e) = spool.spool_message(&message).await {
+                        internal!(
+                            level = ERROR,
+                            "Failed to spool message {}: {}",
+                            message.id,
+                            e
+                        );
+                    }
+                }
+                Err(e) => {
+                    internal!(
+                        level = ERROR,
+                        "Failed to build message for queue {}: {}",
+                        queue,
+                        e
+                    );
+                }
             }
         }
 
