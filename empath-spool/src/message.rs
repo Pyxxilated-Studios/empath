@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use empath_common::envelope::Envelope;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Represents a message in the spool with its envelope, data, and session context
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +76,14 @@ pub struct MessageBuilder {
     context: Option<HashMap<String, String>>,
 }
 
+/// Error type for `MessageBuilder` validation failures
+#[derive(Error, Debug)]
+pub enum BuilderError {
+    /// Required field is missing
+    #[error("Missing required field: {0}")]
+    MissingField(&'static str),
+}
+
 impl MessageBuilder {
     /// Set the unique identifier for this message
     #[must_use]
@@ -120,22 +129,21 @@ impl MessageBuilder {
 
     /// Build the final `Message` with auto-generated timestamp
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if any required field is not set
-    #[must_use]
-    pub fn build(self) -> Message {
-        Message {
-            id: self.id.expect("id is required"),
-            envelope: self.envelope.expect("envelope is required"),
-            data: self.data.expect("data is required"),
-            helo_id: self.helo_id.expect("helo_id is required"),
-            extended: self.extended.expect("extended is required"),
-            context: self.context.expect("context is required"),
+    /// Returns `BuilderError::MissingField` if any required field is not set
+    pub fn build(self) -> Result<Message, BuilderError> {
+        Ok(Message {
+            id: self.id.ok_or(BuilderError::MissingField("id"))?,
+            envelope: self.envelope.ok_or(BuilderError::MissingField("envelope"))?,
+            data: self.data.ok_or(BuilderError::MissingField("data"))?,
+            helo_id: self.helo_id.ok_or(BuilderError::MissingField("helo_id"))?,
+            extended: self.extended.ok_or(BuilderError::MissingField("extended"))?,
+            context: self.context.ok_or(BuilderError::MissingField("context"))?,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-        }
+        })
     }
 }
