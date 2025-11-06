@@ -692,7 +692,7 @@ mod test {
         assert!(response.0.is_some());
         assert_eq!(
             response.0.unwrap().first().unwrap(),
-            &format!("{} Hello {host}", Status::Ok)
+            &format!("{} {banner} says hello to {host}", Status::Ok)
         );
 
         let response = session.receive(&mut context).await;

@@ -1,5 +1,6 @@
 #![feature(bstr, result_option_map_or_default)]
 
+pub mod client;
 pub mod command;
 pub mod connection;
 pub mod extensions;

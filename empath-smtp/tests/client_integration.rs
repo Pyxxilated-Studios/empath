@@ -1,0 +1,416 @@
+//! Integration tests for the SMTP client.
+//!
+//! These tests verify that the client can interact with a real SMTP server.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use empath_smtp::client::{QuitAfter, SmtpClientBuilder};
+use empath_smtp::{Smtp, SmtpArgs};
+use tokio::net::TcpListener;
+use tokio::time::timeout;
+
+use empath_common::traits::protocol::Protocol;
+use empath_smtp::extensions::Extension;
+
+/// Helper function to start a test SMTP server on a random port.
+async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
+    // Bind to port 0 to get a random available port
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let port = addr.port();
+
+    // Create a simple SMTP server controller
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+
+    let handle = tokio::spawn(async move {
+        let smtp = Smtp::default();
+        let args = SmtpArgs::builder()
+            .with_extensions(vec![Extension::Size(10_000_000)])
+            .with_spool(Arc::new(empath_spool::MockController::new()));
+
+        loop {
+            match listener.accept().await {
+                Ok((stream, peer)) => {
+                    let shutdown_rx = shutdown_tx.subscribe();
+                    let session = smtp.handle(stream, peer, Default::default(), args.clone());
+
+                    tokio::spawn(async move {
+                        let _ = timeout(Duration::from_secs(30), async {
+                            empath_common::traits::protocol::SessionHandler::run(
+                                session,
+                                shutdown_rx,
+                            )
+                            .await
+                        })
+                        .await;
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Give the server a moment to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    (port, handle)
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_basic_connection() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .quit_after(QuitAfter::Connect)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].code, 220);
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_ehlo() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .quit_after(QuitAfter::Greeting)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // Should have greeting + EHLO response
+    assert!(responses.len() >= 2);
+    assert_eq!(responses[0].code, 220); // Greeting
+    assert_eq!(responses[1].code, 250); // EHLO response
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_helo() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .helo("test.example.com")
+    .quit_after(QuitAfter::Greeting)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    assert!(responses.len() >= 2);
+    assert_eq!(responses[0].code, 220); // Greeting
+    assert_eq!(responses[1].code, 250); // HELO response
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_mail_from() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .quit_after(QuitAfter::MailFrom)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // Greeting + EHLO + MAIL FROM + QUIT
+    assert!(responses.len() >= 4);
+    assert_eq!(responses.last().unwrap().code, 221); // QUIT response
+    // Check that MAIL FROM succeeded (second to last)
+    assert_eq!(responses[responses.len() - 2].code, 250);
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_mail_from_with_size() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from_with_size("sender@example.com", 1000)
+    .quit_after(QuitAfter::MailFrom)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+    assert!(responses.len() >= 4);
+    assert_eq!(responses.last().unwrap().code, 221); // QUIT response
+    assert_eq!(responses[responses.len() - 2].code, 250); // MAIL FROM response
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_rcpt_to() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .rcpt_to("recipient@example.com")
+    .quit_after(QuitAfter::RcptTo)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+    assert!(responses.len() >= 5);
+    assert_eq!(responses.last().unwrap().code, 221); // QUIT response
+    assert_eq!(responses[responses.len() - 2].code, 250); // RCPT TO response
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_multiple_recipients() {
+    let (port, _handle) = start_test_server().await;
+
+    let recipients = ["user1@example.com", "user2@example.com", "user3@example.com"];
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .rcpt_to_multiple(&recipients)
+    .quit_after(QuitAfter::RcptTo)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // Each RCPT TO should get a 250 response
+    let rcpt_responses: Vec<_> = responses.iter().filter(|r| r.code == 250).collect();
+    assert!(rcpt_responses.len() >= 3);
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_complete_transaction() {
+    let (port, _handle) = start_test_server().await;
+
+    let message = "From: sender@example.com\r\n\
+                   To: recipient@example.com\r\n\
+                   Subject: Test Email\r\n\
+                   \r\n\
+                   This is a test message.\r\n";
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .rcpt_to("recipient@example.com")
+    .data_with_content(message)
+    .quit_after(QuitAfter::DataEnd)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // Find the final response after data
+    let data_end_response = responses.iter().rev().find(|r| r.code == 250);
+    assert!(data_end_response.is_some());
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_full_session_with_quit() {
+    let (port, _handle) = start_test_server().await;
+
+    let message = "Subject: Test\r\n\r\nHello World\r\n";
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .rcpt_to("recipient@example.com")
+    .data_with_content(message)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // Last response should be QUIT (221)
+    assert_eq!(responses.last().unwrap().code, 221);
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_rset_command() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .rcpt_to("recipient@example.com")
+    .rset()
+    .mail_from("newsender@example.com")
+    .quit_after(QuitAfter::MailFrom)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // Should have successful responses for both MAIL FROM commands
+    let mail_responses: Vec<_> = responses.iter()
+        .filter(|r| r.code == 250)
+        .collect();
+    assert!(mail_responses.len() >= 2);
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_raw_command() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .raw_command("HELP")
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // HELP command should get a response
+    assert!(responses.len() >= 3);
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_builder_build_method() {
+    let (port, _handle) = start_test_server().await;
+
+    let mut client = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .build()
+    .await
+    .unwrap();
+
+    // Use the client for additional commands
+    let response = client.mail_from("sender@example.com", None).await;
+    assert!(response.is_ok());
+    assert_eq!(response.unwrap().code, 250);
+
+    let response = client.rcpt_to("recipient@example.com").await;
+    assert!(response.is_ok());
+    assert_eq!(response.unwrap().code, 250);
+
+    let response = client.quit().await;
+    assert!(response.is_ok());
+    assert_eq!(response.unwrap().code, 221);
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_response_inspection() {
+    let (port, _handle) = start_test_server().await;
+
+    let client = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .build()
+    .await
+    .unwrap();
+
+    // All responses should be accessible
+    let responses = client.responses();
+    assert!(responses.len() >= 2); // Greeting + EHLO
+
+    // Last response should be the EHLO response
+    let last = client.last_response().unwrap();
+    assert_eq!(last.code, 250);
+    assert!(last.is_success());
+    assert!(!last.is_error());
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_size_exceeded() {
+    let (port, _handle) = start_test_server().await;
+
+    // Server has 10MB limit, declare larger size
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from_with_size("sender@example.com", 20_000_000)
+    .quit_after(QuitAfter::MailFrom)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+
+    // Should get error response (552) then QUIT (221)
+    assert_eq!(responses.last().unwrap().code, 221); // QUIT after error
+    let error_response = &responses[responses.len() - 2]; // SIZE error
+    assert_eq!(error_response.code, 552);
+    assert!(error_response.is_permanent_error());
+}
