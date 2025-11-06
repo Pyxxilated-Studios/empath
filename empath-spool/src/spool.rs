@@ -41,7 +41,10 @@ impl MockController {
     /// # Panics
     /// Panics if the mutex is poisoned
     pub fn messages(&self) -> Vec<Message> {
-        self.messages.lock().unwrap().clone()
+        self.messages
+            .lock()
+            .expect("MockController messages mutex poisoned")
+            .clone()
     }
 
     /// Get the number of spooled messages
@@ -49,7 +52,10 @@ impl MockController {
     /// # Panics
     /// Panics if the mutex is poisoned
     pub fn message_count(&self) -> usize {
-        self.messages.lock().unwrap().len()
+        self.messages
+            .lock()
+            .expect("MockController messages mutex poisoned")
+            .len()
     }
 
     /// Clear all spooled messages
@@ -57,7 +63,10 @@ impl MockController {
     /// # Panics
     /// Panics if the mutex is poisoned
     pub fn clear(&self) {
-        self.messages.lock().unwrap().clear();
+        self.messages
+            .lock()
+            .expect("MockController messages mutex poisoned")
+            .clear();
     }
 
     /// Get a specific message by index
@@ -65,7 +74,11 @@ impl MockController {
     /// # Panics
     /// Panics if the mutex is poisoned
     pub fn get_message(&self, index: usize) -> Option<Message> {
-        self.messages.lock().unwrap().get(index).cloned()
+        self.messages
+            .lock()
+            .expect("MockController messages mutex poisoned")
+            .get(index)
+            .cloned()
     }
 
     /// Wait for the next message to be spooled
@@ -106,7 +119,10 @@ impl Spool for MockController {
         let messages = self.messages.clone();
         let notify = self.notify.clone();
         Box::pin(async move {
-            messages.lock().unwrap().push(message);
+            messages
+                .lock()
+                .expect("MockController messages mutex poisoned")
+                .push(message);
             notify.notify_waiters();
             Ok(())
         })
