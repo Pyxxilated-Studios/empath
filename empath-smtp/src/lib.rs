@@ -28,7 +28,7 @@ use tokio::net::TcpStream;
 use crate::{
     command::{Command, HeloVariant},
     extensions::Extension,
-    session::{Session, SessionConfig, TlsContext},
+    session::{Session, SessionConfig},
 };
 
 const MAX_MESSAGE_SIZE: usize = 100;
@@ -38,7 +38,6 @@ pub struct Smtp;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct SmtpArgs {
-    tls: Option<TlsContext>,
     #[serde(default)]
     extensions: Vec<Extension>,
     #[serde(skip)]
@@ -50,13 +49,6 @@ impl SmtpArgs {
     #[must_use]
     pub fn builder() -> Self {
         Self::default()
-    }
-
-    /// Set the TLS context for STARTTLS support
-    #[must_use]
-    pub fn with_tls(mut self, tls: Option<TlsContext>) -> Self {
-        self.tls = tls;
-        self
     }
 
     /// Set the SMTP extensions supported by this server
@@ -96,7 +88,6 @@ impl Protocol for Smtp {
             peer,
             SessionConfig::builder()
                 .with_extensions(args.extensions)
-                .with_tls_context(args.tls)
                 .with_spool(args.spool)
                 .with_init_context(init_context)
                 .build(),
@@ -105,24 +96,33 @@ impl Protocol for Smtp {
 
     #[traced(instrument(skip(self, args)), timing(precision = "ns"))]
     fn validate(&mut self, args: &mut Self::Args) -> anyhow::Result<()> {
-        if let Some(tls) = args.tls.as_ref() {
-            if !tls.certificate.try_exists()? {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!(
-                        "Unable to find TLS Certificate {}",
-                        tls.certificate.display()
-                    ),
-                )
-                .into());
-            }
+        if let Some(ext) = args
+            .extensions
+            .iter()
+            .find(|arg| matches!(arg, Extension::Starttls(_)))
+        {
+            match ext {
+                Extension::Starttls(tls) => {
+                    if !tls.certificate.try_exists()? {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!(
+                                "Unable to find TLS Certificate {}",
+                                tls.certificate.display()
+                            ),
+                        )
+                        .into());
+                    }
 
-            if !tls.key.try_exists()? {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Unable to find TLS Key {}", tls.key.display()),
-                )
-                .into());
+                    if !tls.key.try_exists()? {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!("Unable to find TLS Key {}", tls.key.display()),
+                        )
+                        .into());
+                    }
+                }
+                _ => unreachable!(),
             }
         }
 

@@ -2,6 +2,8 @@ use core::fmt::{self, Display};
 
 use serde::Deserialize;
 
+use crate::session::TlsContext;
+
 /// SMTP protocol extensions advertised in EHLO response.
 ///
 /// Extensions modify SMTP behavior and capabilities as defined in various RFCs.
@@ -13,7 +15,7 @@ pub enum Extension {
     ///
     /// When advertised, clients can use the STARTTLS command to initiate
     /// TLS negotiation before transmitting sensitive data.
-    Starttls,
+    Starttls(TlsContext),
 
     /// HELP extension - Provides command help information.
     ///
@@ -47,7 +49,7 @@ pub enum Extension {
 impl Display for Extension {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
-            Self::Starttls => fmt.write_str("STARTTLS"),
+            Self::Starttls(_) => fmt.write_str("STARTTLS"),
             Self::Help => fmt.write_str("HELP"),
             Self::Size(max) => {
                 if *max == 0 {
@@ -63,6 +65,7 @@ impl Display for Extension {
 #[cfg(test)]
 mod test {
     use super::Extension;
+    use crate::session::TlsContext;
 
     #[test]
     fn extension_display() {
@@ -75,7 +78,14 @@ mod test {
         assert_eq!(size_unlimited.to_string(), "SIZE");
 
         // Other extensions
-        assert_eq!(Extension::Starttls.to_string(), "STARTTLS");
+        assert_eq!(
+            Extension::Starttls(TlsContext {
+                certificate: "..".into(),
+                key: "..".into()
+            })
+            .to_string(),
+            "STARTTLS"
+        );
         assert_eq!(Extension::Help.to_string(), "HELP");
     }
 }

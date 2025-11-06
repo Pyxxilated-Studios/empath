@@ -59,8 +59,8 @@ impl From<modules::Error> for SMTPError {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TlsContext {
-    pub(crate) certificate: PathBuf,
-    pub(crate) key: PathBuf,
+    pub certificate: PathBuf,
+    pub key: PathBuf,
 }
 
 #[derive(Debug)]
@@ -185,13 +185,18 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
         tracing::debug!("Max message size: {max_message_size}");
 
+        let tls_context = config.extensions.iter().find_map(|ext| match ext {
+            Extension::Starttls(context) => Some(context.clone()),
+            _ => None,
+        });
+
         Self {
             queue,
             peer,
             connection: Connection::Plain { stream },
             context: Context::default(),
             extensions: config.extensions,
-            tls_context: config.tls_context,
+            tls_context,
             spool: config.spool,
             banner: if config.banner.is_empty() {
                 std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string())
