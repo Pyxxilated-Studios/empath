@@ -125,12 +125,10 @@ impl Module {
 /// Initialise all modules
 ///
 /// # Errors
-/// This can error in two scenarios:
+/// This can error in three scenarios:
 ///   1. The module is invalid (e.g. the shared library cannot be found/has issues)
 ///   2. The modules init has an issue
-///
-/// # Panics
-/// This will panic if it is unable to write to the module store
+///   3. The module store lock is poisoned (another thread panicked while holding the lock)
 ///
 #[traced(instrument(level = tracing::Level::TRACE, ret, skip_all), timing)]
 pub fn init(mut modules: Vec<Module>) -> anyhow::Result<()> {
@@ -146,7 +144,7 @@ pub fn init(mut modules: Vec<Module>) -> anyhow::Result<()> {
 
     MODULE_STORE
         .write()
-        .expect("Unable to write module")
+        .map_err(|e| anyhow::anyhow!("Failed to acquire module store write lock: {}", e))?
         .extend(modules.into_iter());
 
     internal!(level = INFO, "Modules initialised");
@@ -156,16 +154,26 @@ pub fn init(mut modules: Vec<Module>) -> anyhow::Result<()> {
 
 /// Dispatch an event to all modules
 ///
+/// Returns `true` if all modules handled the event successfully (returned 0),
+/// or `false` if any module failed or the module store lock is poisoned.
+///
 /// # Errors
 /// The events being dispatched are handled with a panic handler, which should
 /// catch some possible errors. If these are caught, they are returned to the
 /// caller to handle.
 ///
-/// # Panics
-/// This will panic if it fails to read the Module Store
-///
 pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
-    let store = MODULE_STORE.read().expect("Unable to load modules");
+    let store = match MODULE_STORE.read() {
+        Ok(store) => store,
+        Err(e) => {
+            internal!(
+                level = ERROR,
+                "Failed to acquire module store read lock: {}. Treating as dispatch failure.",
+                e
+            );
+            return false;
+        }
+    };
 
     internal!("Dispatching: {event:?}");
 
