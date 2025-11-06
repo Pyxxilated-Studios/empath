@@ -792,7 +792,6 @@ mod test {
         // TODO: Need to fix the above so it spawns its own server that actually does the emitting
         //       Would possibly be better to make a mock SMTP client or something that we can test with?
         // if let Module::TestModule(mute) = MODULE_STORE.read().unwrap().first().unwrap() {
-        //     println!("{:?}", mute.lock().unwrap().validators_called);
         //     assert!(
         //         mute.lock()
         //             .unwrap()
