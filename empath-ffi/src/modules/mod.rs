@@ -144,7 +144,7 @@ pub fn init(mut modules: Vec<Module>) -> anyhow::Result<()> {
 
     MODULE_STORE
         .write()
-        .map_err(|e| anyhow::anyhow!("Failed to acquire module store write lock: {}", e))?
+        .map_err(|e| anyhow::anyhow!("Failed to acquire module store write lock: {e}"))?
         .extend(modules.into_iter());
 
     internal!(level = INFO, "Modules initialised");

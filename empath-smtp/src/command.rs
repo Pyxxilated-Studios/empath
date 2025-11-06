@@ -127,11 +127,8 @@ impl Display for MailParameters {
             .params
             .iter()
             .map(|(k, v)| {
-                if let Some(val) = v {
-                    format!("{k}={val}")
-                } else {
-                    k.clone()
-                }
+                v.as_ref()
+                    .map_or_else(|| k.clone(), |val| format!("{k}={val}"))
             })
             .collect();
         f.write_str(&params.join(" "))
@@ -210,7 +207,7 @@ impl Command {
 
     /// Get the MAIL FROM parameters, if this is a MAIL FROM command.
     #[must_use]
-    pub fn mail_parameters(&self) -> Option<&MailParameters> {
+    pub const fn mail_parameters(&self) -> Option<&MailParameters> {
         match self {
             Self::MailFrom(_, params) => Some(params),
             _ => None,

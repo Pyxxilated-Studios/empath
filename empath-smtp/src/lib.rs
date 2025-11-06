@@ -1,4 +1,6 @@
 #![feature(bstr, result_option_map_or_default)]
+#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
+#![allow(clippy::must_use_candidate)]
 
 pub mod client;
 pub mod command;
@@ -8,8 +10,6 @@ pub mod session;
 pub mod state;
 
 // Re-export commonly used types
-pub use command::MailParameters;
-
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
 };
 
+pub use command::MailParameters;
 use empath_common::{
     Signal,
     context::Context,

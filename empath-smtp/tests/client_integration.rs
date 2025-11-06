@@ -2,16 +2,15 @@
 //!
 //! These tests verify that the client can interact with a real SMTP server.
 
-use std::sync::Arc;
-use std::time::Duration;
-
-use empath_smtp::client::{MessageBuilder, QuitAfter, SmtpClientBuilder};
-use empath_smtp::{Smtp, SmtpArgs};
-use tokio::net::TcpListener;
-use tokio::time::timeout;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use empath_common::traits::protocol::Protocol;
-use empath_smtp::extensions::Extension;
+use empath_smtp::{
+    Smtp, SmtpArgs,
+    client::{MessageBuilder, QuitAfter, SmtpClientBuilder},
+    extensions::Extension,
+};
+use tokio::{net::TcpListener, time::timeout};
 
 /// Helper function to start a test SMTP server on a random port.
 async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
@@ -24,30 +23,21 @@ async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
     let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
 
     let handle = tokio::spawn(async move {
-        let smtp = Smtp::default();
+        let smtp = Smtp;
         let args = SmtpArgs::builder()
             .with_extensions(vec![Extension::Size(10_000_000)])
             .with_spool(Arc::new(empath_spool::MockController::new()));
 
-        loop {
-            match listener.accept().await {
-                Ok((stream, peer)) => {
-                    let shutdown_rx = shutdown_tx.subscribe();
-                    let session = smtp.handle(stream, peer, Default::default(), args.clone());
+        while let Ok((stream, peer)) = listener.accept().await {
+            let shutdown_rx = shutdown_tx.subscribe();
+            let session = smtp.handle(stream, peer, HashMap::default(), args.clone());
 
-                    tokio::spawn(async move {
-                        let _ = timeout(Duration::from_secs(30), async {
-                            empath_common::traits::protocol::SessionHandler::run(
-                                session,
-                                shutdown_rx,
-                            )
-                            .await
-                        })
-                        .await;
-                    });
-                }
-                Err(_) => break,
-            }
+            tokio::spawn(async move {
+                let _ = timeout(Duration::from_secs(30), async {
+                    empath_common::traits::protocol::SessionHandler::run(session, shutdown_rx).await
+                })
+                .await;
+            });
         }
     });
 
@@ -62,14 +52,11 @@ async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
 async fn test_basic_connection() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .quit_after(QuitAfter::Connect)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .quit_after(QuitAfter::Connect)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -82,15 +69,12 @@ async fn test_basic_connection() {
 async fn test_ehlo() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .quit_after(QuitAfter::Greeting)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .quit_after(QuitAfter::Greeting)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -106,15 +90,12 @@ async fn test_ehlo() {
 async fn test_helo() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .helo("test.example.com")
-    .quit_after(QuitAfter::Greeting)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .helo("test.example.com")
+        .quit_after(QuitAfter::Greeting)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -129,16 +110,13 @@ async fn test_helo() {
 async fn test_mail_from() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .quit_after(QuitAfter::MailFrom)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .quit_after(QuitAfter::MailFrom)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -155,16 +133,13 @@ async fn test_mail_from() {
 async fn test_mail_from_with_size() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from_with_size("sender@example.com", 1000)
-    .quit_after(QuitAfter::MailFrom)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from_with_size("sender@example.com", 1000)
+        .quit_after(QuitAfter::MailFrom)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -178,17 +153,14 @@ async fn test_mail_from_with_size() {
 async fn test_rcpt_to() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .rcpt_to("recipient@example.com")
-    .quit_after(QuitAfter::RcptTo)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .rcpt_to("recipient@example.com")
+        .quit_after(QuitAfter::RcptTo)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -202,26 +174,26 @@ async fn test_rcpt_to() {
 async fn test_multiple_recipients() {
     let (port, _handle) = start_test_server().await;
 
-    let recipients = ["user1@example.com", "user2@example.com", "user3@example.com"];
+    let recipients = [
+        "user1@example.com",
+        "user2@example.com",
+        "user3@example.com",
+    ];
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .rcpt_to_multiple(&recipients)
-    .quit_after(QuitAfter::RcptTo)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .rcpt_to_multiple(&recipients)
+        .quit_after(QuitAfter::RcptTo)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
 
     // Each RCPT TO should get a 250 response
-    let rcpt_responses: Vec<_> = responses.iter().filter(|r| r.code == 250).collect();
-    assert!(rcpt_responses.len() >= 3);
+    assert!(responses.iter().filter(|r| r.code == 250).count() >= 3);
 }
 
 #[tokio::test]
@@ -235,18 +207,15 @@ async fn test_complete_transaction() {
                    \r\n\
                    This is a test message.\r\n";
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .rcpt_to("recipient@example.com")
-    .data_with_content(message)
-    .quit_after(QuitAfter::DataEnd)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .rcpt_to("recipient@example.com")
+        .data_with_content(message)
+        .quit_after(QuitAfter::DataEnd)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -263,17 +232,14 @@ async fn test_full_session_with_quit() {
 
     let message = "Subject: Test\r\n\r\nHello World\r\n";
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .rcpt_to("recipient@example.com")
-    .data_with_content(message)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .rcpt_to("recipient@example.com")
+        .data_with_content(message)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -287,28 +253,22 @@ async fn test_full_session_with_quit() {
 async fn test_rset_command() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .rcpt_to("recipient@example.com")
-    .rset()
-    .mail_from("newsender@example.com")
-    .quit_after(QuitAfter::MailFrom)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .rcpt_to("recipient@example.com")
+        .rset()
+        .mail_from("newsender@example.com")
+        .quit_after(QuitAfter::MailFrom)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
 
     // Should have successful responses for both MAIL FROM commands
-    let mail_responses: Vec<_> = responses.iter()
-        .filter(|r| r.code == 250)
-        .collect();
-    assert!(mail_responses.len() >= 2);
+    assert!(responses.iter().filter(|r| r.code == 250).count() >= 2);
 }
 
 #[tokio::test]
@@ -316,15 +276,12 @@ async fn test_rset_command() {
 async fn test_raw_command() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .raw_command("HELP")
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .raw_command("HELP")
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -338,15 +295,12 @@ async fn test_raw_command() {
 async fn test_builder_build_method() {
     let (port, _handle) = start_test_server().await;
 
-    let mut client = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .build()
-    .await
-    .unwrap();
+    let mut client = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .build()
+        .await
+        .unwrap();
 
     // Use the client for additional commands
     let response = client.mail_from("sender@example.com", None).await;
@@ -367,15 +321,12 @@ async fn test_builder_build_method() {
 async fn test_response_inspection() {
     let (port, _handle) = start_test_server().await;
 
-    let client = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .build()
-    .await
-    .unwrap();
+    let client = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .build()
+        .await
+        .unwrap();
 
     // All responses should be accessible
     let responses = client.responses();
@@ -394,16 +345,13 @@ async fn test_size_exceeded() {
     let (port, _handle) = start_test_server().await;
 
     // Server has 10MB limit, declare larger size
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from_with_size("sender@example.com", 20_000_000)
-    .quit_after(QuitAfter::MailFrom)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from_with_size("sender@example.com", 20_000_000)
+        .quit_after(QuitAfter::MailFrom)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
@@ -484,21 +432,18 @@ async fn test_send_with_message_builder() {
         .build()
         .unwrap();
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .rcpt_to("recipient@example.com")
-    .data_with_message(message)
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .rcpt_to("recipient@example.com")
+        .data_with_message(message)
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
-    
+
     // Should have successful delivery
     let last_response = responses.last().unwrap();
     assert_eq!(last_response.code, 221); // QUIT
@@ -509,26 +454,23 @@ async fn test_send_with_message_builder() {
 async fn test_data_with_builder_closure() {
     let (port, _handle) = start_test_server().await;
 
-    let result = SmtpClientBuilder::new(
-        format!("127.0.0.1:{port}"),
-        "localhost".to_string(),
-    )
-    .accept_invalid_certs(true)
-    .ehlo("test.example.com")
-    .mail_from("sender@example.com")
-    .rcpt_to("recipient@example.com")
-    .data_with_builder(|msg| {
-        msg.subject("Closure Test")
-            .body("Testing the ergonomic closure API")
-            .build()
-    })
-    .unwrap()
-    .execute()
-    .await;
+    let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
+        .accept_invalid_certs(true)
+        .ehlo("test.example.com")
+        .mail_from("sender@example.com")
+        .rcpt_to("recipient@example.com")
+        .data_with_builder(|msg| {
+            msg.subject("Closure Test")
+                .body("Testing the ergonomic closure API")
+                .build()
+        })
+        .unwrap()
+        .execute()
+        .await;
 
     assert!(result.is_ok());
     let responses = result.unwrap();
-    
+
     // Should have successful delivery
     let last_response = responses.last().unwrap();
     assert_eq!(last_response.code, 221); // QUIT

@@ -1,6 +1,7 @@
 //! Error types for the SMTP client.
 
 use std::io;
+
 use thiserror::Error;
 
 /// Errors that can occur when using the SMTP client.
@@ -40,4 +41,4 @@ pub enum ClientError {
 }
 
 /// Specialized `Result` type for SMTP client operations.
-pub type Result<T> = std::result::Result<T, ClientError>;
+pub type Result<T> = anyhow::Result<T, ClientError>;

@@ -72,21 +72,20 @@ impl Response {
         }
 
         let code_str = &line[..3];
-        let code = code_str.parse::<u16>().map_err(|_| {
-            ClientError::ParseError(format!("Invalid status code: '{code_str}'"))
-        })?;
+        let code = code_str
+            .parse::<u16>()
+            .map_err(|_| ClientError::ParseError(format!("Invalid status code: '{code_str}'")))?;
 
         // Check if this is the last line (indicated by a space) or continuation (dash)
         let is_last = if line.len() > 3 {
             match line.chars().nth(3) {
-                Some(' ') => true,
+                None | Some(' ') => true,
                 Some('-') => false,
                 Some(c) => {
                     return Err(ClientError::ParseError(format!(
                         "Invalid separator character: '{c}'"
-                    )))
+                    )));
                 }
-                None => true, // Exactly 3 characters
             }
         } else {
             true
@@ -162,11 +161,7 @@ impl Response {
         }
 
         if complete {
-            if let Some(code) = first_code {
-                Ok(Some((Self::new(code, lines), bytes_consumed)))
-            } else {
-                Ok(None)
-            }
+            Ok(first_code.map(|code| (Self::new(code, lines), bytes_consumed)))
         } else {
             Ok(None) // Need more data
         }

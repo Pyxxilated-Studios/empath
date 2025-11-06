@@ -1,10 +1,12 @@
 //! Builder pattern for constructing SMTP client sessions.
 
-use super::client::SmtpClient;
-use super::error::{ClientError, Result};
-use super::message::MessageBuilder;
-use super::quit_after::QuitAfter;
-use super::response::Response;
+use super::{
+    error::{ClientError, Result},
+    message::MessageBuilder,
+    quit_after::QuitAfter,
+    response::Response,
+    smtp_client::SmtpClient,
+};
 
 /// A step in the SMTP conversation.
 #[derive(Debug, Clone)]
@@ -190,6 +192,7 @@ impl SmtpClientBuilder {
     /// # Errors
     ///
     /// Returns an error if the message builder fails to build the message.
+    #[must_use]
     pub fn data_with_message(mut self, message: impl Into<String>) -> Self {
         self.steps.push(Step::Data);
         self.steps.push(Step::SendData(message.into()));

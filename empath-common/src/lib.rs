@@ -6,6 +6,8 @@
     slice_pattern,
     vec_into_raw_parts
 )]
+#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
+#![allow(clippy::must_use_candidate)]
 
 pub mod address;
 pub mod context;

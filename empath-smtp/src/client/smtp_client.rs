@@ -1,16 +1,22 @@
 //! SMTP client implementation with support for TLS and STARTTLS.
 
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
-use tokio_rustls::rustls::{ClientConfig, RootCertStore};
-use tokio_rustls::TlsConnector;
 
 use empath_common::tracing;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
+use tokio_rustls::{
+    TlsConnector,
+    client::TlsStream,
+    rustls::{ClientConfig, RootCertStore, pki_types::ServerName},
+};
 
-use super::error::{ClientError, Result};
-use super::response::Response;
+use super::{
+    error::{ClientError, Result},
+    response::Response,
+};
 
 /// Initial size of the read buffer for SMTP responses.
 const BUFFER_SIZE: usize = 8192;
@@ -21,7 +27,7 @@ const MAX_BUFFER_SIZE: usize = 1024 * 1024;
 /// An SMTP client connection that can be either plain TCP or TLS-wrapped.
 enum ClientConnection {
     Plain(TcpStream),
-    Tls(tokio_rustls::client::TlsStream<TcpStream>),
+    Tls(Box<TlsStream<TcpStream>>),
 }
 
 impl ClientConnection {
@@ -47,11 +53,7 @@ impl ClientConnection {
     }
 
     /// Upgrades a plain connection to TLS.
-    async fn upgrade_to_tls(
-        self,
-        domain: &str,
-        accept_invalid_certs: bool,
-    ) -> Result<Self> {
+    async fn upgrade_to_tls(self, domain: &str, accept_invalid_certs: bool) -> Result<Self> {
         match self {
             Self::Plain(stream) => {
                 let mut root_store = RootCertStore::empty();
@@ -88,7 +90,7 @@ impl ClientConnection {
                     .await
                     .map_err(|e| ClientError::TlsError(e.to_string()))?;
 
-                Ok(Self::Tls(tls_stream))
+                Ok(Self::Tls(Box::new(tls_stream)))
             }
             Self::Tls(_) => Err(ClientError::TlsError(
                 "Connection is already TLS".to_string(),
@@ -166,9 +168,7 @@ impl SmtpClient {
     ///
     /// Returns an error if the connection fails.
     pub async fn connect(addr: &str, server_domain: String) -> Result<Self> {
-        let stream = TcpStream::connect(addr)
-            .await
-            .map_err(ClientError::Io)?;
+        let stream = TcpStream::connect(addr).await.map_err(ClientError::Io)?;
 
         Ok(Self {
             connection: Some(ClientConnection::Plain(stream)),
@@ -248,11 +248,10 @@ impl SmtpClient {
     ///
     /// Returns an error if the command fails.
     pub async fn mail_from(&mut self, from: &str, size: Option<usize>) -> Result<Response> {
-        let cmd = if let Some(sz) = size {
-            format!("MAIL FROM:<{from}> SIZE={sz}")
-        } else {
-            format!("MAIL FROM:<{from}>")
-        };
+        let cmd = size.map_or_else(
+            || format!("MAIL FROM:<{from}>"),
+            |sz| format!("MAIL FROM:<{from}> SIZE={sz}"),
+        );
         self.command(&cmd).await
     }
 
@@ -348,7 +347,11 @@ impl SmtpClient {
 
             // Take ownership of the connection and upgrade it
             if let Some(old_connection) = self.connection.take() {
-                self.connection = Some(old_connection.upgrade_to_tls(&domain, accept_invalid).await?);
+                self.connection = Some(
+                    old_connection
+                        .upgrade_to_tls(&domain, accept_invalid)
+                        .await?,
+                );
             } else {
                 return Err(ClientError::ConnectionClosed);
             }
@@ -386,7 +389,9 @@ impl SmtpClient {
     async fn read_response(&mut self) -> Result<Response> {
         loop {
             // Try to parse a complete response from the buffer
-            if let Some((response, consumed)) = Response::parse_response(&self.buffer[..self.buffer_pos])? {
+            if let Some((response, consumed)) =
+                Response::parse_response(&self.buffer[..self.buffer_pos])?
+            {
                 // Remove consumed bytes from buffer
                 self.buffer.copy_within(consumed..self.buffer_pos, 0);
                 self.buffer_pos -= consumed;
@@ -403,8 +408,7 @@ impl SmtpClient {
                 let new_size = self.buffer.len() * 2;
                 if new_size > MAX_BUFFER_SIZE {
                     return Err(ClientError::ParseError(format!(
-                        "Response too large (exceeds {} bytes)",
-                        MAX_BUFFER_SIZE
+                        "Response too large (exceeds {MAX_BUFFER_SIZE} bytes)"
                     )));
                 }
                 self.buffer.resize(new_size, 0);

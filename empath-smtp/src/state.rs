@@ -356,7 +356,10 @@ mod test {
         // MAIL FROM
         let sender: AddressList = addrparse("sender@example.com").unwrap().into();
         let state = state.transition(
-            Command::MailFrom(sender.iter().next().cloned(), crate::command::MailParameters::new()),
+            Command::MailFrom(
+                sender.iter().next().cloned(),
+                crate::command::MailParameters::new(),
+            ),
             &mut ctx,
         );
         assert!(matches!(state, State::MailFrom(_)));

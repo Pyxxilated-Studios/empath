@@ -85,15 +85,15 @@
 //! ```
 
 mod builder;
-mod client;
 mod error;
 mod message;
 mod quit_after;
 mod response;
+mod smtp_client;
 
 pub use builder::SmtpClientBuilder;
-pub use client::SmtpClient;
 pub use error::{ClientError, Result};
 pub use message::{Attachment, MessageBuilder};
 pub use quit_after::QuitAfter;
 pub use response::{Response, ResponseLine};
+pub use smtp_client::SmtpClient;

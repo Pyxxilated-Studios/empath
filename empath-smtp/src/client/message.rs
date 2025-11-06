@@ -1,7 +1,6 @@
 //! Email message builder with support for headers, body, and MIME attachments.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::{collections::HashMap, io::Write, path::Path};
 
 use super::error::{ClientError, Result};
 
@@ -147,7 +146,7 @@ impl MessageBuilder {
             .to_string();
 
         let data = tokio::fs::read(path).await.map_err(|e| {
-            ClientError::BuilderError(format!("Failed to read file {path:?}: {e}"))
+            ClientError::BuilderError(format!("Failed to read file {}: {e}", path.display()))
         })?;
 
         // Guess content type based on extension
@@ -178,120 +177,123 @@ impl MessageBuilder {
 
     /// Builds a simple message without attachments.
     fn build_simple(self) -> Result<String> {
-        let mut message = String::new();
+        let mut message = Vec::with_capacity(1024);
 
         // Add From header
         if let Some(from) = &self.from {
-            message.push_str(&format!("From: {from}\r\n"));
+            write!(&mut message, "From: {from}\r\n")?;
         }
 
         // Add To header
         if !self.to.is_empty() {
-            message.push_str(&format!("To: {}\r\n", self.to.join(", ")));
+            write!(&mut message, "To: {}\r\n", self.to.join(", "))?;
         }
 
         // Add Cc header
         if !self.cc.is_empty() {
-            message.push_str(&format!("Cc: {}\r\n", self.cc.join(", ")));
+            write!(&mut message, "Cc: {}\r\n", self.cc.join(", "))?;
         }
 
         // Add Subject header
         if let Some(subject) = &self.subject {
-            message.push_str(&format!("Subject: {subject}\r\n"));
+            write!(&mut message, "Subject: {subject}\r\n")?;
         }
 
         // Add custom headers
         for (name, value) in &self.headers {
-            message.push_str(&format!("{name}: {value}\r\n"));
+            write!(&mut message, "{name}: {value}\r\n")?;
         }
 
         // Add MIME headers for plain text
-        message.push_str("MIME-Version: 1.0\r\n");
-        message.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+        write!(&mut message, "MIME-Version: 1.0\r\n")?;
+        write!(&mut message, "Content-Type: text/plain; charset=utf-8\r\n")?;
 
         // Blank line between headers and body
-        message.push_str("\r\n");
+        write!(&mut message, "\r\n")?;
 
         // Add body
         if let Some(body) = &self.body {
-            message.push_str(body);
+            write!(&mut message, "{body}")?;
         }
 
-        Ok(message)
+        String::from_utf8(message).map_err(|e| ClientError::Utf8Error(e.utf8_error()))
     }
 
     /// Builds a multipart message with attachments.
     fn build_multipart(self) -> Result<String> {
         let boundary = generate_boundary();
-        let mut message = String::new();
+        let mut message = Vec::with_capacity(2048);
 
         // Add From header
         if let Some(from) = &self.from {
-            message.push_str(&format!("From: {from}\r\n"));
+            write!(&mut message, "From: {from}\r\n")?;
         }
 
         // Add To header
         if !self.to.is_empty() {
-            message.push_str(&format!("To: {}\r\n", self.to.join(", ")));
+            write!(&mut message, "To: {}\r\n", self.to.join(", "))?;
         }
 
         // Add Cc header
         if !self.cc.is_empty() {
-            message.push_str(&format!("Cc: {}\r\n", self.cc.join(", ")));
+            write!(&mut message, "Cc: {}\r\n", self.cc.join(", "))?;
         }
 
         // Add Subject header
         if let Some(subject) = &self.subject {
-            message.push_str(&format!("Subject: {subject}\r\n"));
+            write!(&mut message, "Subject: {subject}\r\n")?;
         }
 
         // Add custom headers
         for (name, value) in &self.headers {
-            message.push_str(&format!("{name}: {value}\r\n"));
+            write!(&mut message, "{name}: {value}\r\n")?;
         }
 
         // Add MIME headers for multipart
-        message.push_str("MIME-Version: 1.0\r\n");
-        message.push_str(&format!(
+        write!(&mut message, "MIME-Version: 1.0\r\n")?;
+        write!(
+            &mut message,
             "Content-Type: multipart/mixed; boundary=\"{boundary}\"\r\n"
-        ));
+        )?;
 
         // Blank line between headers and body
-        message.push_str("\r\n");
+        write!(&mut message, "\r\n")?;
 
         // Add body part
-        message.push_str(&format!("--{boundary}\r\n"));
-        message.push_str("Content-Type: text/plain; charset=utf-8\r\n");
-        message.push_str("\r\n");
+        write!(&mut message, "--{boundary}\r\n")?;
+        write!(&mut message, "Content-Type: text/plain; charset=utf-8\r\n")?;
+        write!(&mut message, "\r\n")?;
         if let Some(body) = &self.body {
-            message.push_str(body);
+            write!(&mut message, "{body}")?;
         }
-        message.push_str("\r\n");
+        write!(&mut message, "\r\n")?;
 
         // Add attachments
         for attachment in &self.attachments {
-            message.push_str(&format!("--{boundary}\r\n"));
-            message.push_str(&format!(
+            write!(&mut message, "--{boundary}\r\n")?;
+            write!(
+                &mut message,
                 "Content-Type: {}\r\n",
                 attachment.content_type
-            ));
-            message.push_str("Content-Transfer-Encoding: base64\r\n");
-            message.push_str(&format!(
+            )?;
+            write!(&mut message, "Content-Transfer-Encoding: base64\r\n")?;
+            write!(
+                &mut message,
                 "Content-Disposition: attachment; filename=\"{}\"\r\n",
                 attachment.filename
-            ));
-            message.push_str("\r\n");
+            )?;
+            write!(&mut message, "\r\n")?;
 
             // Encode attachment data as base64
             let encoded = base64_encode(&attachment.data);
-            message.push_str(&encoded);
-            message.push_str("\r\n");
+            write!(&mut message, "{encoded}")?;
+            write!(&mut message, "\r\n")?;
         }
 
         // Add final boundary
-        message.push_str(&format!("--{boundary}--\r\n"));
+        write!(&mut message, "--{boundary}--\r\n")?;
 
-        Ok(message)
+        String::from_utf8(message).map_err(|e| ClientError::Utf8Error(e.utf8_error()))
     }
 }
 
@@ -329,19 +331,17 @@ fn base64_encode(data: &[u8]) -> String {
 
         if chunk.len() > 1 {
             result.push(ALPHABET[b3] as char);
-            col += 1;
         } else {
             result.push('=');
-            col += 1;
         }
 
         if chunk.len() > 2 {
             result.push(ALPHABET[b4] as char);
-            col += 1;
         } else {
             result.push('=');
-            col += 1;
         }
+
+        col += 1;
 
         // Wrap at 76 characters
         if col >= 76 {
@@ -359,10 +359,7 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// Guesses the MIME content type based on file extension.
 fn guess_content_type(path: &Path) -> String {
-    let extension = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match extension.to_lowercase().as_str() {
         "txt" => "text/plain",

@@ -135,10 +135,14 @@ impl MessageBuilder {
     pub fn build(self) -> Result<Message, BuilderError> {
         Ok(Message {
             id: self.id.ok_or(BuilderError::MissingField("id"))?,
-            envelope: self.envelope.ok_or(BuilderError::MissingField("envelope"))?,
+            envelope: self
+                .envelope
+                .ok_or(BuilderError::MissingField("envelope"))?,
             data: self.data.ok_or(BuilderError::MissingField("data"))?,
             helo_id: self.helo_id.ok_or(BuilderError::MissingField("helo_id"))?,
-            extended: self.extended.ok_or(BuilderError::MissingField("extended"))?,
+            extended: self
+                .extended
+                .ok_or(BuilderError::MissingField("extended"))?,
             context: self.context.ok_or(BuilderError::MissingField("context"))?,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
