@@ -87,11 +87,13 @@
 mod builder;
 mod client;
 mod error;
+mod message;
 mod quit_after;
 mod response;
 
 pub use builder::SmtpClientBuilder;
 pub use client::SmtpClient;
 pub use error::{ClientError, Result};
+pub use message::{Attachment, MessageBuilder};
 pub use quit_after::QuitAfter;
 pub use response::{Response, ResponseLine};

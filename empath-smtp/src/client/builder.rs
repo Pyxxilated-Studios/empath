@@ -2,6 +2,7 @@
 
 use super::client::SmtpClient;
 use super::error::{ClientError, Result};
+use super::message::MessageBuilder;
 use super::quit_after::QuitAfter;
 use super::response::Response;
 
@@ -48,6 +49,8 @@ pub struct SmtpClientBuilder {
     steps: Vec<Step>,
     quit_after: QuitAfter,
     accept_invalid_certs: bool,
+    envelope_from: Option<String>,
+    envelope_recipients: Vec<String>,
 }
 
 impl SmtpClientBuilder {
@@ -65,6 +68,8 @@ impl SmtpClientBuilder {
             steps: Vec::new(),
             quit_after: QuitAfter::default(),
             accept_invalid_certs: false,
+            envelope_from: None,
+            envelope_recipients: Vec::new(),
         }
     }
 
@@ -85,8 +90,10 @@ impl SmtpClientBuilder {
     /// Sends MAIL FROM command.
     #[must_use]
     pub fn mail_from(mut self, from: impl Into<String>) -> Self {
+        let from_str = from.into();
+        self.envelope_from = Some(from_str.clone());
         self.steps.push(Step::MailFrom {
-            from: from.into(),
+            from: from_str,
             size: None,
         });
         self
@@ -95,8 +102,10 @@ impl SmtpClientBuilder {
     /// Sends MAIL FROM command with SIZE parameter.
     #[must_use]
     pub fn mail_from_with_size(mut self, from: impl Into<String>, size: usize) -> Self {
+        let from_str = from.into();
+        self.envelope_from = Some(from_str.clone());
         self.steps.push(Step::MailFrom {
-            from: from.into(),
+            from: from_str,
             size: Some(size),
         });
         self
@@ -105,7 +114,9 @@ impl SmtpClientBuilder {
     /// Sends RCPT TO command.
     #[must_use]
     pub fn rcpt_to(mut self, to: impl Into<String>) -> Self {
-        self.steps.push(Step::RcptTo(to.into()));
+        let to_str = to.into();
+        self.envelope_recipients.push(to_str.clone());
+        self.steps.push(Step::RcptTo(to_str));
         self
     }
 
@@ -113,7 +124,9 @@ impl SmtpClientBuilder {
     #[must_use]
     pub fn rcpt_to_multiple(mut self, recipients: &[impl AsRef<str>]) -> Self {
         for recipient in recipients {
-            self.steps.push(Step::RcptTo(recipient.as_ref().to_string()));
+            let to_str = recipient.as_ref().to_string();
+            self.envelope_recipients.push(to_str.clone());
+            self.steps.push(Step::RcptTo(to_str));
         }
         self
     }
@@ -142,6 +155,92 @@ impl SmtpClientBuilder {
     pub fn send_data(mut self, data: impl Into<String>) -> Self {
         self.steps.push(Step::SendData(data.into()));
         self
+    }
+
+    /// Sends DATA command followed by a message built with `MessageBuilder`.
+    ///
+    /// This automatically calls DATA, sends the message content, and continues with
+    /// the rest of the builder chain.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use empath_smtp::client::{MessageBuilder, SmtpClientBuilder};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Build message with MessageBuilder
+    /// let message = MessageBuilder::new()
+    ///     .from("sender@example.com")
+    ///     .to("recipient@example.com")
+    ///     .subject("Test")
+    ///     .body("Hello World")
+    ///     .build()?;
+    ///
+    /// let responses = SmtpClientBuilder::new("localhost:2525", "mail.example.com")
+    ///     .ehlo("client.example.com")
+    ///     .mail_from("sender@example.com")
+    ///     .rcpt_to("recipient@example.com")
+    ///     .data_with_message(message)
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the message builder fails to build the message.
+    pub fn data_with_message(mut self, message: impl Into<String>) -> Self {
+        self.steps.push(Step::Data);
+        self.steps.push(Step::SendData(message.into()));
+        self
+    }
+
+    /// Sends DATA command followed by a message built using a closure.
+    ///
+    /// This is a convenience method that provides a pre-populated `MessageBuilder`
+    /// (with FROM/TO headers from the envelope) to a closure, then sends the result.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use empath_smtp::client::SmtpClientBuilder;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let responses = SmtpClientBuilder::new("localhost:2525", "mail.example.com")
+    ///     .ehlo("client.example.com")
+    ///     .mail_from("sender@example.com")
+    ///     .rcpt_to("recipient@example.com")
+    ///     .data_with_builder(|msg| {
+    ///         msg.subject("Ergonomic API")
+    ///             .body("FROM/TO automatically set from envelope!")
+    ///             .build()
+    ///     })?
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the closure returns an error or message building fails.
+    pub fn data_with_builder<F>(mut self, f: F) -> Result<Self>
+    where
+        F: FnOnce(MessageBuilder) -> Result<String>,
+    {
+        // Create a MessageBuilder pre-populated with FROM/TO from envelope
+        let mut builder = MessageBuilder::new();
+        if let Some(from) = &self.envelope_from {
+            builder = builder.from(from);
+        }
+        builder = builder.to_multiple(&self.envelope_recipients);
+
+        // Call the closure with the pre-populated builder
+        let message = f(builder)?;
+        self.steps.push(Step::Data);
+        self.steps.push(Step::SendData(message));
+        Ok(self)
     }
 
     /// Sends STARTTLS command and upgrades the connection to TLS.

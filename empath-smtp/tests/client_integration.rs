@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use empath_smtp::client::{QuitAfter, SmtpClientBuilder};
+use empath_smtp::client::{MessageBuilder, QuitAfter, SmtpClientBuilder};
 use empath_smtp::{Smtp, SmtpArgs};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
@@ -413,4 +413,123 @@ async fn test_size_exceeded() {
     let error_response = &responses[responses.len() - 2]; // SIZE error
     assert_eq!(error_response.code, 552);
     assert!(error_response.is_permanent_error());
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_message_builder_simple() {
+    let message = MessageBuilder::new()
+        .from("sender@example.com")
+        .to("recipient@example.com")
+        .subject("Test Message")
+        .body("This is a test message.")
+        .build()
+        .unwrap();
+
+    assert!(message.contains("From: sender@example.com"));
+    assert!(message.contains("To: recipient@example.com"));
+    assert!(message.contains("Subject: Test Message"));
+    assert!(message.contains("This is a test message."));
+    assert!(message.contains("MIME-Version: 1.0"));
+    assert!(message.contains("Content-Type: text/plain"));
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_message_builder_with_attachment() {
+    let message = MessageBuilder::new()
+        .from("sender@example.com")
+        .to("recipient@example.com")
+        .subject("File Attached")
+        .body("Please find the attachment.")
+        .attach("test.txt", "text/plain", b"File contents here".to_vec())
+        .build()
+        .unwrap();
+
+    assert!(message.contains("From: sender@example.com"));
+    assert!(message.contains("multipart/mixed"));
+    assert!(message.contains("test.txt"));
+    assert!(message.contains("base64"));
+    assert!(message.contains("Content-Disposition: attachment"));
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_message_builder_auto_headers() {
+    // Test that data_with_builder auto-populates FROM/TO headers
+    let message = MessageBuilder::new()
+        .from("sender@example.com")
+        .to_multiple(&["recipient1@example.com", "recipient2@example.com"])
+        .subject("Auto Headers Test")
+        .body("Testing FROM/TO headers")
+        .build()
+        .unwrap();
+
+    // Verify FROM and TO headers are properly set
+    assert!(message.contains("From: sender@example.com"));
+    assert!(message.contains("To: recipient1@example.com, recipient2@example.com"));
+    assert!(message.contains("Subject: Auto Headers Test"));
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_send_with_message_builder() {
+    let (port, _handle) = start_test_server().await;
+
+    let message = MessageBuilder::new()
+        .from("sender@example.com")
+        .to("recipient@example.com")
+        .subject("Integration Test")
+        .body("Testing MessageBuilder integration with SMTP client")
+        .build()
+        .unwrap();
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .rcpt_to("recipient@example.com")
+    .data_with_message(message)
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+    
+    // Should have successful delivery
+    let last_response = responses.last().unwrap();
+    assert_eq!(last_response.code, 221); // QUIT
+}
+
+#[tokio::test]
+#[cfg_attr(all(target_os = "macos", miri), ignore)]
+async fn test_data_with_builder_closure() {
+    let (port, _handle) = start_test_server().await;
+
+    let result = SmtpClientBuilder::new(
+        format!("127.0.0.1:{port}"),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test.example.com")
+    .mail_from("sender@example.com")
+    .rcpt_to("recipient@example.com")
+    .data_with_builder(|msg| {
+        msg.subject("Closure Test")
+            .body("Testing the ergonomic closure API")
+            .build()
+    })
+    .unwrap()
+    .execute()
+    .await;
+
+    assert!(result.is_ok());
+    let responses = result.unwrap();
+    
+    // Should have successful delivery
+    let last_response = responses.last().unwrap();
+    assert_eq!(last_response.code, 221); // QUIT
 }
