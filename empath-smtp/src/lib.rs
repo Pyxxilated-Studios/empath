@@ -7,6 +7,9 @@ pub mod extensions;
 pub mod session;
 pub mod state;
 
+// Re-export commonly used types
+pub use command::MailParameters;
+
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
@@ -226,15 +229,16 @@ impl FiniteStateMachine for State {
             (Self::Ehlo | Self::Helo, Command::Help) => Self::Help,
             (
                 Self::Ehlo | Self::Helo | Self::StartTLS | Self::PostDot | Self::Help,
-                Command::MailFrom(from, size),
+                Command::MailFrom(from, params),
             ) => {
                 validate_context.envelope.sender_mut().clone_from(&from);
                 // Store the declared size in the context for validation
-                if let Some(size_val) = size {
+                if let Some(size_val) = params.size() {
                     validate_context
                         .context
                         .insert(String::from("declared_size"), size_val.to_string());
                 }
+                // TODO: Store other MAIL FROM parameters in context for module access
                 Self::MailFrom
             }
             (Self::RcptTo | Self::MailFrom, Command::RcptTo(to)) => {

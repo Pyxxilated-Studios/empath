@@ -1,7 +1,142 @@
 use core::fmt::{self, Display, Formatter};
+use std::collections::HashMap;
 
 use empath_common::address::{Address, AddressList};
 use mailparse::MailAddr;
+
+/// ESMTP parameters for MAIL FROM command (RFC 5321 Section 3.3).
+///
+/// Stores generic key-value parameters from the MAIL FROM command.
+/// Common parameters include:
+/// - SIZE: Message size in bytes (RFC 1870)
+/// - BODY: 7BIT or 8BITMIME (RFC 6152)
+/// - AUTH: Authorization identity (RFC 4954)
+/// - RET: FULL or HDRS for DSN (RFC 3461)
+/// - ENVID: Envelope identifier for DSN (RFC 3461)
+/// - SMTPUTF8: UTF-8 support (RFC 6531)
+#[derive(PartialEq, Eq, Debug, Clone, Default)]
+pub struct MailParameters {
+    params: HashMap<String, Option<String>>,
+}
+
+impl MailParameters {
+    /// Creates an empty parameter set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            params: HashMap::new(),
+        }
+    }
+
+    /// Parses ESMTP parameters from a string.
+    ///
+    /// Parses parameter tokens in the form `KEY=VALUE` or `FLAG`.
+    /// All keys are normalized to uppercase for case-insensitive matching.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - A parameter appears multiple times
+    /// - SIZE parameter has an invalid value (non-numeric or zero)
+    pub fn from_params_str(params_str: &str) -> Result<Self, String> {
+        let mut params = Self::new();
+        let param_tokens: Vec<&str> = params_str.split_whitespace().collect();
+
+        for token in param_tokens {
+            if let Some((key, value)) = token.split_once('=') {
+                // Parameter with value: KEY=VALUE
+                let key_upper = key.to_uppercase();
+
+                // Check for duplicates using has()
+                if params.has(&key_upper) {
+                    return Err(format!("Duplicate parameter '{key_upper}' not allowed"));
+                }
+
+                // Special validation for SIZE parameter
+                if key_upper == "SIZE" {
+                    if let Ok(size_val) = value.parse::<usize>() {
+                        if size_val == 0 {
+                            return Err(String::from("SIZE=0 is not allowed"));
+                        }
+                        params.insert(key_upper, value);
+                    } else {
+                        return Err(format!("Invalid SIZE value: {value}"));
+                    }
+                } else {
+                    params.insert(key_upper, value);
+                }
+            } else {
+                // Parameter without value: FLAG (e.g., SMTPUTF8)
+                let key_upper = token.to_uppercase();
+
+                if params.has(&key_upper) {
+                    return Err(format!("Duplicate parameter '{key_upper}' not allowed"));
+                }
+
+                params.insert_flag(key_upper);
+            }
+        }
+
+        Ok(params)
+    }
+
+    /// Adds a parameter with a value.
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.params
+            .insert(key.into().to_uppercase(), Some(value.into()));
+    }
+
+    /// Adds a parameter without a value (flag).
+    pub fn insert_flag(&mut self, key: impl Into<String>) {
+        self.params.insert(key.into().to_uppercase(), None);
+    }
+
+    /// Gets a parameter value by key (case-insensitive).
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.params.get(&key.to_uppercase())?.as_deref()
+    }
+
+    /// Checks if a parameter exists (case-insensitive).
+    #[must_use]
+    pub fn has(&self, key: &str) -> bool {
+        self.params.contains_key(&key.to_uppercase())
+    }
+
+    /// Gets the SIZE parameter value, if present.
+    #[must_use]
+    pub fn size(&self) -> Option<usize> {
+        self.get("SIZE")?.parse().ok()
+    }
+
+    /// Checks if the parameter set is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.params.is_empty()
+    }
+
+    /// Returns an iterator over all parameters.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Option<String>)> {
+        self.params.iter()
+    }
+}
+
+impl Display for MailParameters {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let params: Vec<String> = self
+            .params
+            .iter()
+            .map(|(k, v)| {
+                if let Some(val) = v {
+                    format!("{k}={val}")
+                } else {
+                    k.clone()
+                }
+            })
+            .collect();
+        f.write_str(&params.join(" "))
+    }
+}
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum HeloVariant {
@@ -23,9 +158,9 @@ pub enum Command {
     Helo(HeloVariant),
     /// If this contains `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
     /// from [RFC-5321](https://www.ietf.org/rfc/rfc5321.txt).
-    /// The second field contains the optional SIZE parameter value from the MAIL FROM command.
+    /// The second field contains ESMTP parameters from the MAIL FROM command (RFC 5321 Section 3.3).
     Help,
-    MailFrom(Option<Address>, Option<usize>),
+    MailFrom(Option<Address>, MailParameters),
     RcptTo(AddressList),
     Rset,
     Auth,
@@ -66,9 +201,18 @@ impl Command {
     /// assert_eq!(command.size(), None);
     /// ```
     #[must_use]
-    pub const fn size(&self) -> Option<usize> {
+    pub fn size(&self) -> Option<usize> {
         match self {
-            Self::MailFrom(_, size) => *size,
+            Self::MailFrom(_, params) => params.size(),
+            _ => None,
+        }
+    }
+
+    /// Get the MAIL FROM parameters, if this is a MAIL FROM command.
+    #[must_use]
+    pub fn mail_parameters(&self) -> Option<&MailParameters> {
+        match self {
+            Self::MailFrom(_, params) => Some(params),
             _ => None,
         }
     }
@@ -78,15 +222,15 @@ impl Display for Command {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
-            Self::MailFrom(s, size) => {
+            Self::MailFrom(s, params) => {
                 let addr = s.as_ref().map_or_else(String::new, |f| match &**f {
                     MailAddr::Group(_) => String::new(),
                     MailAddr::Single(s) => s.to_string(),
                 });
-                if let Some(size_val) = size {
-                    fmt.write_fmt(format_args!("MAIL FROM:{addr} SIZE={size_val}"))
-                } else {
+                if params.is_empty() {
                     fmt.write_fmt(format_args!("MAIL FROM:{addr}"))
+                } else {
+                    fmt.write_fmt(format_args!("MAIL FROM:{addr} {params}"))
                 }
             }
             Self::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{rcpt}")),
@@ -113,50 +257,24 @@ impl TryFrom<&str> for Command {
                 return Err(Self::Invalid(command.to_owned()));
             }
 
-            // Parse the address and optional SIZE parameter
-            // Format: MAIL FROM:<addr> [SIZE=<size>]
+            // Parse the address and optional ESMTP parameters
+            // Format: MAIL FROM:<addr> [param1=value1] [param2=value2] ...
             let rest = command[10..].trim();
 
             // Split on whitespace to separate address from parameters
             let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
             let addr = parts[0];
 
-            // Parse SIZE parameter if present (RFC 1870)
-            // Format: MAIL FROM:<addr> [SIZE=<size>] [other ESMTP params...]
-            let size = if parts.len() > 1 {
-                let params: Vec<&str> = parts[1].split_whitespace().collect();
-
-                // Check for duplicate SIZE parameters
-                let size_params: Vec<&str> = params
-                    .iter()
-                    .filter(|p| p.len() >= 5 && p[..5].eq_ignore_ascii_case("SIZE="))
-                    .copied()
-                    .collect();
-
-                if size_params.len() > 1 {
-                    // Duplicate SIZE parameters - should reject per RFC
-                    return Err(Self::Invalid(String::from(
-                        "Duplicate SIZE parameter not allowed",
-                    )));
-                }
-
-                size_params.first().and_then(|size_param| {
-                    size_param.split('=').nth(1).and_then(|s| {
-                        s.parse::<usize>().ok().and_then(|val| {
-                            // Reject SIZE=0 as it's semantically unclear
-                            // RFC 1870 Section 4: "value zero indicates no fixed maximum"
-                            // but clients shouldn't declare 0-byte messages
-                            if val == 0 { None } else { Some(val) }
-                        })
-                    })
-                })
+            // Parse ESMTP parameters if present (RFC 5321 Section 3.3)
+            let mail_params = if parts.len() > 1 {
+                MailParameters::from_params_str(parts[1]).map_err(Self::Invalid)?
             } else {
-                None
+                MailParameters::new()
             };
 
             // Handle NULL sender explicitly, as mailparse doesn't tend to like this
             if addr == "<>" {
-                return Ok(Self::MailFrom(None, size));
+                return Ok(Self::MailFrom(None, mail_params));
             }
 
             mailparse::addrparse(addr).map_or_else(
@@ -168,7 +286,7 @@ impl TryFrom<&str> for Command {
                         } else {
                             Some(from[0].clone().into())
                         },
-                        size,
+                        mail_params,
                     ))
                 },
             )
@@ -224,7 +342,7 @@ impl TryFrom<String> for Command {
 
 #[cfg(test)]
 mod test {
-    use crate::command::{Command, HeloVariant};
+    use crate::command::{Command, HeloVariant, MailParameters};
 
     // Idea copied from https://gitlab.com/erichdongubler-experiments/rust_case_permutations/blob/master/src/lib.rs#L97
     fn string_casing(string: &str) -> impl Iterator<Item = String> {
@@ -262,7 +380,7 @@ mod test {
                         .clone()
                         .into()
                 ),
-                None
+                MailParameters::new()
             ))
         );
 
@@ -272,10 +390,12 @@ mod test {
 
         assert_eq!(
             Command::try_from("MAIL FROM: <>"),
-            Ok(Command::MailFrom(None, None))
+            Ok(Command::MailFrom(None, MailParameters::new()))
         );
 
         // Test SIZE parameter parsing
+        let mut params_with_size = MailParameters::new();
+        params_with_size.insert("SIZE", "12345");
         assert_eq!(
             Command::try_from("MAIL FROM: <test@gmail.com> SIZE=12345"),
             Ok(Command::MailFrom(
@@ -284,19 +404,21 @@ mod test {
                         .clone()
                         .into()
                 ),
-                Some(12345)
+                params_with_size
             ))
         );
 
+        let mut params_null_sender = MailParameters::new();
+        params_null_sender.insert("SIZE", "1000");
         assert_eq!(
             Command::try_from("MAIL FROM: <> SIZE=1000"),
-            Ok(Command::MailFrom(None, Some(1000)))
+            Ok(Command::MailFrom(None, params_null_sender))
         );
 
         for comm in string_casing("mail from") {
             assert!(matches!(
                 Command::try_from(format!("{comm}: test@gmail.com")),
-                Ok(Command::MailFrom(_, None))
+                Ok(Command::MailFrom(_, params)) if params.is_empty()
             ));
         }
     }
@@ -304,27 +426,20 @@ mod test {
     #[test]
     fn mail_from_size_edge_cases() {
         // SIZE=0 should be rejected (semantically invalid)
-        assert_eq!(
+        assert!(matches!(
             Command::try_from("MAIL FROM: <test@example.com> SIZE=0"),
-            Ok(Command::MailFrom(
-                Some(
-                    mailparse::addrparse("test@example.com").unwrap()[0]
-                        .clone()
-                        .into()
-                ),
-                None
-            ))
-        );
+            Err(Command::Invalid(_))
+        ));
 
-        // Malformed SIZE values should be silently ignored
+        // Malformed SIZE values should be rejected
         assert!(matches!(
             Command::try_from("MAIL FROM: <test@example.com> SIZE="),
-            Ok(Command::MailFrom(_, None))
+            Err(Command::Invalid(_))
         ));
 
         assert!(matches!(
             Command::try_from("MAIL FROM: <test@example.com> SIZE=abc"),
-            Ok(Command::MailFrom(_, None))
+            Err(Command::Invalid(_))
         ));
 
         // Duplicate SIZE parameters should be rejected
@@ -334,6 +449,8 @@ mod test {
         ));
 
         // Case insensitive SIZE parameter
+        let mut params_lower = MailParameters::new();
+        params_lower.insert("SIZE", "5000");
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> size=5000"),
             Ok(Command::MailFrom(
@@ -342,10 +459,12 @@ mod test {
                         .clone()
                         .into()
                 ),
-                Some(5000)
+                params_lower
             ))
         );
 
+        let mut params_mixed = MailParameters::new();
+        params_mixed.insert("SIZE", "3000");
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> SiZe=3000"),
             Ok(Command::MailFrom(
@@ -354,11 +473,14 @@ mod test {
                         .clone()
                         .into()
                 ),
-                Some(3000)
+                params_mixed
             ))
         );
 
-        // SIZE with other ESMTP parameters (future-proofing)
+        // SIZE with other ESMTP parameters
+        let mut params_multi = MailParameters::new();
+        params_multi.insert("SIZE", "1000");
+        params_multi.insert("BODY", "8BITMIME");
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> SIZE=1000 BODY=8BITMIME"),
             Ok(Command::MailFrom(
@@ -367,14 +489,16 @@ mod test {
                         .clone()
                         .into()
                 ),
-                Some(1000)
+                params_multi
             ))
         );
 
         // NULL sender with SIZE
+        let mut params_null = MailParameters::new();
+        params_null.insert("SIZE", "500");
         assert_eq!(
             Command::try_from("MAIL FROM: <> SIZE=500"),
-            Ok(Command::MailFrom(None, Some(500)))
+            Ok(Command::MailFrom(None, params_null))
         );
     }
 

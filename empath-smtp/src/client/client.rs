@@ -256,6 +256,24 @@ impl SmtpClient {
         self.command(&cmd).await
     }
 
+    /// Sends MAIL FROM command with generic ESMTP parameters (RFC 5321 Section 3.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command fails.
+    pub async fn mail_from_with_params(
+        &mut self,
+        from: &str,
+        params: &crate::command::MailParameters,
+    ) -> Result<Response> {
+        let cmd = if params.is_empty() {
+            format!("MAIL FROM:<{from}>")
+        } else {
+            format!("MAIL FROM:<{from}> {params}")
+        };
+        self.command(&cmd).await
+    }
+
     /// Sends RCPT TO command.
     ///
     /// # Errors
