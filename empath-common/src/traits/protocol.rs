@@ -35,7 +35,7 @@ pub trait Protocol: Default + Send + Sync {
     /// For example, when providing TLS certificates/keys it may be necessary to check that the
     /// paths provided actually exist
     ///
-    fn validate(&self, args: &Self::Args) -> anyhow::Result<()>;
+    fn validate(&mut self, args: &mut Self::Args) -> anyhow::Result<()>;
 
     fn ty() -> &'static str;
 }

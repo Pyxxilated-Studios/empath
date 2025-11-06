@@ -3,7 +3,7 @@
 use core::slice::SlicePattern;
 use std::ffi::CStr;
 
-use empath_common::{context::Context, status::Status};
+use empath_common::{address::Address, context::Context, status::Status};
 
 pub mod modules;
 pub mod string;
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn em_context_set_sender(
     match sender.to_str() {
         Ok(sender) => match mailparse::addrparse(sender) {
             Ok(sender) => {
-                *validate_context.envelope.sender_mut() = Some(sender[0].clone());
+                *validate_context.envelope.sender_mut() = Some(Address(sender[0].clone()));
                 true
             }
             Err(_err) => false,
@@ -147,13 +147,9 @@ pub unsafe extern "C" fn em_context_exists(
         false
     } else {
         unsafe {
-            CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                println!(
-                    "{key} exists? {}",
-                    validate_context.context.contains_key(key)
-                );
-                validate_context.context.contains_key(key)
-            })
+            CStr::from_ptr(key)
+                .to_str()
+                .is_ok_and(|key| validate_context.context.contains_key(key))
         }
     }
 }
@@ -214,7 +210,12 @@ mod test {
         ptr::null,
     };
 
-    use empath_common::{context::Context, envelope::Envelope, status::Status};
+    use empath_common::{
+        address::{Address, AddressList},
+        context::Context,
+        envelope::Envelope,
+        status::Status,
+    };
 
     use super::{
         em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
@@ -250,7 +251,9 @@ mod test {
 
         let mut recipients = mailparse::addrparse("test@gmail.com").unwrap();
         recipients.extend_from_slice(&mailparse::addrparse("test@test.com").unwrap()[..]);
-        *validate_context.envelope.recipients_mut() = Some(recipients);
+        *validate_context.envelope.recipients_mut() = Some(AddressList(
+            recipients.iter().map(|a| Address(a.clone())).collect(),
+        ));
 
         let buffer = em_context_get_recipients(&validate_context);
         assert_eq!(buffer.len, 2);
@@ -289,7 +292,9 @@ mod test {
             ));
             assert_eq!(
                 validate_context.envelope.sender(),
-                Some(&mailparse::addrparse("test@test.com").unwrap()[0].clone())
+                Some(&Address(
+                    mailparse::addrparse("test@test.com").unwrap()[0].clone()
+                ))
             );
         }
     }
@@ -297,7 +302,9 @@ mod test {
     #[test]
     fn test_null_sender() {
         let mut envelope = Envelope::default();
-        *envelope.sender_mut() = Some(mailparse::addrparse("test@test.com").unwrap()[0].clone());
+        *envelope.sender_mut() = Some(Address(
+            mailparse::addrparse("test@test.com").unwrap()[0].clone(),
+        ));
 
         let mut validate_context = Context {
             id: String::from("Testing"),
@@ -315,7 +322,7 @@ mod test {
     fn test_invalid_sender() {
         let sender = mailparse::addrparse("test@test.com").unwrap();
         let mut envelope = Envelope::default();
-        *envelope.sender_mut() = Some(sender[0].clone());
+        *envelope.sender_mut() = Some(sender[0].clone().into());
 
         let mut validate_context = Context {
             id: String::from("Testing"),
@@ -325,7 +332,10 @@ mod test {
 
         unsafe {
             assert!(!em_context_set_sender(&mut validate_context, cstr!("---")));
-            assert_eq!(validate_context.envelope.sender(), Some(&sender[0]));
+            assert_eq!(
+                validate_context.envelope.sender(),
+                Some(&sender[0].clone().into())
+            );
         }
     }
 

@@ -7,6 +7,7 @@
     vec_into_raw_parts
 )]
 
+pub mod address;
 pub mod context;
 pub mod controller;
 pub mod envelope;
