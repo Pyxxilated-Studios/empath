@@ -38,7 +38,7 @@ impl Context {
     pub fn sender(&self) -> String {
         self.envelope
             .sender()
-            .map_or_default(|sender| match sender {
+            .map_or_default(|sender| match &**sender {
                 MailAddr::Single(addr) => addr.to_string(),
                 MailAddr::Group(_) => String::default(),
             })
@@ -49,7 +49,7 @@ impl Context {
         self.envelope.recipients().map_or_default(|addrs| {
             addrs
                 .iter()
-                .map(|addr| match addr {
+                .map(|addr| match &**addr {
                     mailparse::MailAddr::Group(group) => {
                         format!("RCPT TO:{}", group.group_name)
                     }

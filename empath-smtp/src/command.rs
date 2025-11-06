@@ -1,6 +1,7 @@
 use core::fmt::{self, Display, Formatter};
 
-use mailparse::{MailAddr, MailAddrList};
+use empath_common::address::{Address, AddressList};
+use mailparse::MailAddr;
 
 #[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
 pub enum HeloVariant {
@@ -23,8 +24,8 @@ pub enum Command {
     /// If this contains `None`, then it should be assumed this is the `null sender`, or `null reverse-path`,
     /// from [RFC-5321](https://www.ietf.org/rfc/rfc5321.txt).
     Help,
-    MailFrom(Option<MailAddr>),
-    RcptTo(MailAddrList),
+    MailFrom(Option<Address>),
+    RcptTo(AddressList),
     Rset,
     Auth,
     Data,
@@ -37,7 +38,7 @@ impl Command {
     #[must_use]
     pub fn inner(&self) -> String {
         match self {
-            Self::MailFrom(from) => from.clone().map_or_default(|f| match f {
+            Self::MailFrom(from) => from.clone().map_or_default(|f| match &*f {
                 MailAddr::Group(_) => String::default(),
                 MailAddr::Single(s) => s.to_string(),
             }),
@@ -55,7 +56,7 @@ impl Display for Command {
             Self::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
             Self::MailFrom(s) => fmt.write_fmt(format_args!(
                 "MAIL FROM:{}",
-                s.clone().map_or_default(|f| match f {
+                s.clone().map_or_default(|f| match &*f {
                     MailAddr::Group(_) => String::default(),
                     MailAddr::Single(s) => s.to_string(),
                 })
@@ -96,7 +97,7 @@ impl TryFrom<&str> for Command {
                     Ok(Self::MailFrom(if from.is_empty() {
                         None
                     } else {
-                        Some(from[0].clone())
+                        Some(from[0].clone().into())
                     }))
                 },
             )
@@ -107,7 +108,7 @@ impl TryFrom<&str> for Command {
 
             mailparse::addrparse(command[8..].trim()).map_or_else(
                 |e| Err(Self::Invalid(e.to_string())),
-                |to| Ok(Self::RcptTo(to)),
+                |to| Ok(Self::RcptTo(to.into())),
             )
         } else if comm.starts_with("EHLO") || comm.starts_with("HELO") {
             match command.split_once(' ') {
@@ -185,7 +186,9 @@ mod test {
         assert_eq!(
             Command::try_from("Mail From: test@gmail.com"),
             Ok(Command::MailFrom(Some(
-                mailparse::addrparse("test@gmail.com").unwrap()[0].clone()
+                mailparse::addrparse("test@gmail.com").unwrap()[0]
+                    .clone()
+                    .into()
             )))
         );
 
@@ -211,7 +214,7 @@ mod test {
         assert_eq!(
             Command::try_from("Rcpt To: test@gmail.com"),
             Ok(Command::RcptTo(
-                mailparse::addrparse("test@gmail.com").unwrap()
+                mailparse::addrparse("test@gmail.com").unwrap().into()
             ))
         );
 

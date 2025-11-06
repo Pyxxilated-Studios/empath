@@ -34,7 +34,7 @@ impl<Proto: Protocol> Controller<Proto> {
     pub fn init(&mut self) -> anyhow::Result<()> {
         internal!("Initialising Controller for {}", Proto::ty());
 
-        self.listeners.iter().try_for_each(Listener::init)
+        self.listeners.iter_mut().try_for_each(Listener::init)
     }
 
     ///

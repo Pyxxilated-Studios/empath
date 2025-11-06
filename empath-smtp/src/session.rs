@@ -5,17 +5,17 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
 };
 
-use empath_common::{
-    Signal, context, incoming, internal, outgoing, status::Status, tracing,
-    traits::FiniteStateMachine,
-};
+use empath_common::{Signal, context, incoming, internal, outgoing, status::Status, tracing};
 use empath_ffi::modules::{self, validate};
 use empath_tracing::traced;
 use mailparse::MailParseError;
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, command::Command, connection::Connection, extensions::Extension};
+use crate::{
+    MAX_MESSAGE_SIZE, State, command::Command, connection::Connection, extensions::Extension,
+    state::Invalid,
+};
 
 #[repr(C)]
 #[derive(PartialEq, Eq, Debug)]
@@ -24,21 +24,11 @@ pub enum Event {
     ConnectionKeepAlive,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct Context {
     pub state: State,
     pub message: Vec<u8>,
     pub sent: bool,
-}
-
-impl Default for Context {
-    fn default() -> Self {
-        Self {
-            state: State::Connect,
-            message: Vec::default(),
-            sent: false,
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -153,12 +143,13 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     queue: Arc<AtomicU64>,
     peer: SocketAddr,
     context: Context,
-    extensions: Arc<[Extension]>,
+    extensions: Vec<Extension>,
     banner: String,
     tls_context: Option<TlsContext>,
     spool: Option<Arc<dyn empath_spool::Spool>>,
     connection: Connection<Stream>,
     init_context: HashMap<String, String>,
+    max_size: usize,
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
@@ -170,20 +161,23 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         config: SessionConfig,
     ) -> Self {
         tracing::debug!("Config: {:?}", config);
-        let mut extensions = config.extensions;
-        if config.tls_context.is_some() {
-            extensions.push(Extension::Starttls);
-        }
-        extensions.push(Extension::Help);
+        tracing::debug!("Extensions: {:?}", config.extensions);
 
-        tracing::debug!("Extensions: {extensions:?}");
+        let size = config
+            .extensions
+            .iter()
+            .find(|ext| matches!(ext, Extension::Size(_)))
+            .map_or(MAX_MESSAGE_SIZE, |size| match size {
+                Extension::Size(s) => *s,
+                _ => unreachable!(),
+            });
 
         Self {
             queue,
             peer,
             connection: Connection::Plain { stream },
             context: Context::default(),
-            extensions: extensions.into(),
+            extensions: config.extensions,
             tls_context: config.tls_context,
             spool: config.spool,
             banner: if config.banner.is_empty() {
@@ -192,6 +186,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 config.banner
             },
             init_context: config.init_context,
+            max_size: size,
         }
     }
 
@@ -233,7 +228,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 if Event::ConnectionClose == ev {
                     return Ok(());
                 } else if let Some(tls_context) = session.tls_context.as_ref()
-                    && session.context.state == State::StartTLS
+                    && matches!(session.context.state, State::StartTls(_))
                 {
                     let (conn, info) = session.connection.upgrade(tls_context).await?;
 
@@ -264,7 +259,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         );
                     } else {
                         session.context.sent = false;
-                        session.context.state = State::Reject;
+                        session.context.state = State::Reject(crate::state::Reject);
                         validate_context.response =
                             Some((Status::Error, String::from("STARTTLS failed")));
                     }
@@ -272,7 +267,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     tokio::select! {
                         _ = signal.recv() => {
                             session.context.sent = false;
-                            session.context.state = State::Close;
+                            session.context.state = State::Close(crate::state::Close);
                             validate_context.response =
                                 Some((Status::Unavailable, String::from("Server shutting down")));
                         }
@@ -298,7 +293,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             modules::Event::Validate(validate::Event::Connect),
             &mut validate_context,
         ) {
-            self.context.state = State::Reject;
+            self.context.state = State::Reject(crate::state::Reject);
         }
 
         let result = run_inner(self, &mut validate_context, signal).await;
@@ -314,12 +309,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
     /// Handle EHLO/HELP response generation with extensions
     fn response_ehlo_help(&self) -> Response {
-        let response = if self.context.state == State::Ehlo {
+        let response = if matches!(self.context.state, State::Ehlo(_)) {
             vec![format!(
                 "{}{}Hello {}",
                 Status::Ok,
                 if self.extensions.is_empty() { ' ' } else { '-' },
-                std::str::from_utf8(&self.context.message).unwrap()
+                std::bstr::ByteStr::new(&self.context.message)
             )]
         } else {
             vec![]
@@ -331,7 +326,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 |mut response, (idx, extension)| {
                     response.push(format!(
                         "{}{}{}",
-                        if self.context.state == State::Help {
+                        if matches!(self.context.state, State::Help(_)) {
                             Status::HelpMessage
                         } else {
                             Status::Ok
@@ -354,7 +349,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// Handle `PostDot` state - queue message and optionally spool
     #[traced]
     async fn response_post_dot(&self, validate_context: &context::Context) -> Response {
-        internal!("PostDot: {validate_context:?}");
         let queue = self
             .queue
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -404,19 +398,19 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             return (None, Event::ConnectionKeepAlive);
         }
 
-        if State::PostDot == self.context.state {
+        if matches!(self.context.state, State::PostDot(_)) {
             modules::dispatch(
                 modules::Event::Validate(validate::Event::Data),
                 validate_context,
             );
         }
 
-        match self.context.state {
-            State::Connect => (
+        match &self.context.state {
+            State::Connect(_) => (
                 Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Helo => (
+            State::Helo(_) => (
                 Some(vec![format!(
                     "{} Hello {}",
                     Status::Ok,
@@ -424,12 +418,21 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Ehlo | State::Help => self.response_ehlo_help(),
-            State::StartTLS if self.tls_context.is_some() => (
-                Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
-                Event::ConnectionKeepAlive,
-            ),
-            State::MailFrom => {
+            State::Ehlo(_) | State::Help(_) => self.response_ehlo_help(),
+            State::StartTls(_) => {
+                if self.tls_context.is_some() {
+                    (
+                        Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
+                        Event::ConnectionKeepAlive,
+                    )
+                } else {
+                    (
+                        Some(vec![format!("{} TLS not available", Status::Error)]),
+                        Event::ConnectionClose,
+                    )
+                }
+            }
+            State::MailFrom(_) => {
                 if modules::dispatch(
                     modules::Event::Validate(validate::Event::MailFrom),
                     validate_context,
@@ -445,12 +448,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     )
                 }
             }
-            State::RcptTo => (
+            State::RcptTo(_) => (
                 Some(vec![format!("{} Ok", Status::Ok)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Data => {
-                self.context.state = State::Reading;
+            State::Data(_) => {
+                self.context.state = State::Reading(crate::state::Reading);
                 (
                     Some(vec![format!(
                         "{} End data with <CR><LF>.<CR><LF>",
@@ -459,13 +462,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::PostDot => self.response_post_dot(validate_context).await,
-            State::Quit => (
+            State::PostDot(_) => self.response_post_dot(validate_context).await,
+            State::Quit(_) => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
                 Event::ConnectionClose,
             ),
-            State::Reading | State::Close => (None, Event::ConnectionKeepAlive),
-            State::InvalidCommandSequence => (
+            State::Reading(_) | State::Close(_) => (None, Event::ConnectionKeepAlive),
+            State::Invalid(_) => (
                 Some(vec![format!(
                     "{} {}",
                     Status::InvalidCommandSequence,
@@ -473,7 +476,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionClose,
             ),
-            State::Reject => {
+            State::Reject(_) => {
                 let default = (Status::Unavailable, "Unavailable".to_owned());
                 let (status, response) = validate_context.response.as_ref().unwrap_or(&default);
                 (
@@ -481,13 +484,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionClose,
                 )
             }
-            _ => (
-                Some(vec![format!(
-                    "{} Invalid command",
-                    Status::InvalidCommandSequence,
-                )]),
-                Event::ConnectionClose,
-            ),
         }
     }
 
@@ -509,17 +505,25 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             Ok(bytes_read) => {
                 let received = &received_data[..bytes_read];
 
-                if self.context.state == State::Reading {
+                if matches!(self.context.state, State::Reading(_)) {
                     self.context.message.extend(received);
 
                     if self.context.message.ends_with(b"\r\n.\r\n") {
                         self.context = Context {
-                            state: State::PostDot,
+                            state: State::PostDot(crate::state::PostDot),
                             message: self.context.message.clone(),
                             sent: false,
                         };
 
                         validate_context.data = Some(self.context.message.clone().into());
+                    } else if validate_context.data.iter().len() > self.max_size {
+                        self.context = Context {
+                            state: State::Invalid(Invalid {
+                                reason: format!("{} Message too long", Status::Error),
+                            }),
+                            message: Vec::default(),
+                            sent: false,
+                        }
                     }
                 } else {
                     let command = Command::try_from(received).unwrap_or_else(|e| e);
@@ -528,7 +532,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     incoming!("{command}");
 
                     self.context = Context {
-                        state: self.context.state.transition(command, validate_context),
+                        state: self
+                            .context
+                            .state
+                            .clone()
+                            .transition(command, validate_context),
                         message,
                         sent: false,
                     };
@@ -642,16 +650,17 @@ mod test {
         );
 
         // Simulate HELO state and receiving DATA
-        session.context.state = State::RcptTo;
+        session.context.state = State::RcptTo(crate::state::RcptTo { sender: None });
         let mut sender_addrs = mailparse::addrparse("test@example.com").unwrap();
         context
             .envelope
             .sender_mut()
-            .replace(sender_addrs.remove(0));
-        context
-            .envelope
-            .recipients_mut()
-            .replace(mailparse::addrparse("recipient@example.com").unwrap());
+            .replace(sender_addrs.remove(0).into());
+        context.envelope.recipients_mut().replace(
+            mailparse::addrparse("recipient@example.com")
+                .unwrap()
+                .into(),
+        );
 
         // Process the data
         let _ = session.response(&mut context).await;
@@ -659,7 +668,7 @@ mod test {
         assert!(response.is_ok());
 
         // Simulate PostDot state
-        session.context.state = State::PostDot;
+        session.context.state = State::PostDot(crate::state::PostDot);
         context.data = Some(test_data.to_vec().into());
 
         let response = session.response(&mut context).await;
@@ -700,7 +709,9 @@ mod test {
                 .build(),
         );
 
-        session.context.state = State::Helo;
+        session.context.state = State::Helo(crate::state::Helo {
+            id: "test".to_string(),
+        });
 
         let _ = session.response(&mut context).await;
         let response = session.receive(&mut context).await;

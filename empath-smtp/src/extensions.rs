@@ -6,6 +6,7 @@ use serde::Deserialize;
 pub enum Extension {
     Starttls,
     Help,
+    Size(usize),
 }
 
 impl Display for Extension {
@@ -13,6 +14,7 @@ impl Display for Extension {
         match self {
             Self::Starttls => fmt.write_str("STARTTLS"),
             Self::Help => fmt.write_str("HELP"),
+            Self::Size(s) => fmt.write_fmt(format_args!("SIZE {s}")),
         }
     }
 }

@@ -131,14 +131,14 @@ impl From<&[Rc<str>]> for StringVector {
 
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_free_string(_ffi_string: String) {
-    // drop(ffi_string);
+pub extern "C" fn em_free_string(ffi_string: String) {
+    drop(ffi_string);
 }
 
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
-pub extern "C" fn em_free_string_vector(_ffi_vector: StringVector) {
-    // drop(ffi_vector);
+pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
+    drop(ffi_vector);
 }
 
 #[cfg(test)]

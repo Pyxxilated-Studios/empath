@@ -43,8 +43,8 @@ impl<Proto: Protocol> Listener<Proto> {
     /// Any error during initialisation of the listener may propogate here
     ///
     #[traced(instrument(skip(self)), timing(precision = "ns"))]
-    pub fn init(&self) -> anyhow::Result<()> {
-        self.handler.validate(&self.args)
+    pub fn init(&mut self) -> anyhow::Result<()> {
+        self.handler.validate(&mut self.args)
     }
 
     ///
