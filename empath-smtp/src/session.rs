@@ -68,7 +68,7 @@ pub struct TlsContext {
 pub struct SessionConfig {
     pub extensions: Vec<Extension>,
     pub tls_context: Option<TlsContext>,
-    pub spool: Option<Arc<dyn empath_spool::Spool>>,
+    pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
     pub banner: String,
     pub init_context: HashMap<String, String>,
 }
@@ -86,7 +86,7 @@ impl SessionConfig {
 pub struct SessionConfigBuilder {
     extensions: Vec<Extension>,
     tls_context: Option<TlsContext>,
-    spool: Option<Arc<dyn empath_spool::Spool>>,
+    spool: Option<Arc<dyn empath_spool::BackingStore>>,
     banner: String,
     init_context: HashMap<String, String>,
 }
@@ -108,7 +108,7 @@ impl SessionConfigBuilder {
 
     /// Set the spool controller for message persistence
     #[must_use]
-    pub fn with_spool(mut self, spool: Option<Arc<dyn empath_spool::Spool>>) -> Self {
+    pub fn with_spool(mut self, spool: Option<Arc<dyn empath_spool::BackingStore>>) -> Self {
         self.spool = spool;
         self
     }
@@ -147,7 +147,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     extensions: Vec<Extension>,
     banner: String,
     tls_context: Option<TlsContext>,
-    spool: Option<Arc<dyn empath_spool::Spool>>,
+    spool: Option<Arc<dyn empath_spool::BackingStore>>,
     connection: Connection<Stream>,
     init_context: HashMap<String, String>,
     /// Maximum message size in bytes as advertised via SIZE extension (RFC 1870).
@@ -222,19 +222,19 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             mut signal: tokio::sync::broadcast::Receiver<Signal>,
         ) -> anyhow::Result<()> {
             loop {
+                let (mut response, mut ev) = session.response(validate_context).await;
+
                 session.emit(validate_context);
-                let (response, ev) = if let Some((status, ref resp)) = validate_context.response {
-                    (
+                if let Some((status, ref resp)) = validate_context.response {
+                    (response, ev) = (
                         Some(vec![format!("{} {}", status, resp)]),
                         if status.is_permanent() {
                             Event::ConnectionClose
                         } else {
                             Event::ConnectionKeepAlive
                         },
-                    )
-                } else {
-                    session.response(validate_context).await
-                };
+                    );
+                }
 
                 validate_context.response = None;
                 session.context.sent = true;
@@ -417,21 +417,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 Ok(message) => {
                     // Spool the message to persistent storage
                     // We must complete spooling before clearing transaction context
-                    if let Err(e) = spool.spool_message(&message).await {
-                        internal!(
-                            level = ERROR,
-                            "Failed to spool message {}: {}",
-                            message.id,
-                            e
-                        );
+                    if let Err(e) = spool.write(&message).await {
+                        internal!(level = ERROR, "Failed to spool message {}: {e}", message.id);
                     }
                 }
                 Err(e) => {
                     internal!(
                         level = ERROR,
-                        "Failed to build message for queue {}: {}",
-                        queue,
-                        e
+                        "Failed to build message for queue {queue}: {e}"
                     );
                 }
             }
@@ -630,6 +623,7 @@ mod test {
 
     use empath_common::{context::Context, status::Status};
     use empath_ffi::modules::{self, Module};
+    use empath_spool::{BackingStore, TestBackingStore};
 
     use crate::{
         State,
@@ -711,14 +705,14 @@ mod test {
         cursor.get_mut().extend_from_slice(test_data);
 
         // Create a mock spool controller
-        let mock_spool = Arc::new(empath_spool::MemoryBackedSpool::new());
+        let mock_spool = Arc::new(TestBackingStore::default());
 
         let mut session = Session::create(
             Arc::default(),
             cursor,
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
-                .with_spool(Some(mock_spool.clone() as Arc<dyn empath_spool::Spool>))
+                .with_spool(Some(mock_spool.clone()))
                 .with_banner(banner.to_string())
                 .build(),
         );
@@ -755,8 +749,10 @@ mod test {
             .expect("Spool operation should complete within timeout");
 
         // Verify message was spooled
-        assert_eq!(mock_spool.message_count(), 1);
-        let spooled_msg = mock_spool.get_message(0).unwrap();
+        assert_eq!(mock_spool.message_count().await, 1);
+        let ids = mock_spool.list().await.unwrap();
+        let spooled_msg_id = ids.first().unwrap();
+        let spooled_msg = mock_spool.read(spooled_msg_id).await.unwrap();
         assert_eq!(spooled_msg.data.as_ref(), test_data);
     }
 

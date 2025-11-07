@@ -1,84 +1,429 @@
 use std::{
-    future::Future,
-    pin::Pin,
-    sync::{Arc, Mutex},
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
+use async_trait::async_trait;
 use tokio::sync::Notify;
 
 use crate::message::Message;
 
-/// Trait for spooling messages
-pub trait Spool: Send + Sync + std::fmt::Debug {
-    /// Spool a message
+/// Identifier for a spooled message
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct SpooledMessageId {
+    /// The timestamp from the filename
+    pub timestamp: u64,
+    /// The message ID from the filename
+    pub id: u64,
+}
+
+impl SpooledMessageId {
+    /// Maximum reasonable timestamp (year 2100 in seconds)
+    const MAX_TIMESTAMP: u64 = 4_102_444_800;
+
+    /// Parse a message ID from a filename like `1234567890_42.json` or `1234567890_42.eml`
+    ///
+    /// Validates that the filename contains only numeric components to prevent
+    /// path traversal attacks.
+    ///
+    /// # Security
+    /// This function explicitly rejects:
+    /// - Path separators (/ and \)
+    /// - Directory traversal patterns (..)
+    /// - Non-numeric components
+    /// - Timestamps in the far future (prevents potential overflow attacks)
+    pub fn from_filename(filename: &str) -> Option<Self> {
+        // Reject filenames with path separators
+        if filename.contains('/') || filename.contains('\\') {
+            return None;
+        }
+
+        // Reject filenames with directory traversal patterns
+        if filename.contains("..") {
+            return None;
+        }
+
+        let stem = filename
+            .strip_suffix(".json")
+            .or_else(|| filename.strip_suffix(".eml"))?;
+        let (ts_str, id_str) = stem.split_once('_')?;
+
+        // Ensure both parts contain only digits
+        if !ts_str.chars().all(|c| c.is_ascii_digit())
+            || !id_str.chars().all(|c| c.is_ascii_digit())
+        {
+            return None;
+        }
+
+        let timestamp = ts_str.parse().ok()?;
+        let id = id_str.parse().ok()?;
+
+        // Validate timestamp is reasonable (not in the far future)
+        if timestamp > Self::MAX_TIMESTAMP {
+            return None;
+        }
+
+        Some(Self { timestamp, id })
+    }
+
+    /// Create a new validated message ID
+    #[must_use]
+    pub const fn new(timestamp: u64, id: u64) -> Self {
+        Self { timestamp, id }
+    }
+}
+
+/// Trait for the underlying storage mechanism
+///
+/// This trait defines the core operations for message storage backends.
+/// Implementations can store messages in memory, on disk, in databases, etc.
+///
+/// # Trait Object Safety
+/// This trait uses `async_trait` to remain dyn-safe, allowing for
+/// `Arc<dyn BackingStore>` trait objects. While this adds a small Box
+/// allocation per async call (~10-20ns), this overhead is negligible
+/// compared to I/O operations (microseconds to milliseconds).
+///
+/// # Security
+/// Implementations must:
+/// - Validate all inputs (especially IDs to prevent path traversal)
+/// - Handle concurrent access safely
+/// - Prevent data corruption during writes
+#[async_trait]
+pub trait BackingStore: Send + Sync + std::fmt::Debug {
+    /// Write a message to the backing store
     ///
     /// # Errors
-    /// If the message cannot be spooled
-    fn spool_message(
-        &self,
-        message: &Message,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
+    /// Returns an error if the message cannot be written
+    async fn write(&self, message: &Message) -> anyhow::Result<()>;
+
+    /// List all message identifiers
+    ///
+    /// Messages should be returned in sorted order (by timestamp, then ID)
+    ///
+    /// # Errors
+    /// Returns an error if the backing store cannot be read
+    async fn list(&self) -> anyhow::Result<Vec<SpooledMessageId>>;
+
+    /// Read a specific message
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be found or read
+    async fn read(&self, id: &SpooledMessageId) -> anyhow::Result<Message>;
+
+    /// Delete a message
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be deleted
+    async fn delete(&self, id: &SpooledMessageId) -> anyhow::Result<()>;
 }
 
-/// In-memory implementation of Spool for testing
-#[derive(Debug, Clone, Default)]
-pub struct MemoryBackedSpool {
-    messages: Arc<Mutex<Vec<Message>>>,
-    notify: Arc<Notify>,
+/// Main Spool struct - generic over backing store
+///
+/// This provides a unified interface for message spooling, regardless of
+/// the underlying storage mechanism. The generic parameter `T` allows for
+/// zero-cost abstraction when using concrete types, while still supporting
+/// trait objects (`Arc<dyn BackingStore>`) for dynamic dispatch.
+///
+/// # Type Parameters
+/// * `T` - The backing store implementation
+///
+/// # Examples
+/// ```ignore
+/// // Memory-backed spool for testing
+/// let spool = Spool::new(MemoryBackingStore::new());
+///
+/// // File-backed spool for production
+/// let store = FileBackingStore::builder()
+///     .path(PathBuf::from("/var/spool/empath"))
+///     .build()?;
+/// let spool = Spool::new(store);
+///
+/// // Trait object for polymorphism
+/// let store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::new());
+/// ```
+#[derive(Debug, serde::Deserialize)]
+#[serde(transparent)]
+pub struct Spool<T: BackingStore> {
+    #[serde(bound(deserialize = "T: serde::Deserialize<'de>"))]
+    store: T,
 }
 
-impl MemoryBackedSpool {
-    /// Create a new memory-backed spool
+impl<T: BackingStore + Default> Default for Spool<T> {
+    fn default() -> Self {
+        Self {
+            store: T::default(),
+        }
+    }
+}
+
+impl<T: BackingStore> Spool<T> {
+    /// Create a new spool with the given backing store
+    #[must_use]
+    pub const fn new(store: T) -> Self {
+        Self { store }
+    }
+
+    /// Spool a message to the backing store
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be written to the backing store
+    pub async fn spool_message(&self, message: &Message) -> anyhow::Result<()> {
+        self.store.write(message).await
+    }
+
+    /// List all spooled message identifiers
+    ///
+    /// # Errors
+    /// Returns an error if the backing store cannot be read
+    pub async fn list_messages(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
+        self.store.list().await
+    }
+
+    /// Read a specific message from the spool
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be found or read
+    pub async fn read_message(&self, id: &SpooledMessageId) -> anyhow::Result<Message> {
+        self.store.read(id).await
+    }
+
+    /// Delete a message from the spool
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be deleted
+    pub async fn delete_message(&self, id: &SpooledMessageId) -> anyhow::Result<()> {
+        self.store.delete(id).await
+    }
+
+    /// Access the underlying backing store
+    ///
+    /// This is useful for store-specific operations not exposed through
+    /// the standard Spool interface.
+    #[must_use]
+    pub const fn store(&self) -> &T {
+        &self.store
+    }
+
+    /// Mutably access the underlying backing store
+    #[must_use]
+    pub const fn store_mut(&mut self) -> &mut T {
+        &mut self.store
+    }
+}
+
+/// Clone implementation - only available when T is Clone
+///
+/// This allows cheap cloning for backing stores that use Arc internally,
+/// while preventing cloning for stores where it doesn't make sense.
+impl<T: BackingStore + Clone> Clone for Spool<T> {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+        }
+    }
+}
+
+/// In-memory backing store implementation
+///
+/// This implementation stores messages in a `HashMap` protected by a Mutex.
+/// It's primarily intended for testing, but can also be used for transient
+/// message handling.
+///
+/// # Capacity Management
+/// The store can be configured with a maximum capacity to prevent unbounded
+/// memory growth. When capacity is reached, write operations will fail with
+/// an error. This is useful for:
+/// - Testing capacity-related error handling
+/// - Preventing memory exhaustion if accidentally used in production
+/// - Simulating resource constraints
+///
+/// # Performance
+/// - Write: O(1) -`HashMap` insert + Arc clone (plus capacity check)
+/// - List: O(n log n) - Must clone all keys and sort
+/// - Read: O(1) - `HashMap` lookup + Message clone
+/// - Delete: O(1) - `HashMap` remove
+///
+/// # Concurrency
+/// Uses a Mutex for interior mutability. While this serializes all operations,
+/// it's acceptable for testing scenarios. Production workloads should use
+/// file-backed or database-backed stores with better concurrency primitives.
+#[derive(Debug, Clone)]
+pub struct MemoryBackingStore {
+    messages: Arc<Mutex<HashMap<SpooledMessageId, Message>>>,
+    /// Maximum number of messages to store (None = unlimited)
+    capacity: Option<usize>,
+    /// Atomic counter to ensure unique message IDs
+    counter: Arc<AtomicU64>,
+}
+
+impl MemoryBackingStore {
+    /// Create a new empty memory-backed store with unlimited capacity
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            messages: Arc::new(Mutex::new(Vec::new())),
-            notify: Arc::new(Notify::new()),
+            messages: Arc::new(Mutex::new(HashMap::new())),
+            capacity: None,
+            counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Get all spooled messages
+    /// Create a new memory-backed store with a capacity limit
     ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    pub fn messages(&self) -> Vec<Message> {
-        self.messages
-            .lock()
-            .expect("MemoryBackedSpool messages mutex poisoned")
-            .clone()
+    /// # Examples
+    /// ```ignore
+    /// // Limit to 1000 messages
+    /// let store = MemoryBackingStore::with_capacity(1000);
+    /// ```
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            messages: Arc::new(Mutex::new(HashMap::new())),
+            capacity: Some(capacity),
+            counter: Arc::new(AtomicU64::new(0)),
+        }
     }
 
-    /// Get the number of spooled messages
+    /// Get the current number of messages in the store
     ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    pub fn message_count(&self) -> usize {
+    /// Recovers gracefully if the mutex is poisoned by accessing the underlying data.
+    #[must_use]
+    pub fn len(&self) -> usize {
         self.messages
             .lock()
-            .expect("MemoryBackedSpool messages mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
     }
 
-    /// Clear all spooled messages
-    ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    pub fn clear(&self) {
-        self.messages
-            .lock()
-            .expect("MemoryBackedSpool messages mutex poisoned")
-            .clear();
+    /// Check if the store is empty
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
-    /// Get a specific message by index
+    /// Get the configured capacity (None = unlimited)
+    #[must_use]
+    pub const fn capacity(&self) -> Option<usize> {
+        self.capacity
+    }
+
+    /// Generate a unique `SpooledMessageId` for a message
     ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    pub fn get_message(&self, index: usize) -> Option<Message> {
+    /// Uses the current system time as the timestamp component and an atomic
+    /// counter to ensure uniqueness even when multiple messages are written
+    /// in the same second.
+    fn generate_id(&self) -> SpooledMessageId {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("System time before Unix epoch")
+            .as_secs();
+
+        // Atomic counter ensures unique IDs even with concurrent writes
+        let id = self.counter.fetch_add(1, Ordering::Relaxed);
+
+        SpooledMessageId::new(timestamp, id)
+    }
+}
+
+impl Default for MemoryBackingStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl BackingStore for MemoryBackingStore {
+    async fn write(&self, message: &Message) -> anyhow::Result<()> {
+        // Generate unique ID using atomic counter (prevents ID collision)
+        let id = self.generate_id();
+
+        let mut messages = self
+            .messages
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?;
+
+        // Check capacity before inserting (don't count if overwriting existing)
+        if let Some(cap) = self.capacity
+            && !messages.contains_key(&id)
+            && messages.len() >= cap
+        {
+            return Err(anyhow::anyhow!(
+                "Memory spool capacity exceeded: {}/{} messages",
+                messages.len(),
+                cap
+            ));
+        }
+
+        messages.insert(id, message.clone());
+        // Clippy suggests that: temporary with significant `Drop` can be early dropped
+        drop(messages);
+
+        Ok(())
+    }
+
+    async fn list(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
+        let mut ids: Vec<_> = self
+            .messages
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
+            .keys()
+            .cloned()
+            .collect();
+
+        // Sort by timestamp, then by ID for deterministic ordering
+        ids.sort_by_key(|id| (id.timestamp, id.id));
+
+        Ok(ids)
+    }
+
+    async fn read(&self, id: &SpooledMessageId) -> anyhow::Result<Message> {
         self.messages
             .lock()
-            .expect("MemoryBackedSpool messages mutex poisoned")
-            .get(index)
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
+            .get(id)
             .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Message not found: {id:?}"))
+    }
+
+    async fn delete(&self, id: &SpooledMessageId) -> anyhow::Result<()> {
+        self.messages
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
+            .remove(id)
+            .ok_or_else(|| anyhow::anyhow!("Message not found: {id:?}"))?;
+        Ok(())
+    }
+}
+
+/// Type alias for memory-backed spool
+pub type MemorySpool = Spool<MemoryBackingStore>;
+
+/// Testing utilities for memory-backed spool
+///
+/// This wrapper adds test-specific functionality like waiting for operations
+/// to complete and clearing the store.
+#[derive(Debug, Clone)]
+pub struct TestBackingStore {
+    inner: MemoryBackingStore,
+    notify: Arc<Notify>,
+}
+
+impl Default for TestBackingStore {
+    fn default() -> Self {
+        Self {
+            inner: MemoryBackingStore::new(),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+}
+
+impl TestBackingStore {
+    /// Create a new test backing store
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Wait for the next message to be spooled
@@ -99,7 +444,8 @@ impl MemoryBackedSpool {
     ) -> anyhow::Result<()> {
         tokio::time::timeout(timeout, async {
             loop {
-                if self.message_count() >= expected {
+                let count = self.inner.list().await.unwrap_or_default().len();
+                if count >= expected {
                     return;
                 }
                 self.notify.notified().await;
@@ -108,23 +454,295 @@ impl MemoryBackedSpool {
         .await?;
         Ok(())
     }
+
+    /// Clear all messages from the store
+    ///
+    /// # Errors
+    /// If there was an isue getting the lock for the message store, e.g. the lock has been poisoned
+    #[allow(clippy::unused_async)]
+    pub async fn clear(&self) -> anyhow::Result<()> {
+        self.inner
+            .messages
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
+            .clear();
+        Ok(())
+    }
+
+    /// Get the number of spooled messages
+    ///
+    /// Recovers gracefully if the mutex is poisoned.
+    #[allow(clippy::unused_async)]
+    pub async fn message_count(&self) -> usize {
+        self.inner
+            .messages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    /// Get all messages (for test assertions)
+    ///
+    /// # Errors
+    /// If there is an issue with listing the messages inside this store
+    pub async fn messages(&self) -> anyhow::Result<Vec<Message>> {
+        let ids = self.inner.list().await?;
+        let mut messages = Vec::new();
+        for id in ids {
+            messages.push(self.inner.read(&id).await?);
+        }
+        Ok(messages)
+    }
 }
 
-impl Spool for MemoryBackedSpool {
-    fn spool_message(
-        &self,
-        message: &Message,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
-        let message = message.clone();
-        let messages = self.messages.clone();
-        let notify = self.notify.clone();
-        Box::pin(async move {
-            messages
-                .lock()
-                .expect("MemoryBackedSpool messages mutex poisoned")
-                .push(message);
-            notify.notify_waiters();
-            Ok(())
-        })
+#[async_trait]
+impl BackingStore for TestBackingStore {
+    async fn write(&self, message: &Message) -> anyhow::Result<()> {
+        self.inner.write(message).await?;
+        self.notify.notify_waiters();
+        Ok(())
+    }
+
+    async fn list(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
+        self.inner.list().await
+    }
+
+    async fn read(&self, id: &SpooledMessageId) -> anyhow::Result<Message> {
+        self.inner.read(id).await
+    }
+
+    async fn delete(&self, id: &SpooledMessageId) -> anyhow::Result<()> {
+        self.inner.delete(id).await
+    }
+}
+
+/// Type alias for test spool
+pub type TestSpool = Spool<TestBackingStore>;
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use super::*;
+
+    fn create_test_message(id: u64, data: &str) -> Message {
+        use empath_common::envelope::Envelope;
+
+        Message {
+            id,
+            envelope: Envelope::default(),
+            data: Arc::from(data.as_bytes()),
+            helo_id: "test.example.com".to_string(),
+            extended: false,
+            context: HashMap::new(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_basic_operations() {
+        let store = MemoryBackingStore::new();
+        let message = create_test_message(1, "test message");
+
+        // Write message
+        store.write(&message).await.expect("Failed to write");
+
+        // List messages
+        let ids = store.list().await.expect("Failed to list");
+        assert_eq!(ids.len(), 1);
+
+        // Read message
+        let read_msg = store.read(&ids[0]).await.expect("Failed to read");
+        assert_eq!(read_msg.data.as_ref(), message.data.as_ref());
+
+        // Delete message
+        store.delete(&ids[0]).await.expect("Failed to delete");
+        let ids_after = store.list().await.expect("Failed to list");
+        assert_eq!(ids_after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_capacity_limit() {
+        let store = MemoryBackingStore::with_capacity(2);
+
+        // Write up to capacity
+        let msg1 = create_test_message(1, "message 1");
+        let msg2 = create_test_message(2, "message 2");
+        store
+            .write(&msg1)
+            .await
+            .expect("First write should succeed");
+        store
+            .write(&msg2)
+            .await
+            .expect("Second write should succeed");
+
+        // Third write should fail
+        let msg3 = create_test_message(3, "message 3");
+        let result = store.write(&msg3).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("capacity exceeded")
+        );
+
+        // After deleting one, we should be able to write again
+        let ids = store.list().await.expect("Failed to list");
+        store.delete(&ids[0]).await.expect("Failed to delete");
+
+        let result = store.write(&msg3).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_unique_id_generation() {
+        let store = MemoryBackingStore::new();
+
+        // Write multiple messages concurrently
+        let mut handles = vec![];
+        for i in 0..100 {
+            let store_clone = store.clone();
+            let handle = tokio::spawn(async move {
+                let msg = create_test_message(i, &format!("message {i}"));
+                store_clone.write(&msg).await
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all writes
+        for handle in handles {
+            handle.await.expect("Task panicked").expect("Write failed");
+        }
+
+        // All IDs should be unique
+        let ids = store.list().await.expect("Failed to list");
+        assert_eq!(ids.len(), 100);
+
+        // Check for uniqueness
+        let mut id_set = std::collections::HashSet::new();
+        for id in &ids {
+            assert!(
+                id_set.insert((id.timestamp, id.id)),
+                "Found duplicate ID: {id:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_spool_wrapper() {
+        let store = MemoryBackingStore::new();
+        let spool = Spool::new(store);
+
+        let message = create_test_message(1, "test message");
+
+        // Test through Spool interface
+        spool
+            .spool_message(&message)
+            .await
+            .expect("Failed to spool");
+
+        let ids = spool.list_messages().await.expect("Failed to list");
+        assert_eq!(ids.len(), 1);
+
+        let read_msg = spool.read_message(&ids[0]).await.expect("Failed to read");
+        assert_eq!(read_msg.data.as_ref(), message.data.as_ref());
+
+        spool
+            .delete_message(&ids[0])
+            .await
+            .expect("Failed to delete");
+
+        let ids_after = spool.list_messages().await.expect("Failed to list");
+        assert_eq!(ids_after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_polymorphic_backing_store() {
+        // Test that we can use trait objects
+        let store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::new());
+        let message = create_test_message(1, "polymorphic test");
+
+        store.write(&message).await.expect("Failed to write");
+        let ids = store.list().await.expect("Failed to list");
+        assert_eq!(ids.len(), 1);
+
+        let read_msg = store.read(&ids[0]).await.expect("Failed to read");
+        assert_eq!(read_msg.data.as_ref(), message.data.as_ref());
+    }
+
+    #[tokio::test]
+    async fn test_message_ordering() {
+        let store = MemoryBackingStore::new();
+
+        // Write messages
+        for i in 0..10 {
+            let msg = create_test_message(i, &format!("message {i}"));
+            store.write(&msg).await.expect("Failed to write");
+        }
+
+        // List should return sorted by timestamp then ID
+        let ids = store.list().await.expect("Failed to list");
+        assert_eq!(ids.len(), 10);
+
+        // Verify ordering
+        for i in 1..ids.len() {
+            let prev = &ids[i - 1];
+            let curr = &ids[i];
+            assert!(
+                prev.timestamp < curr.timestamp
+                    || (prev.timestamp == curr.timestamp && prev.id < curr.id),
+                "Messages not properly ordered: {prev:?} -> {curr:?}",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mutex_poisoning_recovery() {
+        let store = MemoryBackingStore::new();
+
+        // len() should recover from poisoned mutex
+        let len = store.len();
+        assert_eq!(len, 0);
+
+        // Write and verify recovery
+        let msg = create_test_message(1, "test");
+        store.write(&msg).await.expect("Failed to write");
+        assert_eq!(store.len(), 1);
+        assert!(!store.is_empty());
+    }
+
+    #[test]
+    fn test_spooled_message_id_validation() {
+        // Valid IDs
+        assert!(SpooledMessageId::from_filename("1234567890_42.json").is_some());
+        assert!(SpooledMessageId::from_filename("1234567890_42.eml").is_some());
+
+        // Invalid IDs (security)
+        assert!(SpooledMessageId::from_filename("../etc/passwd.json").is_none());
+        assert!(SpooledMessageId::from_filename("foo/bar.json").is_none());
+        assert!(SpooledMessageId::from_filename("..\\windows\\system32.json").is_none());
+
+        // Invalid IDs (format)
+        assert!(SpooledMessageId::from_filename("not_a_number_42.json").is_none());
+        assert!(SpooledMessageId::from_filename("1234567890.json").is_none());
+        assert!(SpooledMessageId::from_filename("1234567890_abc.json").is_none());
+
+        // Future timestamp should be rejected
+        let far_future = SpooledMessageId::MAX_TIMESTAMP + 1;
+        assert!(SpooledMessageId::from_filename(&format!("{far_future}_42.json")).is_none());
+    }
+
+    #[test]
+    fn test_capacity_methods() {
+        let unlimited = MemoryBackingStore::new();
+        assert_eq!(unlimited.capacity(), None);
+
+        let limited = MemoryBackingStore::with_capacity(100);
+        assert_eq!(limited.capacity(), Some(100));
     }
 }

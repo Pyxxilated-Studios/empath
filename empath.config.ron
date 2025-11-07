@@ -44,7 +44,8 @@ Empath (
         ),
     ],
     spool: (
-        path: "./spool/empath/test",
+        type: "File",
+        path: "/tmp/spool/empath",
     ),
     delivery: (
         scan_interval_secs: 30,

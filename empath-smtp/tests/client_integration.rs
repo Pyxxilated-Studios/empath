@@ -26,7 +26,7 @@ async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
         let smtp = Smtp;
         let args = SmtpArgs::builder()
             .with_extensions(vec![Extension::Size(10_000_000)])
-            .with_spool(Arc::new(empath_spool::MemoryBackedSpool::new()));
+            .with_spool(Arc::new(empath_spool::MemoryBackingStore::new()));
 
         while let Ok((stream, peer)) = listener.accept().await {
             let shutdown_rx = shutdown_tx.subscribe();

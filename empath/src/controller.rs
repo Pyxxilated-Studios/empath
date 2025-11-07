@@ -17,8 +17,8 @@ pub struct Empath {
     smtp_controller: Controller<Smtp>,
     #[serde(alias = "module", default)]
     modules: Vec<Module>,
-    #[serde(alias = "spool")]
-    spool: empath_spool::FileBackedSpool,
+    #[serde(alias = "spool", default)]
+    spool: empath_spool::SpoolConfig,
     #[serde(alias = "delivery", default)]
     delivery: empath_delivery::DeliveryProcessor,
 }
@@ -76,28 +76,30 @@ impl Empath {
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, err), timing(precision = "s"))]
     pub async fn run(mut self) -> anyhow::Result<()> {
         logging::init();
-        self.spool.init()?;
 
         internal!("Controller running");
 
         modules::init(self.modules)?;
 
-        // Inject the spool into all SMTP listeners before initialization
-        // We need both: the concrete Arc<FileBackedSpool> for serve() and Arc<dyn Spool> for sessions
-        let spool_controller = std::sync::Arc::new(self.spool);
+        // Initialize the spool from configuration
+        let spool = self.spool.into_spool()?;
+
+        // Extract the backing store for SMTP and delivery
+        let backing_store = spool.backing_store();
+
         self.smtp_controller
-            .map_args(|args| args.with_spool(spool_controller.clone()));
+            .map_args(|args| args.with_spool(backing_store.clone()));
 
         self.smtp_controller.init()?;
 
-        // Initialize delivery controller with the same spool controller
-        self.delivery.init(spool_controller.clone())?;
+        // Initialize delivery controller with the same backing store
+        self.delivery.init(backing_store)?;
 
         let ret = tokio::select! {
             r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
                 r
             }
-            r = spool_controller.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+            r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
                 r
             }
             r = self.delivery.serve(SHUTDOWN_BROADCAST.subscribe()) => {

@@ -46,7 +46,7 @@ pub struct SmtpArgs {
     #[serde(default)]
     extensions: Vec<Extension>,
     #[serde(skip)]
-    spool: Option<Arc<dyn empath_spool::Spool>>,
+    spool: Option<Arc<dyn empath_spool::BackingStore>>,
 }
 
 impl SmtpArgs {
@@ -65,7 +65,7 @@ impl SmtpArgs {
 
     /// Set the spool controller for this SMTP server
     #[must_use]
-    pub fn with_spool(mut self, spool: Arc<dyn empath_spool::Spool>) -> Self {
+    pub fn with_spool(mut self, spool: Arc<dyn empath_spool::BackingStore>) -> Self {
         self.spool = Some(spool);
         self
     }

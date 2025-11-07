@@ -219,9 +219,9 @@ pub struct DeliveryProcessor {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
 
-    /// The spool controller to read messages from (initialized in `init()`)
+    /// The spool backing store to read messages from (initialized in `init()`)
     #[serde(skip)]
-    spool: Option<Arc<empath_spool::FileBackedSpool>>,
+    spool: Option<Arc<dyn empath_spool::BackingStore>>,
 
     /// The delivery queue (initialized in `init()`)
     #[serde(skip)]
@@ -246,7 +246,7 @@ impl DeliveryProcessor {
     /// # Errors
     ///
     /// Returns an error if the processor cannot be initialized
-    pub fn init(&mut self, spool: Arc<empath_spool::FileBackedSpool>) -> anyhow::Result<()> {
+    pub fn init(&mut self, spool: Arc<dyn empath_spool::BackingStore>) -> anyhow::Result<()> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
         Ok(())
@@ -338,9 +338,9 @@ impl DeliveryProcessor {
     /// Returns an error if the spool cannot be read
     async fn scan_spool_internal(
         &self,
-        spool: &Arc<empath_spool::FileBackedSpool>,
+        spool: &Arc<dyn empath_spool::BackingStore>,
     ) -> anyhow::Result<usize> {
-        let message_ids = spool.list_messages().await?;
+        let message_ids = spool.list().await?;
         let mut added = 0;
 
         for msg_id in message_ids {
@@ -350,7 +350,7 @@ impl DeliveryProcessor {
             }
 
             // Read the message to get recipient domains
-            let message = spool.read_message(&msg_id).await?;
+            let message = spool.read(&msg_id).await?;
 
             // Group recipients by domain (handle multi-recipient messages)
             let Some(recipients) = message.envelope.recipients() else {
@@ -407,13 +407,13 @@ impl DeliveryProcessor {
     async fn prepare_message(
         &self,
         message_id: &SpooledMessageId,
-        spool: &Arc<empath_spool::FileBackedSpool>,
+        spool: &Arc<dyn empath_spool::BackingStore>,
     ) -> anyhow::Result<()> {
         self.queue
             .update_status(message_id, DeliveryStatus::InProgress)
             .await;
 
-        let _message = spool.read_message(message_id).await?;
+        let _message = spool.read(message_id).await?;
         let info = self
             .queue
             .get(message_id)
@@ -591,7 +591,7 @@ impl DeliveryProcessor {
     /// Returns an error if processing fails
     async fn process_queue_internal(
         &self,
-        spool: &Arc<empath_spool::FileBackedSpool>,
+        spool: &Arc<dyn empath_spool::BackingStore>,
     ) -> anyhow::Result<()> {
         let pending = self.queue.pending_messages().await;
 
