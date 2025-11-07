@@ -31,7 +31,7 @@ cargo build --release
 cargo run
 
 # Run with config file
-cargo run -- empath.config.toml
+cargo run -- empath.config.ron
 
 # Run all tests
 cargo test
@@ -181,7 +181,7 @@ Implementations:
 
 ### Configuration
 
-Runtime config via TOML (default: `empath.config.toml`):
+Runtime config via RON (Rusty Object Notation) (default: `empath.config.ron`):
 
 ```ron
 Empath (
