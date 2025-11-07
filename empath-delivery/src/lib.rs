@@ -269,7 +269,9 @@ impl DeliveryProcessor {
         internal!("Delivery processor starting");
 
         let Some(spool) = &self.spool else {
-            return Err(anyhow::anyhow!("Delivery processor not initialized. Call init() first."));
+            return Err(anyhow::anyhow!(
+                "Delivery processor not initialized. Call init() first."
+            ));
         };
 
         let scan_interval = Duration::from_secs(self.scan_interval_secs);
@@ -363,7 +365,10 @@ impl DeliveryProcessor {
                 let recipient_str = recipient.to_string();
                 match extract_domain(&recipient_str) {
                     Ok(domain) => {
-                        domains.entry(domain).or_insert_with(Vec::new).push(recipient_str);
+                        domains
+                            .entry(domain)
+                            .or_insert_with(Vec::new)
+                            .push(recipient_str);
                     }
                     Err(e) => {
                         use tracing::warn;
@@ -404,36 +409,43 @@ impl DeliveryProcessor {
         message_id: &SpooledMessageId,
         spool: &Arc<empath_spool::FileBackedSpool>,
     ) -> anyhow::Result<()> {
-        // Mark as in progress
-        self.queue.update_status(message_id, DeliveryStatus::InProgress).await;
+        self.queue
+            .update_status(message_id, DeliveryStatus::InProgress)
+            .await;
 
-        // Read the message
-        let message = spool.read_message(message_id).await?;
-
-        // Get delivery info
-        let info = self.queue.get(message_id).await
+        let _message = spool.read_message(message_id).await?;
+        let info = self
+            .queue
+            .get(message_id)
+            .await
             .ok_or_else(|| anyhow::anyhow!("Message not in queue"))?;
 
         // Stub MX lookup - in a real implementation, this would do DNS MX queries
         let mx_server = format!("mx.{}", info.recipient_domain);
-        let mx_address = format!("{mx_server}:25"); // Standard SMTP port
-        self.queue.set_mx_server(message_id, mx_server.clone()).await;
+        let mx_address = format!("{mx_server}:25");
+        self.queue
+            .set_mx_server(message_id, mx_server.clone())
+            .await;
 
-        // Attempt SMTP connection and handshake
-        let result = self.smtp_handshake(&mx_address, &message).await;
+        internal!(
+            "Sending message to {:?} with mx host {}",
+            message_id,
+            mx_address
+        );
 
-        match result {
-            Ok(()) => {
-                // Successfully prepared for delivery
-                self.queue.update_status(message_id, DeliveryStatus::Pending).await;
-                Ok(())
-            }
-            Err(e) => {
-                // Use extracted method to handle the error
-                let error = self.handle_delivery_error(message_id, e, mx_server).await;
-                Err(error)
-            }
-        }
+        // TODO: Actually implement this part at some point
+        // let result = self.smtp_handshake(&mx_address, &message).await;
+
+        // match result {
+        //     Ok(()) => {
+        //         self.queue.update_status(message_id, DeliveryStatus::Pending).await;
+        //         Ok(())
+        //     }
+        //     Err(e) => {
+        //         let error = self.handle_delivery_error(message_id, e, mx_server).await;
+        //         Err(error)
+        //     }
+        Ok(())
     }
 
     /// Handle a failed delivery attempt and update status based on retry policy
@@ -465,7 +477,10 @@ impl DeliveryProcessor {
         // Get updated info to check attempt count
         // Use proper error handling instead of unwrap
         let Some(updated_info) = self.queue.get(message_id).await else {
-            warn!("Message {:?} disappeared from queue during error handling", message_id);
+            warn!(
+                "Message {:?} disappeared from queue during error handling",
+                message_id
+            );
             return error; // Preserve original error
         };
 
@@ -487,7 +502,7 @@ impl DeliveryProcessor {
     ///
     /// # Errors
     /// Returns an error if the SMTP connection or handshake fails
-    async fn smtp_handshake(
+    async fn _smtp_handshake(
         &self,
         server_address: &str,
         message: &empath_spool::Message,
@@ -500,42 +515,64 @@ impl DeliveryProcessor {
             .map_err(|e| anyhow::anyhow!("Failed to connect to {server_address}: {e}"))?;
 
         // Read greeting
-        let greeting = client.read_greeting().await
+        let greeting = client
+            .read_greeting()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read greeting: {e}"))?;
 
         if !greeting.is_success() {
-            return Err(anyhow::anyhow!("Server rejected connection: {}", greeting.message()));
+            return Err(anyhow::anyhow!(
+                "Server rejected connection: {}",
+                greeting.message()
+            ));
         }
 
         // Send EHLO
         let helo_domain = &message.helo_id;
-        let ehlo_response = client.ehlo(helo_domain).await
+        let ehlo_response = client
+            .ehlo(helo_domain)
+            .await
             .map_err(|e| anyhow::anyhow!("EHLO failed: {e}"))?;
 
         if !ehlo_response.is_success() {
-            return Err(anyhow::anyhow!("Server rejected EHLO: {}", ehlo_response.message()));
+            return Err(anyhow::anyhow!(
+                "Server rejected EHLO: {}",
+                ehlo_response.message()
+            ));
         }
 
         // Send MAIL FROM
-        let sender = message.envelope.sender()
+        let sender = message
+            .envelope
+            .sender()
             .map_or_else(|| "<>".to_string(), std::string::ToString::to_string);
 
-        let mail_response = client.mail_from(&sender, None).await
+        let mail_response = client
+            .mail_from(&sender, None)
+            .await
             .map_err(|e| anyhow::anyhow!("MAIL FROM failed: {e}"))?;
 
         if !mail_response.is_success() {
-            return Err(anyhow::anyhow!("Server rejected MAIL FROM: {}", mail_response.message()));
+            return Err(anyhow::anyhow!(
+                "Server rejected MAIL FROM: {}",
+                mail_response.message()
+            ));
         }
 
         // Send RCPT TO for each recipient
         if let Some(recipients) = message.envelope.recipients() {
             for recipient in recipients.iter() {
-                let rcpt_response = client.rcpt_to(&recipient.to_string()).await
+                let rcpt_response = client
+                    .rcpt_to(&recipient.to_string())
+                    .await
                     .map_err(|e| anyhow::anyhow!("RCPT TO failed: {e}"))?;
 
                 if !rcpt_response.is_success() {
-                    return Err(anyhow::anyhow!("Server rejected RCPT TO {}: {}",
-                        recipient, rcpt_response.message()));
+                    return Err(anyhow::anyhow!(
+                        "Server rejected RCPT TO {}: {}",
+                        recipient,
+                        rcpt_response.message()
+                    ));
                 }
             }
         } else {
@@ -570,7 +607,9 @@ impl DeliveryProcessor {
 
                 // Use extracted method to handle the error
                 let server = info.mx_server.clone().unwrap_or_default();
-                let _error = self.handle_delivery_error(&info.message_id, e, server).await;
+                let _error = self
+                    .handle_delivery_error(&info.message_id, e, server)
+                    .await;
             }
         }
 
@@ -594,4 +633,3 @@ fn extract_domain(email: &str) -> anyhow::Result<String> {
         .filter(|domain| !domain.is_empty())
         .ok_or_else(|| anyhow::anyhow!("Invalid email address: no domain found in '{email}'"))
 }
-

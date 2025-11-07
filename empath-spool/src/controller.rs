@@ -205,11 +205,15 @@ impl SpooledMessageId {
             return None;
         }
 
-        let stem = filename.strip_suffix(".json").or_else(|| filename.strip_suffix(".eml"))?;
+        let stem = filename
+            .strip_suffix(".json")
+            .or_else(|| filename.strip_suffix(".eml"))?;
         let (ts_str, id_str) = stem.split_once('_')?;
 
         // Ensure both parts contain only digits
-        if !ts_str.chars().all(|c| c.is_ascii_digit()) || !id_str.chars().all(|c| c.is_ascii_digit()) {
+        if !ts_str.chars().all(|c| c.is_ascii_digit())
+            || !id_str.chars().all(|c| c.is_ascii_digit())
+        {
             return None;
         }
 
@@ -274,7 +278,10 @@ impl FileBackedSpool {
     /// # Errors
     /// If the message metadata or data cannot be read from disk
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(timestamp = msg_id.timestamp, id = msg_id.id)), timing(precision = "ms"))]
-    pub async fn read_message(&self, msg_id: &SpooledMessageId) -> anyhow::Result<crate::message::Message> {
+    pub async fn read_message(
+        &self,
+        msg_id: &SpooledMessageId,
+    ) -> anyhow::Result<crate::message::Message> {
         let meta_filename = format!("{}_{}.json", msg_id.timestamp, msg_id.id);
         let data_filename = format!("{}_{}.eml", msg_id.timestamp, msg_id.id);
 
@@ -289,11 +296,7 @@ impl FileBackedSpool {
         let data_bytes = fs::read(&data_path).await?;
         message.data = Arc::from(data_bytes);
 
-        internal!(
-            level = DEBUG,
-            "Read message {} from spool",
-            message.id
-        );
+        internal!(level = DEBUG, "Read message {} from spool", message.id);
 
         Ok(message)
     }
