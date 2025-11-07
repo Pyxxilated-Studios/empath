@@ -57,7 +57,7 @@ pub fn init() {
 
     let level = std::env::var("LOG_LEVEL").map_or(default, |level| {
         LevelFilter::from_str(level.as_str()).unwrap_or_else(|_| {
-            eprintln!("Invalid log level specified {level}, defaulting to {default}");
+            tracing::error!("Invalid log level specified {level}, defaulting to {default}");
             default
         })
     });
