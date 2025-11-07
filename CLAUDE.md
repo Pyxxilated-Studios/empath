@@ -176,8 +176,8 @@ pub trait Spool: Send + Sync {
 Location: `empath-spool/src/spool.rs`
 
 Implementations:
-- `Controller`: Filesystem with atomic writes and directory watching
-- `MockController`: In-memory for testing (with `wait_for_count` for async tests)
+- `FileBackedSpool`: Filesystem with atomic writes and directory watching
+- `MemoryBackedSpool`: In-memory for testing (with `wait_for_count` for async tests)
 
 ### Configuration
 
@@ -311,7 +311,7 @@ Location: `empath-ffi/src/string.rs`
 
 ### Testing Patterns
 
-- **Integration tests**: Use `MockController` for spool operations with `wait_for_count()` for async verification
+- **Integration tests**: Use `MemoryBackedSpool` for spool operations with `wait_for_count()` for async verification
 - **FSM tests**: Test state transitions with various command sequences
 - **Module tests**: Use `Module::TestModule` for testing without loading shared libraries
 - **Async tests**: Mark with `#[tokio::test]` and `#[cfg_attr(all(target_os = "macos", miri), ignore)]`

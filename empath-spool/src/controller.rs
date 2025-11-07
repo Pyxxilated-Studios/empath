@@ -16,11 +16,11 @@ use crate::spool::Spool;
     reason = "The unsafe aspects have nothing to do with the struct"
 )]
 #[derive(Debug, Deserialize)]
-pub struct Controller {
+pub struct FileBackedSpool {
     path: std::path::PathBuf,
 }
 
-impl Default for Controller {
+impl Default for FileBackedSpool {
     fn default() -> Self {
         Self {
             path: PathBuf::from("/var/spool/empath"),
@@ -28,11 +28,11 @@ impl Default for Controller {
     }
 }
 
-impl Controller {
-    /// Create a new `Controller` builder
+impl FileBackedSpool {
+    /// Create a new `FileBackedSpool` builder
     #[must_use]
-    pub fn builder() -> ControllerBuilder {
-        ControllerBuilder::default()
+    pub fn builder() -> FileBackedSpoolBuilder {
+        FileBackedSpoolBuilder::default()
     }
 
     ///
@@ -118,7 +118,7 @@ impl Controller {
     }
 }
 
-impl Spool for Controller {
+impl Spool for FileBackedSpool {
     fn spool_message(
         &self,
         message: &crate::message::Message,
@@ -156,13 +156,13 @@ impl Spool for Controller {
     }
 }
 
-/// Builder for `Controller`
+/// Builder for `FileBackedSpool`
 #[derive(Debug, Default)]
-pub struct ControllerBuilder {
+pub struct FileBackedSpoolBuilder {
     path: PathBuf,
 }
 
-impl ControllerBuilder {
+impl FileBackedSpoolBuilder {
     /// Set the spool directory path
     #[must_use]
     pub fn path(mut self, path: PathBuf) -> Self {
@@ -170,10 +170,10 @@ impl ControllerBuilder {
         self
     }
 
-    /// Build the final `Controller`
+    /// Build the final `FileBackedSpool`
     #[must_use]
-    pub fn build(self) -> Controller {
-        Controller { path: self.path }
+    pub fn build(self) -> FileBackedSpool {
+        FileBackedSpool { path: self.path }
     }
 }
 
@@ -231,7 +231,7 @@ impl SpooledMessageId {
     }
 }
 
-impl Controller {
+impl FileBackedSpool {
     /// List all message IDs in the spool directory
     ///
     /// Returns a vector of message identifiers found in the spool.

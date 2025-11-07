@@ -20,15 +20,15 @@ pub trait Spool: Send + Sync + std::fmt::Debug {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
 }
 
-/// Mock implementation of Spool for testing
+/// In-memory implementation of Spool for testing
 #[derive(Debug, Clone, Default)]
-pub struct MockController {
+pub struct MemoryBackedSpool {
     messages: Arc<Mutex<Vec<Message>>>,
     notify: Arc<Notify>,
 }
 
-impl MockController {
-    /// Create a new mock controller
+impl MemoryBackedSpool {
+    /// Create a new memory-backed spool
     pub fn new() -> Self {
         Self {
             messages: Arc::new(Mutex::new(Vec::new())),
@@ -43,7 +43,7 @@ impl MockController {
     pub fn messages(&self) -> Vec<Message> {
         self.messages
             .lock()
-            .expect("MockController messages mutex poisoned")
+            .expect("MemoryBackedSpool messages mutex poisoned")
             .clone()
     }
 
@@ -54,7 +54,7 @@ impl MockController {
     pub fn message_count(&self) -> usize {
         self.messages
             .lock()
-            .expect("MockController messages mutex poisoned")
+            .expect("MemoryBackedSpool messages mutex poisoned")
             .len()
     }
 
@@ -65,7 +65,7 @@ impl MockController {
     pub fn clear(&self) {
         self.messages
             .lock()
-            .expect("MockController messages mutex poisoned")
+            .expect("MemoryBackedSpool messages mutex poisoned")
             .clear();
     }
 
@@ -76,7 +76,7 @@ impl MockController {
     pub fn get_message(&self, index: usize) -> Option<Message> {
         self.messages
             .lock()
-            .expect("MockController messages mutex poisoned")
+            .expect("MemoryBackedSpool messages mutex poisoned")
             .get(index)
             .cloned()
     }
@@ -110,7 +110,7 @@ impl MockController {
     }
 }
 
-impl Spool for MockController {
+impl Spool for MemoryBackedSpool {
     fn spool_message(
         &self,
         message: &Message,
@@ -121,7 +121,7 @@ impl Spool for MockController {
         Box::pin(async move {
             messages
                 .lock()
-                .expect("MockController messages mutex poisoned")
+                .expect("MemoryBackedSpool messages mutex poisoned")
                 .push(message);
             notify.notify_waiters();
             Ok(())

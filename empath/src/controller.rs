@@ -18,7 +18,7 @@ pub struct Empath {
     #[serde(alias = "module", default)]
     modules: Vec<Module>,
     #[serde(alias = "spool")]
-    spool: empath_spool::Controller,
+    spool: empath_spool::FileBackedSpool,
     #[serde(alias = "delivery", default)]
     delivery: empath_delivery::DeliveryProcessor,
 }
@@ -83,7 +83,7 @@ impl Empath {
         modules::init(self.modules)?;
 
         // Inject the spool into all SMTP listeners before initialization
-        // We need both: the concrete Arc<Controller> for serve() and Arc<dyn Spool> for sessions
+        // We need both: the concrete Arc<FileBackedSpool> for serve() and Arc<dyn Spool> for sessions
         let spool_controller = std::sync::Arc::new(self.spool);
         self.smtp_controller
             .map_args(|args| args.with_spool(spool_controller.clone()));

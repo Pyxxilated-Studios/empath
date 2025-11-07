@@ -221,7 +221,7 @@ pub struct DeliveryProcessor {
 
     /// The spool controller to read messages from (initialized in `init()`)
     #[serde(skip)]
-    spool: Option<Arc<empath_spool::Controller>>,
+    spool: Option<Arc<empath_spool::FileBackedSpool>>,
 
     /// The delivery queue (initialized in `init()`)
     #[serde(skip)]
@@ -246,7 +246,7 @@ impl DeliveryProcessor {
     /// # Errors
     ///
     /// Returns an error if the processor cannot be initialized
-    pub fn init(&mut self, spool: Arc<empath_spool::Controller>) -> anyhow::Result<()> {
+    pub fn init(&mut self, spool: Arc<empath_spool::FileBackedSpool>) -> anyhow::Result<()> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
         Ok(())
@@ -336,7 +336,7 @@ impl DeliveryProcessor {
     /// Returns an error if the spool cannot be read
     async fn scan_spool_internal(
         &self,
-        spool: &Arc<empath_spool::Controller>,
+        spool: &Arc<empath_spool::FileBackedSpool>,
     ) -> anyhow::Result<usize> {
         let message_ids = spool.list_messages().await?;
         let mut added = 0;
@@ -402,7 +402,7 @@ impl DeliveryProcessor {
     async fn prepare_message(
         &self,
         message_id: &SpooledMessageId,
-        spool: &Arc<empath_spool::Controller>,
+        spool: &Arc<empath_spool::FileBackedSpool>,
     ) -> anyhow::Result<()> {
         // Mark as in progress
         self.queue.update_status(message_id, DeliveryStatus::InProgress).await;
@@ -554,7 +554,7 @@ impl DeliveryProcessor {
     /// Returns an error if processing fails
     async fn process_queue_internal(
         &self,
-        spool: &Arc<empath_spool::Controller>,
+        spool: &Arc<empath_spool::FileBackedSpool>,
     ) -> anyhow::Result<()> {
         let pending = self.queue.pending_messages().await;
 

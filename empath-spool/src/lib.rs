@@ -5,6 +5,6 @@ pub mod controller;
 pub mod message;
 pub mod spool;
 
-pub use controller::{Controller, SpooledMessageId};
+pub use controller::{FileBackedSpool, SpooledMessageId};
 pub use message::Message;
-pub use spool::{MockController, Spool};
+pub use spool::{MemoryBackedSpool, Spool};

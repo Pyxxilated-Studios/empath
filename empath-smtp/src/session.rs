@@ -711,7 +711,7 @@ mod test {
         cursor.get_mut().extend_from_slice(test_data);
 
         // Create a mock spool controller
-        let mock_spool = Arc::new(empath_spool::MockController::new());
+        let mock_spool = Arc::new(empath_spool::MemoryBackedSpool::new());
 
         let mut session = Session::create(
             Arc::default(),
