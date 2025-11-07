@@ -17,14 +17,18 @@ use crate::{
 
 /// File-based backing store implementation
 ///
-/// This implementation stores messages as files in a directory:
-/// - Data files: `{timestamp}_{id}.eml` - Contains the raw message data
-/// - Metadata files: `{timestamp}_{id}.json` - Contains message metadata as JSON
+/// This implementation stores messages as files in a directory using ULID
+/// (Universally Unique Lexicographically Sortable Identifier) for filenames:
+/// - Data files: `{tracking_id}.eml` - Contains the raw message data
+/// - Metadata files: `{tracking_id}.json` - Contains message metadata as JSON
+///
+/// The tracking ID is a 26-character ULID that encodes both timestamp and
+/// randomness, ensuring global uniqueness and lexicographic sortability.
 ///
 /// # Security
 /// - Uses atomic writes (write to temp file, then rename) to prevent corruption
 /// - Validates all filename components to prevent path traversal
-/// - Only reads files matching the expected naming pattern
+/// - Only reads files matching the expected naming pattern (valid ULIDs)
 ///
 /// # Performance
 /// - Write: O(1) - Two file writes + two renames (atomic on most filesystems)
@@ -221,14 +225,15 @@ impl FileBackingStore {
 
 #[async_trait]
 impl BackingStore for FileBackingStore {
-    /// Write a message to disk
+    /// Write a message to disk and return its tracking ID
     ///
     /// Uses atomic writes to ensure consistency:
-    /// 1. Write data to temporary file `.tmp_{timestamp}_{id}.eml`
-    /// 2. Write metadata to temporary file `.tmp_{timestamp}_{id}.json`
-    /// 3. Atomically rename both files (removes `.tmp_` prefix)
+    /// 1. Generate a unique ULID as the tracking ID
+    /// 2. Write data to temporary file `.tmp_{tracking_id}.eml`
+    /// 3. Write metadata to temporary file `.tmp_{tracking_id}.json`
+    /// 4. Atomically rename both files (removes `.tmp_` prefix)
     ///
-    /// If the process crashes during steps 1-2, the temporary files will be
+    /// If the process crashes during steps 2-3, the temporary files will be
     /// ignored (start with `.tmp_`). Only after both renames complete is the
     /// message considered successfully spooled.
     ///
@@ -236,14 +241,30 @@ impl BackingStore for FileBackingStore {
     /// Each write involves 4 I/O operations (2 writes + 2 renames). On modern
     /// filesystems with journaling (ext4, XFS, APFS), the rename operations
     /// are atomic and very fast (< 1ms typical).
-    #[traced(instrument(level = tracing::Level::DEBUG, skip(self, message), fields(id = message.id)), timing(precision = "ms"))]
-    async fn write(&self, message: &Message) -> anyhow::Result<()> {
-        let data_path = self.path.join(message.data_filename());
-        let meta_path = self.path.join(message.meta_filename());
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self, message)), timing(precision = "ms"))]
+    async fn write(&self, message: &Message) -> anyhow::Result<SpooledMessageId> {
+        // Generate unique tracking ID
+        let tracking_id = SpooledMessageId::generate();
+        let tracking_str = tracking_id.to_string();
+
+        let data_filename = format!("{tracking_str}.eml");
+        let meta_filename = format!("{tracking_str}.json");
+
+        let data_path = self.path.join(&data_filename);
+        let meta_path = self.path.join(&meta_filename);
+
+        // Check for ULID collision (should never happen, but defensive programming)
+        if tokio::fs::try_exists(&data_path).await.unwrap_or(false)
+            || tokio::fs::try_exists(&meta_path).await.unwrap_or(false)
+        {
+            return Err(anyhow::anyhow!(
+                "ULID collision detected: {tracking_id}. This should never happen."
+            ));
+        }
 
         // Write to temporary files first, then atomically rename
-        let temp_data_path = self.path.join(format!(".tmp_{}", message.data_filename()));
-        let temp_meta_path = self.path.join(format!(".tmp_{}", message.meta_filename()));
+        let temp_data_path = self.path.join(format!(".tmp_{data_filename}"));
+        let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
 
         // Write the email data
         fs::write(&temp_data_path, message.data.as_ref()).await?;
@@ -258,19 +279,18 @@ impl BackingStore for FileBackingStore {
 
         internal!(
             level = DEBUG,
-            "Spooled message {} to {}",
-            message.id,
+            "Spooled message {tracking_id} to {}",
             data_path.display()
         );
 
-        Ok(())
+        Ok(tracking_id)
     }
 
     /// List all messages in the spool directory
     ///
     /// Scans the spool directory for `.json` metadata files and parses
-    /// their filenames to extract message IDs. Results are sorted by
-    /// timestamp, then ID for deterministic ordering.
+    /// their filenames to extract message IDs. Results are sorted
+    /// lexicographically by ULID (which sorts by creation time).
     ///
     /// # Security
     /// - Ignores temporary files (starting with `.tmp_`)
@@ -295,8 +315,8 @@ impl BackingStore for FileBackingStore {
             }
         }
 
-        // Sort by timestamp, then by ID
-        message_ids.sort_by_key(|id| (id.timestamp, id.id));
+        // ULIDs are lexicographically sortable by creation time
+        message_ids.sort();
 
         internal!(
             level = DEBUG,
@@ -319,10 +339,11 @@ impl BackingStore for FileBackingStore {
     /// # Performance Note
     /// This involves two file reads. For large message bodies, consider whether
     /// you actually need the full data or just the metadata.
-    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(timestamp = msg_id.timestamp, id = msg_id.id)), timing(precision = "ms"))]
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn read(&self, msg_id: &SpooledMessageId) -> anyhow::Result<Message> {
-        let meta_filename = format!("{}_{}.json", msg_id.timestamp, msg_id.id);
-        let data_filename = format!("{}_{}.eml", msg_id.timestamp, msg_id.id);
+        let tracking_str = msg_id.to_string();
+        let meta_filename = format!("{tracking_str}.json");
+        let data_filename = format!("{tracking_str}.eml");
 
         let meta_path = self.path.join(&meta_filename);
         let data_path = self.path.join(&data_filename);
@@ -335,7 +356,7 @@ impl BackingStore for FileBackingStore {
         let data_bytes = fs::read(&data_path).await?;
         message.data = Arc::from(data_bytes);
 
-        internal!(level = DEBUG, "Read message {} from spool", message.id);
+        internal!(level = DEBUG, "Read message {msg_id} from spool");
 
         Ok(message)
     }
@@ -354,10 +375,11 @@ impl BackingStore for FileBackingStore {
     ///
     /// If the process crashes after phase 1 but before phase 2, the .deleted
     /// files will be ignored by `list()` and can be cleaned up on next startup.
-    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(timestamp = msg_id.timestamp, id = msg_id.id)), timing(precision = "ms"))]
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn delete(&self, msg_id: &SpooledMessageId) -> anyhow::Result<()> {
-        let meta_filename = format!("{}_{}.json", msg_id.timestamp, msg_id.id);
-        let data_filename = format!("{}_{}.eml", msg_id.timestamp, msg_id.id);
+        let tracking_str = msg_id.to_string();
+        let meta_filename = format!("{tracking_str}.json");
+        let data_filename = format!("{tracking_str}.eml");
 
         let meta_path = self.path.join(&meta_filename);
         let data_path = self.path.join(&data_filename);
@@ -377,9 +399,7 @@ impl BackingStore for FileBackingStore {
 
         internal!(
             level = DEBUG,
-            "Deleted message {}_{} from spool",
-            msg_id.timestamp,
-            msg_id.id
+            "Deleted message {msg_id} from spool"
         );
 
         Ok(())

@@ -44,16 +44,14 @@ fn test_path_validation_rejects_system_directories() {
 
         assert!(
             result.is_err(),
-            "Path {} should be rejected but wasn't",
-            path
+            "Path {path} should be rejected but wasn't"
         );
         assert!(
             result
                 .unwrap_err()
                 .to_string()
                 .contains("system directory"),
-            "Wrong error for path {}",
-            path
+            "Wrong error for path {path}"
         );
     }
 }

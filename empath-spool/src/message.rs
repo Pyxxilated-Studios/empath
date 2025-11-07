@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Represents a message in the spool with its envelope, data, and session context
+///
+/// The tracking ID is assigned by the spool when the message is written,
+/// not stored in this struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
-    /// Unique identifier for this message
-    pub id: u64,
     /// The envelope information (sender, recipients)
     pub envelope: Envelope,
     /// The raw message data
@@ -20,14 +21,11 @@ pub struct Message {
     pub extended: bool,
     /// Additional session context (e.g., TLS info, protocol, cipher)
     pub context: HashMap<String, String>,
-    /// Timestamp when the message was received
-    pub timestamp: u64,
 }
 
 impl Message {
     /// Create a new spooled message from SMTP session context
-    pub fn new(
-        id: u64,
+    pub const fn new(
         envelope: Envelope,
         data: Arc<[u8]>,
         helo_id: String,
@@ -35,16 +33,11 @@ impl Message {
         context: HashMap<String, String>,
     ) -> Self {
         Self {
-            id,
             envelope,
             data,
             helo_id,
             extended,
             context,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
         }
     }
 
@@ -53,22 +46,11 @@ impl Message {
     pub fn builder() -> MessageBuilder {
         MessageBuilder::default()
     }
-
-    /// Get the filename for this message's data
-    pub fn data_filename(&self) -> String {
-        format!("{}_{}.eml", self.timestamp, self.id)
-    }
-
-    /// Get the filename for this message's metadata
-    pub fn meta_filename(&self) -> String {
-        format!("{}_{}.json", self.timestamp, self.id)
-    }
 }
 
 /// Builder for `Message`
 #[derive(Debug, Default)]
 pub struct MessageBuilder {
-    id: Option<u64>,
     envelope: Option<Envelope>,
     data: Option<Arc<[u8]>>,
     helo_id: Option<String>,
@@ -85,13 +67,6 @@ pub enum BuilderError {
 }
 
 impl MessageBuilder {
-    /// Set the unique identifier for this message
-    #[must_use]
-    pub const fn id(mut self, id: u64) -> Self {
-        self.id = Some(id);
-        self
-    }
-
     /// Set the envelope information (sender, recipients)
     #[must_use]
     pub fn envelope(mut self, envelope: Envelope) -> Self {
@@ -127,14 +102,13 @@ impl MessageBuilder {
         self
     }
 
-    /// Build the final `Message` with auto-generated timestamp
+    /// Build the final `Message`
     ///
     /// # Errors
     ///
     /// Returns `BuilderError::MissingField` if any required field is not set
     pub fn build(self) -> Result<Message, BuilderError> {
         Ok(Message {
-            id: self.id.ok_or(BuilderError::MissingField("id"))?,
             envelope: self
                 .envelope
                 .ok_or(BuilderError::MissingField("envelope"))?,
@@ -144,10 +118,6 @@ impl MessageBuilder {
                 .extended
                 .ok_or(BuilderError::MissingField("extended"))?,
             context: self.context.ok_or(BuilderError::MissingField("context"))?,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
         })
     }
 }

@@ -88,7 +88,6 @@ impl Protocol for Smtp {
         args: Self::Args,
     ) -> Self::Session {
         Session::create(
-            Arc::default(),
             stream,
             peer,
             SessionConfig::builder()
