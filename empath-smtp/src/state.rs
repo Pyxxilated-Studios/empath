@@ -47,12 +47,14 @@ pub struct StartTls;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailFrom {
     pub sender: Option<Address>,
+    pub params: super::MailParameters,
 }
 
 /// After RCPT TO command (at least one recipient)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RcptTo {
     pub sender: Option<Address>,
+    pub params: super::MailParameters,
 }
 
 /// After DATA command (ready to receive message body)
@@ -205,10 +207,12 @@ impl State {
                 | Self::StartTls(_)
                 | Self::Help(_)
                 | Self::PostDot(_),
-                Command::MailFrom(sender, _),
+                Command::MailFrom(sender, params),
             ) => {
                 ctx.envelope.sender_mut().clone_from(&sender);
-                Self::MailFrom(MailFrom { sender })
+                // Store all MAIL FROM parameters in envelope for module access
+                *ctx.envelope.mail_params_mut() = Some(params.clone().into());
+                Self::MailFrom(MailFrom { sender, params })
             }
 
             // Cannot do STARTTLS after mail transaction has started
@@ -227,6 +231,7 @@ impl State {
                 }
                 Self::RcptTo(RcptTo {
                     sender: state.sender,
+                    params: state.params,
                 })
             }
             (Self::RcptTo(state), Command::RcptTo(recipients)) => {
@@ -244,8 +249,27 @@ impl State {
             // After DATA response, client sends message body
             (Self::Data(_), _) => Self::Reading(Reading),
 
+            // RSET clears transaction state and returns to ready state (EHLO or HELO)
+            (_, Command::Rset) => {
+                // Clear transaction state including declared size
+                ctx.metadata.clear();
+                *ctx.envelope.sender_mut() = None;
+                *ctx.envelope.recipients_mut() = None;
+                *ctx.envelope.mail_params_mut() = None;
+                if ctx.extended {
+                    Self::Ehlo(Ehlo { id: ctx.id.clone() })
+                } else {
+                    Self::Helo(Helo { id: ctx.id.clone() })
+                }
+            }
+
             // QUIT from any state
             (_, Command::Quit) => Self::Quit(Quit),
+
+            // AUTH not yet implemented - return invalid for now
+            (_, Command::Auth) => Self::Invalid(Invalid {
+                reason: "AUTH not implemented".to_string(),
+            }),
 
             // Invalid transitions
             (Self::Invalid(state), _) => Self::Invalid(state),
@@ -287,6 +311,7 @@ mod test {
     use mailparse::addrparse;
 
     use super::*;
+    use crate::MailParameters;
 
     #[test]
     fn connect_to_ehlo() {
@@ -325,7 +350,10 @@ mod test {
             ..Context::default()
         };
 
-        let state = State::MailFrom(MailFrom { sender: None });
+        let state = State::MailFrom(MailFrom {
+            sender: None,
+            params: MailParameters::new(),
+        });
         let new_state = state.transition(Command::StartTLS, &mut ctx);
 
         assert!(matches!(new_state, State::Invalid(_)));
@@ -390,5 +418,49 @@ mod test {
         });
         let state = state.transition(Command::Quit, &mut ctx);
         assert!(matches!(state, State::Quit(_)));
+    }
+
+    #[test]
+    fn rset_clears_transaction() {
+        let mut ctx = Context {
+            extended: true,
+            id: "client.example.com".to_string(),
+            ..Context::default()
+        };
+
+        // Start with MailFrom state
+        let sender: AddressList = addrparse("sender@example.com").unwrap().into();
+        *ctx.envelope.sender_mut() = sender.iter().next().cloned();
+
+        let state = State::MailFrom(MailFrom {
+            sender: sender.iter().next().cloned(),
+            params: MailParameters::new(),
+        });
+
+        // Verify sender is set
+        assert!(ctx.envelope.sender().is_some());
+
+        // RSET should clear transaction and return to EHLO
+        let state = state.transition(Command::Rset, &mut ctx);
+        assert!(matches!(state, State::Ehlo(_)));
+
+        // Verify envelope is cleared
+        assert!(ctx.envelope.sender().is_none());
+        assert!(ctx.envelope.recipients().is_none());
+        assert!(ctx.envelope.mail_params().is_none());
+    }
+
+    #[test]
+    fn auth_returns_invalid() {
+        let mut ctx = Context::default();
+        let state = State::Ehlo(Ehlo {
+            id: "test".to_string(),
+        });
+
+        let state = state.transition(Command::Auth, &mut ctx);
+        assert!(matches!(state, State::Invalid(_)));
+        if let State::Invalid(invalid) = state {
+            assert!(invalid.reason.contains("not implemented"));
+        }
     }
 }

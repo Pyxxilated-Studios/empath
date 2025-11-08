@@ -1,17 +1,14 @@
 use core::bstr;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
-use empath_common::{
-    Signal, context, incoming, internal, outgoing, status::Status, tracing,
-    traits::FiniteStateMachine,
-};
+use empath_common::{Signal, context, incoming, internal, outgoing, status::Status, tracing};
 use empath_ffi::modules::{self, validate};
 use empath_tracing::traced;
 use mailparse::MailParseError;
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, command::Command, connection::Connection, extensions::Extension};
+use crate::{State, command::Command, connection::Connection, extensions::Extension, state};
 
 #[repr(C)]
 #[derive(PartialEq, Eq, Debug)]
@@ -228,7 +225,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 if Event::ConnectionClose == ev {
                     return Ok(());
                 } else if let Some(tls_context) = session.tls_context.as_ref()
-                    && matches!(session.context.state, State::StartTLS)
+                    && matches!(session.context.state, State::StartTls(_))
                 {
                     let (conn, info) = session.connection.upgrade(tls_context).await?;
 
@@ -259,7 +256,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         );
                     } else {
                         session.context.sent = false;
-                        session.context.state = State::Reject;
+                        session.context.state = State::Reject(state::Reject);
                         validate_context.response =
                             Some((Status::Error, String::from("STARTTLS failed")));
                     }
@@ -267,7 +264,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     tokio::select! {
                         _ = signal.recv() => {
                             session.context.sent = false;
-                            session.context.state = State::Close;
+                            session.context.state = State::Close(state::Close);
                             validate_context.response =
                                 Some((Status::Unavailable, String::from("Server shutting down")));
                         }
@@ -315,7 +312,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     async fn emit(&mut self, validate_context: &mut context::Context) {
         match self.context.state {
-            State::Connect => {
+            State::Connect(_) => {
                 modules::dispatch(
                     modules::Event::Event(modules::Ev::ConnectionOpened),
                     validate_context,
@@ -325,18 +322,18 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     modules::Event::Validate(validate::Event::Connect),
                     validate_context,
                 ) {
-                    self.context.state = State::Reject;
+                    self.context.state = State::Reject(state::Reject);
                 }
             }
-            State::Helo | State::Ehlo => {
+            State::Helo(_) | State::Ehlo(_) => {
                 if !modules::dispatch(
                     modules::Event::Validate(validate::Event::Ehlo),
                     validate_context,
                 ) {
-                    self.context.state = State::Reject;
+                    self.context.state = State::Reject(state::Reject);
                 }
             }
-            State::MailFrom => {
+            State::MailFrom(_) => {
                 if !modules::dispatch(
                     modules::Event::Validate(validate::Event::MailFrom),
                     validate_context,
@@ -345,15 +342,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     return;
                 }
             }
-            State::RcptTo => {
+            State::RcptTo(_) => {
                 if !modules::dispatch(
                     modules::Event::Validate(validate::Event::RcptTo),
                     validate_context,
                 ) {
-                    self.context.state = State::Reject;
+                    self.context.state = State::Reject(state::Reject);
                 }
             }
-            State::PostDot => {
+            State::PostDot(_) => {
                 // Dispatch validation
                 let valid = modules::dispatch(
                     modules::Event::Validate(validate::Event::Data),
@@ -447,7 +444,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         // If emit() set a response in the context, use it
         // Only close connection for Reject state, not all permanent errors
         if let Some((status, ref message)) = validate_context.response {
-            let event = if matches!(self.context.state, State::Reject) && status.is_permanent() {
+            let event = if matches!(self.context.state, State::Reject(_)) && status.is_permanent() {
                 Event::ConnectionClose
             } else {
                 Event::ConnectionKeepAlive
@@ -458,7 +455,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
         // Otherwise, provide default responses for states not handled by emit()
         match &self.context.state {
-            State::Helo => (
+            State::Helo(_) => (
                 Some(vec![format!(
                     "{} {} says hello to {}",
                     Status::Ok,
@@ -467,7 +464,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionKeepAlive,
             ),
-            State::StartTLS => {
+            State::StartTls(_) => {
                 if self.tls_context.is_some() {
                     (
                         Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
@@ -480,8 +477,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     )
                 }
             }
-            State::Data => {
-                self.context.state = State::Reading;
+            State::Data(_) => {
+                self.context.state = State::Reading(state::Reading);
                 (
                     Some(vec![format!(
                         "{} End data with <CR><LF>.<CR><LF>",
@@ -490,11 +487,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::Quit => (
+            State::Quit(_) => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
                 Event::ConnectionClose,
             ),
-            State::Invalid | State::InvalidCommandSequence => (
+            State::Invalid(_) => (
                 Some(vec![format!(
                     "{} {}",
                     Status::InvalidCommandSequence,
@@ -502,7 +499,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionClose,
             ),
-            State::Reject => {
+            State::Reject(_) => {
                 // Reject should have response set by emit(), but provide fallback
                 (
                     Some(vec![format!("{} Unavailable", Status::Unavailable)]),
@@ -533,7 +530,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             Ok(bytes_read) => {
                 let received = &received_data[..bytes_read];
 
-                if self.context.state == State::Reading {
+                if matches!(self.context.state, State::Reading(_)) {
                     // Check if adding received data would exceed limit (BEFORE extending buffer)
                     // This prevents the buffer overflow vulnerability where an attacker could
                     // consume up to max_message_size + 4095 bytes before being rejected
@@ -549,7 +546,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                                     total_size, self.max_message_size
                                 ),
                             ));
-                            self.context.state = State::Close;
+                            self.context.state = State::Close(state::Close);
                             self.context.sent = false;
                             return Ok(false);
                         }
@@ -562,7 +559,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         let message = std::mem::take(&mut self.context.message);
 
                         self.context = Context {
-                            state: State::PostDot,
+                            state: State::PostDot(state::PostDot),
                             message: message.clone(),
                             sent: false,
                         };
@@ -576,7 +573,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     incoming!("{command}");
 
                     self.context = Context {
-                        state: self.context.state.transition(command, validate_context),
+                        state: self
+                            .context
+                            .state
+                            .clone()
+                            .transition(command, validate_context),
                         message,
                         sent: false,
                     };
@@ -601,6 +602,7 @@ mod test {
     use crate::{
         State,
         session::{Session, SessionConfig},
+        state,
     };
 
     #[tokio::test]
@@ -716,7 +718,10 @@ mod test {
         );
 
         // Simulate HELO state and receiving DATA
-        session.context.state = State::RcptTo;
+        session.context.state = State::RcptTo(state::RcptTo {
+            sender: None,
+            params: crate::MailParameters::new(),
+        });
         let mut sender_addrs = mailparse::addrparse("test@example.com").unwrap();
         context
             .envelope
@@ -733,7 +738,7 @@ mod test {
         assert!(response.is_ok());
 
         // Simulate PostDot state
-        session.context.state = State::PostDot;
+        session.context.state = State::PostDot(state::PostDot);
         context.data = Some(test_data.to_vec().into());
 
         let response = session.response(&mut context).await;
@@ -780,7 +785,9 @@ mod test {
                 .build(),
         );
 
-        session.context.state = State::Helo;
+        session.context.state = State::Helo(state::Helo {
+            id: "test".to_string(),
+        });
 
         let _ = session.response(&mut context).await;
         let response = session.receive(&mut context).await;

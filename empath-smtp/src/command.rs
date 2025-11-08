@@ -14,7 +14,7 @@ use mailparse::MailAddr;
 /// - RET: FULL or HDRS for DSN (RFC 3461)
 /// - ENVID: Envelope identifier for DSN (RFC 3461)
 /// - SMTPUTF8: UTF-8 support (RFC 6531)
-#[derive(PartialEq, Eq, Debug, Clone, Default)]
+#[derive(PartialEq, Eq, Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MailParameters {
     params: HashMap<String, Option<String>>,
 }
