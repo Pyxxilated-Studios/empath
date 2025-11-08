@@ -20,7 +20,7 @@ use crate::{
 /// This implementation stores messages as files in a directory using ULID
 /// (Universally Unique Lexicographically Sortable Identifier) for filenames:
 /// - Data files: `{tracking_id}.eml` - Contains the raw message data
-/// - Metadata files: `{tracking_id}.json` - Contains message metadata as JSON
+/// - Metadata files: `{tracking_id}.bin` - Contains message metadata as bincode
 ///
 /// The tracking ID is a 26-character ULID that encodes both timestamp and
 /// randomness, ensuring global uniqueness and lexicographic sortability.
@@ -230,7 +230,7 @@ impl BackingStore for FileBackingStore {
     /// Uses atomic writes to ensure consistency:
     /// 1. Generate a unique ULID as the tracking ID
     /// 2. Write data to temporary file `.tmp_{tracking_id}.eml`
-    /// 3. Write metadata to temporary file `.tmp_{tracking_id}.json`
+    /// 3. Write metadata to temporary file `.tmp_{tracking_id}.bin`
     /// 4. Atomically rename both files (removes `.tmp_` prefix)
     ///
     /// If the process crashes during steps 2-3, the temporary files will be
@@ -248,7 +248,7 @@ impl BackingStore for FileBackingStore {
         let tracking_str = tracking_id.to_string();
 
         let data_filename = format!("{tracking_str}.eml");
-        let meta_filename = format!("{tracking_str}.json");
+        let meta_filename = format!("{tracking_str}.bin");
 
         let data_path = self.path.join(&data_filename);
         let meta_path = self.path.join(&meta_filename);
@@ -269,9 +269,9 @@ impl BackingStore for FileBackingStore {
         // Write the email data
         fs::write(&temp_data_path, message.data.as_ref()).await?;
 
-        // Write the metadata as JSON
-        let metadata = serde_json::to_string_pretty(&message)?;
-        fs::write(&temp_meta_path, metadata).await?;
+        // Serialize metadata to bincode
+        let metadata = bincode::serialize(&message)?;
+        fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically rename both files
         fs::rename(&temp_data_path, &data_path).await?;
@@ -288,7 +288,7 @@ impl BackingStore for FileBackingStore {
 
     /// List all messages in the spool directory
     ///
-    /// Scans the spool directory for `.json` metadata files and parses
+    /// Scans the spool directory for `.bin` metadata files and parses
     /// their filenames to extract message IDs. Results are sorted
     /// lexicographically by ULID (which sorts by creation time).
     ///
@@ -306,8 +306,8 @@ impl BackingStore for FileBackingStore {
             let filename = entry.file_name();
             let filename_str = filename.to_string_lossy();
 
-            // Only look at .json metadata files
-            if filename_str.ends_with(".json")
+            // Only look at .bin metadata files
+            if filename_str.ends_with(".bin")
                 && !filename_str.starts_with(".tmp_")
                 && let Some(msg_id) = SpooledMessageId::from_filename(&filename_str)
             {
@@ -329,12 +329,12 @@ impl BackingStore for FileBackingStore {
 
     /// Read a specific message from the spool
     ///
-    /// Reads both the metadata (.json) and data (.eml) files for a message.
-    /// The metadata is deserialized from JSON, and the data is read as raw bytes.
+    /// Reads both the metadata (.bin) and data (.eml) files for a message.
+    /// The metadata is deserialized from bincode, and the data is read as raw bytes.
     ///
     /// # Errors
     /// - If either file cannot be read (doesn't exist, permission denied, etc.)
-    /// - If the metadata JSON is malformed
+    /// - If the metadata bincode is malformed
     ///
     /// # Performance Note
     /// This involves two file reads. For large message bodies, consider whether
@@ -342,15 +342,15 @@ impl BackingStore for FileBackingStore {
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn read(&self, msg_id: &SpooledMessageId) -> anyhow::Result<Message> {
         let tracking_str = msg_id.to_string();
-        let meta_filename = format!("{tracking_str}.json");
+        let meta_filename = format!("{tracking_str}.bin");
         let data_filename = format!("{tracking_str}.eml");
 
         let meta_path = self.path.join(&meta_filename);
         let data_path = self.path.join(&data_filename);
 
         // Read and deserialize metadata
-        let meta_content = fs::read_to_string(&meta_path).await?;
-        let mut message: Message = serde_json::from_str(&meta_content)?;
+        let meta_content = fs::read(&meta_path).await?;
+        let mut message: Message = bincode::deserialize(&meta_content)?;
 
         // Read message data
         let data_bytes = fs::read(&data_path).await?;
@@ -363,7 +363,7 @@ impl BackingStore for FileBackingStore {
 
     /// Delete a message from the spool
     ///
-    /// Removes both the data (.eml) and metadata (.json) files for the specified message.
+    /// Removes both the data (.eml) and metadata (.bin) files for the specified message.
     ///
     /// # Errors
     /// - If either file cannot be deleted
@@ -378,7 +378,7 @@ impl BackingStore for FileBackingStore {
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn delete(&self, msg_id: &SpooledMessageId) -> anyhow::Result<()> {
         let tracking_str = msg_id.to_string();
-        let meta_filename = format!("{tracking_str}.json");
+        let meta_filename = format!("{tracking_str}.bin");
         let data_filename = format!("{tracking_str}.eml");
 
         let meta_path = self.path.join(&meta_filename);
