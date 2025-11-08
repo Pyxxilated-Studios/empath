@@ -46,3 +46,10 @@ tracing = { version = "0.1", default-features = false, features = [
     "attributes",
     "std",
 ] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "smtp_benchmarks"
+harness = false

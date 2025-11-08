@@ -48,6 +48,17 @@ cargo test session::test::helo
 # Lint with clippy (STRICT - project enforces all/pedantic/nursery)
 cargo clippy --all-targets --all-features -- -D clippy::all -D clippy::pedantic -D clippy::nursery -A clippy::must_use_candidate
 
+# Run benchmarks
+cargo bench                           # Run all benchmarks
+cargo bench -p empath-smtp            # Run SMTP benchmarks only
+cargo bench -p empath-spool           # Run spool benchmarks only
+cargo bench -- --verbose              # Run with verbose output
+cargo bench command_parsing           # Run specific benchmark group
+
+# View benchmark results
+# Results are saved to target/criterion/ with HTML reports
+# Open target/criterion/report/index.html in a browser
+
 # Generate C headers (happens automatically during build)
 cargo build  # Outputs to empath/target/empath.h
 
@@ -317,6 +328,70 @@ Location: `empath-ffi/src/string.rs`
 - **Async tests**: Mark with `#[tokio::test]` and `#[cfg_attr(all(target_os = "macos", miri), ignore)]`
 
 Example: `empath-smtp/src/session.rs:537` (spool_integration test)
+
+### Benchmarking
+
+The project includes comprehensive benchmarks using Criterion.rs for performance tracking:
+
+**Available Benchmarks:**
+
+1. **SMTP Benchmarks** (`empath-smtp/benches/smtp_benchmarks.rs`):
+   - Command parsing (HELO, MAIL FROM, RCPT TO, etc.)
+   - ESMTP parameter parsing with perfect hash map
+   - FSM state transitions (single and full transaction)
+   - Context operations and cloning
+
+2. **Spool Benchmarks** (`empath-spool/benches/spool_benchmarks.rs`):
+   - Message creation and builder pattern
+   - Bincode serialization/deserialization
+   - ULID generation and parsing
+   - In-memory spool operations (write, read, list, delete)
+
+**Running Benchmarks:**
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run specific crate benchmarks
+cargo bench -p empath-smtp
+cargo bench -p empath-spool
+
+# Run specific benchmark group
+cargo bench command_parsing
+cargo bench fsm_transitions
+cargo bench spool_write
+
+# Verbose output
+cargo bench -- --verbose
+
+# Save baseline for comparison
+cargo bench -- --save-baseline main
+
+# Compare against baseline
+cargo bench -- --baseline main
+```
+
+**Benchmark Results:**
+
+- HTML reports: `target/criterion/report/index.html`
+- Individual benchmark data: `target/criterion/<benchmark_name>/`
+- Flamegraphs (with `--features flamegraph`): Visualize performance hotspots
+
+**Adding New Benchmarks:**
+
+1. Add benchmark file to `benches/` directory in the relevant crate
+2. Add `[[bench]]` section to `Cargo.toml` with `harness = false`
+3. Add Criterion as dev-dependency
+4. Use `criterion_group!` and `criterion_main!` macros
+5. Follow existing patterns for consistency
+
+**Performance Optimization Notes:**
+
+- Recent work reduced clone usage by ~80% in hot paths (commit a09f603)
+- Perfect hash map in MailParameters provides O(1) lookups
+- Zero-allocation command parsing where possible
+- Bincode for efficient serialization vs JSON
 
 ### Important Implementation Notes
 

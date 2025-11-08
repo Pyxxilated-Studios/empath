@@ -6,3 +6,8 @@ resolver = "3"
 lto = "thin"
 opt-level = 2
 codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+# Enable debug info for profiling benchmarks with tools like perf or flamegraph
+debug = true
