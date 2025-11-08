@@ -1,10 +1,5 @@
 use core::bstr;
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use empath_common::{
     Signal, context, incoming, internal, outgoing, status::Status, tracing,
@@ -164,11 +159,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    pub(crate) fn create(
-        stream: Stream,
-        peer: SocketAddr,
-        config: SessionConfig,
-    ) -> Self {
+    pub(crate) fn create(stream: Stream, peer: SocketAddr, config: SessionConfig) -> Self {
         tracing::debug!("Config: {:?}", config);
         tracing::debug!("Extensions: {:?}", config.extensions);
 
@@ -219,19 +210,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             mut signal: tokio::sync::broadcast::Receiver<Signal>,
         ) -> anyhow::Result<()> {
             loop {
-                let (mut response, mut ev) = session.response(validate_context).await;
-
-                session.emit(validate_context);
-                if let Some((status, ref resp)) = validate_context.response {
-                    (response, ev) = (
-                        Some(vec![format!("{} {}", status, resp)]),
-                        if status.is_permanent() {
-                            Event::ConnectionClose
-                        } else {
-                            Event::ConnectionKeepAlive
-                        },
-                    );
-                }
+                // Then generate the response based on what emit() set
+                let (response, ev) = session.response(validate_context).await;
 
                 validate_context.response = None;
                 session.context.sent = true;
@@ -255,13 +235,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     session.connection = conn;
 
                     validate_context
-                        .context
+                        .metadata
                         .insert("tls".to_string(), "true".to_string());
                     validate_context
-                        .context
+                        .metadata
                         .insert("protocol".to_string(), info.proto());
                     validate_context
-                        .context
+                        .metadata
                         .insert("cipher".to_string(), info.cipher());
 
                     session.context = Context {
@@ -301,10 +281,19 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             }
         }
 
-        let mut validate_context = context::Context::default();
-        self.init_context.clone_into(&mut validate_context.context);
+        let mut validate_context = context::Context {
+            banner: self.banner.clone(),
+            max_message_size: self.max_message_size,
+            capabilities: self
+                .extensions
+                .iter()
+                .flat_map(std::convert::TryInto::try_into)
+                .collect(),
+            metadata: self.init_context.clone(),
+            ..Default::default()
+        };
 
-        self.emit(&mut validate_context);
+        self.emit(&mut validate_context).await;
 
         let result = run_inner(self, &mut validate_context, signal).await;
 
@@ -317,7 +306,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         result
     }
 
-    fn emit(&mut self, validate_context: &mut context::Context) {
+    /// Handle validation and work for each state
+    ///
+    /// Flow:
+    /// 1. Dispatch to core module first (sets default responses, validation)
+    /// 2. Then dispatch to user modules (can override responses, reject)
+    /// 3. If validation passed, do the work (spooling)
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
+    async fn emit(&mut self, validate_context: &mut context::Context) {
         match self.context.state {
             State::Connect => {
                 modules::dispatch(
@@ -332,71 +328,61 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     self.context.state = State::Reject;
                 }
             }
+            State::Helo | State::Ehlo => {
+                if !modules::dispatch(
+                    modules::Event::Validate(validate::Event::Ehlo),
+                    validate_context,
+                ) {
+                    self.context.state = State::Reject;
+                }
+            }
             State::MailFrom => {
                 if !modules::dispatch(
                     modules::Event::Validate(validate::Event::MailFrom),
+                    validate_context,
+                ) {
+                    // Don't change state for validation failures like SIZE - just return error
+                    return;
+                }
+            }
+            State::RcptTo => {
+                if !modules::dispatch(
+                    modules::Event::Validate(validate::Event::RcptTo),
                     validate_context,
                 ) {
                     self.context.state = State::Reject;
                 }
             }
             State::PostDot => {
-                modules::dispatch(
+                // Dispatch validation
+                let valid = modules::dispatch(
                     modules::Event::Validate(validate::Event::Data),
                     validate_context,
                 );
+
+                // If validation passed, do the work (spooling)
+                if valid {
+                    // Check if any module set a rejection response
+                    // Positive responses are < 400 (2xx and 3xx codes)
+                    let should_spool = validate_context
+                        .response
+                        .as_ref()
+                        .is_none_or(|(status, _)| !status.is_temporary() && !status.is_permanent());
+
+                    if should_spool {
+                        self.spool_message(validate_context).await;
+                    }
+                }
             }
             _ => {}
         }
     }
 
-    /// Handle EHLO/HELP response generation with extensions
-    fn response_ehlo_help(&self) -> Response {
-        let response = if matches!(self.context.state, State::Ehlo) {
-            vec![format!(
-                "{}{}{} says hello to {}",
-                Status::Ok,
-                if self.extensions.is_empty() { ' ' } else { '-' },
-                self.banner,
-                bstr::ByteStr::new(&self.context.message)
-            )]
-        } else {
-            vec![]
-        };
+    /// Spool message after validation passes
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
+    async fn spool_message(&self, validate_context: &mut context::Context) {
+        internal!("Spooling message");
 
-        (
-            Some(self.extensions.iter().enumerate().fold(
-                response,
-                |mut response, (idx, extension)| {
-                    response.push(format!(
-                        "{}{}{}",
-                        if matches!(self.context.state, State::Help) {
-                            Status::HelpMessage
-                        } else {
-                            Status::Ok
-                        },
-                        if idx == self.extensions.len() - 1 {
-                            ' '
-                        } else {
-                            '-'
-                        },
-                        extension
-                    ));
-
-                    response
-                },
-            )),
-            Event::ConnectionKeepAlive,
-        )
-    }
-
-    /// Handle `PostDot` state - queue message and spool
-    #[traced]
-    async fn response_post_dot(&self, validate_context: &mut context::Context) -> Response {
-        internal!("PostDot: {validate_context:?}");
-
-        // Spool the message if a spool controller is configured
-        // The tracking ID is generated by the spool itself
         let tracking_id = if let Some(spool) = &self.spool
             && let Some(data) = &validate_context.data
         {
@@ -405,74 +391,73 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 .data(data.clone())
                 .helo_id(validate_context.id.clone())
                 .extended(validate_context.extended)
-                .context(validate_context.context.clone())
+                .context(validate_context.metadata.clone())
                 .build()
             {
-                Ok(message) => {
-                    // Spool the message to persistent storage
-                    // We must complete spooling before clearing transaction context
-                    match spool.write(&message).await {
-                        Ok(id) => Some(id),
-                        Err(e) => {
-                            internal!(level = ERROR, "Failed to spool message: {e}");
-                            // Return 451 temporary failure to client per RFC 5321
-                            return (
-                                Some(vec![format!(
-                                    "{} Requested action aborted: error spooling message",
-                                    Status::ActionUnavailable
-                                )]),
-                                Event::ConnectionKeepAlive,
-                            );
-                        }
+                Ok(message) => match spool.write(&message).await {
+                    Ok(id) => Some(id),
+                    Err(e) => {
+                        internal!(level = ERROR, "Failed to spool message: {e}");
+                        validate_context.response = Some((
+                            Status::ActionUnavailable,
+                            "Requested action aborted: error spooling message".to_string(),
+                        ));
+                        return;
                     }
-                }
+                },
                 Err(e) => {
                     internal!(level = ERROR, "Failed to build message: {e}");
-                    // Return 451 temporary failure to client
-                    return (
-                        Some(vec![format!(
-                            "{} Requested action aborted: error processing message",
-                            Status::ActionUnavailable
-                        )]),
-                        Event::ConnectionKeepAlive,
-                    );
+                    validate_context.response = Some((
+                        Status::ActionUnavailable,
+                        "Requested action aborted: error processing message".to_string(),
+                    ));
+                    return;
                 }
             }
         } else {
             None
         };
 
-        // Clear transaction state after successful message acceptance
-        // This prevents SIZE parameter from persisting across MAIL transactions
-        validate_context.context.remove("declared_size");
+        // Clear transaction state after successful acceptance
+        validate_context.metadata.remove("declared_size");
 
-        let default = (
+        // Set success response with tracking ID
+        validate_context.response = Some((
             Status::Ok,
-            tracking_id
-                .as_ref()
-                .map_or_else(|| "Ok: queued".to_string(), |id| format!("Ok: queued as {id}")),
-        );
-        let response = validate_context.response.as_ref().unwrap_or(&default);
-
-        (
-            Some(vec![format!("{} {}", response.0, response.1)]),
-            Event::ConnectionKeepAlive,
-        )
+            tracking_id.as_ref().map_or_else(
+                || "Ok: queued".to_string(),
+                |id| format!("Ok: queued as {id}"),
+            ),
+        ));
     }
 
-    /// Generate the response(s) that should be sent back to the client
-    /// depending on the servers state
+    /// Format and return the response to send to the client
+    ///
+    /// This is a pure formatter - all validation and work happens in `emit()`.
+    /// Just formats the response based on state and what `emit()` set in the context.
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "ns"))]
     async fn response(&mut self, validate_context: &mut context::Context) -> Response {
         if self.context.sent {
             return (None, Event::ConnectionKeepAlive);
         }
 
+        // Emit events, do validation and work first
+        self.emit(validate_context).await;
+
+        // If emit() set a response in the context, use it
+        // Only close connection for Reject state, not all permanent errors
+        if let Some((status, ref message)) = validate_context.response {
+            let event = if matches!(self.context.state, State::Reject) && status.is_permanent() {
+                Event::ConnectionClose
+            } else {
+                Event::ConnectionKeepAlive
+            };
+
+            return (Some(vec![format!("{status} {message}")]), event);
+        }
+
+        // Otherwise, provide default responses for states not handled by emit()
         match &self.context.state {
-            State::Connect => (
-                Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
-                Event::ConnectionKeepAlive,
-            ),
             State::Helo => (
                 Some(vec![format!(
                     "{} {} says hello to {}",
@@ -482,7 +467,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 )]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Ehlo | State::Help => self.response_ehlo_help(),
             State::StartTLS => {
                 if self.tls_context.is_some() {
                     (
@@ -496,34 +480,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     )
                 }
             }
-            State::MailFrom => {
-                // Validate SIZE parameter if present and max_message_size is set
-                // Per RFC 1870 Section 4: check declared size against server maximum
-                if self.max_message_size > 0
-                    && let Some(declared_size_str) = validate_context.context.get("declared_size")
-                    && let Ok(declared_size) = declared_size_str.parse::<usize>()
-                    && declared_size > self.max_message_size
-                {
-                    return (
-                        Some(vec![format!(
-                            "{} 5.2.3 Declared message size exceeds maximum (declared: {} bytes, maximum: {} bytes)",
-                            Status::ExceededStorage,
-                            declared_size,
-                            self.max_message_size
-                        )]),
-                        Event::ConnectionKeepAlive,
-                    );
-                }
-
-                (
-                    Some(vec![format!("{} Ok", Status::Ok)]),
-                    Event::ConnectionKeepAlive,
-                )
-            }
-            State::RcptTo => (
-                Some(vec![format!("{} Ok", Status::Ok)]),
-                Event::ConnectionKeepAlive,
-            ),
             State::Data => {
                 self.context.state = State::Reading;
                 (
@@ -534,12 +490,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     Event::ConnectionKeepAlive,
                 )
             }
-            State::PostDot => self.response_post_dot(validate_context).await,
             State::Quit => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
                 Event::ConnectionClose,
             ),
-            State::Reading | State::Close => (None, Event::ConnectionKeepAlive),
             State::Invalid | State::InvalidCommandSequence => (
                 Some(vec![format!(
                     "{} {}",
@@ -549,13 +503,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 Event::ConnectionClose,
             ),
             State::Reject => {
-                let default = (Status::Unavailable, "Unavailable".to_owned());
-                let (status, response) = validate_context.response.as_ref().unwrap_or(&default);
+                // Reject should have response set by emit(), but provide fallback
                 (
-                    Some(vec![format!("{} {}", status, response)]),
+                    Some(vec![format!("{} Unavailable", Status::Unavailable)]),
                     Event::ConnectionClose,
                 )
             }
+            // States handled by emit() (Connect, Ehlo, MailFrom, RcptTo, PostDot) should have set a response
+            // States like Reading, Close, and others that don't need responses
+            _ => (None, Event::ConnectionKeepAlive),
         }
     }
 
@@ -650,8 +606,16 @@ mod test {
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]
     async fn session() {
+        // Initialize modules to add core module
+        let _ = modules::init(vec![]);
+
         let banner = "testing";
-        let mut context = Context::default();
+        let mut context = Context {
+            banner: banner.to_string(),
+            max_message_size: 0,
+            ..Default::default()
+        };
+
         let cursor = Cursor::<Vec<u8>>::default();
 
         let mut session = Session::create(
@@ -676,8 +640,16 @@ mod test {
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]
     async fn helo() {
+        // Initialize modules to add core module
+        let _ = modules::init(vec![]);
+
         let banner = "testing";
-        let mut context = Context::default();
+        let mut context = Context {
+            banner: banner.to_string(),
+            max_message_size: 0,
+            ..Default::default()
+        };
+
         let host = "Test";
         let mut cursor = Cursor::<Vec<u8>>::default();
         cursor
@@ -693,10 +665,14 @@ mod test {
         );
 
         let _ = session.response(&mut context).await;
+        context.response = None; // Clear response like run_inner does
+
+        // Receive HELO command
         let response = session.receive(&mut context).await;
         assert!(response.is_ok());
         assert!(!response.unwrap());
 
+        // HELO doesn't need emit(), it's not validated
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(
@@ -713,8 +689,16 @@ mod test {
     async fn spool_integration() {
         use std::sync::Arc;
 
+        // Initialize modules to add core module
+        let _ = modules::init(vec![]);
+
         let banner = "testing";
-        let mut context = Context::default();
+        let mut context = Context {
+            banner: banner.to_string(),
+            max_message_size: 0,
+            ..Default::default()
+        };
+
         let mut cursor = Cursor::<Vec<u8>>::default();
         let test_data = b"Subject: Test\r\n\r\nHello World\r\n.\r\n";
         cursor.get_mut().extend_from_slice(test_data);
@@ -744,7 +728,6 @@ mod test {
                 .into(),
         );
 
-        // Process the data
         let _ = session.response(&mut context).await;
         let response = session.receive(&mut context).await;
         assert!(response.is_ok());
@@ -774,7 +757,12 @@ mod test {
     #[cfg_attr(all(target_os = "macos", miri), ignore)]
     async fn modules() {
         let banner = "testing";
-        let mut context = Context::default();
+        let mut context = Context {
+            banner: banner.to_string(),
+            max_message_size: 0,
+            ..Default::default()
+        };
+
         let mut cursor = Cursor::<Vec<u8>>::default();
         cursor
             .get_mut()
@@ -799,6 +787,7 @@ mod test {
         assert!(response.is_ok());
         assert!(!response.unwrap());
 
+        // After receive, state should be MailFrom - need to emit before response
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(

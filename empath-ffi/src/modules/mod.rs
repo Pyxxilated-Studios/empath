@@ -1,5 +1,7 @@
-use core::fmt::{self, Display};
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::{
+    fmt::{self, Display},
+    sync::{Arc, LazyLock, Mutex, RwLock},
+};
 
 use empath_common::{context::Context, internal};
 use empath_tracing::traced;
@@ -8,6 +10,7 @@ use thiserror::Error;
 
 use super::string::StringVector;
 
+pub mod core;
 pub mod library;
 pub mod validate;
 
@@ -99,6 +102,12 @@ pub struct Test {
 pub enum Module {
     SharedLibrary(library::Shared),
     TestModule(Arc<Mutex<Test>>),
+    /// Core validation module with session-specific configuration.
+    /// Not deserialized - created programmatically by each session.
+    #[serde(skip)]
+    Core {
+        validators: Arc<core::CoreValidators>,
+    },
 }
 
 pub static MODULE_STORE: LazyLock<RwLock<Vec<Module>>> = LazyLock::new(RwLock::default);
@@ -108,6 +117,7 @@ impl Display for Module {
         match self {
             Self::SharedLibrary(lib) => f.write_fmt(format_args!("{lib}")),
             Self::TestModule { .. } => f.write_str("Test Module"),
+            Self::Core { .. } => f.write_str("Core Module"),
         }
     }
 }
@@ -118,6 +128,7 @@ impl Module {
         match self {
             Self::SharedLibrary(lib) => lib.emit(event, validate_context),
             Self::TestModule { .. } => test::emit(self, event, validate_context),
+            Self::Core { validators } => core::emit(validators, event, validate_context),
         }
     }
 }
@@ -131,21 +142,27 @@ impl Module {
 ///   3. The module store lock is poisoned (another thread panicked while holding the lock)
 ///
 #[traced(instrument(level = tracing::Level::TRACE, ret, skip_all), timing)]
-pub fn init(mut modules: Vec<Module>) -> anyhow::Result<()> {
+pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
     internal!(level = INFO, "Initialising modules ...");
 
-    modules
+    // Add core module first so it runs before other validation modules
+    let mut all_modules = vec![Module::Core {
+        validators: Arc::new(core::CoreValidators::new()),
+    }];
+    all_modules.extend(modules);
+
+    all_modules
         .iter_mut()
         .inspect(|module| internal!("Init: {module}"))
         .try_for_each(|module| match module {
             Module::SharedLibrary(lib) => lib.init(),
-            Module::TestModule { .. } => Ok(()),
+            Module::TestModule { .. } | Module::Core { .. } => Ok(()),
         })?;
 
     MODULE_STORE
         .write()
         .map_err(|e| anyhow::anyhow!("Failed to acquire module store write lock: {e}"))?
-        .extend(modules.into_iter());
+        .extend(all_modules.into_iter());
 
     internal!(level = INFO, "Modules initialised");
 

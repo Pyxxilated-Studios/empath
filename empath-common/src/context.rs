@@ -4,6 +4,11 @@ use mailparse::MailAddr;
 
 use crate::{envelope::Envelope, status::Status};
 
+#[derive(Debug)]
+pub enum Capability {
+    Auth,
+}
+
 #[derive(Default, Debug)]
 pub struct Context {
     pub extended: bool,
@@ -11,8 +16,13 @@ pub struct Context {
     pub id: String,
     pub data: Option<Arc<[u8]>>,
     pub response: Option<(Status, String)>,
-    #[allow(clippy::struct_field_names)]
-    pub context: HashMap<String, String>,
+    /// Session metadata and custom attributes
+    pub metadata: HashMap<String, String>,
+    /// Server banner/hostname for greeting messages
+    pub banner: String,
+    /// Maximum message size in bytes (0 = unlimited)
+    pub max_message_size: usize,
+    pub capabilities: Vec<Capability>,
 }
 
 impl Context {

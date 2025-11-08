@@ -7,7 +7,9 @@ use serde::Deserialize;
 // cbindgen:prefix-with-name=Validate
 pub enum Event {
     Connect,
+    Ehlo,
     MailFrom,
+    RcptTo,
     Data,
     StartTls,
 }
@@ -16,7 +18,9 @@ pub enum Event {
 #[allow(clippy::struct_field_names)]
 pub struct Validators {
     pub validate_connect: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
+    pub validate_ehlo: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_mail_from: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
+    pub validate_rcpt_to: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_data: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_starttls: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
 }
@@ -39,14 +43,20 @@ impl Validation {
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub fn emit(&self, event: super::Event, context: &mut Context) -> i32 {
         match event {
-            super::Event::Validate(Event::Data) => unsafe {
-                self.validators.validate_data.map(|func| func(context))
+            super::Event::Validate(Event::Connect) => unsafe {
+                self.validators.validate_connect.map(|func| func(context))
+            },
+            super::Event::Validate(Event::Ehlo) => unsafe {
+                self.validators.validate_ehlo.map(|func| func(context))
             },
             super::Event::Validate(Event::MailFrom) => unsafe {
                 self.validators.validate_mail_from.map(|func| func(context))
             },
-            super::Event::Validate(Event::Connect) => unsafe {
-                self.validators.validate_connect.map(|func| func(context))
+            super::Event::Validate(Event::RcptTo) => unsafe {
+                self.validators.validate_rcpt_to.map(|func| func(context))
+            },
+            super::Event::Validate(Event::Data) => unsafe {
+                self.validators.validate_data.map(|func| func(context))
             },
             super::Event::Validate(Event::StartTls) => unsafe {
                 self.validators.validate_starttls.map(|func| func(context))

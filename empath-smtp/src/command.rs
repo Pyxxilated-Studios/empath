@@ -121,6 +121,14 @@ impl MailParameters {
     }
 }
 
+impl<S: std::hash::BuildHasher + Default> From<MailParameters>
+    for HashMap<String, Option<String>, S>
+{
+    fn from(params: MailParameters) -> Self {
+        params.params.into_iter().collect()
+    }
+}
+
 impl Display for MailParameters {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let params: Vec<String> = self

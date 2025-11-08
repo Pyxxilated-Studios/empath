@@ -1,5 +1,6 @@
-use empath_spool::FileBackingStore;
 use std::path::PathBuf;
+
+use empath_spool::FileBackingStore;
 
 #[test]
 fn test_path_validation_rejects_parent_dir() {
@@ -8,10 +9,12 @@ fn test_path_validation_rejects_parent_dir() {
         .build();
 
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("cannot contain '..'"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot contain '..'")
+    );
 }
 
 #[test]
@@ -42,15 +45,9 @@ fn test_path_validation_rejects_system_directories() {
             .path(PathBuf::from(path))
             .build();
 
+        assert!(result.is_err(), "Path {path} should be rejected but wasn't");
         assert!(
-            result.is_err(),
-            "Path {path} should be rejected but wasn't"
-        );
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("system directory"),
+            result.unwrap_err().to_string().contains("system directory"),
             "Wrong error for path {path}"
         );
     }

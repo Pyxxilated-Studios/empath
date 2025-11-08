@@ -232,13 +232,8 @@ impl FiniteStateMachine for State {
                 Command::MailFrom(from, params),
             ) => {
                 validate_context.envelope.sender_mut().clone_from(&from);
-                // Store the declared size in the context for validation
-                if let Some(size_val) = params.size() {
-                    validate_context
-                        .context
-                        .insert(String::from("declared_size"), size_val.to_string());
-                }
-                // TODO: Store other MAIL FROM parameters in context for module access
+                // Store all MAIL FROM parameters in envelope for module access
+                *validate_context.envelope.mail_params_mut() = Some(params.into());
                 Self::MailFrom
             }
             (Self::RcptTo | Self::MailFrom, Command::RcptTo(to)) => {
@@ -253,10 +248,14 @@ impl FiniteStateMachine for State {
             (Self::Data, comm) if comm != Command::Quit => Self::Connect,
             (_, Command::Rset) => {
                 // RSET clears transaction state including declared size
-                validate_context.context.remove("declared_size");
+                validate_context.metadata.clear();
                 *validate_context.envelope.sender_mut() = None;
                 *validate_context.envelope.recipients_mut() = None;
-                Self::Helo
+                if validate_context.extended {
+                    Self::Ehlo
+                } else {
+                    Self::Helo
+                }
             }
             (_, Command::Quit) => Self::Quit,
             (Self::Invalid, _) => Self::Invalid,

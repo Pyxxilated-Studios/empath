@@ -397,10 +397,7 @@ impl BackingStore for FileBackingStore {
         fs::remove_file(&deleted_data_path).await?;
         fs::remove_file(&deleted_meta_path).await?;
 
-        internal!(
-            level = DEBUG,
-            "Deleted message {msg_id} from spool"
-        );
+        internal!(level = DEBUG, "Deleted message {msg_id} from spool");
 
         Ok(())
     }

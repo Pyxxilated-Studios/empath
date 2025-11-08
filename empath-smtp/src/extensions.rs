@@ -1,5 +1,6 @@
 use core::fmt::{self, Display};
 
+use empath_common::context::Capability;
 use serde::Deserialize;
 
 use crate::session::TlsContext;
@@ -59,6 +60,22 @@ impl Display for Extension {
                 }
             }
         }
+    }
+}
+
+impl TryInto<Capability> for Extension {
+    type Error = ();
+
+    fn try_into(self) -> Result<Capability, Self::Error> {
+        Err(())
+    }
+}
+
+impl TryInto<Capability> for &Extension {
+    type Error = ();
+
+    fn try_into(self) -> Result<Capability, Self::Error> {
+        Err(())
     }
 }
 

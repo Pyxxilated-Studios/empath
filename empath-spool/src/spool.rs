@@ -704,7 +704,10 @@ mod tests {
         );
 
         // Verify all IDs are unique (additional sanity check)
-        let unique_count = generated_ids.iter().collect::<std::collections::HashSet<_>>().len();
+        let unique_count = generated_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
         assert_eq!(unique_count, 10, "All ULIDs should be unique");
     }
 

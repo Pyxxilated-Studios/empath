@@ -14,6 +14,10 @@ use tokio::{net::TcpListener, time::timeout};
 
 /// Helper function to start a test SMTP server on a random port.
 async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
+    // Initialize modules (adds core module to MODULE_STORE)
+    // This only needs to be done once, subsequent calls will just add to the store
+    let _ = empath_ffi::modules::init(vec![]);
+
     // Bind to port 0 to get a random available port
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -78,6 +82,7 @@ async fn test_ehlo() {
 
     assert!(result.is_ok());
     let responses = result.unwrap();
+    eprintln!("{responses:?}");
 
     // Should have greeting + EHLO response
     assert!(responses.len() >= 2);
@@ -100,6 +105,7 @@ async fn test_helo() {
     assert!(result.is_ok());
     let responses = result.unwrap();
 
+    eprintln!("{responses:?}");
     assert!(responses.len() >= 2);
     assert_eq!(responses[0].code, 220); // Greeting
     assert_eq!(responses[1].code, 250); // HELO response
@@ -279,7 +285,7 @@ async fn test_raw_command() {
     let result = SmtpClientBuilder::new(format!("127.0.0.1:{port}"), "localhost".to_string())
         .accept_invalid_certs(true)
         .ehlo("test.example.com")
-        .raw_command("HELP")
+        .raw_command("MAIL FROM: test@gmail.com")
         .execute()
         .await;
 

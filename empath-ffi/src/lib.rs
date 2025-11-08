@@ -113,14 +113,14 @@ pub unsafe extern "C" fn em_context_set_response(
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_is_tls(validate_context: &Context) -> bool {
-    validate_context.context.contains_key("tls")
+    validate_context.metadata.contains_key("tls")
 }
 
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::string::String {
     validate_context
-        .context
+        .metadata
         .get("protocol")
         .map_or_default(crate::string::String::from)
 }
@@ -129,7 +129,7 @@ pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::string::String {
     validate_context
-        .context
+        .metadata
         .get("cipher")
         .map_or_default(crate::string::String::from)
 }
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn em_context_exists(
         unsafe {
             CStr::from_ptr(key)
                 .to_str()
-                .is_ok_and(|key| validate_context.context.contains_key(key))
+                .is_ok_and(|key| validate_context.metadata.contains_key(key))
         }
     }
 }
@@ -174,7 +174,10 @@ pub unsafe extern "C" fn em_context_set(
         unsafe {
             CStr::from_ptr(key).to_str().is_ok_and(|key| {
                 let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
-                *validate_context.context.entry(key.to_string()).or_default() = value;
+                *validate_context
+                    .metadata
+                    .entry(key.to_string())
+                    .or_default() = value;
                 true
             })
         }
@@ -199,7 +202,7 @@ pub unsafe extern "C" fn em_context_get(
             CStr::from_ptr(key)
                 .to_str()
                 .ok()
-                .and_then(|key| validate_context.context.get(key))
+                .and_then(|key| validate_context.metadata.get(key))
                 .map_or_else(crate::string::String::default, std::convert::Into::into)
         }
     }
