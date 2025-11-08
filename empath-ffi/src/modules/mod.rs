@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display},
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use empath_common::{context::Context, internal};
@@ -110,7 +110,8 @@ pub enum Module {
     },
 }
 
-pub static MODULE_STORE: LazyLock<RwLock<Vec<Module>>> = LazyLock::new(RwLock::default);
+/// Module store using Arc for lock-free concurrent reads after initialization
+pub static MODULE_STORE: OnceLock<Arc<[Module]>> = OnceLock::new();
 
 impl Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -136,10 +137,9 @@ impl Module {
 /// Initialise all modules
 ///
 /// # Errors
-/// This can error in three scenarios:
+/// This can error in two scenarios:
 ///   1. The module is invalid (e.g. the shared library cannot be found/has issues)
 ///   2. The modules init has an issue
-///   3. The module store lock is poisoned (another thread panicked while holding the lock)
 ///
 #[traced(instrument(level = tracing::Level::TRACE, ret, skip_all), timing)]
 pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
@@ -159,10 +159,10 @@ pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
             Module::TestModule { .. } | Module::Core { .. } => Ok(()),
         })?;
 
-    MODULE_STORE
-        .write()
-        .map_err(|e| anyhow::anyhow!("Failed to acquire module store write lock: {e}"))?
-        .extend(all_modules.into_iter());
+    let modules: Arc<[Module]> = all_modules.into();
+
+    // Set module store (ignore if already initialized, which can happen in tests)
+    let _ = MODULE_STORE.set(modules);
 
     internal!(level = INFO, "Modules initialised");
 
@@ -172,7 +172,7 @@ pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
 /// Dispatch an event to all modules
 ///
 /// Returns `true` if all modules handled the event successfully (returned 0),
-/// or `false` if any module failed or the module store lock is poisoned.
+/// or `false` if any module failed or modules not initialized.
 ///
 /// # Errors
 /// The events being dispatched are handled with a panic handler, which should
@@ -180,21 +180,19 @@ pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
 /// caller to handle.
 ///
 pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
-    let store = match MODULE_STORE.read() {
-        Ok(store) => store,
-        Err(e) => {
-            internal!(
-                level = ERROR,
-                "Failed to acquire module store read lock: {}. Treating as dispatch failure.",
-                e
-            );
-            return false;
-        }
+    let modules = if let Some(modules) = MODULE_STORE.get() {
+        Arc::clone(modules)
+    } else {
+        internal!(
+            level = ERROR,
+            "Module store not initialized. Treating as dispatch failure."
+        );
+        return false;
     };
 
     internal!("Dispatching: {event:?}");
 
-    store
+    modules
         .iter()
         .inspect(|m| internal!(level = DEBUG, "{m}"))
         .all(|module| module.emit(event, validate_context) == 0)

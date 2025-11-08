@@ -3,7 +3,7 @@
 #![allow(clippy::must_use_candidate)]
 
 use core::slice::SlicePattern;
-use std::ffi::CStr;
+use std::{borrow::Cow, ffi::CStr};
 
 use empath_common::{address::Address, context::Context, status::Status};
 
@@ -100,10 +100,12 @@ pub unsafe extern "C" fn em_context_set_response(
         None
     } else {
         Some((Status::from(status), unsafe {
-            CStr::from_ptr(response)
-                .to_owned()
-                .to_string_lossy()
-                .to_string()
+            Cow::Owned(
+                CStr::from_ptr(response)
+                    .to_owned()
+                    .to_string_lossy()
+                    .to_string(),
+            )
         }))
     };
 
@@ -176,7 +178,7 @@ pub unsafe extern "C" fn em_context_set(
                 let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
                 *validate_context
                     .metadata
-                    .entry(key.to_string())
+                    .entry(Cow::Owned(key.to_string()))
                     .or_default() = value;
                 true
             })
@@ -211,6 +213,7 @@ pub unsafe extern "C" fn em_context_get(
 #[cfg(test)]
 mod test {
     use std::{
+        borrow::Cow,
         ffi::{CStr, CString},
         ptr::null,
     };
@@ -382,11 +385,11 @@ mod test {
         assert!(ans);
         assert_eq!(
             validate_context.response,
-            Some((Status::Ok, "Test Response".to_owned()))
+            Some((Status::Ok, Cow::Owned("Test Response".to_owned())))
         );
 
         let mut validate_context = Context {
-            response: Some((Status::Ok, "Test".to_owned())),
+            response: Some((Status::Ok, Cow::Owned("Test".to_owned()))),
             ..Default::default()
         };
 

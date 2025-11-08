@@ -1,5 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
+use ahash::AHashMap;
 use empath_common::envelope::Envelope;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -20,7 +21,7 @@ pub struct Message {
     /// Whether EHLO (extended SMTP) was used
     pub extended: bool,
     /// Additional session context (e.g., TLS info, protocol, cipher)
-    pub context: HashMap<String, String>,
+    pub context: AHashMap<Cow<'static, str>, String>,
 }
 
 impl Message {
@@ -30,7 +31,7 @@ impl Message {
         data: Arc<[u8]>,
         helo_id: String,
         extended: bool,
-        context: HashMap<String, String>,
+        context: AHashMap<Cow<'static, str>, String>,
     ) -> Self {
         Self {
             envelope,
@@ -55,7 +56,7 @@ pub struct MessageBuilder {
     data: Option<Arc<[u8]>>,
     helo_id: Option<String>,
     extended: Option<bool>,
-    context: Option<HashMap<String, String>>,
+    context: Option<AHashMap<Cow<'static, str>, String>>,
 }
 
 /// Error type for `MessageBuilder` validation failures
@@ -97,7 +98,7 @@ impl MessageBuilder {
 
     /// Set additional session context (e.g., TLS info, protocol, cipher)
     #[must_use]
-    pub fn context(mut self, context: HashMap<String, String>) -> Self {
+    pub fn context(mut self, context: AHashMap<Cow<'static, str>, String>) -> Self {
         self.context = Some(context);
         self
     }

@@ -1,4 +1,4 @@
-use std::bstr;
+use std::{borrow::Cow, bstr};
 
 use empath_common::{context::Context, status::Status};
 use empath_tracing::traced;
@@ -28,18 +28,21 @@ impl Default for CoreValidators {
 
 /// Validation handler functions - read all state from Context
 fn validate_connect(validation_context: &mut Context) -> i32 {
-    validation_context.response = Some((Status::ServiceReady, validation_context.banner.clone()));
+    validation_context.response = Some((
+        Status::ServiceReady,
+        Cow::Owned(validation_context.banner.to_string()),
+    ));
     0
 }
 
 fn validate_ehlo(validation_context: &mut Context) -> i32 {
     validation_context.response = Some((
         Status::Ok,
-        format!(
+        Cow::Owned(format!(
             "{} says hello to {}",
             validation_context.banner,
             bstr::ByteStr::new(&validation_context.id())
-        ),
+        )),
     ));
 
     0
@@ -55,25 +58,25 @@ fn validate_mail_from(validation_context: &mut Context) -> i32 {
     {
         validation_context.response = Some((
             Status::ExceededStorage,
-            format!(
+            Cow::Owned(format!(
                 "5.2.3 Declared message size exceeds maximum (declared: {} bytes, maximum: {} bytes)",
                 declared_size, validation_context.max_message_size
-            ),
+            )),
         ));
         return 1;
     }
 
-    validation_context.response = Some((Status::Ok, "Ok".to_string()));
+    validation_context.response = Some((Status::Ok, Cow::Borrowed("Ok")));
     0
 }
 
 fn validate_rcpt_to(validation_context: &mut Context) -> i32 {
-    validation_context.response = Some((Status::Ok, "Ok".to_string()));
+    validation_context.response = Some((Status::Ok, Cow::Borrowed("Ok")));
     0
 }
 
 fn validate_data(validation_context: &mut Context) -> i32 {
-    validation_context.response = Some((Status::Ok, "Ok: queued".to_string()));
+    validation_context.response = Some((Status::Ok, Cow::Borrowed("Ok: queued")));
     0
 }
 

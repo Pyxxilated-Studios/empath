@@ -18,6 +18,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ahash = { version = "0.8", features = ["serde"] }
 anyhow = "1.0.93"
 charset = "0.1.5"
 encoding_rs = "0.8.35"

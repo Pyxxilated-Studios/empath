@@ -18,13 +18,16 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ahash = { version = "0.8", features = ["serde"] }
 anyhow = "1.0.93"
+arrayvec = "0.7"
 empath-common = { path = "../empath-common", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
 empath-spool = { path = "../empath-spool", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 futures-util = "0.3"
 mailparse = "0.16"
+phf = { version = "0.11", features = ["macros"] }
 rustls-native-certs = "0.8"
 rustls-pemfile = "2.2"
 serde = { version = "1", features = ["derive", "rc"] }

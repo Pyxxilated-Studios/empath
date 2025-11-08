@@ -1,6 +1,7 @@
 use core::bstr;
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, net::SocketAddr, path::PathBuf, sync::Arc};
 
+use ahash::AHashMap;
 use empath_common::{Signal, context, incoming, internal, outgoing, status::Status, tracing};
 use empath_ffi::modules::{self, validate};
 use empath_tracing::traced;
@@ -62,7 +63,7 @@ pub struct SessionConfig {
     pub tls_context: Option<TlsContext>,
     pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
     pub banner: String,
-    pub init_context: HashMap<String, String>,
+    pub init_context: AHashMap<Cow<'static, str>, String>,
 }
 
 impl SessionConfig {
@@ -80,7 +81,7 @@ pub struct SessionConfigBuilder {
     tls_context: Option<TlsContext>,
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     banner: String,
-    init_context: HashMap<String, String>,
+    init_context: AHashMap<Cow<'static, str>, String>,
 }
 
 impl SessionConfigBuilder {
@@ -114,7 +115,7 @@ impl SessionConfigBuilder {
 
     /// Set the initial context key-value pairs
     #[must_use]
-    pub fn with_init_context(mut self, init_context: HashMap<String, String>) -> Self {
+    pub fn with_init_context(mut self, init_context: AHashMap<Cow<'static, str>, String>) -> Self {
         self.init_context = init_context;
         self
     }
@@ -136,11 +137,11 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     peer: SocketAddr,
     context: Context,
     extensions: Vec<Extension>,
-    banner: String,
+    banner: Arc<str>,
     tls_context: Option<TlsContext>,
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     connection: Connection<Stream>,
-    init_context: HashMap<String, String>,
+    init_context: Arc<AHashMap<Cow<'static, str>, String>>,
     /// Maximum message size in bytes as advertised via SIZE extension (RFC 1870).
     ///
     /// A value of 0 means no size limit is enforced (unlimited).
@@ -179,17 +180,24 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
         Self {
             peer,
-            connection: Connection::Plain { stream },
+            connection: Connection::Plain {
+                stream,
+                read_buf: Vec::new(),
+                read_pos: 0,
+                read_len: 0,
+            },
             context: Context::default(),
             extensions: config.extensions,
             tls_context,
             spool: config.spool,
             banner: if config.banner.is_empty() {
-                std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string())
+                std::env::var("HOSTNAME")
+                    .unwrap_or_else(|_| "localhost".to_string())
+                    .into()
             } else {
-                config.banner
+                config.banner.into()
             },
-            init_context: config.init_context,
+            init_context: Arc::new(config.init_context),
             max_message_size,
         }
     }
@@ -233,13 +241,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                     validate_context
                         .metadata
-                        .insert("tls".to_string(), "true".to_string());
+                        .insert(Cow::Borrowed("tls"), "true".to_string());
                     validate_context
                         .metadata
-                        .insert("protocol".to_string(), info.proto());
+                        .insert(Cow::Borrowed("protocol"), info.proto());
                     validate_context
                         .metadata
-                        .insert("cipher".to_string(), info.cipher());
+                        .insert(Cow::Borrowed("cipher"), info.cipher());
 
                     session.context = Context {
                         sent: true,
@@ -258,7 +266,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         session.context.sent = false;
                         session.context.state = State::Reject(state::Reject);
                         validate_context.response =
-                            Some((Status::Error, String::from("STARTTLS failed")));
+                            Some((Status::Error, Cow::Borrowed("STARTTLS failed")));
                     }
                 } else {
                     tokio::select! {
@@ -266,7 +274,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                             session.context.sent = false;
                             session.context.state = State::Close(state::Close);
                             validate_context.response =
-                                Some((Status::Unavailable, String::from("Server shutting down")));
+                                Some((Status::Unavailable, Cow::Borrowed("Server shutting down")));
                         }
                         close = session.receive(validate_context) => {
                             if close.unwrap_or(true) {
@@ -279,14 +287,23 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         }
 
         let mut validate_context = context::Context {
-            banner: self.banner.clone(),
+            banner: Arc::clone(&self.banner),
             max_message_size: self.max_message_size,
             capabilities: self
                 .extensions
                 .iter()
                 .flat_map(std::convert::TryInto::try_into)
                 .collect(),
-            metadata: self.init_context.clone(),
+            // Fast path: if init_context is empty, use default. Otherwise copy entries.
+            // This avoids HashMap clone in the common case (empty init_context)
+            metadata: if self.init_context.is_empty() {
+                AHashMap::new()
+            } else {
+                self.init_context
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            },
             ..Default::default()
         };
 
@@ -384,20 +401,20 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             && let Some(data) = &validate_context.data
         {
             match empath_spool::Message::builder()
-                .envelope(validate_context.envelope.clone())
+                .envelope(std::mem::take(&mut validate_context.envelope))
                 .data(data.clone())
-                .helo_id(validate_context.id.clone())
+                .helo_id(std::mem::take(&mut validate_context.id))
                 .extended(validate_context.extended)
-                .context(validate_context.metadata.clone())
+                .context(std::mem::take(&mut validate_context.metadata))
                 .build()
             {
-                Ok(message) => match spool.write(&message).await {
+                Ok(message) => match spool.write(message).await {
                     Ok(id) => Some(id),
                     Err(e) => {
                         internal!(level = ERROR, "Failed to spool message: {e}");
                         validate_context.response = Some((
                             Status::ActionUnavailable,
-                            "Requested action aborted: error spooling message".to_string(),
+                            Cow::Borrowed("Requested action aborted: error spooling message"),
                         ));
                         return;
                     }
@@ -406,7 +423,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     internal!(level = ERROR, "Failed to build message: {e}");
                     validate_context.response = Some((
                         Status::ActionUnavailable,
-                        "Requested action aborted: error processing message".to_string(),
+                        Cow::Borrowed("Requested action aborted: error processing message"),
                     ));
                     return;
                 }
@@ -422,8 +439,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         validate_context.response = Some((
             Status::Ok,
             tracking_id.as_ref().map_or_else(
-                || "Ok: queued".to_string(),
-                |id| format!("Ok: queued as {id}"),
+                || Cow::Borrowed("Ok: queued"),
+                |id| Cow::Owned(format!("Ok: queued as {id}")),
             ),
         ));
     }
@@ -479,6 +496,16 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             }
             State::Data(_) => {
                 self.context.state = State::Reading(state::Reading);
+
+                // Pre-allocate message buffer based on SIZE parameter if declared
+                if let Some(params) = validate_context.envelope.mail_params()
+                    && let Some(Some(size_str)) = params.get("SIZE")
+                    && let Ok(declared_size) = size_str.parse::<usize>()
+                {
+                    // Reserve capacity to avoid reallocations during message receipt
+                    self.context.message.reserve(declared_size);
+                }
+
                 (
                     Some(vec![format!(
                         "{} End data with <CR><LF>.<CR><LF>",
@@ -541,10 +568,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         if total_size > self.max_message_size {
                             validate_context.response = Some((
                                 Status::ExceededStorage,
-                                format!(
+                                Cow::Owned(format!(
                                     "Actual message size {} bytes exceeds maximum allowed size {} bytes",
                                     total_size, self.max_message_size
-                                ),
+                                )),
                             ));
                             self.context.state = State::Close(state::Close);
                             self.context.sent = false;
@@ -568,7 +595,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     }
                 } else {
                     let command = Command::try_from(received).unwrap_or_else(|e| e);
-                    let message = command.inner().into_bytes();
+                    let message = command.inner().as_bytes().to_vec();
 
                     incoming!("{command}");
 
@@ -613,7 +640,7 @@ mod test {
 
         let banner = "testing";
         let mut context = Context {
-            banner: banner.to_string(),
+            banner: banner.into(),
             max_message_size: 0,
             ..Default::default()
         };
@@ -647,7 +674,7 @@ mod test {
 
         let banner = "testing";
         let mut context = Context {
-            banner: banner.to_string(),
+            banner: banner.into(),
             max_message_size: 0,
             ..Default::default()
         };
@@ -696,7 +723,7 @@ mod test {
 
         let banner = "testing";
         let mut context = Context {
-            banner: banner.to_string(),
+            banner: banner.into(),
             max_message_size: 0,
             ..Default::default()
         };
@@ -763,7 +790,7 @@ mod test {
     async fn modules() {
         let banner = "testing";
         let mut context = Context {
-            banner: banner.to_string(),
+            banner: banner.into(),
             max_message_size: 0,
             ..Default::default()
         };

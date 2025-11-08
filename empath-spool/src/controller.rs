@@ -242,7 +242,7 @@ impl BackingStore for FileBackingStore {
     /// filesystems with journaling (ext4, XFS, APFS), the rename operations
     /// are atomic and very fast (< 1ms typical).
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self, message)), timing(precision = "ms"))]
-    async fn write(&self, message: &Message) -> anyhow::Result<SpooledMessageId> {
+    async fn write(&self, message: Message) -> anyhow::Result<SpooledMessageId> {
         // Generate unique tracking ID
         let tracking_id = SpooledMessageId::generate();
         let tracking_str = tracking_id.to_string();

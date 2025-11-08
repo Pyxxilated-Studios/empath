@@ -10,7 +10,7 @@ pub mod session;
 pub mod state;
 
 // Re-export commonly used types
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, net::SocketAddr, sync::Arc};
 
 pub use command::MailParameters;
 use empath_common::{
@@ -85,7 +85,12 @@ impl Protocol for Smtp {
             SessionConfig::builder()
                 .with_extensions(args.extensions)
                 .with_spool(args.spool)
-                .with_init_context(init_context)
+                .with_init_context(
+                    init_context
+                        .into_iter()
+                        .map(|(k, v)| (Cow::Owned(k), v))
+                        .collect(),
+                )
                 .build(),
         )
     }

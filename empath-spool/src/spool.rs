@@ -129,7 +129,7 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     /// Returns an error if the message cannot be written
-    async fn write(&self, message: &Message) -> anyhow::Result<SpooledMessageId>;
+    async fn write(&self, message: Message) -> anyhow::Result<SpooledMessageId>;
 
     /// List all message identifiers
     ///
@@ -204,7 +204,7 @@ impl<T: BackingStore> Spool<T> {
     ///
     /// # Errors
     /// Returns an error if the message cannot be written to the backing store
-    pub async fn spool_message(&self, message: &Message) -> anyhow::Result<SpooledMessageId> {
+    pub async fn spool_message(&self, message: Message) -> anyhow::Result<SpooledMessageId> {
         self.store.write(message).await
     }
 
@@ -348,7 +348,7 @@ impl Default for MemoryBackingStore {
 
 #[async_trait]
 impl BackingStore for MemoryBackingStore {
-    async fn write(&self, message: &Message) -> anyhow::Result<SpooledMessageId> {
+    async fn write(&self, message: Message) -> anyhow::Result<SpooledMessageId> {
         // Generate unique ULID
         let id = SpooledMessageId::generate();
 
@@ -369,7 +369,7 @@ impl BackingStore for MemoryBackingStore {
             ));
         }
 
-        messages.insert(id.clone(), message.clone());
+        messages.insert(id.clone(), message);
         // Clippy suggests that: temporary with significant `Drop` can be early dropped
         drop(messages);
 
@@ -509,7 +509,7 @@ impl TestBackingStore {
 
 #[async_trait]
 impl BackingStore for TestBackingStore {
-    async fn write(&self, message: &Message) -> anyhow::Result<SpooledMessageId> {
+    async fn write(&self, message: Message) -> anyhow::Result<SpooledMessageId> {
         let id = self.inner.write(message).await?;
         self.notify.notify_waiters();
         Ok(id)
@@ -533,7 +533,9 @@ pub type TestSpool = Spool<TestBackingStore>;
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::sync::Arc;
+
+    use ahash::AHashMap;
 
     use super::*;
 
@@ -545,7 +547,7 @@ mod tests {
             data: Arc::from(data.as_bytes()),
             helo_id: "test.example.com".to_string(),
             extended: false,
-            context: HashMap::new(),
+            context: AHashMap::new(),
         }
     }
 
@@ -553,9 +555,10 @@ mod tests {
     async fn test_memory_store_basic_operations() {
         let store = MemoryBackingStore::new();
         let message = create_test_message("test message");
+        let expected_data = message.data.clone();
 
         // Write message and get tracking ID
-        let id = store.write(&message).await.expect("Failed to write");
+        let id = store.write(message).await.expect("Failed to write");
 
         // List messages
         let ids = store.list().await.expect("Failed to list");
@@ -564,7 +567,7 @@ mod tests {
 
         // Read message
         let read_msg = store.read(&id).await.expect("Failed to read");
-        assert_eq!(read_msg.data.as_ref(), message.data.as_ref());
+        assert_eq!(read_msg.data.as_ref(), expected_data.as_ref());
 
         // Delete message
         store.delete(&id).await.expect("Failed to delete");
@@ -579,18 +582,15 @@ mod tests {
         // Write up to capacity
         let msg1 = create_test_message("message 1");
         let msg2 = create_test_message("message 2");
+        store.write(msg1).await.expect("First write should succeed");
         store
-            .write(&msg1)
-            .await
-            .expect("First write should succeed");
-        store
-            .write(&msg2)
+            .write(msg2)
             .await
             .expect("Second write should succeed");
 
         // Third write should fail
         let msg3 = create_test_message("message 3");
-        let result = store.write(&msg3).await;
+        let result = store.write(msg3.clone()).await;
         assert!(result.is_err());
         assert!(
             result
@@ -603,7 +603,7 @@ mod tests {
         let ids = store.list().await.expect("Failed to list");
         store.delete(&ids[0]).await.expect("Failed to delete");
 
-        let result = store.write(&msg3).await;
+        let result = store.write(msg3).await;
         assert!(result.is_ok());
     }
 
@@ -617,7 +617,7 @@ mod tests {
             let store_clone = store.clone();
             let handle = tokio::spawn(async move {
                 let msg = create_test_message(&format!("message {i}"));
-                store_clone.write(&msg).await
+                store_clone.write(msg).await
             });
             handles.push(handle);
         }
@@ -644,19 +644,17 @@ mod tests {
         let spool = Spool::new(store);
 
         let message = create_test_message("test message");
+        let expected_data = message.data.clone();
 
         // Test through Spool interface and get tracking ID
-        let id = spool
-            .spool_message(&message)
-            .await
-            .expect("Failed to spool");
+        let id = spool.spool_message(message).await.expect("Failed to spool");
 
         let ids = spool.list_messages().await.expect("Failed to list");
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id);
 
         let read_msg = spool.read_message(&id).await.expect("Failed to read");
-        assert_eq!(read_msg.data.as_ref(), message.data.as_ref());
+        assert_eq!(read_msg.data.as_ref(), expected_data.as_ref());
 
         spool.delete_message(&id).await.expect("Failed to delete");
 
@@ -669,14 +667,15 @@ mod tests {
         // Test that we can use trait objects
         let store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::new());
         let message = create_test_message("polymorphic test");
+        let expected_data = message.data.clone();
 
-        let id = store.write(&message).await.expect("Failed to write");
+        let id = store.write(message).await.expect("Failed to write");
         let ids = store.list().await.expect("Failed to list");
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id);
 
         let read_msg = store.read(&id).await.expect("Failed to read");
-        assert_eq!(read_msg.data.as_ref(), message.data.as_ref());
+        assert_eq!(read_msg.data.as_ref(), expected_data.as_ref());
     }
 
     #[tokio::test]
@@ -687,7 +686,7 @@ mod tests {
         let mut generated_ids = Vec::new();
         for i in 0..10 {
             let msg = create_test_message(&format!("message {i}"));
-            let id = store.write(&msg).await.expect("Failed to write");
+            let id = store.write(msg).await.expect("Failed to write");
             generated_ids.push(id);
         }
 
@@ -721,7 +720,7 @@ mod tests {
 
         // Write and verify recovery
         let msg = create_test_message("test");
-        store.write(&msg).await.expect("Failed to write");
+        store.write(msg).await.expect("Failed to write");
         assert_eq!(store.len(), 1);
         assert!(!store.is_empty());
     }

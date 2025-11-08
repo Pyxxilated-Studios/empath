@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::borrow::Cow;
 
+use ahash::AHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::address::{Address, AddressList};
 
 /// ESMTP parameters (e.g., SIZE, BODY, etc.)
-pub type MailParameters = HashMap<String, Option<String>>;
+pub type MailParameters = AHashMap<Cow<'static, str>, Option<String>>;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {

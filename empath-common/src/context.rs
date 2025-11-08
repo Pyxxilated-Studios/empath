@@ -1,5 +1,6 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{borrow::Cow, fmt::Debug, sync::Arc};
 
+use ahash::AHashMap;
 use mailparse::MailAddr;
 
 use crate::{envelope::Envelope, status::Status};
@@ -9,20 +10,36 @@ pub enum Capability {
     Auth,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Context {
     pub extended: bool,
     pub envelope: Envelope,
     pub id: String,
     pub data: Option<Arc<[u8]>>,
-    pub response: Option<(Status, String)>,
+    pub response: Option<(Status, Cow<'static, str>)>,
     /// Session metadata and custom attributes
-    pub metadata: HashMap<String, String>,
+    pub metadata: AHashMap<Cow<'static, str>, String>,
     /// Server banner/hostname for greeting messages
-    pub banner: String,
+    pub banner: Arc<str>,
     /// Maximum message size in bytes (0 = unlimited)
     pub max_message_size: usize,
     pub capabilities: Vec<Capability>,
+}
+
+impl Default for Context {
+    fn default() -> Self {
+        Self {
+            extended: false,
+            envelope: Envelope::default(),
+            id: String::new(),
+            data: None,
+            response: None,
+            metadata: AHashMap::new(),
+            banner: Arc::from(""),
+            max_message_size: 0,
+            capabilities: Vec::new(),
+        }
+    }
 }
 
 impl Context {

@@ -1,8 +1,10 @@
 use core::fmt::{self, Display, Formatter};
-use std::collections::HashMap;
+use std::borrow::Cow;
 
+use ahash::AHashMap;
 use empath_common::address::{Address, AddressList};
 use mailparse::MailAddr;
+use phf::phf_map;
 
 /// ESMTP parameters for MAIL FROM command (RFC 5321 Section 3.3).
 ///
@@ -16,7 +18,39 @@ use mailparse::MailAddr;
 /// - SMTPUTF8: UTF-8 support (RFC 6531)
 #[derive(PartialEq, Eq, Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MailParameters {
-    params: HashMap<String, Option<String>>,
+    params: AHashMap<Cow<'static, str>, Option<String>>,
+}
+
+/// Perfect hash map of known ESMTP parameters for O(1) lookup
+static KNOWN_PARAMS: phf::Map<&'static str, &'static str> = phf_map! {
+    "SIZE" => "SIZE",
+    "BODY" => "BODY",
+    "AUTH" => "AUTH",
+    "RET" => "RET",
+    "ENVID" => "ENVID",
+    "SMTPUTF8" => "SMTPUTF8",
+};
+
+/// Normalize a parameter key, using static str for known parameters with O(1) lookup
+fn normalize_key(key: &str) -> Cow<'static, str> {
+    // Stack-allocated buffer for uppercasing (max param name length is typically < 16)
+    let mut upper_buf = [0u8; 16];
+    let key_bytes = key.as_bytes();
+    let len = key_bytes.len().min(16);
+
+    // Convert to uppercase in-place
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..len {
+        upper_buf[i] = key_bytes[i].to_ascii_uppercase();
+    }
+
+    // SAFETY: We only uppercased ASCII bytes, so still valid UTF-8
+    let upper = unsafe { std::str::from_utf8_unchecked(&upper_buf[..len]) };
+
+    // O(1) lookup in perfect hash map
+    KNOWN_PARAMS
+        .get(upper)
+        .map_or_else(|| Cow::Owned(upper.to_string()), |&s| Cow::Borrowed(s))
 }
 
 impl MailParameters {
@@ -24,7 +58,7 @@ impl MailParameters {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            params: HashMap::new(),
+            params: AHashMap::new(),
         }
     }
 
@@ -45,35 +79,43 @@ impl MailParameters {
         for token in param_tokens {
             if let Some((key, value)) = token.split_once('=') {
                 // Parameter with value: KEY=VALUE
-                let key_upper = key.to_uppercase();
+                let key_normalized = normalize_key(key);
 
                 // Check for duplicates using has()
-                if params.has(&key_upper) {
-                    return Err(format!("Duplicate parameter '{key_upper}' not allowed"));
+                if params.has(key) {
+                    return Err(format!(
+                        "Duplicate parameter '{key_normalized}' not allowed"
+                    ));
                 }
 
                 // Special validation for SIZE parameter
-                if key_upper == "SIZE" {
+                if key_normalized == "SIZE" {
                     if let Ok(size_val) = value.parse::<usize>() {
                         if size_val == 0 {
                             return Err(String::from("SIZE=0 is not allowed"));
                         }
-                        params.insert(key_upper, value);
+                        params
+                            .params
+                            .insert(key_normalized, Some(value.to_string()));
                     } else {
                         return Err(format!("Invalid SIZE value: {value}"));
                     }
                 } else {
-                    params.insert(key_upper, value);
+                    params
+                        .params
+                        .insert(key_normalized, Some(value.to_string()));
                 }
             } else {
                 // Parameter without value: FLAG (e.g., SMTPUTF8)
-                let key_upper = token.to_uppercase();
+                let key_normalized = normalize_key(token);
 
-                if params.has(&key_upper) {
-                    return Err(format!("Duplicate parameter '{key_upper}' not allowed"));
+                if params.has(token) {
+                    return Err(format!(
+                        "Duplicate parameter '{key_normalized}' not allowed"
+                    ));
                 }
 
-                params.insert_flag(key_upper);
+                params.params.insert(key_normalized, None);
             }
         }
 
@@ -82,25 +124,27 @@ impl MailParameters {
 
     /// Adds a parameter with a value.
     pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let key_str = key.into();
         self.params
-            .insert(key.into().to_uppercase(), Some(value.into()));
+            .insert(normalize_key(&key_str), Some(value.into()));
     }
 
     /// Adds a parameter without a value (flag).
     pub fn insert_flag(&mut self, key: impl Into<String>) {
-        self.params.insert(key.into().to_uppercase(), None);
+        let key_str = key.into();
+        self.params.insert(normalize_key(&key_str), None);
     }
 
     /// Gets a parameter value by key (case-insensitive).
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.params.get(&key.to_uppercase())?.as_deref()
+        self.params.get(normalize_key(key).as_ref())?.as_deref()
     }
 
     /// Checks if a parameter exists (case-insensitive).
     #[must_use]
     pub fn has(&self, key: &str) -> bool {
-        self.params.contains_key(&key.to_uppercase())
+        self.params.contains_key(normalize_key(key).as_ref())
     }
 
     /// Gets the SIZE parameter value, if present.
@@ -116,30 +160,32 @@ impl MailParameters {
     }
 
     /// Returns an iterator over all parameters.
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &Option<String>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Cow<'static, str>, &Option<String>)> {
         self.params.iter()
     }
 }
 
-impl<S: std::hash::BuildHasher + Default> From<MailParameters>
-    for HashMap<String, Option<String>, S>
-{
+impl From<MailParameters> for AHashMap<Cow<'static, str>, Option<String>> {
     fn from(params: MailParameters) -> Self {
-        params.params.into_iter().collect()
+        params.params
     }
 }
 
 impl Display for MailParameters {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let params: Vec<String> = self
-            .params
-            .iter()
-            .map(|(k, v)| {
-                v.as_ref()
-                    .map_or_else(|| k.clone(), |val| format!("{k}={val}"))
-            })
-            .collect();
-        f.write_str(&params.join(" "))
+        let mut first = true;
+        for (k, v) in &self.params {
+            if !first {
+                f.write_str(" ")?;
+            }
+            first = false;
+
+            match v {
+                None => f.write_str(k)?,
+                Some(val) => write!(f, "{k}={val}")?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -177,16 +223,19 @@ pub enum Command {
 
 impl Command {
     #[must_use]
-    pub fn inner(&self) -> String {
+    pub fn inner(&self) -> Cow<'_, str> {
         match self {
-            Self::MailFrom(from, _) => from.as_ref().map_or_else(String::new, |f| match &**f {
-                MailAddr::Group(_) => String::new(),
-                MailAddr::Single(s) => s.to_string(),
-            }),
-            Self::RcptTo(to) => to.to_string(),
-            Self::Invalid(command) => command.clone(),
-            Self::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => id.clone(),
-            _ => String::new(),
+            Self::MailFrom(from, _) => from.as_ref().map_or_else(
+                || Cow::Borrowed(""),
+                |f| match &**f {
+                    MailAddr::Group(_) => Cow::Borrowed(""),
+                    MailAddr::Single(s) => Cow::Owned(s.to_string()),
+                },
+            ),
+            Self::RcptTo(to) => Cow::Owned(to.to_string()),
+            Self::Invalid(command) => Cow::Borrowed(command.as_str()),
+            Self::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => Cow::Borrowed(id.as_str()),
+            _ => Cow::Borrowed(""),
         }
     }
 
@@ -254,17 +303,17 @@ impl TryFrom<&str> for Command {
     type Error = Self;
 
     fn try_from(command: &str) -> Result<Self, Self::Error> {
-        let comm = command.to_ascii_uppercase();
-        let comm = comm.trim();
+        let trimmed = command.trim();
 
-        if comm.starts_with("MAIL FROM:") {
-            if comm.len() < 11 {
+        // Zero-allocation case-insensitive prefix matching
+        if trimmed.len() >= 10 && trimmed[..10].eq_ignore_ascii_case("MAIL FROM:") {
+            if trimmed.len() < 11 {
                 return Err(Self::Invalid(command.to_owned()));
             }
 
             // Parse the address and optional ESMTP parameters
             // Format: MAIL FROM:<addr> [param1=value1] [param2=value2] ...
-            let rest = command[10..].trim();
+            let rest = trimmed[10..].trim();
 
             // Split on whitespace to separate address from parameters
             let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
@@ -295,33 +344,42 @@ impl TryFrom<&str> for Command {
                     ))
                 },
             )
-        } else if comm.starts_with("RCPT TO:") {
-            if comm.len() < 9 {
+        } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("RCPT TO:") {
+            if trimmed.len() < 9 {
                 return Err(Self::Invalid(command.to_owned()));
             }
 
-            mailparse::addrparse(command[8..].trim()).map_or_else(
+            mailparse::addrparse(trimmed[8..].trim()).map_or_else(
                 |e| Err(Self::Invalid(e.to_string())),
                 |to| Ok(Self::RcptTo(to.into())),
             )
-        } else if comm.starts_with("EHLO") || comm.starts_with("HELO") {
-            match command.split_once(' ') {
-                None => Err(Self::Invalid(format!("Expected hostname in {comm}"))),
-                Some((_, host)) if comm.starts_with('H') => {
-                    Ok(Self::Helo(HeloVariant::Helo(host.trim().to_string())))
+        } else if trimmed.len() >= 4 {
+            let prefix = &trimmed[..4];
+            if prefix.eq_ignore_ascii_case("EHLO") || prefix.eq_ignore_ascii_case("HELO") {
+                match trimmed.split_once(' ') {
+                    None => Err(Self::Invalid(format!("Expected hostname in {trimmed}"))),
+                    Some((cmd, host)) if cmd.eq_ignore_ascii_case("HELO") => {
+                        Ok(Self::Helo(HeloVariant::Helo(host.trim().to_string())))
+                    }
+                    Some((_, host)) => Ok(Self::Helo(HeloVariant::Ehlo(host.trim().to_string()))),
                 }
-                Some((_, host)) => Ok(Self::Helo(HeloVariant::Ehlo(host.trim().to_string()))),
+            } else if trimmed.eq_ignore_ascii_case("DATA") {
+                Ok(Self::Data)
+            } else if trimmed.eq_ignore_ascii_case("QUIT") {
+                Ok(Self::Quit)
+            } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("STARTTLS") {
+                Ok(Self::StartTLS)
+            } else if trimmed.eq_ignore_ascii_case("HELP") {
+                Ok(Self::Help)
+            } else if trimmed.eq_ignore_ascii_case("AUTH") {
+                Ok(Self::Auth)
+            } else if trimmed.eq_ignore_ascii_case("RSET") {
+                Ok(Self::Rset)
+            } else {
+                Err(Self::Invalid(command.to_owned()))
             }
         } else {
-            match comm {
-                "DATA" => Ok(Self::Data),
-                "QUIT" => Ok(Self::Quit),
-                "STARTTLS" => Ok(Self::StartTLS),
-                "HELP" => Ok(Self::Help),
-                "AUTH" => Ok(Self::Auth),
-                "RSET" => Ok(Self::Rset),
-                _ => Err(Self::Invalid(command.to_owned())),
-            }
+            Err(Self::Invalid(command.to_owned()))
         }
     }
 }

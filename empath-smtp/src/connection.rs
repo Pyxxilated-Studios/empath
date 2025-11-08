@@ -39,8 +39,24 @@ impl TlsInfo {
 }
 
 pub enum Connection<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
-    Plain { stream: Stream },
-    Tls { stream: Box<TlsStream<Stream>> },
+    Plain {
+        stream: Stream,
+        /// Internal read buffer to reduce syscalls (8KB)
+        read_buf: Vec<u8>,
+        /// Current position in read buffer
+        read_pos: usize,
+        /// Amount of valid data in read buffer
+        read_len: usize,
+    },
+    Tls {
+        stream: Box<TlsStream<Stream>>,
+        /// Internal read buffer to reduce syscalls (8KB)
+        read_buf: Vec<u8>,
+        /// Current position in read buffer
+        read_pos: usize,
+        /// Amount of valid data in read buffer
+        read_len: usize,
+    },
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
@@ -49,9 +65,20 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         &mut self,
         response: &S,
     ) -> anyhow::Result<usize> {
+        // Format response to stack-allocated buffer to avoid heap allocation
+        use std::fmt::Write;
+        let mut buffer = arrayvec::ArrayString::<512>::new();
+        write!(&mut buffer, "{response}\r\n")?;
+
         Ok(match self {
-            Self::Plain { stream } => stream.write(format!("{response}\r\n").as_bytes()).await?,
-            Self::Tls { stream, .. } => stream.write(format!("{response}\r\n").as_bytes()).await?,
+            Self::Plain { stream, .. } => stream
+                .write_all(buffer.as_bytes())
+                .await
+                .map(|()| buffer.len())?,
+            Self::Tls { stream, .. } => stream
+                .write_all(buffer.as_bytes())
+                .await
+                .map(|()| buffer.len())?,
         })
     }
 
@@ -90,30 +117,111 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
         Ok(match self {
-            Self::Plain { stream } => {
+            Self::Plain {
+                stream,
+                read_buf,
+                read_pos,
+                read_len,
+            } => {
                 let stream = acceptor.accept(stream).await?;
                 let info = TlsInfo::of(stream.get_ref().1);
 
                 (
                     Self::Tls {
                         stream: Box::new(stream),
+                        read_buf,
+                        read_pos,
+                        read_len,
                     },
                     info,
                 )
             }
-            Self::Tls { stream, .. } => {
+            Self::Tls {
+                stream,
+                read_buf,
+                read_pos,
+                read_len,
+            } => {
                 let (stream, connection) = acceptor.accept(stream).await?.into_inner();
 
-                (Self::Tls { stream }, TlsInfo::of(&connection))
+                (
+                    Self::Tls {
+                        stream,
+                        read_buf,
+                        read_pos,
+                        read_len,
+                    },
+                    TlsInfo::of(&connection),
+                )
             }
         })
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn receive(&mut self, buf: &mut [u8]) -> anyhow::Result<usize> {
-        Ok(match self {
-            Self::Plain { stream } => stream.read(buf).await?,
-            Self::Tls { stream, .. } => stream.read(buf).await?,
-        })
+        const BUFFER_SIZE: usize = 8192;
+
+        match self {
+            Self::Plain {
+                stream,
+                read_buf,
+                read_pos,
+                read_len,
+            } => {
+                // If we have buffered data, use it first
+                if *read_pos < *read_len {
+                    let available = *read_len - *read_pos;
+                    let to_copy = available.min(buf.len());
+                    buf[..to_copy].copy_from_slice(&read_buf[*read_pos..*read_pos + to_copy]);
+                    *read_pos += to_copy;
+                    return Ok(to_copy);
+                }
+
+                // Buffer is empty, read more data
+                if read_buf.is_empty() {
+                    read_buf.resize(BUFFER_SIZE, 0);
+                }
+
+                let bytes_read = stream.read(read_buf).await?;
+                *read_pos = 0;
+                *read_len = bytes_read;
+
+                // Copy from buffer to output
+                let to_copy = bytes_read.min(buf.len());
+                buf[..to_copy].copy_from_slice(&read_buf[..to_copy]);
+                *read_pos = to_copy;
+                Ok(to_copy)
+            }
+            Self::Tls {
+                stream,
+                read_buf,
+                read_pos,
+                read_len,
+            } => {
+                // If we have buffered data, use it first
+                if *read_pos < *read_len {
+                    let available = *read_len - *read_pos;
+                    let to_copy = available.min(buf.len());
+                    buf[..to_copy].copy_from_slice(&read_buf[*read_pos..*read_pos + to_copy]);
+                    *read_pos += to_copy;
+                    return Ok(to_copy);
+                }
+
+                // Buffer is empty, read more data
+                if read_buf.is_empty() {
+                    read_buf.resize(BUFFER_SIZE, 0);
+                }
+
+                let bytes_read = stream.read(read_buf).await?;
+                *read_pos = 0;
+                *read_len = bytes_read;
+
+                // Copy from buffer to output
+                let to_copy = bytes_read.min(buf.len());
+                buf[..to_copy].copy_from_slice(&read_buf[..to_copy]);
+                *read_pos = to_copy;
+                Ok(to_copy)
+            }
+        }
     }
 }
