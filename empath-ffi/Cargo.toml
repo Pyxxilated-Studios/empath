@@ -22,7 +22,7 @@ anyhow = "1.0.93"
 empath-common = { path = "../empath-common", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 libc = "0.2"
-libloading = "0.8"
+libloading = "0.9"
 mailparse = "0.16"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
