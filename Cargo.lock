@@ -473,6 +473,7 @@ dependencies = [
  "mailparse",
  "pretty_assertions",
  "serde",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -482,7 +483,6 @@ dependencies = [
 name = "empath-delivery"
 version = "0.0.1"
 dependencies = [
- "anyhow",
  "empath-common",
  "empath-ffi",
  "empath-smtp",
@@ -503,7 +503,6 @@ dependencies = [
 name = "empath-ffi"
 version = "0.0.2"
 dependencies = [
- "anyhow",
  "cbindgen",
  "empath-common",
  "empath-tracing",
@@ -520,7 +519,6 @@ name = "empath-smtp"
 version = "0.0.2"
 dependencies = [
  "ahash",
- "anyhow",
  "arrayvec",
  "criterion",
  "empath-common",

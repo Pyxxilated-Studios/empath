@@ -141,7 +141,7 @@ impl DnsResolver {
     /// # Errors
     ///
     /// Returns an error if the system DNS configuration cannot be loaded.
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> Result<Self, DnsError> {
         Self::with_dns_config(DnsConfig::default())
     }
 
@@ -150,7 +150,7 @@ impl DnsResolver {
     /// # Errors
     ///
     /// Returns an error if the resolver cannot be initialized.
-    pub fn with_dns_config(dns_config: DnsConfig) -> anyhow::Result<Self> {
+    pub fn with_dns_config(dns_config: DnsConfig) -> Result<Self, DnsError> {
         let mut opts = ResolverOpts::default();
         opts.timeout = Duration::from_secs(dns_config.timeout_secs);
 
@@ -176,7 +176,7 @@ impl DnsResolver {
         resolver_config: ResolverConfig,
         opts: ResolverOpts,
         dns_config: DnsConfig,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, DnsError> {
         let resolver = TokioAsyncResolver::tokio(resolver_config, opts);
 
         let cache_size =

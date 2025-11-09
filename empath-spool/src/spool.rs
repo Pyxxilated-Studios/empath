@@ -129,7 +129,7 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     /// Returns an error if the context cannot be written
-    async fn write(&self, context: Context) -> anyhow::Result<SpooledMessageId>;
+    async fn write(&self, context: Context) -> crate::Result<SpooledMessageId>;
 
     /// List all message identifiers
     ///
@@ -137,19 +137,19 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     /// Returns an error if the backing store cannot be read
-    async fn list(&self) -> anyhow::Result<Vec<SpooledMessageId>>;
+    async fn list(&self) -> crate::Result<Vec<SpooledMessageId>>;
 
     /// Read a specific message and return its full context
     ///
     /// # Errors
     /// Returns an error if the message cannot be found or read
-    async fn read(&self, id: &SpooledMessageId) -> anyhow::Result<Context>;
+    async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context>;
 
     /// Delete a message
     ///
     /// # Errors
     /// Returns an error if the message cannot be deleted
-    async fn delete(&self, id: &SpooledMessageId) -> anyhow::Result<()>;
+    async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()>;
 }
 
 /// Main Spool struct - generic over backing store
@@ -204,7 +204,7 @@ impl<T: BackingStore> Spool<T> {
     ///
     /// # Errors
     /// Returns an error if the context cannot be written to the backing store
-    pub async fn spool_message(&self, context: Context) -> anyhow::Result<SpooledMessageId> {
+    pub async fn spool_message(&self, context: Context) -> crate::Result<SpooledMessageId> {
         self.store.write(context).await
     }
 
@@ -212,7 +212,7 @@ impl<T: BackingStore> Spool<T> {
     ///
     /// # Errors
     /// Returns an error if the backing store cannot be read
-    pub async fn list_messages(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
+    pub async fn list_messages(&self) -> crate::Result<Vec<SpooledMessageId>> {
         self.store.list().await
     }
 
@@ -220,7 +220,7 @@ impl<T: BackingStore> Spool<T> {
     ///
     /// # Errors
     /// Returns an error if the message cannot be found or read
-    pub async fn read_message(&self, id: &SpooledMessageId) -> anyhow::Result<Context> {
+    pub async fn read_message(&self, id: &SpooledMessageId) -> crate::Result<Context> {
         self.store.read(id).await
     }
 
@@ -228,7 +228,7 @@ impl<T: BackingStore> Spool<T> {
     ///
     /// # Errors
     /// Returns an error if the message cannot be deleted
-    pub async fn delete_message(&self, id: &SpooledMessageId) -> anyhow::Result<()> {
+    pub async fn delete_message(&self, id: &SpooledMessageId) -> crate::Result<()> {
         self.store.delete(id).await
     }
 
@@ -348,28 +348,27 @@ impl Default for MemoryBackingStore {
 
 #[async_trait]
 impl BackingStore for MemoryBackingStore {
-    async fn write(&self, mut context: Context) -> anyhow::Result<SpooledMessageId> {
+    async fn write(&self, mut context: Context) -> crate::Result<SpooledMessageId> {
+        use crate::error::SpoolError;
+
         // Generate unique ULID
         let id = SpooledMessageId::generate();
 
         // Set the tracking ID in the context
         context.tracking_id = Some(id.to_string());
 
-        let mut messages = self
-            .messages
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?;
+        let mut messages = self.messages.lock()?;
 
         // Check capacity before inserting (don't count if overwriting existing)
         if let Some(cap) = self.capacity
             && !messages.contains_key(&id)
             && messages.len() >= cap
         {
-            return Err(anyhow::anyhow!(
+            return Err(SpoolError::Internal(format!(
                 "Memory spool capacity exceeded: {}/{} messages",
                 messages.len(),
                 cap
-            ));
+            )));
         }
 
         messages.insert(id.clone(), context);
@@ -379,14 +378,8 @@ impl BackingStore for MemoryBackingStore {
         Ok(id)
     }
 
-    async fn list(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
-        let mut ids: Vec<_> = self
-            .messages
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
-            .keys()
-            .cloned()
-            .collect();
+    async fn list(&self) -> crate::Result<Vec<SpooledMessageId>> {
+        let mut ids: Vec<_> = self.messages.lock()?.keys().cloned().collect();
 
         // ULIDs are lexicographically sortable by creation time
         ids.sort();
@@ -394,21 +387,23 @@ impl BackingStore for MemoryBackingStore {
         Ok(ids)
     }
 
-    async fn read(&self, id: &SpooledMessageId) -> anyhow::Result<Context> {
+    async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context> {
+        use crate::error::SpoolError;
+
         self.messages
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
+            .lock()?
             .get(id)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Message not found: {id}"))
+            .ok_or_else(|| SpoolError::NotFound(id.clone()))
     }
 
-    async fn delete(&self, id: &SpooledMessageId) -> anyhow::Result<()> {
+    async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()> {
+        use crate::error::SpoolError;
+
         self.messages
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
+            .lock()?
             .remove(id)
-            .ok_or_else(|| anyhow::anyhow!("Message not found: {id}"))?;
+            .ok_or_else(|| SpoolError::NotFound(id.clone()))?;
         Ok(())
     }
 }
@@ -456,7 +451,9 @@ impl TestBackingStore {
         &self,
         expected: usize,
         timeout: std::time::Duration,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
+        use crate::error::SpoolError;
+
         tokio::time::timeout(timeout, async {
             loop {
                 let count = self.inner.list().await.unwrap_or_default().len();
@@ -466,7 +463,8 @@ impl TestBackingStore {
                 self.notify.notified().await;
             }
         })
-        .await?;
+        .await
+        .map_err(|e| SpoolError::Internal(format!("Timeout waiting for messages: {e}")))?;
         Ok(())
     }
 
@@ -475,12 +473,8 @@ impl TestBackingStore {
     /// # Errors
     /// If there was an isue getting the lock for the message store, e.g. the lock has been poisoned
     #[allow(clippy::unused_async)]
-    pub async fn clear(&self) -> anyhow::Result<()> {
-        self.inner
-            .messages
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {e}"))?
-            .clear();
+    pub async fn clear(&self) -> crate::Result<()> {
+        self.inner.messages.lock()?.clear();
         Ok(())
     }
 
@@ -500,7 +494,7 @@ impl TestBackingStore {
     ///
     /// # Errors
     /// If there is an issue with listing the messages inside this store
-    pub async fn messages(&self) -> anyhow::Result<Vec<Context>> {
+    pub async fn messages(&self) -> crate::Result<Vec<Context>> {
         let ids = self.inner.list().await?;
         let mut messages = Vec::new();
         for id in ids {
@@ -512,21 +506,21 @@ impl TestBackingStore {
 
 #[async_trait]
 impl BackingStore for TestBackingStore {
-    async fn write(&self, context: Context) -> anyhow::Result<SpooledMessageId> {
+    async fn write(&self, context: Context) -> crate::Result<SpooledMessageId> {
         let id = self.inner.write(context).await?;
         self.notify.notify_waiters();
         Ok(id)
     }
 
-    async fn list(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
+    async fn list(&self) -> crate::Result<Vec<SpooledMessageId>> {
         self.inner.list().await
     }
 
-    async fn read(&self, id: &SpooledMessageId) -> anyhow::Result<Context> {
+    async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context> {
         self.inner.read(id).await
     }
 
-    async fn delete(&self, id: &SpooledMessageId) -> anyhow::Result<()> {
+    async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()> {
         self.inner.delete(id).await
     }
 }

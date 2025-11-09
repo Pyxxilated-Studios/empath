@@ -6,7 +6,9 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 
 use crate::{
-    Signal, internal,
+    Signal,
+    error::{ListenerError, ProtocolError},
+    internal,
     traits::protocol::{Protocol, SessionHandler},
 };
 
@@ -43,7 +45,7 @@ impl<Proto: Protocol> Listener<Proto> {
     /// Any error during initialisation of the listener may propogate here
     ///
     #[traced(instrument(skip(self)), timing(precision = "ns"))]
-    pub fn init(&mut self) -> anyhow::Result<()> {
+    pub fn init(&mut self) -> Result<(), ProtocolError> {
         self.handler.validate(&mut self.args)
     }
 
@@ -55,7 +57,7 @@ impl<Proto: Protocol> Listener<Proto> {
     pub async fn serve(
         &self,
         shutdown: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ListenerError> {
         internal!(
             "Serving {:?} with {:?}, args: {:?}",
             self.socket,
@@ -65,7 +67,13 @@ impl<Proto: Protocol> Listener<Proto> {
 
         let mut sessions = Vec::default();
         let (address, port) = (self.socket.ip(), self.socket.port());
-        let listener = TcpListener::bind(self.socket).await?;
+        let listener =
+            TcpListener::bind(self.socket)
+                .await
+                .map_err(|e| ListenerError::BindFailed {
+                    address: self.socket.to_string(),
+                    source: e,
+                })?;
 
         let mut shutdown_signal = shutdown.resubscribe();
 

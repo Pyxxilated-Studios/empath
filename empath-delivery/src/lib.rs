@@ -11,6 +11,7 @@
 
 mod dns;
 mod domain_config;
+mod error;
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -20,6 +21,7 @@ use empath_common::{Signal, context::Context, internal, tracing};
 use empath_ffi::modules::{self, Ev, Event};
 use empath_spool::SpooledMessageId;
 use empath_tracing::traced;
+pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -305,7 +307,10 @@ impl DeliveryProcessor {
     /// # Errors
     ///
     /// Returns an error if the processor cannot be initialized
-    pub fn init(&mut self, spool: Arc<dyn empath_spool::BackingStore>) -> anyhow::Result<()> {
+    pub fn init(
+        &mut self,
+        spool: Arc<dyn empath_spool::BackingStore>,
+    ) -> Result<(), DeliveryError> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
         self.dns_resolver = Some(DnsResolver::with_dns_config(self.dns.clone())?);
@@ -331,13 +336,14 @@ impl DeliveryProcessor {
     pub async fn serve(
         &self,
         mut shutdown: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), DeliveryError> {
         internal!("Delivery processor starting");
 
         let Some(spool) = &self.spool else {
-            return Err(anyhow::anyhow!(
-                "Delivery processor not initialized. Call init() first."
-            ));
+            return Err(SystemError::NotInitialized(
+                "Delivery processor not initialized. Call init() first.".to_string(),
+            )
+            .into());
         };
 
         let scan_interval = Duration::from_secs(self.scan_interval_secs);
@@ -405,8 +411,11 @@ impl DeliveryProcessor {
     async fn scan_spool_internal(
         &self,
         spool: &Arc<dyn empath_spool::BackingStore>,
-    ) -> anyhow::Result<usize> {
-        let message_ids = spool.list().await?;
+    ) -> Result<usize, DeliveryError> {
+        let message_ids = spool
+            .list()
+            .await
+            .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
         let mut added = 0;
 
         for msg_id in message_ids {
@@ -416,7 +425,10 @@ impl DeliveryProcessor {
             }
 
             // Read the message to get recipient domains
-            let message = spool.read(&msg_id).await?;
+            let message = spool
+                .read(&msg_id)
+                .await
+                .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
 
             // Group recipients by domain (handle multi-recipient messages)
             let Some(recipients) = message.envelope.recipients() else {
@@ -479,19 +491,20 @@ impl DeliveryProcessor {
         &self,
         message_id: &SpooledMessageId,
         spool: &Arc<dyn empath_spool::BackingStore>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), DeliveryError> {
         use empath_common::context::DeliveryContext;
 
         self.queue
             .update_status(message_id, DeliveryStatus::InProgress)
             .await;
 
-        let mut context = spool.read(message_id).await?;
-        let info = self
-            .queue
-            .get(message_id)
+        let mut context = spool
+            .read(message_id)
             .await
-            .ok_or_else(|| anyhow::anyhow!("Message not in queue"))?;
+            .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+        let info = self.queue.get(message_id).await.ok_or_else(|| {
+            SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
+        })?;
 
         // Dispatch DeliveryAttempt event to modules
         {
@@ -531,28 +544,20 @@ impl DeliveryProcessor {
         } else {
             // Get the DNS resolver
             let Some(dns_resolver) = &self.dns_resolver else {
-                return Err(anyhow::anyhow!(
-                    "DNS resolver not initialized. Call init() first."
-                ));
+                return Err(SystemError::NotInitialized(
+                    "DNS resolver not initialized. Call init() first.".to_string(),
+                )
+                .into());
             };
 
             // Perform real DNS MX lookup for the recipient domain
+            // DNS errors are automatically converted to DeliveryError via From<DnsError>
             let resolved = dns_resolver
                 .resolve_mail_servers(&info.recipient_domain)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to resolve mail servers for domain '{}': {}",
-                        info.recipient_domain,
-                        e
-                    )
-                })?;
+                .await?;
 
             if resolved.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "No mail servers found for domain: {}",
-                    info.recipient_domain
-                ));
+                return Err(PermanentError::NoMailServers(info.recipient_domain.clone()).into());
             }
 
             resolved
@@ -613,9 +618,9 @@ impl DeliveryProcessor {
         &self,
         message_id: &SpooledMessageId,
         context: Option<&mut Context>,
-        error: anyhow::Error,
+        error: DeliveryError,
         server: String,
-    ) -> anyhow::Error {
+    ) -> DeliveryError {
         use empath_common::context::DeliveryContext;
         use tracing::{info, warn};
 
@@ -643,9 +648,7 @@ impl DeliveryProcessor {
 
         // Check if this is a temporary failure that warrants trying another MX server
         // (e.g., connection refused, timeout, temporary SMTP error)
-        let is_temporary_failure = error.to_string().to_lowercase().contains("connect")
-            || error.to_string().to_lowercase().contains("timeout")
-            || error.to_string().to_lowercase().contains("refused");
+        let is_temporary_failure = error.is_temporary();
 
         // Try next MX server if this was a temporary failure
         if is_temporary_failure
@@ -697,25 +700,33 @@ impl DeliveryProcessor {
     ///
     /// # Errors
     /// Returns an error if the SMTP connection or handshake fails
-    async fn _smtp_handshake(&self, server_address: &str, context: &Context) -> anyhow::Result<()> {
+    async fn _smtp_handshake(
+        &self,
+        server_address: &str,
+        context: &Context,
+    ) -> Result<(), DeliveryError> {
         use empath_smtp::client::SmtpClient;
 
         // Connect to the SMTP server
         let mut client = SmtpClient::connect(server_address, server_address.to_string())
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to {server_address}: {e}"))?;
+            .map_err(|e| {
+                TemporaryError::ConnectionFailed(format!(
+                    "Failed to connect to {server_address}: {e}"
+                ))
+            })?;
 
         // Read greeting
-        let greeting = client
-            .read_greeting()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read greeting: {e}"))?;
+        let greeting = client.read_greeting().await.map_err(|e| {
+            TemporaryError::ConnectionFailed(format!("Failed to read greeting: {e}"))
+        })?;
 
         if !greeting.is_success() {
-            return Err(anyhow::anyhow!(
+            return Err(TemporaryError::ServerBusy(format!(
                 "Server rejected connection: {}",
                 greeting.message()
-            ));
+            ))
+            .into());
         }
 
         // Send EHLO
@@ -723,13 +734,14 @@ impl DeliveryProcessor {
         let ehlo_response = client
             .ehlo(helo_domain)
             .await
-            .map_err(|e| anyhow::anyhow!("EHLO failed: {e}"))?;
+            .map_err(|e| TemporaryError::SmtpTemporary(format!("EHLO failed: {e}")))?;
 
         if !ehlo_response.is_success() {
-            return Err(anyhow::anyhow!(
+            return Err(TemporaryError::SmtpTemporary(format!(
                 "Server rejected EHLO: {}",
                 ehlo_response.message()
-            ));
+            ))
+            .into());
         }
 
         // Send MAIL FROM
@@ -741,13 +753,17 @@ impl DeliveryProcessor {
         let mail_response = client
             .mail_from(&sender, None)
             .await
-            .map_err(|e| anyhow::anyhow!("MAIL FROM failed: {e}"))?;
+            .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
 
         if !mail_response.is_success() {
-            return Err(anyhow::anyhow!(
-                "Server rejected MAIL FROM: {}",
-                mail_response.message()
-            ));
+            // Check if this is a 5xx (permanent) or 4xx (temporary) error
+            let code = mail_response.code;
+            let message = format!("Server rejected MAIL FROM: {}", mail_response.message());
+            return if (500..600).contains(&code) {
+                Err(PermanentError::MessageRejected(message).into())
+            } else {
+                Err(TemporaryError::SmtpTemporary(message).into())
+            };
         }
 
         // Send RCPT TO for each recipient
@@ -756,18 +772,25 @@ impl DeliveryProcessor {
                 let rcpt_response = client
                     .rcpt_to(&recipient.to_string())
                     .await
-                    .map_err(|e| anyhow::anyhow!("RCPT TO failed: {e}"))?;
+                    .map_err(|e| TemporaryError::SmtpTemporary(format!("RCPT TO failed: {e}")))?;
 
                 if !rcpt_response.is_success() {
-                    return Err(anyhow::anyhow!(
+                    // Check if this is a 5xx (permanent) or 4xx (temporary) error
+                    let code = rcpt_response.code;
+                    let message = format!(
                         "Server rejected RCPT TO {}: {}",
                         recipient,
                         rcpt_response.message()
-                    ));
+                    );
+                    return if (500..600).contains(&code) {
+                        Err(PermanentError::InvalidRecipient(message).into())
+                    } else {
+                        Err(TemporaryError::SmtpTemporary(message).into())
+                    };
                 }
             }
         } else {
-            return Err(anyhow::anyhow!("No recipients in message"));
+            return Err(SystemError::Internal("No recipients in message".to_string()).into());
         }
 
         // Send QUIT to cleanly close the connection
@@ -783,7 +806,7 @@ impl DeliveryProcessor {
     async fn process_queue_internal(
         &self,
         spool: &Arc<dyn empath_spool::BackingStore>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), DeliveryError> {
         let pending = self.queue.pending_messages().await;
 
         for info in pending {
@@ -818,7 +841,7 @@ impl DeliveryProcessor {
 ///
 /// # Errors
 /// Returns an error if the email address format is invalid or has no domain part
-fn extract_domain(email: &str) -> anyhow::Result<String> {
+fn extract_domain(email: &str) -> Result<String, DeliveryError> {
     // Remove angle brackets if present
     let cleaned = email.trim().trim_matches(|c| c == '<' || c == '>');
 
@@ -828,7 +851,12 @@ fn extract_domain(email: &str) -> anyhow::Result<String> {
         .nth(1)
         .map(|domain| domain.trim().to_string())
         .filter(|domain| !domain.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Invalid email address: no domain found in '{email}'"))
+        .ok_or_else(|| {
+            SystemError::Internal(format!(
+                "Invalid email address: no domain found in '{email}'"
+            ))
+            .into()
+        })
 }
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
 use std::{
-    io::{Error, ErrorKind},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -78,22 +77,28 @@ impl FileBackingStore {
     ///
     /// # Errors
     /// Returns an error if the path is invalid or potentially dangerous
-    fn validate_path(path: &Path) -> anyhow::Result<()> {
+    fn validate_path(path: &Path) -> crate::Result<()> {
+        use crate::error::{SpoolError, ValidationError};
+
         // Reject relative paths with .. components
         for component in path.components() {
             if component == std::path::Component::ParentDir {
-                return Err(anyhow::anyhow!(
-                    "Spool path cannot contain '..' components: {}",
-                    path.display()
+                return Err(SpoolError::Validation(
+                    ValidationError::InvalidConfiguration(format!(
+                        "Spool path cannot contain '..' components: {}",
+                        path.display()
+                    )),
                 ));
             }
         }
 
         // Reject non-absolute paths (optional - could allow relative paths in some cases)
         if !path.is_absolute() {
-            return Err(anyhow::anyhow!(
-                "Spool path must be absolute: {}",
-                path.display()
+            return Err(SpoolError::Validation(
+                ValidationError::InvalidConfiguration(format!(
+                    "Spool path must be absolute: {}",
+                    path.display()
+                )),
             ));
         }
 
@@ -112,10 +117,12 @@ impl FileBackingStore {
 
         for prefix in &sensitive_prefixes {
             if path.starts_with(prefix) {
-                return Err(anyhow::anyhow!(
-                    "Spool path cannot be in system directory {}: {}",
-                    prefix,
-                    path.display()
+                return Err(SpoolError::Validation(
+                    ValidationError::InvalidConfiguration(format!(
+                        "Spool path cannot be in system directory {}: {}",
+                        prefix,
+                        path.display()
+                    )),
                 ));
             }
         }
@@ -142,7 +149,9 @@ impl FileBackingStore {
     /// # Security
     /// This should be called during application startup to fail fast if there
     /// are permission issues with the spool directory.
-    pub fn init(&mut self) -> anyhow::Result<()> {
+    pub fn init(&mut self) -> crate::Result<()> {
+        use crate::error::{SpoolError, ValidationError};
+
         internal!("Initialising Spool ...");
 
         let path = Path::new(&self.path);
@@ -150,16 +159,9 @@ impl FileBackingStore {
             internal!("{:#?} does not exist, creating...", self.path);
             std::fs::create_dir_all(path)?;
         } else if !path.is_dir() {
-            return anyhow::Result::Err(
-                Error::new(
-                    ErrorKind::NotADirectory,
-                    format!(
-                        "Expected {} to be a Directory, but it is not",
-                        path.display()
-                    ),
-                )
-                .into(),
-            );
+            return Err(SpoolError::Validation(ValidationError::NotDirectory(
+                path.display().to_string(),
+            )));
         }
 
         // Clean up any orphaned .deleted files from previous crashes
@@ -172,7 +174,7 @@ impl FileBackingStore {
     ///
     /// This is called during `init()` to remove any files that were renamed
     /// to .deleted suffix but not removed due to a crash.
-    fn cleanup_deleted_files(&self) -> anyhow::Result<()> {
+    fn cleanup_deleted_files(&self) -> crate::Result<()> {
         let entries = std::fs::read_dir(&self.path)?;
         let mut cleaned = 0;
 
@@ -207,7 +209,7 @@ impl FileBackingStore {
     pub async fn serve(
         &self,
         mut shutdown: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         let path = self.path.clone();
         internal!("Serving spool at {path:?}");
 
@@ -239,7 +241,9 @@ impl BackingStore for FileBackingStore {
     /// filesystems with journaling (ext4, XFS, APFS), the rename operations
     /// are atomic and very fast (< 1ms typical).
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self, context)), timing(precision = "ms"))]
-    async fn write(&self, mut context: Context) -> anyhow::Result<SpooledMessageId> {
+    async fn write(&self, mut context: Context) -> crate::Result<SpooledMessageId> {
+        use crate::error::SpoolError;
+
         // Generate unique tracking ID
         let tracking_id = SpooledMessageId::generate();
         let tracking_str = tracking_id.to_string();
@@ -257,9 +261,7 @@ impl BackingStore for FileBackingStore {
         if tokio::fs::try_exists(&data_path).await.unwrap_or(false)
             || tokio::fs::try_exists(&meta_path).await.unwrap_or(false)
         {
-            return Err(anyhow::anyhow!(
-                "ULID collision detected: {tracking_id}. This should never happen."
-            ));
+            return Err(SpoolError::AlreadyExists(tracking_id));
         }
 
         // Write to temporary files first, then atomically rename
@@ -275,7 +277,8 @@ impl BackingStore for FileBackingStore {
         }
 
         // Serialize metadata to bincode
-        let metadata = bincode::serialize(&context)?;
+        let metadata =
+            bincode::serialize(&context).map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically rename both files
@@ -303,7 +306,7 @@ impl BackingStore for FileBackingStore {
     ///   to prevent path traversal attacks
     /// - Skips any files that don't match the expected pattern
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self)), timing(precision = "ms"))]
-    async fn list(&self) -> anyhow::Result<Vec<SpooledMessageId>> {
+    async fn list(&self) -> crate::Result<Vec<SpooledMessageId>> {
         let mut entries = fs::read_dir(&self.path).await?;
         let mut message_ids = Vec::new();
 
@@ -345,7 +348,7 @@ impl BackingStore for FileBackingStore {
     /// This involves two file reads. For large message bodies, consider whether
     /// you actually need the full data or just the metadata.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
-    async fn read(&self, msg_id: &SpooledMessageId) -> anyhow::Result<Context> {
+    async fn read(&self, msg_id: &SpooledMessageId) -> crate::Result<Context> {
         let tracking_str = msg_id.to_string();
         let meta_filename = format!("{tracking_str}.bin");
         let data_filename = format!("{tracking_str}.eml");
@@ -355,7 +358,8 @@ impl BackingStore for FileBackingStore {
 
         // Read and deserialize metadata
         let meta_content = fs::read(&meta_path).await?;
-        let mut context: Context = bincode::deserialize(&meta_content)?;
+        let mut context: Context =
+            bincode::deserialize(&meta_content).map_err(crate::error::SerializationError::from)?;
 
         // Read message data
         let data_bytes = fs::read(&data_path).await?;
@@ -385,7 +389,7 @@ impl BackingStore for FileBackingStore {
     /// If the process crashes after phase 1 but before phase 2, the .deleted
     /// files will be ignored by `list()` and can be cleaned up on next startup.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
-    async fn delete(&self, msg_id: &SpooledMessageId) -> anyhow::Result<()> {
+    async fn delete(&self, msg_id: &SpooledMessageId) -> crate::Result<()> {
         let tracking_str = msg_id.to_string();
         let meta_filename = format!("{tracking_str}.bin");
         let data_filename = format!("{tracking_str}.eml");
@@ -430,7 +434,7 @@ impl FileBackingStoreBuilder {
     ///
     /// # Errors
     /// Returns an error if the path is invalid or potentially dangerous
-    pub fn build(self) -> anyhow::Result<FileBackingStore> {
+    pub fn build(self) -> crate::Result<FileBackingStore> {
         FileBackingStore::validate_path(&self.path)?;
         Ok(FileBackingStore { path: self.path })
     }
@@ -447,7 +451,7 @@ impl Spool<FileBackingStore> {
     ///
     /// # Errors
     /// Returns an error if initialization fails
-    pub fn init(&mut self) -> anyhow::Result<()> {
+    pub fn init(&mut self) -> crate::Result<()> {
         self.store_mut().init()
     }
 
@@ -460,7 +464,7 @@ impl Spool<FileBackingStore> {
     pub async fn serve(
         &self,
         shutdown: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         self.store().serve(shutdown).await
     }
 }

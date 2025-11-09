@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::Deref};
 
-use crate::mime::Mime;
+use crate::{error::MessageParseError, mime::Mime};
 
 struct Parser<'buf> {
     buf: &'buf [u8],
@@ -107,7 +107,7 @@ impl<'a> Body<'a> {
     ///
     /// ```
     ///
-    pub fn parse(bytes: &'a [u8]) -> anyhow::Result<(Self, &'a [u8])> {
+    pub fn parse(bytes: &'a [u8]) -> Result<(Self, &'a [u8]), MessageParseError> {
         let mut parser = Parser::new(bytes);
 
         loop {
@@ -124,11 +124,7 @@ impl<'a> Body<'a> {
             }
         }
 
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Could not find end of Data",
-        )
-        .into())
+        Err(MessageParseError::EndOfBodyNotFound)
     }
 }
 
@@ -182,7 +178,7 @@ impl<'a> Headers<'a> {
     /// Should we be unable to determine the end of the headers, a resulting
     /// error will be returned.
     ///
-    pub fn parse(bytes: &'a [u8]) -> anyhow::Result<(Self, &'a [u8])> {
+    pub fn parse(bytes: &'a [u8]) -> Result<(Self, &'a [u8]), MessageParseError> {
         let mut headers = Vec::default();
         let mut parser = Parser::new(bytes);
 
@@ -237,14 +233,16 @@ impl<'buf> Message<'buf> {
     /// If provided a message that's invalid, i.e. does not have a body,
     /// or does not contain the end of the body marker
     ///
-    pub fn parse(message: &'buf [u8]) -> anyhow::Result<Self> {
+    pub fn parse(message: &'buf [u8]) -> Result<Self, MessageParseError> {
         let (headers, remaining) = Headers::parse(message)?;
         let (body, remaining) = Body::parse(remaining)?;
 
         if remaining.is_empty() {
             Ok(Message { headers, body })
         } else {
-            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid Message").into())
+            Err(MessageParseError::InvalidStructure(
+                "Invalid Message".to_string(),
+            ))
         }
     }
 }

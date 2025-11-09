@@ -97,13 +97,13 @@ impl Empath {
 
         let ret = tokio::select! {
             r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
-                r
+                r.map_err(|e| anyhow::anyhow!(e))
             }
             r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                r
+                r.map_err(|e| anyhow::anyhow!(e))
             }
             r = self.delivery.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                r
+                r.map_err(|e| anyhow::anyhow!(e))
             }
             r = shutdown() => {
                 r

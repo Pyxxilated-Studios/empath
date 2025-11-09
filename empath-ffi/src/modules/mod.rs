@@ -148,7 +148,7 @@ impl Module {
 ///   2. The modules init has an issue
 ///
 #[traced(instrument(level = tracing::Level::TRACE, ret, skip_all), timing)]
-pub fn init(modules: Vec<Module>) -> anyhow::Result<()> {
+pub fn init(modules: Vec<Module>) -> Result<(), Error> {
     internal!(level = INFO, "Initialising modules ...");
 
     // Add core module first so it runs before other validation modules

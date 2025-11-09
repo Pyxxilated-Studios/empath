@@ -18,7 +18,6 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-anyhow = "1.0.93"
 empath-common = { path = "../empath-common", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
 empath-smtp = { path = "../empath-smtp", version = "*" }

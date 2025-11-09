@@ -94,7 +94,7 @@ impl SpoolConfig {
     ///
     /// # Errors
     /// Returns an error if file spool initialization fails (directory creation, permissions, etc.)
-    pub fn into_spool(self) -> anyhow::Result<SpoolType> {
+    pub fn into_spool(self) -> crate::Result<SpoolType> {
         match self {
             Self::File(store) => {
                 let mut spool = Spool::new(store);
@@ -147,7 +147,7 @@ impl SpoolType {
     pub async fn serve(
         &self,
         shutdown: tokio::sync::broadcast::Receiver<empath_common::Signal>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         match self {
             Self::File(spool) => spool.serve(shutdown).await,
             Self::Memory(_) => {

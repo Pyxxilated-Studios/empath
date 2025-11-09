@@ -3,7 +3,7 @@ use futures_util::future::join_all;
 use serde::Deserialize;
 use tokio::sync::broadcast::Receiver;
 
-use crate::{Signal, internal, listener::Listener, traits::Protocol};
+use crate::{Signal, error::ControllerError, internal, listener::Listener, traits::Protocol};
 
 #[derive(Default, Deserialize)]
 pub struct Controller<Proto: Protocol> {
@@ -31,10 +31,13 @@ impl<Proto: Protocol> Controller<Proto> {
     /// # Errors
     /// Any errors initialising this controller
     ///
-    pub fn init(&mut self) -> anyhow::Result<()> {
+    pub fn init(&mut self) -> Result<(), ControllerError> {
         internal!("Initialising Controller for {}", Proto::ty());
 
-        self.listeners.iter_mut().try_for_each(Listener::init)
+        self.listeners
+            .iter_mut()
+            .try_for_each(Listener::init)
+            .map_err(ControllerError::Protocol)
     }
 
     ///
@@ -42,7 +45,7 @@ impl<Proto: Protocol> Controller<Proto> {
     /// If any of the listeners have a failure
     ///
     #[traced(instrument(level = tracing::Level::TRACE, skip(self, signals)), timing(precision = "s"))]
-    pub async fn control(self, signals: Vec<Receiver<Signal>>) -> anyhow::Result<()> {
+    pub async fn control(self, signals: Vec<Receiver<Signal>>) -> Result<(), ControllerError> {
         join_all(
             self.listeners
                 .iter()
@@ -50,6 +53,6 @@ impl<Proto: Protocol> Controller<Proto> {
         )
         .await
         .into_iter()
-        .try_for_each(|a| a)
+        .try_for_each(|a| a.map_err(Into::into))
     }
 }

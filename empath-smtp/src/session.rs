@@ -2,7 +2,9 @@ use core::bstr;
 use std::{borrow::Cow, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use ahash::AHashMap;
-use empath_common::{Signal, context, incoming, internal, outgoing, status::Status, tracing};
+use empath_common::{
+    Signal, context, error::SessionError, incoming, internal, outgoing, status::Status, tracing,
+};
 use empath_ffi::modules::{self, validate};
 use empath_tracing::traced;
 use mailparse::MailParseError;
@@ -206,14 +208,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     pub(crate) async fn run(
         mut self,
         signal: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), SessionError> {
         internal!("Connected");
 
         async fn run_inner<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
             mut session: Session<Stream>,
             validate_context: &mut context::Context,
             mut signal: tokio::sync::broadcast::Receiver<Signal>,
-        ) -> anyhow::Result<()> {
+        ) -> Result<(), SessionError> {
             loop {
                 // Then generate the response based on what emit() set
                 let (response, ev) = session.response(validate_context).await;
@@ -226,7 +228,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                     session.connection.send(&response).await.map_err(|err| {
                         internal!(level = ERROR, "{err}");
-                        std::io::Error::new(std::io::ErrorKind::ConnectionAborted, err.to_string())
+                        SessionError::Protocol(format!("Failed to send response: {err}"))
                     })?;
                 }
 
@@ -235,7 +237,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 } else if let Some(tls_context) = session.tls_context.as_ref()
                     && matches!(session.context.state, State::StartTls(_))
                 {
-                    let (conn, info) = session.connection.upgrade(tls_context).await?;
+                    let (conn, info) = session
+                        .connection
+                        .upgrade(tls_context)
+                        .await
+                        .map_err(|e| SessionError::Protocol(e.to_string()))?;
 
                     session.connection = conn;
 
@@ -526,14 +532,17 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing)]
-    async fn receive(&mut self, validate_context: &mut context::Context) -> anyhow::Result<bool> {
+    async fn receive(
+        &mut self,
+        validate_context: &mut context::Context,
+    ) -> Result<bool, SessionError> {
         let mut received_data = [0; 4096];
 
         match self.connection.receive(&mut received_data).await {
             // Consider any errors received here to be fatal
             Err(err) => {
                 internal!("Error: {err}");
-                Err(err)
+                Err(SessionError::Protocol(err.to_string()))
             }
             Ok(0) => {
                 // Reading 0 bytes means the other side has closed the

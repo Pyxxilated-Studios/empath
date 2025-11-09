@@ -31,7 +31,7 @@ impl Display for Shared {
 
 impl Shared {
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "us"))]
-    pub(super) fn init(&mut self) -> anyhow::Result<()> {
+    pub(super) fn init(&mut self) -> Result<(), super::Error> {
         unsafe {
             let lib = Library::new(&self.name)?;
 

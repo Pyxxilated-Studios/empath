@@ -5,6 +5,7 @@
 pub mod client;
 pub mod command;
 pub mod connection;
+pub mod error;
 pub mod extensions;
 pub mod session;
 pub mod state;
@@ -15,6 +16,7 @@ use std::{borrow::Cow, collections::HashMap, net::SocketAddr, sync::Arc};
 pub use command::MailParameters;
 use empath_common::{
     Signal,
+    error::{ProtocolError, SessionError},
     traits::protocol::{Protocol, SessionHandler},
 };
 use empath_tracing::traced;
@@ -96,7 +98,7 @@ impl Protocol for Smtp {
     }
 
     #[traced(instrument(skip(self, args)), timing(precision = "ns"))]
-    fn validate(&mut self, args: &mut Self::Args) -> anyhow::Result<()> {
+    fn validate(&mut self, args: &mut Self::Args) -> Result<(), ProtocolError> {
         if let Some(ext) = args
             .extensions
             .iter()
@@ -140,7 +142,10 @@ impl Protocol for Smtp {
 }
 
 impl SessionHandler for Session<TcpStream> {
-    async fn run(self, signal: tokio::sync::broadcast::Receiver<Signal>) -> anyhow::Result<()> {
+    async fn run(
+        self,
+        signal: tokio::sync::broadcast::Receiver<Signal>,
+    ) -> Result<(), SessionError> {
         Self::run(self, signal).await
     }
 }

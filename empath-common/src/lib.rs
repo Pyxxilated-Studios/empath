@@ -13,6 +13,7 @@ pub mod address;
 pub mod context;
 pub mod controller;
 pub mod envelope;
+pub mod error;
 pub mod listener;
 pub mod logging;
 pub mod message;

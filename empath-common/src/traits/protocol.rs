@@ -3,13 +3,16 @@ use std::{collections::HashMap, fmt::Debug, net::SocketAddr};
 use serde::Deserialize;
 use tokio::net::TcpStream;
 
-use crate::Signal;
+use crate::{
+    Signal,
+    error::{ProtocolError, SessionError},
+};
 
 pub trait SessionHandler {
     fn run(
         self,
         signal: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+    ) -> impl std::future::Future<Output = Result<(), SessionError>> + Send;
 }
 
 pub trait Protocol: Default + Send + Sync {
@@ -35,7 +38,7 @@ pub trait Protocol: Default + Send + Sync {
     /// For example, when providing TLS certificates/keys it may be necessary to check that the
     /// paths provided actually exist
     ///
-    fn validate(&mut self, args: &mut Self::Args) -> anyhow::Result<()>;
+    fn validate(&mut self, args: &mut Self::Args) -> Result<(), ProtocolError>;
 
     fn ty() -> &'static str;
 }
