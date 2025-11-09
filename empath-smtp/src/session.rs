@@ -398,32 +398,18 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         internal!("Spooling message");
 
         let tracking_id = if let Some(spool) = &self.spool
-            && let Some(data) = &validate_context.data
+            && validate_context.data.is_some()
         {
-            match empath_spool::Message::builder()
-                .envelope(std::mem::take(&mut validate_context.envelope))
-                .data(data.clone())
-                .helo_id(std::mem::take(&mut validate_context.id))
-                .extended(validate_context.extended)
-                .context(std::mem::take(&mut validate_context.metadata))
-                .build()
-            {
-                Ok(message) => match spool.write(message).await {
-                    Ok(id) => Some(id),
-                    Err(e) => {
-                        internal!(level = ERROR, "Failed to spool message: {e}");
-                        validate_context.response = Some((
-                            Status::ActionUnavailable,
-                            Cow::Borrowed("Requested action aborted: error spooling message"),
-                        ));
-                        return;
-                    }
-                },
+            // Clone the context for spooling
+            let context_to_spool = validate_context.clone();
+
+            match spool.write(context_to_spool).await {
+                Ok(id) => Some(id),
                 Err(e) => {
-                    internal!(level = ERROR, "Failed to build message: {e}");
+                    internal!(level = ERROR, "Failed to spool message: {e}");
                     validate_context.response = Some((
                         Status::ActionUnavailable,
-                        Cow::Borrowed("Requested action aborted: error processing message"),
+                        Cow::Borrowed("Please try again later"),
                     ));
                     return;
                 }
@@ -782,7 +768,7 @@ mod test {
         let ids = mock_spool.list().await.unwrap();
         let spooled_msg_id = ids.first().unwrap();
         let spooled_msg = mock_spool.read(spooled_msg_id).await.unwrap();
-        assert_eq!(spooled_msg.data.as_ref(), test_data);
+        assert_eq!(spooled_msg.data.as_deref(), Some(test_data.as_ref()));
     }
 
     #[tokio::test]

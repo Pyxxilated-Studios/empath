@@ -22,6 +22,12 @@ type DeclareModule = unsafe extern "C" fn() -> Mod;
 pub enum Ev {
     ConnectionOpened,
     ConnectionClosed,
+    /// Triggered before attempting delivery to a mail server
+    DeliveryAttempt,
+    /// Triggered when delivery succeeds
+    DeliverySuccess,
+    /// Triggered when delivery fails (temporary or permanent)
+    DeliveryFailure,
 }
 
 #[repr(C)]

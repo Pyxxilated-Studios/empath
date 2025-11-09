@@ -1,7 +1,9 @@
 use core::fmt::{self, Display, Formatter};
 
+use serde::{Deserialize, Serialize};
+
 #[repr(C, u32)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Debug, Serialize, Deserialize)]
 pub enum Status {
     ConnectionError = 101,
     #[allow(clippy::enum_variant_names)]

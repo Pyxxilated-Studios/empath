@@ -5,15 +5,12 @@ use std::{
 };
 
 use async_trait::async_trait;
-use empath_common::{Signal, internal};
+use empath_common::{Signal, context::Context, internal};
 use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::fs;
 
-use crate::{
-    message::Message,
-    spool::{BackingStore, Spool, SpooledMessageId},
-};
+use crate::spool::{BackingStore, Spool, SpooledMessageId};
 
 /// File-based backing store implementation
 ///
@@ -241,11 +238,14 @@ impl BackingStore for FileBackingStore {
     /// Each write involves 4 I/O operations (2 writes + 2 renames). On modern
     /// filesystems with journaling (ext4, XFS, APFS), the rename operations
     /// are atomic and very fast (< 1ms typical).
-    #[traced(instrument(level = tracing::Level::DEBUG, skip(self, message)), timing(precision = "ms"))]
-    async fn write(&self, message: Message) -> anyhow::Result<SpooledMessageId> {
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self, context)), timing(precision = "ms"))]
+    async fn write(&self, mut context: Context) -> anyhow::Result<SpooledMessageId> {
         // Generate unique tracking ID
         let tracking_id = SpooledMessageId::generate();
         let tracking_str = tracking_id.to_string();
+
+        // Set the tracking ID in the context
+        context.tracking_id = Some(tracking_str.clone());
 
         let data_filename = format!("{tracking_str}.eml");
         let meta_filename = format!("{tracking_str}.bin");
@@ -267,10 +267,15 @@ impl BackingStore for FileBackingStore {
         let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
 
         // Write the email data
-        fs::write(&temp_data_path, message.data.as_ref()).await?;
+        if let Some(data) = &context.data {
+            fs::write(&temp_data_path, data.as_ref()).await?;
+        } else {
+            // If no data, write empty file
+            fs::write(&temp_data_path, b"").await?;
+        }
 
         // Serialize metadata to bincode
-        let metadata = bincode::serialize(&message)?;
+        let metadata = bincode::serialize(&context)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically rename both files
@@ -340,7 +345,7 @@ impl BackingStore for FileBackingStore {
     /// This involves two file reads. For large message bodies, consider whether
     /// you actually need the full data or just the metadata.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
-    async fn read(&self, msg_id: &SpooledMessageId) -> anyhow::Result<Message> {
+    async fn read(&self, msg_id: &SpooledMessageId) -> anyhow::Result<Context> {
         let tracking_str = msg_id.to_string();
         let meta_filename = format!("{tracking_str}.bin");
         let data_filename = format!("{tracking_str}.eml");
@@ -350,15 +355,19 @@ impl BackingStore for FileBackingStore {
 
         // Read and deserialize metadata
         let meta_content = fs::read(&meta_path).await?;
-        let mut message: Message = bincode::deserialize(&meta_content)?;
+        let mut context: Context = bincode::deserialize(&meta_content)?;
 
         // Read message data
         let data_bytes = fs::read(&data_path).await?;
-        message.data = Arc::from(data_bytes);
+        context.data = if data_bytes.is_empty() {
+            None
+        } else {
+            Some(Arc::from(data_bytes))
+        };
 
         internal!(level = DEBUG, "Read message {msg_id} from spool");
 
-        Ok(message)
+        Ok(context)
     }
 
     /// Delete a message from the spool

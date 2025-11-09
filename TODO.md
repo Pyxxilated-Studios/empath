@@ -34,20 +34,21 @@ This document tracks future improvements for the empath MTA, organized by priori
 
 ---
 
-### 🔴 1.2 Real DNS MX Lookups
+### ✅ 1.2 Real DNS MX Lookups
 **Priority:** Critical
 **Complexity:** Medium
 **Effort:** 1-2 days
-**Files:** `empath-delivery/src/dns.rs` (new)
+**Files:** `empath-delivery/src/dns.rs`
 
-**Current Issue:** Stub implementation (`format!("mx.{}", domain)`) prevents actual mail delivery
+**Status:** ✅ **COMPLETED** - Real DNS MX lookups implemented with RFC 5321 compliance
 
 **Implementation:**
-- Add `trust-dns-resolver` or `hickory-dns` dependency
-- Implement MX record resolution with priority sorting
-- Add LRU cache with TTL respect
-- Handle missing MX (fallback to A/AAAA records per RFC 5321)
-- Add DNS timeout and retry configuration
+- ✅ Added `hickory-resolver` dependency
+- ✅ Implemented MX record resolution with priority sorting
+- ✅ Handle missing MX (fallback to A/AAAA records per RFC 5321)
+- ✅ Custom error types with temporary/permanent failure detection
+- 🔄 LRU cache with TTL respect (in progress)
+- 🔄 DNS timeout and retry configuration (in progress)
 
 **Configuration:**
 ```ron
@@ -64,6 +65,46 @@ Empath (
 ```
 
 **Dependencies:** None
+
+---
+
+### 🟢 1.2.1 DNSSEC Validation
+**Priority:** Medium
+**Complexity:** Medium
+**Effort:** 2-3 days
+**Files:** `empath-delivery/src/dns.rs`
+
+**Current Issue:** No DNSSEC validation for DNS responses, vulnerable to DNS spoofing
+
+**Implementation:**
+- Enable DNSSEC validation in hickory-resolver
+- Configure trusted root keys
+- Add validation status to MailServer results
+- Log DNSSEC failures for monitoring
+- Make DNSSEC enforcement configurable (warn vs. fail)
+
+**Configuration:**
+```ron
+// In empath.config.ron
+Empath (
+    // ... other config ...
+    delivery: (
+        dns: (
+            dnssec: (
+                enabled: true,
+                enforce: false,  // Log warnings instead of failing
+            ),
+        ),
+    ),
+)
+```
+
+**Benefits:**
+- Protection against DNS spoofing attacks
+- Improved security for mail delivery
+- Compliance with modern security standards
+
+**Dependencies:** 1.2 (Real DNS MX Lookups)
 
 ---
 

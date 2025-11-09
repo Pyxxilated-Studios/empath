@@ -4,13 +4,20 @@
 //! - Track messages pending delivery
 //! - Manage delivery attempts and retries
 //! - Prepare messages for sending via SMTP
+//! - DNS MX record resolution for recipient domains
 
 #![deny(clippy::pedantic, clippy::all, clippy::nursery)]
 #![allow(clippy::must_use_candidate)]
 
+mod dns;
+mod domain_config;
+
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use empath_common::{Signal, internal, tracing};
+pub use dns::{DnsConfig, DnsError, DnsResolver, MailServer};
+pub use domain_config::{DomainConfig, DomainConfigRegistry};
+use empath_common::{Signal, context::Context, internal, tracing};
+use empath_ffi::modules::{self, Ev, Event};
 use empath_spool::SpooledMessageId;
 use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
@@ -53,19 +60,23 @@ pub struct DeliveryInfo {
     pub attempts: Vec<DeliveryAttempt>,
     /// Recipient domain for this delivery
     pub recipient_domain: String,
-    /// MX server to use for delivery
-    pub mx_server: Option<String>,
+    /// Resolved mail servers (sorted by priority)
+    pub mail_servers: Vec<MailServer>,
+    /// Index of the current mail server being tried
+    pub current_server_index: usize,
 }
 
 impl DeliveryInfo {
     /// Create a new pending delivery info
+    #[must_use]
     pub const fn new(message_id: SpooledMessageId, recipient_domain: String) -> Self {
         Self {
             message_id,
             status: DeliveryStatus::Pending,
             attempts: Vec::new(),
             recipient_domain,
-            mx_server: None,
+            mail_servers: Vec::new(),
+            current_server_index: 0,
         }
     }
 
@@ -77,6 +88,28 @@ impl DeliveryInfo {
     /// Get the number of attempts made
     pub fn attempt_count(&self) -> u32 {
         u32::try_from(self.attempts.len()).unwrap_or(u32::MAX)
+    }
+
+    /// Try the next MX server in the priority list.
+    ///
+    /// Returns `true` if there is another server to try, `false` if all servers exhausted.
+    pub const fn try_next_server(&mut self) -> bool {
+        if self.current_server_index + 1 < self.mail_servers.len() {
+            self.current_server_index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reset to the first MX server (for new delivery cycle).
+    pub const fn reset_server_index(&mut self) {
+        self.current_server_index = 0;
+    }
+
+    /// Get the current mail server being tried.
+    pub fn current_mail_server(&self) -> Option<&MailServer> {
+        self.mail_servers.get(self.current_server_index)
     }
 }
 
@@ -133,12 +166,23 @@ impl DeliveryQueue {
         }
     }
 
-    /// Set the MX server for a message
-    pub async fn set_mx_server(&self, message_id: &SpooledMessageId, mx_server: String) {
+    /// Set the resolved mail servers for a message
+    pub async fn set_mail_servers(&self, message_id: &SpooledMessageId, servers: Vec<MailServer>) {
         let mut queue = self.queue.write().await;
         if let Some(info) = queue.get_mut(message_id) {
-            info.mx_server = Some(mx_server);
+            info.mail_servers = servers;
+            info.current_server_index = 0;
         }
+    }
+
+    /// Try the next MX server for a message.
+    ///
+    /// Returns `true` if there is another server to try, `false` if all exhausted.
+    pub async fn try_next_server(&self, message_id: &SpooledMessageId) -> bool {
+        let mut queue = self.queue.write().await;
+        queue
+            .get_mut(message_id)
+            .is_some_and(DeliveryInfo::try_next_server)
     }
 
     /// Remove a message from the queue
@@ -219,6 +263,14 @@ pub struct DeliveryProcessor {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
 
+    /// DNS configuration for resolver
+    #[serde(default)]
+    pub dns: DnsConfig,
+
+    /// Per-domain delivery configuration
+    #[serde(default)]
+    pub domains: DomainConfigRegistry,
+
     /// The spool backing store to read messages from (initialized in `init()`)
     #[serde(skip)]
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
@@ -226,6 +278,10 @@ pub struct DeliveryProcessor {
     /// The delivery queue (initialized in `init()`)
     #[serde(skip)]
     queue: DeliveryQueue,
+
+    /// DNS resolver for MX record lookups (initialized in `init()`)
+    #[serde(skip)]
+    dns_resolver: Option<DnsResolver>,
 }
 
 impl Default for DeliveryProcessor {
@@ -234,8 +290,11 @@ impl Default for DeliveryProcessor {
             scan_interval_secs: default_scan_interval(),
             process_interval_secs: default_process_interval(),
             max_attempts: default_max_attempts(),
+            dns: DnsConfig::default(),
+            domains: DomainConfigRegistry::default(),
             spool: None,
             queue: DeliveryQueue::new(),
+            dns_resolver: None,
         }
     }
 }
@@ -249,6 +308,13 @@ impl DeliveryProcessor {
     pub fn init(&mut self, spool: Arc<dyn empath_spool::BackingStore>) -> anyhow::Result<()> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
+        self.dns_resolver = Some(DnsResolver::with_dns_config(self.dns.clone())?);
+        internal!(
+            "DNS resolver initialized with timeout={}s, cache_ttl={}s, cache_size={}",
+            self.dns.timeout_secs,
+            self.dns.cache_ttl_secs,
+            self.dns.cache_size
+        );
         Ok(())
     }
 
@@ -362,7 +428,12 @@ impl DeliveryProcessor {
             // Collect unique domains from all recipients
             let mut domains = std::collections::HashMap::new();
             for recipient in recipients.iter() {
-                let recipient_str = recipient.to_string();
+                // Extract the actual email address from the MailAddr
+                let recipient_str = match &**recipient {
+                    mailparse::MailAddr::Single(single) => single.addr.clone(),
+                    mailparse::MailAddr::Group(_) => continue, // Skip groups
+                };
+
                 match extract_domain(&recipient_str) {
                     Ok(domain) => {
                         domains
@@ -396,71 +467,157 @@ impl DeliveryProcessor {
     ///
     /// This method:
     /// 1. Reads the message from the spool
-    /// 2. Determines the recipient domain and MX server
+    /// 2. Performs DNS MX lookup for the recipient domain
     /// 3. Connects to the MX server via SMTP
     /// 4. Performs EHLO/HELO handshake
     /// 5. Validates MAIL FROM and RCPT TO
     /// 6. Does NOT send DATA (that's for actual delivery)
     ///
     /// # Errors
-    /// Returns an error if the message cannot be read or SMTP connection fails
+    /// Returns an error if the message cannot be read, DNS lookup fails, or SMTP connection fails
     async fn prepare_message(
         &self,
         message_id: &SpooledMessageId,
         spool: &Arc<dyn empath_spool::BackingStore>,
     ) -> anyhow::Result<()> {
+        use empath_common::context::DeliveryContext;
+
         self.queue
             .update_status(message_id, DeliveryStatus::InProgress)
             .await;
 
-        let _message = spool.read(message_id).await?;
+        let mut context = spool.read(message_id).await?;
         let info = self
             .queue
             .get(message_id)
             .await
             .ok_or_else(|| anyhow::anyhow!("Message not in queue"))?;
 
-        // Stub MX lookup - in a real implementation, this would do DNS MX queries
-        let mx_server = format!("mx.{}", info.recipient_domain);
-        let mx_address = format!("{mx_server}:25");
+        // Dispatch DeliveryAttempt event to modules
+        {
+            context.delivery = Some(DeliveryContext {
+                message_id: message_id.to_string(),
+                domain: info.recipient_domain.clone(),
+                server: None, // Server not yet determined at this point
+                error: None,
+                attempts: Some(info.attempt_count()),
+            });
+
+            modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
+        }
+
+        // Check for domain-specific MX override first (for testing/debugging)
+        let mail_servers = if let Some(domain_config) = self.domains.get(&info.recipient_domain)
+            && let Some(mx_override) = domain_config.mx_override_address()
+        {
+            internal!(
+                "Using MX override for {}: {}",
+                info.recipient_domain,
+                mx_override
+            );
+
+            // Parse host:port or use default port 25
+            let (host, port) = if let Some((h, p)) = mx_override.split_once(':') {
+                (h.to_string(), p.parse::<u16>().unwrap_or(25))
+            } else {
+                (mx_override.to_string(), 25)
+            };
+
+            vec![MailServer {
+                host,
+                port,
+                priority: 0,
+            }]
+        } else {
+            // Get the DNS resolver
+            let Some(dns_resolver) = &self.dns_resolver else {
+                return Err(anyhow::anyhow!(
+                    "DNS resolver not initialized. Call init() first."
+                ));
+            };
+
+            // Perform real DNS MX lookup for the recipient domain
+            let resolved = dns_resolver
+                .resolve_mail_servers(&info.recipient_domain)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to resolve mail servers for domain '{}': {}",
+                        info.recipient_domain,
+                        e
+                    )
+                })?;
+
+            if resolved.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No mail servers found for domain: {}",
+                    info.recipient_domain
+                ));
+            }
+
+            resolved
+        };
+
+        // Store the resolved mail servers
         self.queue
-            .set_mx_server(message_id, mx_server.clone())
+            .set_mail_servers(message_id, mail_servers.clone())
             .await;
 
+        // Use the first (highest priority) mail server
+        let primary_server = &mail_servers[0];
+        let mx_address = primary_server.address();
+
         internal!(
-            "Sending message to {:?} with mx host {}",
+            "Sending message to {:?} with MX host {} (priority {})",
             message_id,
-            mx_address
+            mx_address,
+            primary_server.priority
         );
 
         // TODO: Actually implement this part at some point
-        // let result = self.smtp_handshake(&mx_address, &message).await;
+        // let result = self._smtp_handshake(&mx_address, &context).await;
 
         // match result {
         //     Ok(()) => {
-        //         self.queue.update_status(message_id, DeliveryStatus::Pending).await;
+        //         self.queue.update_status(message_id, DeliveryStatus::Completed).await;
+        //
+        //         // Dispatch DeliverySuccess event to modules
+        //         context.delivery = Some(DeliveryContext {
+        //             message_id: message_id.to_string(),
+        //             domain: info.recipient_domain.clone(),
+        //             server: Some(mx_address.to_string()),
+        //             error: None,
+        //             attempts: Some(info.attempt_count()),
+        //         });
+        //         modules::dispatch(Event::Event(Ev::DeliverySuccess), &mut context);
+        //
         //         Ok(())
         //     }
         //     Err(e) => {
-        //         let error = self.handle_delivery_error(message_id, e, mx_server).await;
+        //         let error = self.handle_delivery_error(message_id, Some(&mut context), e, mx_address.to_string()).await;
         //         Err(error)
         //     }
+        // }
         Ok(())
     }
 
     /// Handle a failed delivery attempt and update status based on retry policy
     ///
     /// Records the attempt and determines whether to retry or mark as permanently failed.
+    /// Implements MX server fallback: tries lower-priority MX servers before counting as a retry.
+    /// Dispatches `DeliveryFailure` event to modules.
     ///
     /// # Errors
     /// Returns the original error after recording it
     async fn handle_delivery_error(
         &self,
         message_id: &SpooledMessageId,
+        context: Option<&mut Context>,
         error: anyhow::Error,
         server: String,
     ) -> anyhow::Error {
-        use tracing::warn;
+        use empath_common::context::DeliveryContext;
+        use tracing::{info, warn};
 
         // Record the attempt
         let attempt = DeliveryAttempt {
@@ -469,7 +626,7 @@ impl DeliveryProcessor {
                 .unwrap_or_default()
                 .as_secs(),
             error: Some(error.to_string()),
-            server,
+            server: server.clone(),
         };
 
         self.queue.record_attempt(message_id, attempt).await;
@@ -484,6 +641,30 @@ impl DeliveryProcessor {
             return error; // Preserve original error
         };
 
+        // Check if this is a temporary failure that warrants trying another MX server
+        // (e.g., connection refused, timeout, temporary SMTP error)
+        let is_temporary_failure = error.to_string().to_lowercase().contains("connect")
+            || error.to_string().to_lowercase().contains("timeout")
+            || error.to_string().to_lowercase().contains("refused");
+
+        // Try next MX server if this was a temporary failure
+        if is_temporary_failure
+            && self.queue.try_next_server(message_id).await
+            && let Some(info) = self.queue.get(message_id).await
+            && let Some(next_server) = info.current_mail_server()
+        {
+            info!(
+                "Trying next MX server for {:?}: {} (priority {})",
+                message_id, next_server.host, next_server.priority
+            );
+            // Set status back to Pending to retry immediately with next server
+            self.queue
+                .update_status(message_id, DeliveryStatus::Pending)
+                .await;
+            return error;
+        }
+
+        // All MX servers exhausted or permanent failure, use normal retry logic
         // Determine new status based on attempt count
         let new_status = if updated_info.attempt_count() >= self.max_attempts {
             DeliveryStatus::Failed(error.to_string())
@@ -495,6 +676,20 @@ impl DeliveryProcessor {
         };
 
         self.queue.update_status(message_id, new_status).await;
+
+        // Dispatch DeliveryFailure event to modules if context is available
+        if let Some(ctx) = context {
+            ctx.delivery = Some(DeliveryContext {
+                message_id: message_id.to_string(),
+                domain: updated_info.recipient_domain.clone(),
+                server: Some(server),
+                error: Some(error.to_string()),
+                attempts: Some(updated_info.attempt_count()),
+            });
+
+            modules::dispatch(Event::Event(Ev::DeliveryFailure), ctx);
+        }
+
         error
     }
 
@@ -502,11 +697,7 @@ impl DeliveryProcessor {
     ///
     /// # Errors
     /// Returns an error if the SMTP connection or handshake fails
-    async fn _smtp_handshake(
-        &self,
-        server_address: &str,
-        message: &empath_spool::Message,
-    ) -> anyhow::Result<()> {
+    async fn _smtp_handshake(&self, server_address: &str, context: &Context) -> anyhow::Result<()> {
         use empath_smtp::client::SmtpClient;
 
         // Connect to the SMTP server
@@ -528,7 +719,7 @@ impl DeliveryProcessor {
         }
 
         // Send EHLO
-        let helo_domain = &message.helo_id;
+        let helo_domain = &context.id;
         let ehlo_response = client
             .ehlo(helo_domain)
             .await
@@ -542,7 +733,7 @@ impl DeliveryProcessor {
         }
 
         // Send MAIL FROM
-        let sender = message
+        let sender = context
             .envelope
             .sender()
             .map_or_else(|| "<>".to_string(), std::string::ToString::to_string);
@@ -560,7 +751,7 @@ impl DeliveryProcessor {
         }
 
         // Send RCPT TO for each recipient
-        if let Some(recipients) = message.envelope.recipients() {
+        if let Some(recipients) = context.envelope.recipients() {
             for recipient in recipients.iter() {
                 let rcpt_response = client
                     .rcpt_to(&recipient.to_string())
@@ -605,10 +796,16 @@ impl DeliveryProcessor {
                     "Failed to prepare message for delivery"
                 );
 
+                // Try to read the context from spool for event dispatching
+                let mut context = spool.read(&info.message_id).await.ok();
+
                 // Use extracted method to handle the error
-                let server = info.mx_server.clone().unwrap_or_default();
+                let server = info
+                    .mail_servers
+                    .get(info.current_server_index)
+                    .map_or_else(|| info.recipient_domain.clone(), MailServer::address);
                 let _error = self
-                    .handle_delivery_error(&info.message_id, e, server)
+                    .handle_delivery_error(&info.message_id, context.as_mut(), e, server)
                     .await;
             }
         }
@@ -632,4 +829,214 @@ fn extract_domain(email: &str) -> anyhow::Result<String> {
         .map(|domain| domain.trim().to_string())
         .filter(|domain| !domain.is_empty())
         .ok_or_else(|| anyhow::anyhow!("Invalid email address: no domain found in '{email}'"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use empath_common::{
+        address::{Address, AddressList},
+        context::Context,
+        envelope::Envelope,
+    };
+    use empath_spool::BackingStore;
+
+    use super::*;
+
+    fn create_test_context(from: &str, to: &str) -> Context {
+        let mut envelope = Envelope::default();
+
+        // Parse and set sender
+        if let Ok(sender_addr) = mailparse::addrparse(from)
+            && let Some(addr) = sender_addr.iter().next()
+        {
+            *envelope.sender_mut() = Some(Address(addr.clone()));
+        }
+
+        // Parse and set recipient
+        if let Ok(recip_addr) = mailparse::addrparse(to) {
+            *envelope.recipients_mut() = Some(AddressList(
+                recip_addr.iter().map(|a| Address(a.clone())).collect(),
+            ));
+        }
+
+        Context {
+            envelope,
+            id: "test-session".to_string(),
+            data: Some(Arc::from(b"Test message content".as_slice())),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_extract_domain() {
+        assert_eq!(extract_domain("user@example.com").unwrap(), "example.com");
+        assert_eq!(extract_domain("<user@test.org>").unwrap(), "test.org");
+        assert_eq!(extract_domain("  user@domain.net  ").unwrap(), "domain.net");
+
+        assert!(extract_domain("invalid").is_err());
+        assert!(extract_domain("user@").is_err());
+        assert!(extract_domain("@domain.com").is_ok()); // Empty local part is technically valid
+    }
+
+    #[tokio::test]
+    async fn test_domain_config_mx_override() {
+        // Create a domain config registry with an MX override
+        let mut domains = DomainConfigRegistry::new();
+        domains.insert(
+            "test.example.com".to_string(),
+            DomainConfig {
+                mx_override: Some("localhost:1025".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let processor = DeliveryProcessor {
+            domains,
+            ..Default::default()
+        };
+
+        // Verify the domain config was stored
+        assert!(processor.domains.has_config("test.example.com"));
+        let domain_config = processor.domains.get("test.example.com").unwrap();
+        assert_eq!(domain_config.mx_override_address(), Some("localhost:1025"));
+    }
+
+    #[tokio::test]
+    async fn test_delivery_with_mx_override_integration() {
+        use empath_spool::MemoryBackingStore;
+
+        // Create a memory-backed spool
+        let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+        // Create a test context (message)
+        let context = create_test_context("sender@example.org", "recipient@test.example.com");
+
+        // Spool the message
+        let msg_id = spool.write(context).await.unwrap();
+
+        // Create domain config with MX override
+        let mut domains = DomainConfigRegistry::new();
+        domains.insert(
+            "test.example.com".to_string(),
+            DomainConfig {
+                mx_override: Some("localhost:1025".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let mut processor = DeliveryProcessor {
+            domains,
+            scan_interval_secs: 1,
+            process_interval_secs: 1,
+            max_attempts: 3,
+            ..Default::default()
+        };
+
+        processor.init(spool.clone()).unwrap();
+
+        // Manually scan the spool to add the message to the queue
+        let added = processor.scan_spool_internal(&spool).await.unwrap();
+        assert_eq!(added, 1, "Should have added 1 message to queue");
+
+        // Verify the message is in the queue
+        let queue_info = processor.queue.get(&msg_id).await;
+        assert!(queue_info.is_some(), "Message should be in queue");
+
+        let info = queue_info.unwrap();
+        assert_eq!(info.recipient_domain, "test.example.com");
+        assert_eq!(info.attempt_count(), 0);
+
+        // Test prepare_message to verify MX override is used
+        // Note: This will fail to actually connect (expected), but we can verify
+        // that the MX override logic was triggered by checking the mail_servers
+        let _result = processor.prepare_message(&msg_id, &spool).await;
+
+        // Verify that mail_servers were set (even though connection failed)
+        let updated_info = processor.queue.get(&msg_id).await.unwrap();
+        assert!(
+            !updated_info.mail_servers.is_empty(),
+            "Mail servers should be set"
+        );
+
+        // Verify the MX override was used (localhost:1025)
+        let server = &updated_info.mail_servers[0];
+        assert_eq!(server.host, "localhost");
+        assert_eq!(server.port, 1025);
+        assert_eq!(server.priority, 0);
+    }
+
+    #[test]
+    fn test_domain_config_multiple_domains() {
+        let mut domains = DomainConfigRegistry::new();
+
+        domains.insert(
+            "test.local".to_string(),
+            DomainConfig {
+                mx_override: Some("localhost:1025".to_string()),
+                ..Default::default()
+            },
+        );
+
+        domains.insert(
+            "gmail.com".to_string(),
+            DomainConfig {
+                require_tls: true,
+                max_connections: Some(10),
+                rate_limit: Some(100),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(domains.len(), 2);
+
+        let test_config = domains.get("test.local").unwrap();
+        assert!(test_config.has_mx_override());
+        assert!(!test_config.require_tls);
+
+        let gmail_config = domains.get("gmail.com").unwrap();
+        assert!(!gmail_config.has_mx_override());
+        assert!(gmail_config.require_tls);
+        assert_eq!(gmail_config.max_connections, Some(10));
+        assert_eq!(gmail_config.rate_limit, Some(100));
+    }
+
+    #[tokio::test]
+    async fn test_delivery_queue_domain_grouping() {
+        use empath_spool::MemoryBackingStore;
+
+        let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+        // Create a message with multiple recipients in different domains
+        let mut context = create_test_context("sender@example.org", "user1@domain1.com");
+
+        // Add more recipients to different domains
+        if let Some(recipients) = context.envelope.recipients_mut() {
+            if let Ok(addr2) = mailparse::addrparse("user2@domain2.com") {
+                for addr in addr2.iter() {
+                    recipients.push(Address(addr.clone()));
+                }
+            }
+            if let Ok(addr3) = mailparse::addrparse("user3@domain1.com") {
+                for addr in addr3.iter() {
+                    recipients.push(Address(addr.clone()));
+                }
+            }
+        }
+
+        let msg_id = spool.write(context).await.unwrap();
+
+        let mut processor = DeliveryProcessor::default();
+        processor.init(spool.clone()).unwrap();
+
+        // Scan spool - should create separate queue entries for each domain
+        let added = processor.scan_spool_internal(&spool).await.unwrap();
+        assert_eq!(added, 2, "Should create 2 queue entries (one per domain)");
+
+        // Verify both domains are queued
+        // Note: The same message ID is queued multiple times with different domains
+        let info = processor.queue.get(&msg_id).await;
+        assert!(info.is_some(), "Message should be in queue");
+    }
 }

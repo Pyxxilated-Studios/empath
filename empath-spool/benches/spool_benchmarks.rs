@@ -10,14 +10,14 @@ use std::{borrow::Cow, sync::Arc};
 
 use ahash::AHashMap;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use empath_common::envelope::Envelope;
-use empath_spool::{BackingStore, MemoryBackingStore, Message, SpooledMessageId};
+use empath_common::{context::Context, envelope::Envelope};
+use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
 
 // ============================================================================
 // Message Creation Benchmarks
 // ============================================================================
 
-fn create_test_message(data_size: usize) -> Message {
+fn create_test_message(data_size: usize) -> Context {
     let data = vec![b'X'; data_size];
     let mut context = AHashMap::new();
     context.insert(Cow::Borrowed("protocol"), "SMTP".to_string());
@@ -38,14 +38,13 @@ fn create_test_message(data_size: usize) -> Message {
         .into(),
     );
 
-    Message::builder()
-        .envelope(envelope)
-        .data(Arc::from(data.into_boxed_slice()))
-        .helo_id("mail.example.com".to_string())
-        .extended(true)
-        .context(context)
-        .build()
-        .expect("Valid message")
+    Context {
+        envelope,
+        data: Some(Arc::from(data.into_boxed_slice())),
+        extended: true,
+        metadata: context,
+        ..Default::default()
+    }
 }
 
 fn bench_message_creation(c: &mut Criterion) {
@@ -67,46 +66,6 @@ fn bench_message_creation(c: &mut Criterion) {
             });
         });
     }
-
-    group.finish();
-}
-
-fn bench_message_builder(c: &mut Criterion) {
-    let mut group = c.benchmark_group("message_builder");
-
-    let data: Arc<[u8]> = Arc::from(vec![b'X'; 1024].into_boxed_slice());
-
-    let mut envelope = Envelope::default();
-    *envelope.sender_mut() = Some(
-        mailparse::addrparse("sender@example.com").expect("Valid address")[0]
-            .clone()
-            .into(),
-    );
-    *envelope.recipients_mut() = Some(
-        vec![
-            mailparse::addrparse("recipient@example.com").expect("Valid address")[0]
-                .clone()
-                .into(),
-        ]
-        .into(),
-    );
-
-    let mut context = AHashMap::new();
-    context.insert(Cow::Borrowed("protocol"), "SMTP".to_string());
-
-    group.bench_function("builder_pattern", |b| {
-        b.iter(|| {
-            let msg = Message::builder()
-                .envelope(black_box(envelope.clone()))
-                .data(black_box(data.clone()))
-                .helo_id(black_box("mail.example.com".to_string()))
-                .extended(black_box(true))
-                .context(black_box(context.clone()))
-                .build()
-                .expect("Valid message");
-            black_box(msg)
-        });
-    });
 
     group.finish();
 }
@@ -160,7 +119,7 @@ fn bench_bincode_deserialization(c: &mut Criterion) {
             &serialized,
             |b, data| {
                 b.iter(|| {
-                    let deserialized: Message =
+                    let deserialized: Context =
                         bincode::deserialize(black_box(data)).expect("Deserialization works");
                     black_box(deserialized)
                 });
@@ -183,7 +142,7 @@ fn bench_bincode_roundtrip(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(desc), &message, |b, msg| {
             b.iter(|| {
                 let serialized = bincode::serialize(black_box(msg)).expect("Serialization works");
-                let deserialized: Message =
+                let deserialized: Context =
                     bincode::deserialize(&serialized).expect("Deserialization works");
                 black_box(deserialized)
             });
@@ -373,7 +332,6 @@ fn bench_spool_full_lifecycle(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_message_creation,
-    bench_message_builder,
     bench_bincode_serialization,
     bench_bincode_deserialization,
     bench_bincode_roundtrip,

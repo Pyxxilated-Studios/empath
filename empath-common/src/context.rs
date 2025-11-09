@@ -2,15 +2,31 @@ use std::{borrow::Cow, fmt::Debug, sync::Arc};
 
 use ahash::AHashMap;
 use mailparse::MailAddr;
+use serde::{Deserialize, Serialize};
 
 use crate::{envelope::Envelope, status::Status};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Capability {
     Auth,
 }
 
-#[derive(Debug)]
+/// Delivery-specific context information for outbound mail delivery.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeliveryContext {
+    /// The message ID being delivered
+    pub message_id: String,
+    /// The recipient domain being delivered to
+    pub domain: String,
+    /// The mail server (MX host:port) being used for delivery
+    pub server: Option<String>,
+    /// Error message if delivery failed
+    pub error: Option<String>,
+    /// Number of delivery attempts made
+    pub attempts: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Context {
     pub extended: bool,
     pub envelope: Envelope,
@@ -24,6 +40,10 @@ pub struct Context {
     /// Maximum message size in bytes (0 = unlimited)
     pub max_message_size: usize,
     pub capabilities: Vec<Capability>,
+    /// Delivery-specific context (populated during outbound delivery)
+    pub delivery: Option<DeliveryContext>,
+    /// Spool tracking ID (assigned when message is spooled)
+    pub tracking_id: Option<String>,
 }
 
 impl Default for Context {
@@ -38,6 +58,8 @@ impl Default for Context {
             banner: Arc::from(""),
             max_message_size: 0,
             capabilities: Vec::new(),
+            delivery: None,
+            tracking_id: None,
         }
     }
 }

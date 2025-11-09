@@ -210,6 +210,79 @@ pub unsafe extern "C" fn em_context_get(
     }
 }
 
+// ============================================================================
+// Delivery Context Accessors
+// ============================================================================
+
+/// Check if delivery context is present
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub const extern "C" fn em_context_has_delivery(validate_context: &Context) -> bool {
+    validate_context.delivery.is_some()
+}
+
+/// Get the message ID from delivery context
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_delivery_get_message_id(validate_context: &Context) -> crate::string::String {
+    validate_context
+        .delivery
+        .as_ref()
+        .map_or_else(crate::string::String::default, |d| {
+            d.message_id.as_str().into()
+        })
+}
+
+/// Get the delivery domain from delivery context
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_delivery_get_domain(validate_context: &Context) -> crate::string::String {
+    validate_context
+        .delivery
+        .as_ref()
+        .map_or_else(crate::string::String::default, |d| d.domain.as_str().into())
+}
+
+/// Get the delivery server from delivery context
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_delivery_get_server(validate_context: &Context) -> crate::string::String {
+    validate_context
+        .delivery
+        .as_ref()
+        .map_or_else(crate::string::String::default, |d| {
+            d.server
+                .as_ref()
+                .map_or_else(crate::string::String::default, |s| s.as_str().into())
+        })
+}
+
+/// Get the delivery error from delivery context
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_delivery_get_error(validate_context: &Context) -> crate::string::String {
+    validate_context
+        .delivery
+        .as_ref()
+        .map_or_else(crate::string::String::default, |d| {
+            d.error
+                .as_ref()
+                .map_or_else(crate::string::String::default, |e| e.as_str().into())
+        })
+}
+
+/// Get the delivery attempt count from delivery context
+/// Returns 0 if no delivery context or no attempt count is set
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_delivery_get_attempts(validate_context: &Context) -> u32 {
+    validate_context
+        .delivery
+        .as_ref()
+        .and_then(|d| d.attempts)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod test {
     use std::{
