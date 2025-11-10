@@ -57,6 +57,10 @@ pub enum PermanentError {
     /// Message size exceeds server limits.
     #[error("Message too large: {0}")]
     MessageTooLarge(String),
+
+    /// TLS is required but not available or failed.
+    #[error("TLS required: {0}")]
+    TlsRequired(String),
 }
 
 /// Temporary errors that should be retried with exponential backoff.

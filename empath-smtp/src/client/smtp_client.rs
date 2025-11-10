@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use empath_common::tracing;
+use empath_common::{outgoing, tracing};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -33,6 +33,8 @@ enum ClientConnection {
 impl ClientConnection {
     /// Sends data over the connection.
     async fn send(&mut self, data: &[u8]) -> Result<()> {
+        outgoing!("{:?}", std::str::from_utf8(data));
+
         match self {
             Self::Plain(stream) => stream.write_all(data).await?,
             Self::Tls(stream) => stream.write_all(data).await?,
