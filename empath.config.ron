@@ -6,6 +6,15 @@ Empath (
                 context: {
                     "service": "smtp",
                 },
+                // Server-side timeout configuration (RFC 5321 compliant defaults)
+                // These timeouts prevent resource exhaustion from slow or malicious clients
+                timeouts: (
+                    command_secs: 300,          // 5 minutes for regular commands (EHLO, MAIL FROM, etc.)
+                    data_init_secs: 120,        // 2 minutes for DATA command
+                    data_block_secs: 180,       // 3 minutes between data chunks
+                    data_termination_secs: 600, // 10 minutes for processing after final dot
+                    connection_secs: 1800,      // 30 minutes maximum session lifetime
+                ),
                 extensions: [
                     {
                         "size": 10000,
@@ -54,6 +63,18 @@ Empath (
         // SECURITY WARNING: Accept invalid TLS certificates globally (for testing only)
         // Default: false (secure). Only enable for testing with self-signed certificates.
         // accept_invalid_certs: false,
+
+        // SMTP operation timeout configuration (all values in seconds)
+        // These timeouts prevent hung connections and ensure timely failure detection
+        smtp_timeouts: (
+            connect_secs: 30,      // Initial connection establishment
+            ehlo_secs: 30,         // EHLO/HELO commands
+            starttls_secs: 30,     // STARTTLS command and TLS upgrade
+            mail_from_secs: 30,    // MAIL FROM command
+            rcpt_to_secs: 30,      // RCPT TO command (per recipient)
+            data_secs: 120,        // DATA command and message transmission (longer for large messages)
+            quit_secs: 10,         // QUIT command
+        ),
 
         // Per-domain configuration for testing and custom settings
         domains: {

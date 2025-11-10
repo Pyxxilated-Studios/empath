@@ -66,6 +66,7 @@ pub struct SessionConfig {
     pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
     pub banner: String,
     pub init_context: AHashMap<Cow<'static, str>, String>,
+    pub timeouts: crate::SmtpServerTimeouts,
 }
 
 impl SessionConfig {
@@ -77,13 +78,27 @@ impl SessionConfig {
 }
 
 /// Builder for `SessionConfig`
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SessionConfigBuilder {
     extensions: Vec<Extension>,
     tls_context: Option<TlsContext>,
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     banner: String,
     init_context: AHashMap<Cow<'static, str>, String>,
+    timeouts: crate::SmtpServerTimeouts,
+}
+
+impl Default for SessionConfigBuilder {
+    fn default() -> Self {
+        Self {
+            extensions: Vec::new(),
+            tls_context: None,
+            spool: None,
+            banner: String::new(),
+            init_context: AHashMap::new(),
+            timeouts: crate::SmtpServerTimeouts::default(),
+        }
+    }
 }
 
 impl SessionConfigBuilder {
@@ -122,6 +137,13 @@ impl SessionConfigBuilder {
         self
     }
 
+    /// Set the timeout configuration for this session
+    #[must_use]
+    pub const fn with_timeouts(mut self, timeouts: crate::SmtpServerTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+
     /// Build the final `SessionConfig`
     #[must_use]
     pub fn build(self) -> SessionConfig {
@@ -131,6 +153,7 @@ impl SessionConfigBuilder {
             spool: self.spool,
             banner: self.banner,
             init_context: self.init_context,
+            timeouts: self.timeouts,
         }
     }
 }
@@ -155,6 +178,10 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     /// When the limit is exceeded, the server rejects with SMTP status code 552
     /// (Exceeded Storage Allocation).
     max_message_size: usize,
+    /// Server-side timeout configuration
+    timeouts: crate::SmtpServerTimeouts,
+    /// Start time for tracking connection lifetime
+    start_time: std::time::Instant,
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
@@ -201,10 +228,31 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             },
             init_context: Arc::new(config.init_context),
             max_message_size,
+            timeouts: config.timeouts,
+            start_time: std::time::Instant::now(),
+        }
+    }
+
+    /// Get the appropriate timeout for the current state
+    ///
+    /// Returns timeout in seconds based on RFC 5321 recommendations:
+    /// - DATA block reading: 3 minutes (waiting for message content)
+    /// - DATA initiation: 2 minutes (for DATA command itself)
+    /// - `PostDot`: 10 minutes (for processing after final dot)
+    /// - Regular commands: 5 minutes (EHLO, MAIL FROM, RCPT TO, etc.)
+    const fn get_timeout_secs(&self) -> u64 {
+        use crate::state::State;
+
+        match &self.context.state {
+            State::Reading(_) => self.timeouts.data_block_secs,
+            State::Data(_) => self.timeouts.data_init_secs,
+            State::PostDot(_) => self.timeouts.data_termination_secs,
+            _ => self.timeouts.command_secs,
         }
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, fields(?peer = self.peer), ret), timing(precision = "us"))]
+    #[allow(clippy::too_many_lines)]
     pub(crate) async fn run(
         mut self,
         signal: tokio::sync::broadcast::Receiver<Signal>,
@@ -217,6 +265,19 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             mut signal: tokio::sync::broadcast::Receiver<Signal>,
         ) -> Result<(), SessionError> {
             loop {
+                // Check if connection has exceeded maximum lifetime
+                let connection_duration = session.start_time.elapsed();
+                let max_duration = std::time::Duration::from_secs(session.timeouts.connection_secs);
+                if connection_duration >= max_duration {
+                    tracing::warn!(
+                        peer = ?session.peer,
+                        duration_secs = ?connection_duration.as_secs(),
+                        max_secs = session.timeouts.connection_secs,
+                        "Connection exceeded maximum lifetime, closing"
+                    );
+                    return Err(SessionError::Timeout(session.timeouts.connection_secs));
+                }
+
                 // Then generate the response based on what emit() set
                 let (response, ev) = session.response(validate_context).await;
 
@@ -275,6 +336,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                             Some((Status::Error, Cow::Borrowed("STARTTLS failed")));
                     }
                 } else {
+                    // Get state-aware timeout
+                    let timeout_secs = session.get_timeout_secs();
+                    let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+
                     tokio::select! {
                         _ = signal.recv() => {
                             session.context.sent = false;
@@ -282,9 +347,20 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                             validate_context.response =
                                 Some((Status::Unavailable, Cow::Borrowed("Server shutting down")));
                         }
-                        close = session.receive(validate_context) => {
-                            if close.unwrap_or(true) {
-                                return Ok(());
+                        result = tokio::time::timeout(timeout_duration, session.receive(validate_context)) => {
+                            if let Ok(close) = result {
+                                if close.unwrap_or(true) {
+                                    return Ok(());
+                                }
+                            } else {
+                                // Timeout occurred
+                                tracing::warn!(
+                                    peer = ?session.peer,
+                                    state = ?session.context.state,
+                                    timeout_secs = timeout_secs,
+                                    "Client connection timed out"
+                                );
+                                return Err(SessionError::Timeout(timeout_secs));
                             }
                         }
                     }

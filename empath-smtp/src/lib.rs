@@ -32,6 +32,80 @@ use crate::{
 
 const MAX_MESSAGE_SIZE: usize = 100;
 
+/// SMTP server-side timeout configuration
+///
+/// These timeouts prevent resource exhaustion from slow or malicious clients
+/// and follow RFC 5321 Section 4.5.3.2 recommendations.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SmtpServerTimeouts {
+    /// Timeout for regular SMTP commands (EHLO, MAIL FROM, RCPT TO, etc.)
+    ///
+    /// RFC 5321 recommends: 5 minutes
+    /// Default: 300 seconds (5 minutes)
+    #[serde(default = "default_command_timeout")]
+    pub command_secs: u64,
+
+    /// Timeout for DATA command response
+    ///
+    /// RFC 5321 recommends: 2 minutes
+    /// Default: 120 seconds (2 minutes)
+    #[serde(default = "default_data_init_timeout")]
+    pub data_init_secs: u64,
+
+    /// Timeout between data chunks while receiving message body
+    ///
+    /// RFC 5321 recommends: 3 minutes
+    /// Default: 180 seconds (3 minutes)
+    #[serde(default = "default_data_block_timeout")]
+    pub data_block_secs: u64,
+
+    /// Timeout for processing after final dot terminator
+    ///
+    /// RFC 5321 recommends: 10 minutes
+    /// Default: 600 seconds (10 minutes)
+    #[serde(default = "default_data_termination_timeout")]
+    pub data_termination_secs: u64,
+
+    /// Maximum total session duration
+    ///
+    /// Prevents sessions from living indefinitely.
+    /// Default: 1800 seconds (30 minutes)
+    #[serde(default = "default_connection_timeout")]
+    pub connection_secs: u64,
+}
+
+impl Default for SmtpServerTimeouts {
+    fn default() -> Self {
+        Self {
+            command_secs: default_command_timeout(),
+            data_init_secs: default_data_init_timeout(),
+            data_block_secs: default_data_block_timeout(),
+            data_termination_secs: default_data_termination_timeout(),
+            connection_secs: default_connection_timeout(),
+        }
+    }
+}
+
+const fn default_command_timeout() -> u64 {
+    300 // 5 minutes per RFC 5321
+}
+
+const fn default_data_init_timeout() -> u64 {
+    120 // 2 minutes per RFC 5321
+}
+
+const fn default_data_block_timeout() -> u64 {
+    180 // 3 minutes per RFC 5321
+}
+
+const fn default_data_termination_timeout() -> u64 {
+    600 // 10 minutes per RFC 5321
+}
+
+const fn default_connection_timeout() -> u64 {
+    1800 // 30 minutes
+}
+
 #[derive(Default, Deserialize)]
 pub struct Smtp;
 
@@ -41,6 +115,8 @@ pub struct SmtpArgs {
     extensions: Vec<Extension>,
     #[serde(skip)]
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
+    #[serde(default)]
+    pub timeouts: SmtpServerTimeouts,
 }
 
 impl SmtpArgs {
@@ -61,6 +137,13 @@ impl SmtpArgs {
     #[must_use]
     pub fn with_spool(mut self, spool: Arc<dyn empath_spool::BackingStore>) -> Self {
         self.spool = Some(spool);
+        self
+    }
+
+    /// Set the timeout configuration for this SMTP server
+    #[must_use]
+    pub const fn with_timeouts(mut self, timeouts: SmtpServerTimeouts) -> Self {
+        self.timeouts = timeouts;
         self
     }
 }
@@ -87,6 +170,7 @@ impl Protocol for Smtp {
             SessionConfig::builder()
                 .with_extensions(args.extensions)
                 .with_spool(args.spool)
+                .with_timeouts(args.timeouts)
                 .with_init_context(
                     init_context
                         .into_iter()

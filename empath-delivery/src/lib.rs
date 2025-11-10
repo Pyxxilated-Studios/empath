@@ -25,6 +25,98 @@ pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+/// SMTP operation timeout configuration
+///
+/// Configures timeout durations for various SMTP operations to prevent
+/// hung connections and ensure timely failure detection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmtpTimeouts {
+    /// Timeout for initial connection establishment
+    ///
+    /// Default: 30 seconds
+    #[serde(default = "default_connect_timeout")]
+    pub connect_secs: u64,
+
+    /// Timeout for EHLO/HELO commands
+    ///
+    /// Default: 30 seconds
+    #[serde(default = "default_ehlo_timeout")]
+    pub ehlo_secs: u64,
+
+    /// Timeout for STARTTLS command and TLS upgrade
+    ///
+    /// Default: 30 seconds
+    #[serde(default = "default_starttls_timeout")]
+    pub starttls_secs: u64,
+
+    /// Timeout for MAIL FROM command
+    ///
+    /// Default: 30 seconds
+    #[serde(default = "default_mail_from_timeout")]
+    pub mail_from_secs: u64,
+
+    /// Timeout for RCPT TO command
+    ///
+    /// Default: 30 seconds
+    #[serde(default = "default_rcpt_to_timeout")]
+    pub rcpt_to_secs: u64,
+
+    /// Timeout for DATA command and message transmission
+    ///
+    /// This is longer than other timeouts to accommodate large messages.
+    /// Default: 120 seconds (2 minutes)
+    #[serde(default = "default_data_timeout")]
+    pub data_secs: u64,
+
+    /// Timeout for QUIT command
+    ///
+    /// Default: 10 seconds
+    #[serde(default = "default_quit_timeout")]
+    pub quit_secs: u64,
+}
+
+impl Default for SmtpTimeouts {
+    fn default() -> Self {
+        Self {
+            connect_secs: default_connect_timeout(),
+            ehlo_secs: default_ehlo_timeout(),
+            starttls_secs: default_starttls_timeout(),
+            mail_from_secs: default_mail_from_timeout(),
+            rcpt_to_secs: default_rcpt_to_timeout(),
+            data_secs: default_data_timeout(),
+            quit_secs: default_quit_timeout(),
+        }
+    }
+}
+
+const fn default_connect_timeout() -> u64 {
+    30
+}
+
+const fn default_ehlo_timeout() -> u64 {
+    30
+}
+
+const fn default_starttls_timeout() -> u64 {
+    30
+}
+
+const fn default_mail_from_timeout() -> u64 {
+    30
+}
+
+const fn default_rcpt_to_timeout() -> u64 {
+    30
+}
+
+const fn default_data_timeout() -> u64 {
+    120
+}
+
+const fn default_quit_timeout() -> u64 {
+    10
+}
+
 /// Status of a message in the delivery queue
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeliveryStatus {
@@ -283,6 +375,10 @@ pub struct DeliveryProcessor {
     #[serde(default)]
     pub domains: DomainConfigRegistry,
 
+    /// SMTP operation timeout configuration
+    #[serde(default)]
+    pub smtp_timeouts: SmtpTimeouts,
+
     /// The spool backing store to read messages from (initialized in `init()`)
     #[serde(skip)]
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
@@ -313,6 +409,7 @@ impl Default for DeliveryProcessor {
             accept_invalid_certs: false,
             dns: DnsConfig::default(),
             domains: DomainConfigRegistry::default(),
+            smtp_timeouts: SmtpTimeouts::default(),
             spool: None,
             queue: DeliveryQueue::new(),
             dns_resolver: None,
@@ -887,7 +984,15 @@ impl DeliveryProcessor {
         self.send_message_data(&mut client, context).await?;
 
         // Send QUIT to cleanly close the connection
-        let _ = client.quit().await;
+        // Note: We don't fail the delivery if QUIT fails since the message was already delivered
+        let quit_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
+        if let Err(e) = tokio::time::timeout(quit_timeout, client.quit()).await {
+            tracing::warn!(
+                server = %server_address,
+                timeout = ?quit_timeout,
+                "QUIT command timed out after successful delivery: {e}"
+            );
+        }
 
         Ok(())
     }
@@ -903,9 +1008,10 @@ impl DeliveryProcessor {
         require_tls: bool,
     ) -> Result<(), DeliveryError> {
         // Send initial EHLO
-        let ehlo_response = client
-            .ehlo(helo_domain)
+        let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+        let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
             .await
+            .map_err(|_| TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}")))?
             .map_err(|e| TemporaryError::SmtpTemporary(format!("EHLO failed: {e}")))?;
 
         if !ehlo_response.is_success() {
@@ -923,17 +1029,31 @@ impl DeliveryProcessor {
             .any(|line| line.to_uppercase().contains("STARTTLS"));
 
         if require_tls || supports_starttls {
-            let starttls_response = client.starttls().await.map_err(|e| {
-                if require_tls {
-                    DeliveryError::Permanent(PermanentError::TlsRequired(format!(
-                        "STARTTLS failed: {e}"
-                    )))
-                } else {
-                    DeliveryError::Temporary(TemporaryError::SmtpTemporary(format!(
-                        "STARTTLS failed: {e}"
-                    )))
-                }
-            })?;
+            let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
+            let starttls_response = tokio::time::timeout(starttls_timeout, client.starttls())
+                .await
+                .map_err(|_| {
+                    if require_tls {
+                        DeliveryError::Permanent(PermanentError::TlsRequired(format!(
+                            "STARTTLS timed out after {starttls_timeout:?}"
+                        )))
+                    } else {
+                        DeliveryError::Temporary(TemporaryError::Timeout(format!(
+                            "STARTTLS timed out after {starttls_timeout:?}"
+                        )))
+                    }
+                })?
+                .map_err(|e| {
+                    if require_tls {
+                        DeliveryError::Permanent(PermanentError::TlsRequired(format!(
+                            "STARTTLS failed: {e}"
+                        )))
+                    } else {
+                        DeliveryError::Temporary(TemporaryError::SmtpTemporary(format!(
+                            "STARTTLS failed: {e}"
+                        )))
+                    }
+                })?;
 
             if !starttls_response.is_success() {
                 let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
@@ -945,9 +1065,16 @@ impl DeliveryProcessor {
             }
 
             // Re-send EHLO after STARTTLS (RFC 3207)
-            let ehlo_response = client.ehlo(helo_domain).await.map_err(|e| {
-                TemporaryError::SmtpTemporary(format!("EHLO after STARTTLS failed: {e}"))
-            })?;
+            let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!(
+                        "EHLO after STARTTLS timed out after {ehlo_timeout:?}"
+                    ))
+                })?
+                .map_err(|e| {
+                    TemporaryError::SmtpTemporary(format!("EHLO after STARTTLS failed: {e}"))
+                })?;
 
             if !ehlo_response.is_success() {
                 return Err(TemporaryError::SmtpTemporary(format!(
@@ -976,10 +1103,16 @@ impl DeliveryProcessor {
             .and_then(extract_email_address)
             .unwrap_or_default();
 
-        let mail_response = client
-            .mail_from(&sender, None)
-            .await
-            .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
+        let mail_from_timeout = Duration::from_secs(self.smtp_timeouts.mail_from_secs);
+        let mail_response =
+            tokio::time::timeout(mail_from_timeout, client.mail_from(&sender, None))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!(
+                        "MAIL FROM timed out after {mail_from_timeout:?}"
+                    ))
+                })?
+                .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
 
         if !mail_response.is_success() {
             let code = mail_response.code;
@@ -1007,15 +1140,21 @@ impl DeliveryProcessor {
             return Err(SystemError::Internal("No recipients in message".to_string()).into());
         };
 
+        let rcpt_to_timeout = Duration::from_secs(self.smtp_timeouts.rcpt_to_secs);
         for recipient in recipients.iter() {
             let Some(recipient_addr) = extract_email_address(recipient) else {
                 continue; // Skip group addresses
             };
 
-            let rcpt_response = client
-                .rcpt_to(&recipient_addr)
-                .await
-                .map_err(|e| TemporaryError::SmtpTemporary(format!("RCPT TO failed: {e}")))?;
+            let rcpt_response =
+                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(&recipient_addr))
+                    .await
+                    .map_err(|_| {
+                        TemporaryError::Timeout(format!(
+                            "RCPT TO timed out after {rcpt_to_timeout:?}"
+                        ))
+                    })?
+                    .map_err(|e| TemporaryError::SmtpTemporary(format!("RCPT TO failed: {e}")))?;
 
             if !rcpt_response.is_success() {
                 let code = rcpt_response.code;
@@ -1044,10 +1183,14 @@ impl DeliveryProcessor {
         client: &mut empath_smtp::client::SmtpClient,
         context: &Context,
     ) -> Result<(), DeliveryError> {
+        let data_timeout = Duration::from_secs(self.smtp_timeouts.data_secs);
+
         // Send DATA command
-        let data_response = client
-            .data()
+        let data_response = tokio::time::timeout(data_timeout, client.data())
             .await
+            .map_err(|_| {
+                TemporaryError::Timeout(format!("DATA command timed out after {data_timeout:?}"))
+            })?
             .map_err(|e| TemporaryError::SmtpTemporary(format!("DATA command failed: {e}")))?;
 
         if !(300..400).contains(&data_response.code) {
@@ -1069,9 +1212,16 @@ impl DeliveryProcessor {
         let data_str = std::str::from_utf8(message_data.as_ref())
             .map_err(|e| SystemError::Internal(format!("Message data is not valid UTF-8: {e}")))?;
 
-        let send_response = client.send_data(data_str).await.map_err(|e| {
-            TemporaryError::SmtpTemporary(format!("Failed to send message data: {e}"))
-        })?;
+        let send_response = tokio::time::timeout(data_timeout, client.send_data(data_str))
+            .await
+            .map_err(|_| {
+                TemporaryError::Timeout(format!(
+                    "Sending message data timed out after {data_timeout:?}"
+                ))
+            })?
+            .map_err(|e| {
+                TemporaryError::SmtpTemporary(format!("Failed to send message data: {e}"))
+            })?;
 
         if !send_response.is_success() {
             let code = send_response.code;

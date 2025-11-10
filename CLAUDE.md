@@ -217,6 +217,15 @@ Empath (
                 context: {
                     "service": "smtp",
                 },
+                // Server-side timeout configuration (RFC 5321 compliant defaults)
+                // Prevents resource exhaustion from slow or malicious clients
+                timeouts: (
+                    command_secs: 300,          // 5 min for regular commands (EHLO, MAIL FROM, etc.)
+                    data_init_secs: 120,        // 2 min for DATA command
+                    data_block_secs: 180,       // 3 min between data chunks
+                    data_termination_secs: 600, // 10 min for processing after final dot
+                    connection_secs: 1800,      // 30 min maximum session lifetime
+                ),
                 // Optional extensions like SIZE and STARTTLS
                 extensions: [
                     {
@@ -505,6 +514,81 @@ let accept_invalid_certs = self
     .and_then(|config| config.accept_invalid_certs)
     .unwrap_or(self.accept_invalid_certs);
 ```
+
+### SMTP Operation Timeouts
+
+Both the server (receiving) and client (delivery) sides implement comprehensive timeouts to prevent hung connections and resource exhaustion.
+
+#### Server-Side Timeouts (RFC 5321 Compliant)
+
+The SMTP server implements state-aware timeouts that follow RFC 5321 Section 4.5.3.2 recommendations:
+
+**Configuration** (in `smtp_controller` listener config):
+
+```ron
+timeouts: (
+    command_secs: 300,          // 5 minutes for regular commands (EHLO, MAIL FROM, RCPT TO, etc.)
+    data_init_secs: 120,        // 2 minutes for DATA command response
+    data_block_secs: 180,       // 3 minutes between data chunks while receiving message
+    data_termination_secs: 600, // 10 minutes for processing after final dot terminator
+    connection_secs: 1800,      // 30 minutes maximum total session lifetime
+),
+```
+
+**How It Works:**
+
+- Timeouts are **state-aware**: The system automatically selects the appropriate timeout based on the current SMTP state
+- `Reading` state (receiving message body): Uses `data_block_secs`
+- `Data` state (waiting for DATA command): Uses `data_init_secs`
+- `PostDot` state (processing after final `.`): Uses `data_termination_secs`
+- All other states: Uses `command_secs`
+
+**Connection Lifetime:**
+
+The maximum session lifetime (`connection_secs`) is checked on every iteration of the session loop. When exceeded, the connection is automatically closed with a timeout error.
+
+**Security Benefits:**
+
+- Prevents slowloris attacks (clients that send data very slowly)
+- Prevents resource exhaustion from hung connections
+- Mitigates DoS vulnerabilities from clients holding resources indefinitely
+- Protects against misbehaving SMTP clients
+
+**Implementation:** `empath-smtp/src/session.rs:243-252, 267-278, 336-365`
+
+#### Client-Side Timeouts (Delivery)
+
+The delivery system implements per-operation timeouts for outbound SMTP connections:
+
+**Configuration** (in `delivery` config):
+
+```ron
+smtp_timeouts: (
+    connect_secs: 30,      // Initial connection establishment
+    ehlo_secs: 30,         // EHLO/HELO commands
+    starttls_secs: 30,     // STARTTLS command and TLS upgrade
+    mail_from_secs: 30,    // MAIL FROM command
+    rcpt_to_secs: 30,      // RCPT TO command (per recipient)
+    data_secs: 120,        // DATA command and message transmission (longer for large messages)
+    quit_secs: 10,         // QUIT command
+),
+```
+
+**QUIT Timeout Behavior:**
+
+Since QUIT occurs after successful delivery, timeout errors are logged but do not fail the delivery:
+
+```rust
+if let Err(e) = tokio::time::timeout(quit_timeout, client.quit()).await {
+    tracing::warn!(
+        server = %server_address,
+        timeout = ?quit_timeout,
+        "QUIT command timed out after successful delivery: {e}"
+    );
+}
+```
+
+**Implementation:** `empath-delivery/src/lib.rs:28-118, 987-995, 1004-1008, 1026-1049, 1061-1070, 1100-1108, 1141-1149, 1180-1215`
 
 ## Adding New Features
 
