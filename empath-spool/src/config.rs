@@ -64,6 +64,24 @@ impl Default for SpoolConfig {
 }
 
 impl SpoolConfig {
+    /// Get the filesystem path for file-backed spools, if applicable
+    ///
+    /// Returns `Some(path)` for `File` variant, `None` for `Memory` variant.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// if let Some(path) = config.path() {
+    ///     println!("Spool directory: {}", path.display());
+    /// }
+    /// ```
+    #[must_use]
+    pub fn path(&self) -> Option<&std::path::Path> {
+        match self {
+            Self::File(store) => Some(store.path()),
+            Self::Memory(_) => None,
+        }
+    }
+
     /// Convert the configuration into a concrete backing store
     ///
     /// This consumes the config and returns an Arc'd trait object that can

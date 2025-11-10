@@ -66,6 +66,18 @@ cargo build  # Outputs to empath/target/empath.h
 cd empath-ffi/examples
 gcc example.c -fpic -shared -o libexample.so -l empath -L ../../target/debug
 gcc event.c -fpic -shared -o libevent.so -l empath -L ../../target/debug
+
+# Queue Management with empathctl
+cargo build --bin empathctl            # Build queue management CLI
+./target/debug/empathctl queue list    # List all messages in queue
+./target/debug/empathctl queue list --status=failed  # List only failed messages
+./target/debug/empathctl queue view <message-id>  # View message details
+./target/debug/empathctl queue delete <message-id> --yes  # Delete message
+./target/debug/empathctl queue retry <message-id>   # Retry failed delivery
+./target/debug/empathctl queue freeze    # Pause delivery processing
+./target/debug/empathctl queue unfreeze  # Resume delivery processing
+./target/debug/empathctl queue stats     # Show queue statistics
+./target/debug/empathctl queue stats --watch --interval 2  # Live stats view
 ```
 
 ## Clippy Configuration

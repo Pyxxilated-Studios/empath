@@ -130,6 +130,12 @@ impl FileBackingStore {
         Ok(())
     }
 
+    /// Get the spool directory path
+    #[must_use]
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
     /// Create a new `FileBackingStore` builder
     #[must_use]
     pub fn builder() -> FileBackingStoreBuilder {

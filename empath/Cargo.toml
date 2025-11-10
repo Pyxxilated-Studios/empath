@@ -22,8 +22,15 @@ crate-type = ["cdylib", "rlib"]
 name = "empath"
 path = "bin/main.rs"
 
+[[bin]]
+name = "empathctl"
+path = "src/bin/empathctl.rs"
+
 [dependencies]
 anyhow = "1.0.93"
+bincode = "1"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
 empath-common = { path = "../empath-common", version = "*" }
 empath-delivery = { path = "../empath-delivery", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
@@ -38,6 +45,7 @@ rustls-pemfile = "2.2"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
 tokio = { version = "1", default-features = false, features = [
+    "fs",
     "io-util",
     "net",
     "macros",
@@ -45,7 +53,9 @@ tokio = { version = "1", default-features = false, features = [
     "rt-multi-thread",
     "signal",
     "sync",
+    "time",
 ] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 anyhow = "1.0.93"

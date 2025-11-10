@@ -294,6 +294,14 @@ pub struct DeliveryProcessor {
     /// DNS resolver for MX record lookups (initialized in `init()`)
     #[serde(skip)]
     dns_resolver: Option<DnsResolver>,
+
+    /// Path to persist queue state (JSON file for CLI access)
+    #[serde(skip)]
+    queue_state_path: Option<std::path::PathBuf>,
+
+    /// Path to freeze marker file (presence indicates queue is frozen)
+    #[serde(skip)]
+    freeze_marker_path: Option<std::path::PathBuf>,
 }
 
 impl Default for DeliveryProcessor {
@@ -308,6 +316,8 @@ impl Default for DeliveryProcessor {
             spool: None,
             queue: DeliveryQueue::new(),
             dns_resolver: None,
+            queue_state_path: None,
+            freeze_marker_path: None,
         }
     }
 }
@@ -321,6 +331,7 @@ impl DeliveryProcessor {
     pub fn init(
         &mut self,
         spool: Arc<dyn empath_spool::BackingStore>,
+        spool_path: Option<std::path::PathBuf>,
     ) -> Result<(), DeliveryError> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
@@ -331,6 +342,13 @@ impl DeliveryProcessor {
             self.dns.cache_ttl_secs,
             self.dns.cache_size
         );
+
+        // Set up queue state persistence paths based on spool directory
+        // If spool_path is provided, derive paths from it, otherwise use /tmp/spool
+        let base_path = spool_path.unwrap_or_else(|| std::path::PathBuf::from("/tmp/spool"));
+        self.queue_state_path = Some(base_path.join("queue_state.bin"));
+        self.freeze_marker_path = Some(base_path.join("queue_frozen"));
+
         Ok(())
     }
 
@@ -359,13 +377,16 @@ impl DeliveryProcessor {
 
         let scan_interval = Duration::from_secs(self.scan_interval_secs);
         let process_interval = Duration::from_secs(self.process_interval_secs);
+        let state_save_interval = Duration::from_secs(30); // Save queue state every 30s
 
         let mut scan_timer = tokio::time::interval(scan_interval);
         let mut process_timer = tokio::time::interval(process_interval);
+        let mut state_save_timer = tokio::time::interval(state_save_interval);
 
         // Skip the first tick to avoid immediate execution
         scan_timer.tick().await;
         process_timer.tick().await;
+        state_save_timer.tick().await;
 
         loop {
             tokio::select! {
@@ -383,6 +404,12 @@ impl DeliveryProcessor {
                     }
                 }
                 _ = process_timer.tick() => {
+                    // Check if queue is frozen before processing
+                    if self.is_frozen() {
+                        tracing::debug!("Delivery queue is frozen, skipping processing");
+                        continue;
+                    }
+
                     match self.process_queue_internal(spool).await {
                         Ok(()) => {
                             tracing::debug!("Processed delivery queue");
@@ -392,10 +419,18 @@ impl DeliveryProcessor {
                         }
                     }
                 }
+                _ = state_save_timer.tick() => {
+                    // Periodically persist queue state for CLI access
+                    if let Err(e) = self.save_queue_state().await {
+                        tracing::warn!("Failed to save queue state: {e}");
+                    }
+                }
                 sig = shutdown.recv() => {
                     match sig {
                         Ok(Signal::Shutdown | Signal::Finalised) => {
                             internal!("Delivery processor shutting down");
+                            // Save final queue state before shutdown
+                            let _ignore_error = self.save_queue_state().await;
                             break;
                         }
                         Err(e) => {
@@ -413,6 +448,59 @@ impl DeliveryProcessor {
     /// Get a reference to the delivery queue
     pub const fn queue(&self) -> &DeliveryQueue {
         &self.queue
+    }
+
+    /// Check if the delivery queue is frozen
+    ///
+    /// Returns `true` if the freeze marker file exists, `false` otherwise.
+    fn is_frozen(&self) -> bool {
+        self.freeze_marker_path
+            .as_ref()
+            .is_some_and(|path| path.exists())
+    }
+
+    /// Save the current queue state to a bincode file for CLI access
+    ///
+    /// This allows the `empathctl` CLI tool to inspect queue status without
+    /// requiring a running API server or IPC mechanism.
+    ///
+    /// # Errors
+    /// Returns an error if the queue state cannot be serialized or written
+    async fn save_queue_state(&self) -> Result<(), DeliveryError> {
+        if let Some(ref state_path) = self.queue_state_path {
+            let queue_data = self.queue.all_messages().await;
+
+            // Convert to a HashMap keyed by message ID string for easier CLI access
+            let state_map: std::collections::HashMap<String, DeliveryInfo> = queue_data
+                .into_iter()
+                .map(|info| (info.message_id.to_string(), info))
+                .collect();
+
+            let encoded = bincode::serialize(&state_map).map_err(|e| {
+                SystemError::Internal(format!("Failed to serialize queue state: {e}"))
+            })?;
+
+            // Create parent directory if it doesn't exist
+            if let Some(parent) = state_path.parent() {
+                let _ignore_error = tokio::fs::create_dir_all(parent).await;
+            }
+
+            // Write to temporary file first, then rename for atomic update
+            let temp_path = state_path.with_extension("tmp");
+            tokio::fs::write(&temp_path, encoded)
+                .await
+                .map_err(|e| SystemError::Internal(format!("Failed to write queue state: {e}")))?;
+
+            tokio::fs::rename(&temp_path, state_path)
+                .await
+                .map_err(|e| {
+                    SystemError::Internal(format!("Failed to rename queue state file: {e}"))
+                })?;
+
+            tracing::trace!("Queue state saved to {:?}", state_path);
+        }
+
+        Ok(())
     }
 
     /// Scan the spool for new messages and add them to the queue
@@ -1170,7 +1258,7 @@ mod tests {
             ..Default::default()
         };
 
-        processor.init(spool.clone()).unwrap();
+        processor.init(spool.clone(), None).unwrap();
 
         // Manually scan the spool to add the message to the queue
         let added = processor.scan_spool_internal(&spool).await.unwrap();
@@ -1264,7 +1352,7 @@ mod tests {
         let msg_id = spool.write(context).await.unwrap();
 
         let mut processor = DeliveryProcessor::default();
-        processor.init(spool.clone()).unwrap();
+        processor.init(spool.clone(), None).unwrap();
 
         // Scan spool - should create separate queue entries for each domain
         let added = processor.scan_spool_internal(&spool).await.unwrap();

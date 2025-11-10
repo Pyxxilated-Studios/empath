@@ -18,6 +18,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+bincode = "1"
 empath-common = { path = "../empath-common", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
 empath-smtp = { path = "../empath-smtp", version = "*" }
@@ -27,7 +28,6 @@ hickory-resolver = "0.24"
 lru = "0.12"
 mailparse = "0.16"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", default-features = false, features = ["sync", "fs", "time"] }
 tracing = { version = "0.1", default-features = false }
