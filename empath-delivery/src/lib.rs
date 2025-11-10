@@ -152,10 +152,10 @@ pub struct DeliveryInfo {
     pub status: DeliveryStatus,
     /// List of delivery attempts
     pub attempts: Vec<DeliveryAttempt>,
-    /// Recipient domain for this delivery
-    pub recipient_domain: String,
-    /// Resolved mail servers (sorted by priority)
-    pub mail_servers: Vec<MailServer>,
+    /// Recipient domain for this delivery (Arc for cheap cloning)
+    pub recipient_domain: Arc<str>,
+    /// Resolved mail servers (sorted by priority, Arc for cheap cloning)
+    pub mail_servers: Arc<Vec<MailServer>>,
     /// Index of the current mail server being tried
     pub current_server_index: usize,
 }
@@ -163,13 +163,13 @@ pub struct DeliveryInfo {
 impl DeliveryInfo {
     /// Create a new pending delivery info
     #[must_use]
-    pub const fn new(message_id: SpooledMessageId, recipient_domain: String) -> Self {
+    pub fn new(message_id: SpooledMessageId, recipient_domain: String) -> Self {
         Self {
             message_id,
             status: DeliveryStatus::Pending,
             attempts: Vec::new(),
-            recipient_domain,
-            mail_servers: Vec::new(),
+            recipient_domain: Arc::from(recipient_domain),
+            mail_servers: Arc::new(Vec::new()),
             current_server_index: 0,
         }
     }
@@ -187,7 +187,7 @@ impl DeliveryInfo {
     /// Try the next MX server in the priority list.
     ///
     /// Returns `true` if there is another server to try, `false` if all servers exhausted.
-    pub const fn try_next_server(&mut self) -> bool {
+    pub fn try_next_server(&mut self) -> bool {
         if self.current_server_index + 1 < self.mail_servers.len() {
             self.current_server_index += 1;
             true
@@ -261,7 +261,11 @@ impl DeliveryQueue {
     }
 
     /// Set the resolved mail servers for a message
-    pub async fn set_mail_servers(&self, message_id: &SpooledMessageId, servers: Vec<MailServer>) {
+    pub async fn set_mail_servers(
+        &self,
+        message_id: &SpooledMessageId,
+        servers: Arc<Vec<MailServer>>,
+    ) {
         let mut queue = self.queue.write().await;
         if let Some(info) = queue.get_mut(message_id) {
             info.mail_servers = servers;
@@ -302,19 +306,19 @@ impl DeliveryQueue {
     }
 
     /// Get count of messages by status
-    pub async fn count_by_status(&self) -> HashMap<String, usize> {
+    pub async fn count_by_status(&self) -> HashMap<&'static str, usize> {
         let queue = self.queue.read().await;
         let mut counts = HashMap::new();
 
         for info in queue.values() {
-            let status_key = match &info.status {
+            let status_key: &'static str = match &info.status {
                 DeliveryStatus::Pending => "pending",
                 DeliveryStatus::InProgress => "in_progress",
                 DeliveryStatus::Completed => "completed",
                 DeliveryStatus::Failed(_) => "failed",
                 DeliveryStatus::Retry { .. } => "retry",
             };
-            *counts.entry(status_key.to_string()).or_insert(0) += 1;
+            *counts.entry(status_key).or_insert(0) += 1;
         }
 
         drop(queue); // Explicit early drop of lock guard
@@ -638,16 +642,16 @@ impl DeliveryProcessor {
             for recipient in recipients.iter() {
                 // Extract the actual email address from the MailAddr
                 let recipient_str = match &**recipient {
-                    mailparse::MailAddr::Single(single) => single.addr.clone(),
+                    mailparse::MailAddr::Single(single) => &single.addr,
                     mailparse::MailAddr::Group(_) => continue, // Skip groups
                 };
 
-                match extract_domain(&recipient_str) {
+                match extract_domain(recipient_str) {
                     Ok(domain) => {
                         domains
                             .entry(domain)
                             .or_insert_with(Vec::new)
-                            .push(recipient_str);
+                            .push(recipient_str.to_owned());
                     }
                     Err(e) => {
                         use tracing::warn;
@@ -732,11 +736,11 @@ impl DeliveryProcessor {
                 (mx_override.to_string(), 25)
             };
 
-            vec![MailServer {
+            Arc::new(vec![MailServer {
                 host,
                 port,
                 priority: 0,
-            }]
+            }])
         } else {
             // Get the DNS resolver
             let Some(dns_resolver) = &self.dns_resolver else {
@@ -753,7 +757,9 @@ impl DeliveryProcessor {
                 .await?;
 
             if resolved.is_empty() {
-                return Err(PermanentError::NoMailServers(info.recipient_domain.clone()).into());
+                return Err(
+                    PermanentError::NoMailServers(info.recipient_domain.to_string()).into(),
+                );
             }
 
             resolved
@@ -1104,15 +1110,12 @@ impl DeliveryProcessor {
             .unwrap_or_default();
 
         let mail_from_timeout = Duration::from_secs(self.smtp_timeouts.mail_from_secs);
-        let mail_response =
-            tokio::time::timeout(mail_from_timeout, client.mail_from(&sender, None))
-                .await
-                .map_err(|_| {
-                    TemporaryError::Timeout(format!(
-                        "MAIL FROM timed out after {mail_from_timeout:?}"
-                    ))
-                })?
-                .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
+        let mail_response = tokio::time::timeout(mail_from_timeout, client.mail_from(sender, None))
+            .await
+            .map_err(|_| {
+                TemporaryError::Timeout(format!("MAIL FROM timed out after {mail_from_timeout:?}"))
+            })?
+            .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
 
         if !mail_response.is_success() {
             let code = mail_response.code;
@@ -1147,7 +1150,7 @@ impl DeliveryProcessor {
             };
 
             let rcpt_response =
-                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(&recipient_addr))
+                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(recipient_addr))
                     .await
                     .map_err(|_| {
                         TemporaryError::Timeout(format!(
@@ -1260,7 +1263,7 @@ impl DeliveryProcessor {
                     let server = info
                         .mail_servers
                         .get(info.current_server_index)
-                        .map_or_else(|| info.recipient_domain.clone(), MailServer::address);
+                        .map_or_else(|| info.recipient_domain.to_string(), MailServer::address);
                     let _error = self
                         .handle_delivery_error(&info.message_id, &mut context, e, server)
                         .await;
@@ -1276,9 +1279,11 @@ impl DeliveryProcessor {
 ///
 /// For `Single` addresses, returns just the email address.
 /// For `Group` addresses, returns `None` as they can't be used in SMTP commands.
-fn extract_email_address(address: &empath_common::address::Address) -> Option<String> {
+///
+/// Returns a reference to avoid allocations in the hot delivery path.
+fn extract_email_address(address: &empath_common::address::Address) -> Option<&str> {
     match &**address {
-        mailparse::MailAddr::Single(single_info) => Some(single_info.addr.clone()),
+        mailparse::MailAddr::Single(single_info) => Some(&single_info.addr),
         mailparse::MailAddr::Group(_) => None, // Groups can't be used in SMTP commands
     }
 }
@@ -1385,10 +1390,10 @@ mod tests {
         let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
         // Create a test context (message)
-        let context = create_test_context("sender@example.org", "recipient@test.example.com");
+        let mut context = create_test_context("sender@example.org", "recipient@test.example.com");
 
         // Spool the message
-        let msg_id = spool.write(context).await.unwrap();
+        let msg_id = spool.write(&mut context).await.unwrap();
 
         // Create domain config with MX override
         let mut domains = DomainConfigRegistry::new();
@@ -1419,7 +1424,7 @@ mod tests {
         assert!(queue_info.is_some(), "Message should be in queue");
 
         let info = queue_info.unwrap();
-        assert_eq!(info.recipient_domain, "test.example.com");
+        assert_eq!(info.recipient_domain.as_ref(), "test.example.com");
         assert_eq!(info.attempt_count(), 0);
 
         // Test prepare_message to verify MX override is used
@@ -1499,7 +1504,7 @@ mod tests {
             }
         }
 
-        let msg_id = spool.write(context).await.unwrap();
+        let msg_id = spool.write(&mut context).await.unwrap();
 
         let mut processor = DeliveryProcessor::default();
         processor.init(spool.clone(), None).unwrap();

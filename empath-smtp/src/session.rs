@@ -482,10 +482,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         let tracking_id = if let Some(spool) = &self.spool
             && validate_context.data.is_some()
         {
-            // Clone the context for spooling
-            let context_to_spool = validate_context.clone();
-
-            match spool.write(context_to_spool).await {
+            match spool.write(validate_context).await {
                 Ok(id) => Some(id),
                 Err(e) => {
                     internal!(level = ERROR, "Failed to spool message: {e}");

@@ -240,7 +240,7 @@ pub extern "C" fn em_delivery_get_domain(validate_context: &Context) -> crate::s
     validate_context
         .delivery
         .as_ref()
-        .map_or_else(crate::string::String::default, |d| d.domain.as_str().into())
+        .map_or_else(crate::string::String::default, |d| d.domain.as_ref().into())
 }
 
 /// Get the delivery server from delivery context

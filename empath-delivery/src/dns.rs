@@ -103,8 +103,8 @@ pub struct MailServer {
 /// Cached DNS result with expiration time.
 #[derive(Debug, Clone)]
 struct CachedResult {
-    /// The resolved mail servers
-    servers: Vec<MailServer>,
+    /// The resolved mail servers (Arc for cheap cloning on cache hits)
+    servers: Arc<Vec<MailServer>>,
     /// When this cache entry expires
     expires_at: Instant,
 }
@@ -203,7 +203,10 @@ impl DnsResolver {
     /// - The domain does not exist
     /// - No mail servers (MX, A, or AAAA) are found
     /// - The DNS query fails or times out
-    pub async fn resolve_mail_servers(&self, domain: &str) -> Result<Vec<MailServer>, DnsError> {
+    pub async fn resolve_mail_servers(
+        &self,
+        domain: &str,
+    ) -> Result<Arc<Vec<MailServer>>, DnsError> {
         debug!("Resolving mail servers for domain: {domain}");
 
         // Check cache first
@@ -212,14 +215,14 @@ impl DnsResolver {
             if let Some(cached) = cache.get(domain) {
                 if cached.expires_at > Instant::now() {
                     debug!("Cache hit for {domain}, {} server(s)", cached.servers.len());
-                    return Ok(cached.servers.clone());
+                    return Ok(Arc::clone(&cached.servers));
                 }
                 debug!("Cache entry expired for {domain}");
             }
         }
 
         // Cache miss or expired, perform DNS lookup
-        let servers = self.resolve_mail_servers_uncached(domain).await?;
+        let servers = Arc::new(self.resolve_mail_servers_uncached(domain).await?);
 
         // Cache the result
         let expires_at = Instant::now() + Duration::from_secs(self.config.cache_ttl_secs);

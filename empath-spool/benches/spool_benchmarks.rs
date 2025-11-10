@@ -214,11 +214,8 @@ fn bench_spool_write(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(desc), &size, |b, &size| {
             b.to_async(&runtime).iter(|| async move {
                 let spool = MemoryBackingStore::new();
-                let message = create_test_message(black_box(size));
-                let id = spool
-                    .write(black_box(message))
-                    .await
-                    .expect("Write succeeds");
+                let mut message = create_test_message(black_box(size));
+                let id = spool.write(&mut message).await.expect("Write succeeds");
                 black_box(id)
             });
         });
@@ -236,8 +233,9 @@ fn bench_spool_read(c: &mut Criterion) {
 
     for (size, desc) in sizes {
         let spool = MemoryBackingStore::new();
-        let message = create_test_message(size);
-        let id = runtime.block_on(async { spool.write(message).await.expect("Write succeeds") });
+        let mut message = create_test_message(size);
+        let id =
+            runtime.block_on(async { spool.write(&mut message).await.expect("Write succeeds") });
 
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(desc), &size, |b, &_size| {
@@ -269,8 +267,8 @@ fn bench_spool_list(c: &mut Criterion) {
         let spool = MemoryBackingStore::new();
         runtime.block_on(async {
             for _ in 0..count {
-                let message = create_test_message(1024);
-                spool.write(message).await.expect("Write succeeds");
+                let mut message = create_test_message(1024);
+                spool.write(&mut message).await.expect("Write succeeds");
             }
         });
 
@@ -305,13 +303,10 @@ fn bench_spool_full_lifecycle(c: &mut Criterion) {
     group.bench_function("write_read_delete", |b| {
         b.to_async(&runtime).iter(|| async {
             let spool = MemoryBackingStore::new();
-            let message = create_test_message(1024);
+            let mut message = create_test_message(1024);
 
             // Write
-            let id = spool
-                .write(black_box(message))
-                .await
-                .expect("Write succeeds");
+            let id = spool.write(&mut message).await.expect("Write succeeds");
 
             // Read
             let read_msg = spool.read(&id).await.expect("Read succeeds");

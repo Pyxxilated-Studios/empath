@@ -129,7 +129,7 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     /// Returns an error if the context cannot be written
-    async fn write(&self, context: Context) -> crate::Result<SpooledMessageId>;
+    async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId>;
 
     /// List all message identifiers
     ///
@@ -204,7 +204,7 @@ impl<T: BackingStore> Spool<T> {
     ///
     /// # Errors
     /// Returns an error if the context cannot be written to the backing store
-    pub async fn spool_message(&self, context: Context) -> crate::Result<SpooledMessageId> {
+    pub async fn spool_message(&self, context: &mut Context) -> crate::Result<SpooledMessageId> {
         self.store.write(context).await
     }
 
@@ -348,7 +348,7 @@ impl Default for MemoryBackingStore {
 
 #[async_trait]
 impl BackingStore for MemoryBackingStore {
-    async fn write(&self, mut context: Context) -> crate::Result<SpooledMessageId> {
+    async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId> {
         use crate::error::SpoolError;
 
         // Generate unique ULID
@@ -357,23 +357,23 @@ impl BackingStore for MemoryBackingStore {
         // Set the tracking ID in the context
         context.tracking_id = Some(id.to_string());
 
-        let mut messages = self.messages.lock()?;
-
-        // Check capacity before inserting (don't count if overwriting existing)
-        if let Some(cap) = self.capacity
-            && !messages.contains_key(&id)
-            && messages.len() >= cap
         {
-            return Err(SpoolError::Internal(format!(
-                "Memory spool capacity exceeded: {}/{} messages",
-                messages.len(),
-                cap
-            )));
-        }
+            let mut messages = self.messages.lock()?;
 
-        messages.insert(id.clone(), context);
-        // Clippy suggests that: temporary with significant `Drop` can be early dropped
-        drop(messages);
+            // Check capacity before inserting (don't count if overwriting existing)
+            if let Some(cap) = self.capacity
+                && !messages.contains_key(&id)
+                && messages.len() >= cap
+            {
+                return Err(SpoolError::Internal(format!(
+                    "Memory spool capacity exceeded: {}/{} messages",
+                    messages.len(),
+                    cap
+                )));
+            }
+
+            messages.insert(id.clone(), context.clone());
+        }
 
         Ok(id)
     }
@@ -506,7 +506,7 @@ impl TestBackingStore {
 
 #[async_trait]
 impl BackingStore for TestBackingStore {
-    async fn write(&self, context: Context) -> crate::Result<SpooledMessageId> {
+    async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId> {
         let id = self.inner.write(context).await?;
         self.notify.notify_waiters();
         Ok(id)
@@ -552,11 +552,11 @@ mod tests {
     #[tokio::test]
     async fn test_memory_store_basic_operations() {
         let store = MemoryBackingStore::new();
-        let context = create_test_context("test message");
+        let mut context = create_test_context("test message");
         let expected_data = context.data.clone();
 
         // Write context and get tracking ID
-        let id = store.write(context).await.expect("Failed to write");
+        let id = store.write(&mut context).await.expect("Failed to write");
 
         // List messages
         let ids = store.list().await.expect("Failed to list");
@@ -579,17 +579,20 @@ mod tests {
         let store = MemoryBackingStore::with_capacity(2);
 
         // Write up to capacity
-        let ctx1 = create_test_context("message 1");
-        let ctx2 = create_test_context("message 2");
-        store.write(ctx1).await.expect("First write should succeed");
+        let mut ctx1 = create_test_context("message 1");
+        let mut ctx2 = create_test_context("message 2");
         store
-            .write(ctx2)
+            .write(&mut ctx1)
+            .await
+            .expect("First write should succeed");
+        store
+            .write(&mut ctx2)
             .await
             .expect("Second write should succeed");
 
         // Third write should fail
-        let ctx3 = create_test_context("message 3");
-        let result = store.write(ctx3.clone()).await;
+        let mut ctx3 = create_test_context("message 3");
+        let result = store.write(&mut ctx3).await;
         assert!(result.is_err());
         assert!(
             result
@@ -602,7 +605,7 @@ mod tests {
         let ids = store.list().await.expect("Failed to list");
         store.delete(&ids[0]).await.expect("Failed to delete");
 
-        let result = store.write(ctx3).await;
+        let result = store.write(&mut ctx3).await;
         assert!(result.is_ok());
     }
 
@@ -615,8 +618,8 @@ mod tests {
         for i in 0..100 {
             let store_clone = store.clone();
             let handle = tokio::spawn(async move {
-                let msg = create_test_context(&format!("message {i}"));
-                store_clone.write(msg).await
+                let mut msg = create_test_context(&format!("message {i}"));
+                store_clone.write(&mut msg).await
             });
             handles.push(handle);
         }
@@ -642,11 +645,14 @@ mod tests {
         let store = MemoryBackingStore::new();
         let spool = Spool::new(store);
 
-        let message = create_test_context("test message");
+        let mut message = create_test_context("test message");
         let expected_data = message.data.clone();
 
         // Test through Spool interface and get tracking ID
-        let id = spool.spool_message(message).await.expect("Failed to spool");
+        let id = spool
+            .spool_message(&mut message)
+            .await
+            .expect("Failed to spool");
 
         let ids = spool.list_messages().await.expect("Failed to list");
         assert_eq!(ids.len(), 1);
@@ -665,10 +671,10 @@ mod tests {
     async fn test_polymorphic_backing_store() {
         // Test that we can use trait objects
         let store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::new());
-        let message = create_test_context("polymorphic test");
+        let mut message = create_test_context("polymorphic test");
         let expected_data = message.data.clone();
 
-        let id = store.write(message).await.expect("Failed to write");
+        let id = store.write(&mut message).await.expect("Failed to write");
         let ids = store.list().await.expect("Failed to list");
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id);
@@ -684,8 +690,8 @@ mod tests {
         // Write messages and collect IDs in generation order
         let mut generated_ids = Vec::new();
         for i in 0..10 {
-            let msg = create_test_context(&format!("message {i}"));
-            let id = store.write(msg).await.expect("Failed to write");
+            let mut msg = create_test_context(&format!("message {i}"));
+            let id = store.write(&mut msg).await.expect("Failed to write");
             generated_ids.push(id);
         }
 
@@ -718,8 +724,8 @@ mod tests {
         assert_eq!(len, 0);
 
         // Write and verify recovery
-        let msg = create_test_context("test");
-        store.write(msg).await.expect("Failed to write");
+        let mut msg = create_test_context("test");
+        store.write(&mut msg).await.expect("Failed to write");
         assert_eq!(store.len(), 1);
         assert!(!store.is_empty());
     }

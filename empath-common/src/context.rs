@@ -16,8 +16,8 @@ pub enum Capability {
 pub struct DeliveryContext {
     /// The message ID being delivered
     pub message_id: String,
-    /// The recipient domain being delivered to
-    pub domain: String,
+    /// The recipient domain being delivered to (Arc for cheap cloning)
+    pub domain: Arc<str>,
     /// The mail server (MX host:port) being used for delivery
     pub server: Option<String>,
     /// Error message if delivery failed
@@ -105,7 +105,7 @@ impl Context {
                     mailparse::MailAddr::Single(single) => {
                         format!(
                             "RCPT TO:{}{}",
-                            single.display_name.clone().unwrap_or_default(),
+                            single.display_name.as_deref().unwrap_or(""),
                             single.addr
                         )
                     }

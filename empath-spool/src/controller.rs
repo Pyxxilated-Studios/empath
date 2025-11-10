@@ -247,7 +247,7 @@ impl BackingStore for FileBackingStore {
     /// filesystems with journaling (ext4, XFS, APFS), the rename operations
     /// are atomic and very fast (< 1ms typical).
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self, context)), timing(precision = "ms"))]
-    async fn write(&self, mut context: Context) -> crate::Result<SpooledMessageId> {
+    async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId> {
         use crate::error::SpoolError;
 
         // Generate unique tracking ID
