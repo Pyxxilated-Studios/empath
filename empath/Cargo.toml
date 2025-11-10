@@ -20,11 +20,11 @@ crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "empath"
-path = "bin/main.rs"
+path = "bin/empath.rs"
 
 [[bin]]
 name = "empathctl"
-path = "src/bin/empathctl.rs"
+path = "bin/empathctl.rs"
 
 [dependencies]
 anyhow = "1.0.93"

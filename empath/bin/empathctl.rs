@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Command-line utility for managing the Empath MTA delivery queue
 #[derive(Parser, Debug)]
@@ -49,9 +49,9 @@ enum Commands {
 enum QueueAction {
     /// List messages in the queue
     List {
-        /// Filter by status (pending, in_progress, completed, failed, retry)
-        #[arg(long)]
-        status: Option<String>,
+        /// Filter by status
+        #[arg(long, value_enum)]
+        status: Option<StatusFilter>,
 
         /// Output format (text, json)
         #[arg(long, default_value = "text")]
@@ -96,6 +96,21 @@ enum QueueAction {
     },
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum StatusFilter {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+    Retry,
+}
+
+static PENDING_STR: &str = "Pending";
+static IN_PROGRESS_STR: &str = "In Progress";
+static COMPLETED_STR: &str = "Completed";
+static FAILED_STR: &str = "Failed";
+static RETRY_STR: &str = "Retry";
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing/logging
@@ -117,13 +132,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Queue { action } => match action {
             QueueAction::List { status, format } => {
-                cmd_list(
-                    &cli.spool_path,
-                    &queue_state_path,
-                    status.as_deref(),
-                    &format,
-                )
-                .await?;
+                cmd_list(&cli.spool_path, &queue_state_path, status, &format).await?;
             }
             QueueAction::View { message_id } => {
                 cmd_view(&cli.spool_path, &queue_state_path, &message_id).await?;
@@ -153,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
 async fn cmd_list(
     spool_path: &std::path::Path,
     queue_state_path: &std::path::Path,
-    status_filter: Option<&str>,
+    status_filter: Option<StatusFilter>,
     format: &str,
 ) -> anyhow::Result<()> {
     use empath_spool::BackingStore;
@@ -168,23 +177,24 @@ async fn cmd_list(
     let queue_state = load_queue_state(queue_state_path).await.ok();
 
     // Filter messages by status if requested
-    let filtered: Vec<_> = if let Some(filter_status) = status_filter {
-        message_ids
-            .iter()
-            .filter(|id| {
-                if let Some(ref state) = queue_state
-                    && let Some(info) = state.get(&id.to_string())
-                {
-                    return status_matches(&info.status, filter_status);
-                }
+    let filtered: Vec<_> = status_filter.map_or_else(
+        || message_ids.iter().collect(),
+        |filter_status| {
+            message_ids
+                .iter()
+                .filter(|id| {
+                    if let Some(ref state) = queue_state
+                        && let Some(info) = state.get(&id.to_string())
+                    {
+                        return status_matches(&info.status, filter_status);
+                    }
 
-                // If no queue state, assume pending
-                filter_status == "pending"
-            })
-            .collect()
-    } else {
-        message_ids.iter().collect()
-    };
+                    // If no queue state, assume pending
+                    filter_status == StatusFilter::Pending
+                })
+                .collect()
+        },
+    );
 
     // Output results
     match format {
@@ -195,8 +205,10 @@ async fn cmd_list(
                 let status = queue_state
                     .as_ref()
                     .and_then(|s| s.get(&id.to_string()))
-                    .map(|info| format_status(&info.status))
-                    .unwrap_or_else(|| "pending".to_string());
+                    .map_or_else(
+                        || PENDING_STR.to_string(),
+                        |info| format_status(&info.status),
+                    );
 
                 let comma = if i < filtered.len() - 1 { "," } else { "" };
                 println!(
@@ -218,8 +230,10 @@ async fn cmd_list(
                 let status = queue_state
                     .as_ref()
                     .and_then(|s| s.get(&id.to_string()))
-                    .map(|info| format_status(&info.status))
-                    .unwrap_or_else(|| "pending".to_string());
+                    .map_or_else(
+                        || PENDING_STR.to_string(),
+                        |info| format_status(&info.status),
+                    );
 
                 let age = format_age(id.timestamp_ms());
 
@@ -263,7 +277,7 @@ async fn cmd_view(
 
     // Envelope information
     println!("Envelope:");
-    if let Some(ref sender) = context.envelope.sender() {
+    if let Some(sender) = context.envelope.sender() {
         println!("  From: {sender}");
     }
     if let Some(recipients) = context.envelope.recipients() {
@@ -309,7 +323,7 @@ async fn cmd_view(
         if !info.mail_servers.is_empty() {
             println!();
             println!("  Mail Servers:");
-            for server in &info.mail_servers {
+            for server in info.mail_servers.iter() {
                 let marker = if info.current_server_index
                     == info
                         .mail_servers
@@ -514,32 +528,30 @@ async fn display_stats(queue_state_path: &std::path::Path) -> anyhow::Result<()>
         let mut counts = std::collections::HashMap::new();
         for info in state.values() {
             let status_key = match &info.status {
-                empath_delivery::DeliveryStatus::Pending => "Pending",
-                empath_delivery::DeliveryStatus::InProgress => "In Progress",
-                empath_delivery::DeliveryStatus::Completed => "Completed",
-                empath_delivery::DeliveryStatus::Failed(_) => "Failed",
-                empath_delivery::DeliveryStatus::Retry { .. } => "Retry",
+                empath_delivery::DeliveryStatus::Pending => PENDING_STR,
+                empath_delivery::DeliveryStatus::InProgress => IN_PROGRESS_STR,
+                empath_delivery::DeliveryStatus::Completed => COMPLETED_STR,
+                empath_delivery::DeliveryStatus::Failed(_) => FAILED_STR,
+                empath_delivery::DeliveryStatus::Retry { .. } => RETRY_STR,
             };
             *counts.entry(status_key).or_insert(0) += 1;
         }
 
         println!("Messages by Status:");
-        println!("  Pending:     {:>6}", counts.get("Pending").unwrap_or(&0));
-        println!(
-            "  In Progress: {:>6}",
-            counts.get("In Progress").unwrap_or(&0)
-        );
-        println!("  Retry:       {:>6}", counts.get("Retry").unwrap_or(&0));
-        println!("  Failed:      {:>6}", counts.get("Failed").unwrap_or(&0));
-        println!(
-            "  Completed:   {:>6}",
-            counts.get("Completed").unwrap_or(&0)
-        );
-        println!();
-        println!("Total:         {:>6}", state.len());
+        for s in [
+            PENDING_STR,
+            IN_PROGRESS_STR,
+            RETRY_STR,
+            FAILED_STR,
+            COMPLETED_STR,
+        ] {
+            println!("{s}: {}", counts.get(s).unwrap_or(&0));
+        }
+
+        println!("Total: {}", state.len());
 
         // Domain statistics
-        let mut domain_counts: std::collections::HashMap<String, usize> =
+        let mut domain_counts: std::collections::HashMap<std::sync::Arc<str>, usize> =
             std::collections::HashMap::new();
         for info in state.values() {
             *domain_counts
@@ -579,7 +591,7 @@ fn parse_message_id(s: &str) -> anyhow::Result<empath_spool::SpooledMessageId> {
     };
 
     SpooledMessageId::from_filename(&filename)
-        .ok_or_else(|| anyhow::anyhow!("Invalid message ID: {}", s))
+        .ok_or_else(|| anyhow::anyhow!("Invalid message ID: {s}"))
 }
 
 /// Load queue state from bincode file
@@ -602,26 +614,37 @@ async fn save_queue_state(
 }
 
 /// Check if a status matches the filter
-fn status_matches(status: &empath_delivery::DeliveryStatus, filter: &str) -> bool {
+fn status_matches(status: &empath_delivery::DeliveryStatus, filter: StatusFilter) -> bool {
     matches!(
         (status, filter),
-        (empath_delivery::DeliveryStatus::Pending, "pending")
-            | (empath_delivery::DeliveryStatus::InProgress, "in_progress")
-            | (empath_delivery::DeliveryStatus::Completed, "completed")
-            | (empath_delivery::DeliveryStatus::Failed(_), "failed")
-            | (empath_delivery::DeliveryStatus::Retry { .. }, "retry")
+        (
+            empath_delivery::DeliveryStatus::Pending,
+            StatusFilter::Pending
+        ) | (
+            empath_delivery::DeliveryStatus::InProgress,
+            StatusFilter::InProgress
+        ) | (
+            empath_delivery::DeliveryStatus::Completed,
+            StatusFilter::Completed
+        ) | (
+            empath_delivery::DeliveryStatus::Failed(_),
+            StatusFilter::Failed
+        ) | (
+            empath_delivery::DeliveryStatus::Retry { .. },
+            StatusFilter::Retry
+        )
     )
 }
 
 /// Format delivery status for display
 fn format_status(status: &empath_delivery::DeliveryStatus) -> String {
     match status {
-        empath_delivery::DeliveryStatus::Pending => "pending".to_string(),
-        empath_delivery::DeliveryStatus::InProgress => "in_progress".to_string(),
-        empath_delivery::DeliveryStatus::Completed => "completed".to_string(),
-        empath_delivery::DeliveryStatus::Failed(_) => "failed".to_string(),
+        empath_delivery::DeliveryStatus::Pending => PENDING_STR.to_string(),
+        empath_delivery::DeliveryStatus::InProgress => IN_PROGRESS_STR.to_string(),
+        empath_delivery::DeliveryStatus::Completed => COMPLETED_STR.to_string(),
+        empath_delivery::DeliveryStatus::Failed(_) => FAILED_STR.to_string(),
         empath_delivery::DeliveryStatus::Retry { attempts, .. } => {
-            format!("retry ({attempts})")
+            format!("{RETRY_STR} ({attempts})")
         }
     }
 }

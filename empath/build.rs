@@ -5,6 +5,7 @@ use cbindgen::{Config, Language, ParseConfig};
 fn main() -> anyhow::Result<()> {
     let dependencies = vec![
         String::from("empath-common"),
+        String::from("empath-delivery"),
         String::from("empath-ffi"),
         String::from("empath-smtp"),
         String::from("empath-spool"),
