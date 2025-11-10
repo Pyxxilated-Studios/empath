@@ -237,6 +237,15 @@ Empath (
         scan_interval_secs: 30,      // How often to scan spool
         process_interval_secs: 10,   // How often to process queue
         max_attempts: 25,             // Max delivery attempts
+        accept_invalid_certs: false, // Global TLS cert validation (SECURITY WARNING)
+
+        // Per-domain configuration
+        domains: {
+            "test.example.com": (
+                mx_override: "localhost:1025",
+                accept_invalid_certs: true,  // Per-domain override
+            ),
+        },
     ),
 )
 ```
@@ -406,6 +415,84 @@ cargo bench -- --baseline main
 5. **Header Generation**: cbindgen runs during build to generate `empath.h` from FFI crate. Update `build.rs` dependencies if FFI API changes
 
 6. **Strict Clippy**: All clippy warnings with pedantic/nursery lints must be fixed or explicitly allowed with justification
+
+## Security Considerations
+
+### TLS Certificate Validation
+
+The delivery system validates TLS certificates by default to prevent Man-in-the-Middle attacks. However, for testing purposes, certificate validation can be disabled through a **two-tier configuration system**:
+
+#### Global Configuration (DeliveryProcessor)
+
+Set `accept_invalid_certs: true` in the delivery configuration to disable validation globally (affects all domains unless overridden):
+
+```ron
+delivery: (
+    accept_invalid_certs: false,  // Default: false (secure)
+    // ...
+)
+```
+
+**SECURITY WARNING**: This setting should remain `false` in production environments.
+
+#### Per-Domain Override (DomainConfig)
+
+Individual domains can override the global setting:
+
+```ron
+delivery: (
+    accept_invalid_certs: false,  // Global default: require valid certs
+    domains: {
+        "test.example.com": (
+            accept_invalid_certs: true,   // Override: accept invalid for testing
+        ),
+        "secure.example.com": (
+            accept_invalid_certs: false,  // Override: explicitly require valid
+        ),
+        "default.example.com": (
+            // No override: uses global config
+        ),
+    },
+)
+```
+
+**Configuration Priority**: Per-domain setting > Global setting
+
+#### Security Warnings
+
+When certificate validation is disabled, the system logs a warning:
+
+```
+SECURITY WARNING: TLS certificate validation is disabled for this connection
+```
+
+This appears in the logs with the domain and server address for audit purposes.
+
+#### When to Use `accept_invalid_certs`
+
+**✅ Acceptable use cases:**
+- Local development with self-signed certificates
+- Integration testing with test SMTP servers
+- Staging environments with internal CAs
+
+**❌ Never use in production:**
+- Production email delivery
+- Connections to public email providers (Gmail, Outlook, etc.)
+- Any environment where security matters
+
+#### Implementation Details
+
+Location: `empath-delivery/src/lib.rs:748-763`
+
+The delivery logic checks per-domain configuration first, then falls back to global configuration:
+
+```rust
+let accept_invalid_certs = self
+    .domains
+    .get(&delivery_info.recipient_domain)
+    .and_then(|config| config.accept_invalid_certs)
+    .unwrap_or(self.accept_invalid_certs);
+```
 
 ## Adding New Features
 

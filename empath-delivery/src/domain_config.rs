@@ -32,6 +32,18 @@ pub struct DomainConfig {
     #[serde(default)]
     pub require_tls: bool,
 
+    /// Accept invalid TLS certificates for this domain
+    ///
+    /// **SECURITY WARNING**: Setting this overrides the global configuration
+    /// and disables certificate validation for this specific domain.
+    /// Only use for testing with self-signed certificates.
+    ///
+    /// - `Some(true)`: Accept invalid certs (override global config)
+    /// - `Some(false)`: Require valid certs (override global config)
+    /// - `None`: Use global configuration (default)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub accept_invalid_certs: Option<bool>,
+
     /// Maximum concurrent connections to this domain
     ///
     /// Prevents overwhelming recipient servers.
@@ -116,6 +128,7 @@ mod tests {
         let config = DomainConfig::default();
         assert!(!config.has_mx_override());
         assert!(!config.require_tls);
+        assert!(config.accept_invalid_certs.is_none());
         assert!(config.max_connections.is_none());
         assert!(config.rate_limit.is_none());
     }
@@ -162,6 +175,7 @@ mod tests {
                 max_connections: Some(10),
                 rate_limit: Some(100),
                 require_tls: true,
+                accept_invalid_certs: None,
                 mx_override: None,
             },
         );
@@ -227,5 +241,50 @@ mod tests {
         assert_eq!(gmail_config.max_connections, Some(10));
         assert_eq!(gmail_config.rate_limit, Some(100));
         assert!(gmail_config.mx_override.is_none());
+    }
+
+    #[test]
+    fn test_accept_invalid_certs_configuration() {
+        // Test per-domain override of certificate validation
+        let mut registry = DomainConfigRegistry::new();
+
+        // Domain that explicitly accepts invalid certs
+        registry.insert(
+            "test.local".to_string(),
+            DomainConfig {
+                accept_invalid_certs: Some(true),
+                ..Default::default()
+            },
+        );
+
+        // Domain that explicitly requires valid certs
+        registry.insert(
+            "secure.example.com".to_string(),
+            DomainConfig {
+                accept_invalid_certs: Some(false),
+                require_tls: true,
+                ..Default::default()
+            },
+        );
+
+        // Domain with no override (uses global config)
+        registry.insert(
+            "default.example.com".to_string(),
+            DomainConfig {
+                accept_invalid_certs: None,
+                ..Default::default()
+            },
+        );
+
+        // Verify configurations
+        let test_config = registry.get("test.local").unwrap();
+        assert_eq!(test_config.accept_invalid_certs, Some(true));
+
+        let secure_config = registry.get("secure.example.com").unwrap();
+        assert_eq!(secure_config.accept_invalid_certs, Some(false));
+        assert!(secure_config.require_tls);
+
+        let default_config = registry.get("default.example.com").unwrap();
+        assert_eq!(default_config.accept_invalid_certs, None);
     }
 }

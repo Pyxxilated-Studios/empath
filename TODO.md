@@ -8,6 +8,448 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🟢 **Medium** - Nice to have, improves functionality
 - 🔵 **Low** - Future enhancements, optimization
 
+**Recent Updates:**
+- **2025-11-10:** Comprehensive code review completed (see CODE_REVIEW_2025-11-10.md)
+- **2025-11-10:** ✅ Fixed TLS certificate validation (two-tier configuration system)
+
+---
+
+## Phase 0: Code Review Follow-ups (Week 0)
+
+### ✅ 0.1 TLS Certificate Validation Security Fix
+**Priority:** Critical
+**Complexity:** Medium
+**Effort:** 1 day
+**Status:** ✅ **COMPLETED** (2025-11-10)
+
+**Implementation:**
+- ✅ Added global `accept_invalid_certs` flag to DeliveryProcessor (defaults to false)
+- ✅ Added per-domain `accept_invalid_certs` override to DomainConfig
+- ✅ Implemented priority resolution (per-domain > global)
+- ✅ Added security warning logging when validation disabled
+- ✅ Updated example configuration with commented examples
+- ✅ Comprehensive documentation in CLAUDE.md
+- ✅ Added test coverage for two-tier configuration
+
+**Files Modified:**
+- `empath-delivery/src/lib.rs`
+- `empath-delivery/src/domain_config.rs`
+- `empath.config.ron`
+- `CLAUDE.md`
+
+---
+
+### 🔴 0.2 Add SMTP Operation Timeouts
+**Priority:** Critical
+**Complexity:** Simple
+**Effort:** 1 day
+**Files:** `empath-delivery/src/lib.rs`
+
+**Current Issue:** No timeouts on SMTP operations (EHLO, STARTTLS, MAIL FROM, RCPT TO, DATA, QUIT) can cause hung connections.
+
+**Implementation:**
+```rust
+use tokio::time::{timeout, Duration};
+
+const SMTP_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+// Apply to all SMTP operations
+let ehlo_response = timeout(
+    SMTP_COMMAND_TIMEOUT,
+    client.ehlo(helo_domain)
+)
+.await
+.map_err(|_| TemporaryError::Timeout("EHLO timed out".to_string()))?
+.map_err(|e| TemporaryError::SmtpTemporary(format!("EHLO failed: {e}")))?;
+```
+
+**Commands to Add Timeouts:**
+- EHLO/HELO (line ~790)
+- STARTTLS (line ~814)
+- MAIL FROM (line ~864)
+- RCPT TO (line ~894)
+- DATA (line ~927)
+- QUIT (line ~774)
+
+**Configuration:**
+```ron
+// Add to delivery config
+delivery: (
+    smtp_timeouts: (
+        command: "30s",
+        connect: "30s",
+        data: "120s",  // Longer for large messages
+    ),
+)
+```
+
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 1.4
+
+---
+
+### 🔴 0.3 Fix Context/Message Layer Violation in Spool
+**Priority:** Critical
+**Complexity:** Medium
+**Effort:** 1 day
+**Files:** `empath-spool/src/spool.rs`, `empath-common/src/message.rs` (new)
+
+**Current Issue:** Spool stores `Context` (session state) instead of `Message` (data), violating architectural layer separation.
+
+**Implementation:**
+```rust
+// File: empath-common/src/message.rs (new)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub envelope: Envelope,
+    pub data: Arc<[u8]>,
+    pub received_timestamp: u64,
+    pub delivery_metadata: DeliveryMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliveryMetadata {
+    pub helo_domain: String,
+    pub source_ip: String,
+    // Only delivery-relevant fields, NOT session state
+}
+
+// Conversion at boundaries
+impl From<Context> for Message { /* extract relevant fields */ }
+impl From<Message> for Context { /* reconstitute with defaults */ }
+
+// Update spool API
+pub trait Spool {
+    async fn spool_message(&self, message: Message) -> Result<SpooledMessageId>;
+    async fn read_message(&self, id: &SpooledMessageId) -> Result<Message>;
+}
+```
+
+**Benefits:**
+- Proper layer separation
+- No session state persistence
+- Cleaner architecture
+
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 2.1
+
+---
+
+### 🟡 0.4 Optimize String Cloning in Hot Path
+**Priority:** High
+**Complexity:** Simple
+**Effort:** 1 hour
+**Files:** `empath-delivery/src/lib.rs:1015`
+
+**Current Issue:** `extract_email_address` clones on every call (hot path for every recipient).
+
+**Implementation:**
+```rust
+// Current (clones)
+fn extract_email_address(address: &Address) -> Option<String> {
+    match &**address {
+        mailparse::MailAddr::Single(single_info) => Some(single_info.addr.clone()),
+        mailparse::MailAddr::Group(_) => None,
+    }
+}
+
+// Improved (borrows)
+fn extract_email_address(address: &Address) -> Option<&str> {
+    match &**address {
+        mailparse::MailAddr::Single(single_info) => Some(&single_info.addr),
+        mailparse::MailAddr::Group(_) => None,
+    }
+}
+```
+
+**Impact:** Reduces allocations in delivery hot path
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 3.1
+
+---
+
+### 🟡 0.5 Fix DNS Cache Mutex Contention
+**Priority:** High
+**Complexity:** Simple
+**Effort:** 1 hour
+**Files:** `empath-delivery/src/dns.rs:133`
+
+**Current Issue:** `Mutex<LruCache>` serializes all DNS lookups under load.
+
+**Implementation:**
+```rust
+use dashmap::DashMap;
+
+pub struct DnsResolver {
+    resolver: TokioAsyncResolver,
+    cache: Arc<DashMap<String, CachedResult>>,  // Lock-free reads
+    config: DnsConfig,
+}
+```
+
+**Benefits:**
+- Lock-free concurrent reads
+- Better throughput under load
+- Lower latency
+
+**Dependencies:** Add `dashmap` crate
+**Source:** CODE_REVIEW_2025-11-10.md Section 3.2
+
+---
+
+### 🟡 0.6 Add Compile-Time Guard to NoVerifier
+**Priority:** High
+**Complexity:** Simple
+**Effort:** 30 minutes
+**Files:** `empath-smtp/src/client/smtp_client.rs`
+
+**Current Issue:** `NoVerifier` accepts all certificates without compile-time protection.
+
+**Implementation:**
+```rust
+#[cfg(any(test, feature = "insecure-tls"))]
+pub struct NoVerifier;
+
+// Add to Cargo.toml:
+// [features]
+// insecure-tls = []  # DANGEROUS: See SECURITY.md
+```
+
+**Alternative:** Remove `NoVerifier` entirely and rely on the two-tier configuration system.
+
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 1.2
+
+---
+
+### 🟡 0.7 Extract SmtpTransaction from DeliveryProcessor
+**Priority:** High (Refactoring)
+**Complexity:** Medium
+**Effort:** 1 day
+**Files:** `empath-delivery/src/smtp_transaction.rs` (new), `empath-delivery/src/lib.rs`
+
+**Current Issue:** DeliveryProcessor is 977 lines with too many responsibilities (god object).
+
+**Implementation:**
+```rust
+// File: empath-delivery/src/smtp_transaction.rs (new)
+pub struct SmtpTransaction<'a> {
+    client: &'a mut SmtpClient,
+    context: &'a Context,
+    require_tls: bool,
+}
+
+impl SmtpTransaction<'_> {
+    pub async fn execute(self) -> Result<(), DeliveryError> {
+        self.negotiate_tls().await?;
+        self.send_envelope().await?;
+        self.send_data().await?;
+        Ok(())
+    }
+    // Private helper methods...
+}
+```
+
+**Benefits:**
+- Reduces DeliveryProcessor from 977 to ~600 lines
+- Independently testable
+- Clearer separation of concerns
+
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 2.2
+
+---
+
+### 🟡 0.8 Add Spool Deletion Retry Mechanism
+**Priority:** High
+**Complexity:** Medium
+**Effort:** 2 hours
+**Files:** `empath-delivery/src/lib.rs:592`
+
+**Current Issue:** Silent spool deletion failures can cause:
+- Disk exhaustion
+- Duplicate delivery on restart
+- No operational alerting
+
+**Implementation:**
+```rust
+// Add metrics
+static SPOOL_DELETION_FAILURES: Counter = /* ... */;
+
+// Create cleanup task
+async fn cleanup_delivered_messages(&self) {
+    loop {
+        // Scan for messages in "delivered" state
+        // Retry deletion with exponential backoff
+        // Alert on sustained failures
+        tokio::time::sleep(Duration::from_secs(300)).await;
+    }
+}
+
+// Add queue state
+pub enum DeliveryStatus {
+    // ... existing states
+    DeliveredPendingCleanup { delivered_at: u64 },
+}
+```
+
+**Dependencies:** 2.1 (Metrics)
+**Source:** CODE_REVIEW_2025-11-10.md Section 1.5
+
+---
+
+### 🟢 0.9 Add DNSSEC Validation and Logging
+**Priority:** Medium
+**Complexity:** Medium
+**Effort:** 2 days
+**Files:** `empath-delivery/src/dns.rs`
+
+**Implementation:**
+```rust
+// Enable DNSSEC in resolver
+let mut opts = ResolverOpts::default();
+opts.validate = true;
+
+// Log validation status
+if let Some(dnssec) = &response.dnssec() {
+    if !dnssec.is_secure() {
+        warn!(domain = %domain, "DNSSEC validation failed");
+    }
+}
+```
+
+**Configuration:**
+```ron
+delivery: (
+    dns: (
+        dnssec: (
+            enabled: true,
+            enforce: false,  // Log warnings vs. fail delivery
+        ),
+    ),
+)
+```
+
+**Dependencies:** 1.2.1 (DNSSEC Validation section exists)
+**Source:** CODE_REVIEW_2025-11-10.md Section 1.3
+
+---
+
+### 🟢 0.10 Add MX Record Randomization (RFC 5321)
+**Priority:** Medium
+**Complexity:** Simple
+**Effort:** 2 hours
+**Files:** `empath-delivery/src/dns.rs:266-267`
+
+**Current Issue:** Equal-priority MX records are not randomized as recommended by RFC 5321.
+
+**Implementation:**
+```rust
+use rand::seq::SliceRandom;
+
+// After sorting by priority, randomize within each priority group
+let mut priority_groups: HashMap<u16, Vec<MailServer>> = HashMap::new();
+for server in servers {
+    priority_groups.entry(server.priority).or_default().push(server);
+}
+
+let mut result = Vec::new();
+for priority in priority_groups.keys().sorted() {
+    let mut group = priority_groups.remove(priority).unwrap();
+    group.shuffle(&mut rand::thread_rng());
+    result.extend(group);
+}
+```
+
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 1.3
+
+---
+
+### 🟢 0.11 Create Security Documentation
+**Priority:** Medium
+**Complexity:** Simple
+**Effort:** 1 day
+**Files:** `docs/SECURITY.md` (new)
+
+**Contents:**
+- Threat model for email delivery
+- TLS certificate validation policy
+- DNSSEC considerations
+- Rate limiting to prevent abuse
+- Input validation boundaries
+- Vulnerability reporting process
+- Security configuration best practices
+
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 5.1
+
+---
+
+### 🟢 0.12 Create Deployment Guide
+**Priority:** Medium
+**Complexity:** Simple
+**Effort:** 2 days
+**Files:** `docs/DEPLOYMENT.md` (new)
+
+**Contents:**
+- System requirements
+- Configuration best practices
+- TLS certificate setup
+- Monitoring setup (metrics, logs)
+- Performance tuning guide
+- Backup and recovery procedures
+- Troubleshooting common issues
+- Production readiness checklist
+
+**Dependencies:** None
+**Source:** CODE_REVIEW_2025-11-10.md Section 5.2
+
+---
+
+### 🟢 0.13 Add Integration Test Suite
+**Priority:** High
+**Complexity:** Medium
+**Effort:** 3-5 days
+**Files:** `empath-delivery/tests/` (new)
+
+**Test Categories:**
+- End-to-end delivery flow with TLS
+- Spool deletion failure scenarios
+- DNS cache expiration
+- TLS requirement enforcement
+- Group address handling
+- Timeout handling
+- Error scenarios
+
+**Dependencies:** 4.2 (Mock SMTP server)
+**Source:** CODE_REVIEW_2025-11-10.md Section 4.1
+
+---
+
+### 🔵 0.14 Implement Delivery Strategy Pattern
+**Priority:** Low (Extensibility)
+**Complexity:** Medium
+**Effort:** 2-3 days
+**Files:** `empath-delivery/src/strategy.rs` (new)
+
+**Implementation:**
+```rust
+#[async_trait]
+pub trait DeliveryStrategy: Send + Sync {
+    async fn deliver(&self, context: &Context, config: &DomainConfig)
+        -> Result<(), DeliveryError>;
+    fn supports_domain(&self, domain: &str) -> bool;
+}
+
+pub struct SmtpDeliveryStrategy { /* ... */ }
+pub struct LmtpDeliveryStrategy { /* ... */ }  // Future
+pub struct WebhookDeliveryStrategy { /* ... */ }  // Future
+```
+
+**Dependencies:** 0.3 (Message type), 0.7 (SmtpTransaction extraction)
+**Source:** CODE_REVIEW_2025-11-10.md Section 2.3, TODO.md 6.5
+
 ---
 
 ## Phase 1: Production Foundation (Weeks 1-2)
@@ -1124,5 +1566,6 @@ After completing Phase 1, the system will be production-ready for basic mail del
 
 ---
 
-**Last Updated:** 2025-11-07
-**Contributors:** code-reviewer, rust-engineer, refactoring-specialist agents
+**Last Updated:** 2025-11-10
+**Contributors:** code-reviewer, architect-review, rust-expert, refactoring-specialist agents
+**Code Review:** See CODE_REVIEW_2025-11-10.md for comprehensive analysis

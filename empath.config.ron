@@ -51,16 +51,24 @@ Empath (
         scan_interval_secs: 30,
         process_interval_secs: 10,
         max_attempts: 25,
+        // SECURITY WARNING: Accept invalid TLS certificates globally (for testing only)
+        // Default: false (secure). Only enable for testing with self-signed certificates.
+        // accept_invalid_certs: false,
+
         // Per-domain configuration for testing and custom settings
         domains: {
             // Route test.example.com to local SMTP server for integration testing
             "test.example.com": (
                 mx_override: "localhost:1025",
+                // Accept self-signed certs for this test domain only
+                accept_invalid_certs: true,
             ),
             // Example: Require TLS for a specific domain
             "secure.example.com": (
                 require_tls: true,
                 max_connections: 5,
+                // Explicitly require valid certificates (overrides global setting)
+                accept_invalid_certs: false,
             ),
             // Example: Rate limiting for a high-volume domain
             "gmail.com": (

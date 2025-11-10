@@ -265,6 +265,16 @@ pub struct DeliveryProcessor {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
 
+    /// Accept invalid TLS certificates globally (for testing only)
+    ///
+    /// **SECURITY WARNING**: Setting this to `true` disables certificate validation
+    /// for all domains (unless overridden per-domain), making connections vulnerable
+    /// to Man-in-the-Middle attacks. Only enable for testing with self-signed certificates.
+    ///
+    /// Default: `false` (secure)
+    #[serde(default)]
+    pub accept_invalid_certs: bool,
+
     /// DNS configuration for resolver
     #[serde(default)]
     pub dns: DnsConfig,
@@ -292,6 +302,7 @@ impl Default for DeliveryProcessor {
             scan_interval_secs: default_scan_interval(),
             process_interval_secs: default_process_interval(),
             max_attempts: default_max_attempts(),
+            accept_invalid_certs: false,
             dns: DnsConfig::default(),
             domains: DomainConfigRegistry::default(),
             spool: None,
@@ -734,6 +745,23 @@ impl DeliveryProcessor {
             .get(&delivery_info.recipient_domain)
             .is_some_and(|config| config.require_tls);
 
+        // Determine if we should accept invalid certificates
+        // Priority: per-domain override > global configuration
+        let accept_invalid_certs = self
+            .domains
+            .get(&delivery_info.recipient_domain)
+            .and_then(|config| config.accept_invalid_certs)
+            .unwrap_or(self.accept_invalid_certs);
+
+        // Log security warning if certificate validation is disabled
+        if accept_invalid_certs {
+            tracing::warn!(
+                domain = %delivery_info.recipient_domain,
+                server = %server_address,
+                "SECURITY WARNING: TLS certificate validation is disabled for this connection"
+            );
+        }
+
         // Connect to the SMTP server
         let mut client = SmtpClient::connect(server_address, server_address.to_string())
             .await
@@ -742,7 +770,7 @@ impl DeliveryProcessor {
                     "Failed to connect to {server_address}: {e}"
                 ))
             })?
-            .accept_invalid_certs(true); // For testing with self-signed certs
+            .accept_invalid_certs(accept_invalid_certs);
 
         // Read greeting
         let greeting = client.read_greeting().await.map_err(|e| {
