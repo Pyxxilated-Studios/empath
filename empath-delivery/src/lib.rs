@@ -12,6 +12,7 @@
 mod dns;
 mod domain_config;
 mod error;
+mod smtp_transaction;
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -912,13 +913,7 @@ impl DeliveryProcessor {
 
     /// Deliver a message via SMTP (complete transaction including DATA)
     ///
-    /// This method performs the full SMTP transaction:
-    /// 1. Connects to the SMTP server
-    /// 2. Optionally upgrades to TLS via STARTTLS if required
-    /// 3. Performs EHLO/HELO handshake
-    /// 4. Sends MAIL FROM and RCPT TO commands
-    /// 5. Sends DATA command and the actual message content
-    /// 6. Sends QUIT to cleanly close the connection
+    /// This method performs the full SMTP transaction by delegating to `SmtpTransaction`.
     ///
     /// # Errors
     /// Returns an error if any part of the SMTP transaction fails
@@ -928,8 +923,6 @@ impl DeliveryProcessor {
         context: &Context,
         delivery_info: &DeliveryInfo,
     ) -> Result<(), DeliveryError> {
-        use empath_smtp::client::SmtpClient;
-
         // Check if TLS is required for this domain
         let require_tls = self
             .domains
@@ -944,300 +937,18 @@ impl DeliveryProcessor {
             .and_then(|config| config.accept_invalid_certs)
             .unwrap_or(self.accept_invalid_certs);
 
-        // Log security warning if certificate validation is disabled
-        if accept_invalid_certs {
-            tracing::warn!(
-                domain = %delivery_info.recipient_domain,
-                server = %server_address,
-                "SECURITY WARNING: TLS certificate validation is disabled for this connection"
-            );
-        }
+        // Create and execute the SMTP transaction
+        let transaction = smtp_transaction::SmtpTransaction::new(
+            context,
+            server_address.to_string(),
+            require_tls,
+            accept_invalid_certs,
+            &self.smtp_timeouts,
+        );
 
-        // Connect to the SMTP server
-        let mut client = SmtpClient::connect(server_address, server_address.to_string())
-            .await
-            .map_err(|e| {
-                TemporaryError::ConnectionFailed(format!(
-                    "Failed to connect to {server_address}: {e}"
-                ))
-            })?
-            .accept_invalid_certs(accept_invalid_certs);
-
-        // Read greeting
-        let greeting = client.read_greeting().await.map_err(|e| {
-            TemporaryError::ConnectionFailed(format!("Failed to read greeting: {e}"))
-        })?;
-
-        if !greeting.is_success() {
-            return Err(TemporaryError::ServerBusy(format!(
-                "Server rejected connection: {}",
-                greeting.message()
-            ))
-            .into());
-        }
-
-        // Perform TLS negotiation if required or available
-        self.negotiate_tls(&mut client, &context.id, require_tls)
-            .await?;
-
-        // Send MAIL FROM
-        self.send_mail_from(&mut client, context).await?;
-
-        // Send RCPT TO for all recipients
-        self.send_rcpt_to(&mut client, context).await?;
-
-        // Send DATA command and message content
-        self.send_message_data(&mut client, context).await?;
-
-        // Send QUIT to cleanly close the connection
-        // Note: We don't fail the delivery if QUIT fails since the message was already delivered
-        let quit_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
-        if let Err(e) = tokio::time::timeout(quit_timeout, client.quit()).await {
-            tracing::warn!(
-                server = %server_address,
-                timeout = ?quit_timeout,
-                "QUIT command timed out after successful delivery: {e}"
-            );
-        }
-
-        Ok(())
+        transaction.execute().await
     }
 
-    /// Negotiate TLS upgrade via STARTTLS if required or available
-    ///
-    /// # Errors
-    /// Returns an error if TLS is required but fails, or if STARTTLS negotiation fails
-    async fn negotiate_tls(
-        &self,
-        client: &mut empath_smtp::client::SmtpClient,
-        helo_domain: &str,
-        require_tls: bool,
-    ) -> Result<(), DeliveryError> {
-        // Send initial EHLO
-        let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
-        let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-            .await
-            .map_err(|_| TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}")))?
-            .map_err(|e| TemporaryError::SmtpTemporary(format!("EHLO failed: {e}")))?;
-
-        if !ehlo_response.is_success() {
-            return Err(TemporaryError::SmtpTemporary(format!(
-                "Server rejected EHLO: {}",
-                ehlo_response.message()
-            ))
-            .into());
-        }
-
-        // Check if server advertises STARTTLS
-        let supports_starttls = ehlo_response
-            .message()
-            .lines()
-            .any(|line| line.to_uppercase().contains("STARTTLS"));
-
-        if require_tls || supports_starttls {
-            let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
-            let starttls_response = tokio::time::timeout(starttls_timeout, client.starttls())
-                .await
-                .map_err(|_| {
-                    if require_tls {
-                        DeliveryError::Permanent(PermanentError::TlsRequired(format!(
-                            "STARTTLS timed out after {starttls_timeout:?}"
-                        )))
-                    } else {
-                        DeliveryError::Temporary(TemporaryError::Timeout(format!(
-                            "STARTTLS timed out after {starttls_timeout:?}"
-                        )))
-                    }
-                })?
-                .map_err(|e| {
-                    if require_tls {
-                        DeliveryError::Permanent(PermanentError::TlsRequired(format!(
-                            "STARTTLS failed: {e}"
-                        )))
-                    } else {
-                        DeliveryError::Temporary(TemporaryError::SmtpTemporary(format!(
-                            "STARTTLS failed: {e}"
-                        )))
-                    }
-                })?;
-
-            if !starttls_response.is_success() {
-                let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
-                return if require_tls {
-                    Err(PermanentError::TlsRequired(message).into())
-                } else {
-                    Err(TemporaryError::SmtpTemporary(message).into())
-                };
-            }
-
-            // Re-send EHLO after STARTTLS (RFC 3207)
-            let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-                .await
-                .map_err(|_| {
-                    TemporaryError::Timeout(format!(
-                        "EHLO after STARTTLS timed out after {ehlo_timeout:?}"
-                    ))
-                })?
-                .map_err(|e| {
-                    TemporaryError::SmtpTemporary(format!("EHLO after STARTTLS failed: {e}"))
-                })?;
-
-            if !ehlo_response.is_success() {
-                return Err(TemporaryError::SmtpTemporary(format!(
-                    "Server rejected EHLO after STARTTLS: {}",
-                    ehlo_response.message()
-                ))
-                .into());
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send MAIL FROM command
-    ///
-    /// # Errors
-    /// Returns an error if the MAIL FROM command fails
-    async fn send_mail_from(
-        &self,
-        client: &mut empath_smtp::client::SmtpClient,
-        context: &Context,
-    ) -> Result<(), DeliveryError> {
-        let sender = context
-            .envelope
-            .sender()
-            .and_then(extract_email_address)
-            .unwrap_or_default();
-
-        let mail_from_timeout = Duration::from_secs(self.smtp_timeouts.mail_from_secs);
-        let mail_response = tokio::time::timeout(mail_from_timeout, client.mail_from(sender, None))
-            .await
-            .map_err(|_| {
-                TemporaryError::Timeout(format!("MAIL FROM timed out after {mail_from_timeout:?}"))
-            })?
-            .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
-
-        if !mail_response.is_success() {
-            let code = mail_response.code;
-            let message = format!("Server rejected MAIL FROM: {}", mail_response.message());
-            return if (500..600).contains(&code) {
-                Err(PermanentError::MessageRejected(message).into())
-            } else {
-                Err(TemporaryError::SmtpTemporary(message).into())
-            };
-        }
-
-        Ok(())
-    }
-
-    /// Send RCPT TO commands for all recipients
-    ///
-    /// # Errors
-    /// Returns an error if any RCPT TO command fails
-    async fn send_rcpt_to(
-        &self,
-        client: &mut empath_smtp::client::SmtpClient,
-        context: &Context,
-    ) -> Result<(), DeliveryError> {
-        let Some(recipients) = context.envelope.recipients() else {
-            return Err(SystemError::Internal("No recipients in message".to_string()).into());
-        };
-
-        let rcpt_to_timeout = Duration::from_secs(self.smtp_timeouts.rcpt_to_secs);
-        for recipient in recipients.iter() {
-            let Some(recipient_addr) = extract_email_address(recipient) else {
-                continue; // Skip group addresses
-            };
-
-            let rcpt_response =
-                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(recipient_addr))
-                    .await
-                    .map_err(|_| {
-                        TemporaryError::Timeout(format!(
-                            "RCPT TO timed out after {rcpt_to_timeout:?}"
-                        ))
-                    })?
-                    .map_err(|e| TemporaryError::SmtpTemporary(format!("RCPT TO failed: {e}")))?;
-
-            if !rcpt_response.is_success() {
-                let code = rcpt_response.code;
-                let message = format!(
-                    "Server rejected RCPT TO {}: {}",
-                    recipient_addr,
-                    rcpt_response.message()
-                );
-                return if (500..600).contains(&code) {
-                    Err(PermanentError::InvalidRecipient(message).into())
-                } else {
-                    Err(TemporaryError::SmtpTemporary(message).into())
-                };
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send DATA command and message content
-    ///
-    /// # Errors
-    /// Returns an error if the DATA command or message sending fails
-    async fn send_message_data(
-        &self,
-        client: &mut empath_smtp::client::SmtpClient,
-        context: &Context,
-    ) -> Result<(), DeliveryError> {
-        let data_timeout = Duration::from_secs(self.smtp_timeouts.data_secs);
-
-        // Send DATA command
-        let data_response = tokio::time::timeout(data_timeout, client.data())
-            .await
-            .map_err(|_| {
-                TemporaryError::Timeout(format!("DATA command timed out after {data_timeout:?}"))
-            })?
-            .map_err(|e| TemporaryError::SmtpTemporary(format!("DATA command failed: {e}")))?;
-
-        if !(300..400).contains(&data_response.code) {
-            let code = data_response.code;
-            let message = format!("Server rejected DATA: {}", data_response.message());
-            return if (500..600).contains(&code) {
-                Err(PermanentError::MessageRejected(message).into())
-            } else {
-                Err(TemporaryError::SmtpTemporary(message).into())
-            };
-        }
-
-        // Send the actual message data
-        let message_data = context
-            .data
-            .as_ref()
-            .ok_or_else(|| SystemError::Internal("No message data to send".to_string()))?;
-
-        let data_str = std::str::from_utf8(message_data.as_ref())
-            .map_err(|e| SystemError::Internal(format!("Message data is not valid UTF-8: {e}")))?;
-
-        let send_response = tokio::time::timeout(data_timeout, client.send_data(data_str))
-            .await
-            .map_err(|_| {
-                TemporaryError::Timeout(format!(
-                    "Sending message data timed out after {data_timeout:?}"
-                ))
-            })?
-            .map_err(|e| {
-                TemporaryError::SmtpTemporary(format!("Failed to send message data: {e}"))
-            })?;
-
-        if !send_response.is_success() {
-            let code = send_response.code;
-            let message = format!("Server rejected message data: {}", send_response.message());
-            return if (500..600).contains(&code) {
-                Err(PermanentError::MessageRejected(message).into())
-            } else {
-                Err(TemporaryError::SmtpTemporary(message).into())
-            };
-        }
-
-        Ok(())
-    }
 
     /// Process all pending messages in the queue
     ///
@@ -1272,19 +983,6 @@ impl DeliveryProcessor {
         }
 
         Ok(())
-    }
-}
-
-/// Extract the email address string from an Address (for SMTP commands)
-///
-/// For `Single` addresses, returns just the email address.
-/// For `Group` addresses, returns `None` as they can't be used in SMTP commands.
-///
-/// Returns a reference to avoid allocations in the hot delivery path.
-fn extract_email_address(address: &empath_common::address::Address) -> Option<&str> {
-    match &**address {
-        mailparse::MailAddr::Single(single_info) => Some(&single_info.addr),
-        mailparse::MailAddr::Group(_) => None, // Groups can't be used in SMTP commands
     }
 }
 
