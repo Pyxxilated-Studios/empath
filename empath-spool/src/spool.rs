@@ -18,7 +18,7 @@ pub struct SpooledMessageId {
 }
 
 impl SpooledMessageId {
-    /// Parse a message ID from a filename like `01ARYZ6S41.json` or `01ARYZ6S41.eml`
+    /// Parse a message ID from a filename like `01ARYZ6S41.bin` or `01ARYZ6S41.eml`
     ///
     /// Validates that the filename is a valid ULID to prevent path traversal attacks.
     ///
@@ -40,7 +40,7 @@ impl SpooledMessageId {
 
         // Strip file extension
         let stem = filename
-            .strip_suffix(".json")
+            .strip_suffix(".bin")
             .or_else(|| filename.strip_suffix(".eml"))?;
 
         // Parse as ULID
@@ -727,18 +727,21 @@ mod tests {
     #[test]
     fn test_spooled_message_id_validation() {
         // Valid ULIDs (26 characters)
-        assert!(SpooledMessageId::from_filename("01ARZ3NDEKTSV4RRFFQ69G5FAV.json").is_some());
+        assert!(SpooledMessageId::from_filename("01ARZ3NDEKTSV4RRFFQ69G5FAV.bin").is_some());
         assert!(SpooledMessageId::from_filename("01ARZ3NDEKTSV4RRFFQ69G5FAV.eml").is_some());
 
         // Invalid IDs (security)
-        assert!(SpooledMessageId::from_filename("../etc/passwd.json").is_none());
-        assert!(SpooledMessageId::from_filename("foo/bar.json").is_none());
-        assert!(SpooledMessageId::from_filename("..\\windows\\system32.json").is_none());
+        assert!(SpooledMessageId::from_filename("../etc/passwd.bin").is_none());
+        assert!(SpooledMessageId::from_filename("foo/bar.bin").is_none());
+        assert!(SpooledMessageId::from_filename("..\\windows\\system32.bin").is_none());
 
         // Invalid IDs (format)
-        assert!(SpooledMessageId::from_filename("not_a_valid_ulid.json").is_none());
-        assert!(SpooledMessageId::from_filename("1234567890.json").is_none());
-        assert!(SpooledMessageId::from_filename("1234567890_42.json").is_none()); // Old format
+        assert!(SpooledMessageId::from_filename("not_a_valid_ulid.bin").is_none());
+        assert!(SpooledMessageId::from_filename("1234567890.bin").is_none());
+        assert!(SpooledMessageId::from_filename("1234567890_42.bin").is_none()); // Old format
+
+        // Invalid extension (no longer supported)
+        assert!(SpooledMessageId::from_filename("01ARZ3NDEKTSV4RRFFQ69G5FAV.json").is_none());
     }
 
     #[test]

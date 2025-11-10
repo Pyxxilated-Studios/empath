@@ -23,7 +23,7 @@ pub struct DomainConfig {
     ///     ),
     /// }
     /// ```
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub mx_override: Option<String>,
 
     /// Require TLS for delivery to this domain
@@ -35,13 +35,13 @@ pub struct DomainConfig {
     /// Maximum concurrent connections to this domain
     ///
     /// Prevents overwhelming recipient servers.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_connections: Option<usize>,
 
     /// Rate limit (messages per minute) for this domain
     ///
     /// Prevents being flagged as spam or hitting recipient quotas.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub rate_limit: Option<u32>,
 }
 
@@ -185,5 +185,47 @@ mod tests {
                 .mx_override_address(),
             Some("localhost:1025")
         );
+    }
+
+    #[test]
+    fn test_deserialize_from_config_format() {
+        // Test the exact format used in empath.config.ron (with implicit_some extension)
+        let config_str = r#"{
+            "test.example.com": (
+                mx_override: "localhost:1025",
+            ),
+            "secure.example.com": (
+                require_tls: true,
+                max_connections: 5,
+            ),
+            "gmail.com": (
+                max_connections: 10,
+                rate_limit: 100,
+            ),
+        }"#;
+
+        let registry: DomainConfigRegistry = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(config_str)
+            .unwrap();
+
+        assert_eq!(registry.len(), 3);
+
+        // Verify test.example.com has mx_override
+        let test_config = registry.get("test.example.com").unwrap();
+        assert_eq!(test_config.mx_override_address(), Some("localhost:1025"));
+        assert!(!test_config.require_tls);
+
+        // Verify secure.example.com has TLS and connection limit
+        let secure_config = registry.get("secure.example.com").unwrap();
+        assert!(secure_config.require_tls);
+        assert_eq!(secure_config.max_connections, Some(5));
+        assert!(secure_config.mx_override.is_none());
+
+        // Verify gmail.com has connection and rate limits
+        let gmail_config = registry.get("gmail.com").unwrap();
+        assert_eq!(gmail_config.max_connections, Some(10));
+        assert_eq!(gmail_config.rate_limit, Some(100));
+        assert!(gmail_config.mx_override.is_none());
     }
 }

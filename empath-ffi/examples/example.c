@@ -1,11 +1,11 @@
 // Compile with
-//   gcc example.c -fpic -shared -o libexample.so -l empath -L ../target/debug
+//   gcc example.c -fpic -shared -o libexample.so -l empath -L ../../target/debug -I ../../target -L .
 //
 
 #include <stdio.h>
 #include <string.h>
 
-#include "../target/empath.h"
+#include "empath.h"
 #include "log.h"
 
 int something = 1;

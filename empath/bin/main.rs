@@ -14,7 +14,12 @@ async fn main() -> anyhow::Result<()> {
             e
         )
     })?;
-    let empath: empath::controller::Empath = ron::from_str(&config_content)?;
+
+    // Use RON options with implicit_some to allow writing `mx_override: "localhost:1025"`
+    // instead of requiring `mx_override: Some("localhost:1025")`
+    let empath: empath::controller::Empath = ron::Options::default()
+        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+        .from_str(&config_content)?;
 
     empath.run().await
 }

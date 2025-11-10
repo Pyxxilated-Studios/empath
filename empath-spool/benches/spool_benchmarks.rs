@@ -168,14 +168,14 @@ fn bench_message_id_operations(c: &mut Criterion) {
 
     group.bench_function("from_filename_valid", |b| {
         b.iter(|| {
-            let id = SpooledMessageId::from_filename(black_box("01ARYZ6S41TST000000000.json"));
+            let id = SpooledMessageId::from_filename(black_box("01ARYZ6S41TST000000000.bin"));
             black_box(id)
         });
     });
 
     group.bench_function("from_filename_invalid_path", |b| {
         b.iter(|| {
-            let id = SpooledMessageId::from_filename(black_box("../01ARYZ6S41TST000000000.json"));
+            let id = SpooledMessageId::from_filename(black_box("../01ARYZ6S41TST000000000.bin"));
             black_box(id)
         });
     });

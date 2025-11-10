@@ -1,10 +1,10 @@
 // Compile with
-//   gcc event.c -fpic -shared -o libevent.so -l empath -L ../target/debug
+//   gcc event.c -fpic -shared -o libevent.so -l empath -L ../../target
 //
 
 #include <stdio.h>
 
-#include "../target/empath.h"
+#include "empath.h"
 
 int emit(Ev event, Context *validate_context) {
   if (event == ConnectionOpened) {
