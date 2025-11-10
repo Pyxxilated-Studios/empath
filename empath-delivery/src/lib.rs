@@ -949,7 +949,6 @@ impl DeliveryProcessor {
         transaction.execute().await
     }
 
-
     /// Process all pending messages in the queue
     ///
     /// # Errors

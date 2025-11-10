@@ -18,6 +18,17 @@ use crate::{
     SmtpTimeouts,
 };
 
+/// Outcome of TLS negotiation attempt
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TlsNegotiationOutcome {
+    /// TLS was successfully negotiated via STARTTLS
+    Success,
+    /// TLS was not attempted (server doesn't advertise STARTTLS and not required)
+    Skipped,
+    /// TLS negotiation failed but was opportunistic - should retry without TLS per RFC 3207
+    RetryWithoutTls,
+}
+
 /// Extracts the email address string from an Address (for SMTP commands)
 ///
 /// For `Single` addresses, returns just the email address.
@@ -74,28 +85,11 @@ impl<'a> SmtpTransaction<'a> {
         }
     }
 
-    /// Execute the complete SMTP transaction
-    ///
-    /// This method performs the full SMTP transaction:
-    /// 1. Connects to the SMTP server
-    /// 2. Reads the server greeting
-    /// 3. Optionally upgrades to TLS via STARTTLS if required
-    /// 4. Performs EHLO/HELO handshake
-    /// 5. Sends MAIL FROM and RCPT TO commands
-    /// 6. Sends DATA command and the actual message content
-    /// 7. Sends QUIT to cleanly close the connection
+    /// Connect to SMTP server and read greeting
     ///
     /// # Errors
-    /// Returns an error if any part of the SMTP transaction fails
-    pub async fn execute(self) -> Result<(), DeliveryError> {
-        // Log security warning if certificate validation is disabled
-        if self.accept_invalid_certs {
-            tracing::warn!(
-                server = %self.server_address,
-                "SECURITY WARNING: TLS certificate validation is disabled for this connection"
-            );
-        }
-
+    /// Returns an error if connection or greeting fails
+    async fn connect_and_greet(&self) -> Result<SmtpClient, DeliveryError> {
         // Connect to the SMTP server
         let mut client = SmtpClient::connect(&self.server_address, self.server_address.clone())
             .await
@@ -120,8 +114,72 @@ impl<'a> SmtpTransaction<'a> {
             .into());
         }
 
+        Ok(client)
+    }
+
+    /// Execute the complete SMTP transaction
+    ///
+    /// This method performs the full SMTP transaction:
+    /// 1. Connects to the SMTP server
+    /// 2. Reads the server greeting
+    /// 3. Optionally upgrades to TLS via STARTTLS if required or available
+    /// 4. If STARTTLS fails for opportunistic TLS, reconnects without TLS (RFC 3207)
+    /// 5. Performs EHLO/HELO handshake
+    /// 6. Sends MAIL FROM and RCPT TO commands
+    /// 7. Sends DATA command and the actual message content
+    /// 8. Sends QUIT to cleanly close the connection
+    ///
+    /// # Errors
+    /// Returns an error if any part of the SMTP transaction fails
+    pub async fn execute(self) -> Result<(), DeliveryError> {
+        // Log security warning if certificate validation is disabled
+        if self.accept_invalid_certs {
+            tracing::warn!(
+                server = %self.server_address,
+                "SECURITY WARNING: TLS certificate validation is disabled for this connection"
+            );
+        }
+
+        // Connect to the SMTP server
+        let mut client = self.connect_and_greet().await?;
+
         // Perform TLS negotiation if required or available
-        self.negotiate_tls(&mut client).await?;
+        let tls_outcome = self.negotiate_tls(&mut client).await?;
+
+        // RFC 3207: If STARTTLS fails for opportunistic TLS, reconnect without attempting TLS
+        if tls_outcome == TlsNegotiationOutcome::RetryWithoutTls {
+            tracing::info!(
+                server = %self.server_address,
+                "Reconnecting without STARTTLS per RFC 3207 Section 4.1"
+            );
+
+            // Drop the old connection and reconnect
+            drop(client);
+            client = self.connect_and_greet().await?;
+
+            // Perform EHLO without attempting TLS
+            let helo_domain = &self.context.id;
+            let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+            let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
+                })?
+                .map_err(|e| TemporaryError::SmtpTemporary(format!("EHLO failed: {e}")))?;
+
+            if !ehlo_response.is_success() {
+                return Err(TemporaryError::SmtpTemporary(format!(
+                    "Server rejected EHLO: {}",
+                    ehlo_response.message()
+                ))
+                .into());
+            }
+
+            tracing::info!(
+                server = %self.server_address,
+                "Successfully reconnected without TLS, proceeding with plaintext delivery"
+            );
+        }
 
         // Send MAIL FROM
         self.send_mail_from(&mut client).await?;
@@ -148,9 +206,12 @@ impl<'a> SmtpTransaction<'a> {
 
     /// Negotiate TLS upgrade via STARTTLS if required or available
     ///
+    /// Returns an outcome indicating whether TLS was successfully negotiated, skipped,
+    /// or failed in a way that requires reconnection without TLS (per RFC 3207).
+    ///
     /// # Errors
-    /// Returns an error if TLS is required but fails, or if STARTTLS negotiation fails
-    async fn negotiate_tls(&self, client: &mut SmtpClient) -> Result<(), DeliveryError> {
+    /// Returns an error if TLS is required but fails
+    async fn negotiate_tls(&self, client: &mut SmtpClient) -> Result<TlsNegotiationOutcome, DeliveryError> {
         let helo_domain = &self.context.id;
 
         // Send initial EHLO
@@ -174,40 +235,50 @@ impl<'a> SmtpTransaction<'a> {
             .lines()
             .any(|line| line.to_uppercase().contains("STARTTLS"));
 
+        // If server doesn't support STARTTLS and it's not required, skip TLS
+        if !supports_starttls && !self.require_tls {
+            return Ok(TlsNegotiationOutcome::Skipped);
+        }
+
         if self.require_tls || supports_starttls {
             let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
-            let starttls_response = tokio::time::timeout(starttls_timeout, client.starttls())
+
+            // Attempt STARTTLS command
+            let starttls_result = tokio::time::timeout(starttls_timeout, client.starttls())
                 .await
-                .map_err(|_| {
+                .map_err(|_| format!("STARTTLS timed out after {starttls_timeout:?}"))
+                .and_then(|r| r.map_err(|e| format!("STARTTLS failed: {e}")));
+
+            let starttls_response = match starttls_result {
+                Ok(response) => response,
+                Err(error_msg) => {
                     if self.require_tls {
-                        DeliveryError::Permanent(PermanentError::TlsRequired(format!(
-                            "STARTTLS timed out after {starttls_timeout:?}"
-                        )))
-                    } else {
-                        DeliveryError::Temporary(TemporaryError::Timeout(format!(
-                            "STARTTLS timed out after {starttls_timeout:?}"
-                        )))
+                        // TLS required but failed - permanent error
+                        return Err(PermanentError::TlsRequired(error_msg).into());
                     }
-                })?
-                .map_err(|e| {
-                    if self.require_tls {
-                        DeliveryError::Permanent(PermanentError::TlsRequired(format!(
-                            "STARTTLS failed: {e}"
-                        )))
-                    } else {
-                        DeliveryError::Temporary(TemporaryError::SmtpTemporary(format!(
-                            "STARTTLS failed: {e}"
-                        )))
-                    }
-                })?;
+                    // Opportunistic TLS failed - should retry without TLS per RFC 3207
+                    tracing::info!(
+                        domain = helo_domain,
+                        error = %error_msg,
+                        "STARTTLS failed for opportunistic TLS, will retry without TLS per RFC 3207"
+                    );
+                    return Ok(TlsNegotiationOutcome::RetryWithoutTls);
+                }
+            };
 
             if !starttls_response.is_success() {
                 let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
-                return if self.require_tls {
-                    Err(PermanentError::TlsRequired(message).into())
-                } else {
-                    Err(TemporaryError::SmtpTemporary(message).into())
-                };
+                if self.require_tls {
+                    // TLS required but server rejected - permanent error
+                    return Err(PermanentError::TlsRequired(message).into());
+                }
+                // Opportunistic TLS rejected - should retry without TLS per RFC 3207
+                tracing::info!(
+                    domain = helo_domain,
+                    response = %starttls_response.message(),
+                    "Server rejected STARTTLS for opportunistic TLS, will retry without TLS per RFC 3207"
+                );
+                return Ok(TlsNegotiationOutcome::RetryWithoutTls);
             }
 
             // Re-send EHLO after STARTTLS (RFC 3207)
@@ -229,9 +300,13 @@ impl<'a> SmtpTransaction<'a> {
                 ))
                 .into());
             }
-        }
 
-        Ok(())
+            tracing::debug!(domain = helo_domain, "TLS successfully negotiated via STARTTLS");
+            Ok(TlsNegotiationOutcome::Success)
+        } else {
+            // This branch shouldn't be reached given the earlier check, but handle it for completeness
+            Ok(TlsNegotiationOutcome::Skipped)
+        }
     }
 
     /// Send MAIL FROM command
