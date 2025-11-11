@@ -52,7 +52,7 @@ async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_basic_connection() {
     let (port, _handle) = start_test_server().await;
 
@@ -69,7 +69,7 @@ async fn test_basic_connection() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_ehlo() {
     let (port, _handle) = start_test_server().await;
 
@@ -91,7 +91,7 @@ async fn test_ehlo() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_helo() {
     let (port, _handle) = start_test_server().await;
 
@@ -112,7 +112,7 @@ async fn test_helo() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_mail_from() {
     let (port, _handle) = start_test_server().await;
 
@@ -135,7 +135,7 @@ async fn test_mail_from() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_mail_from_with_size() {
     let (port, _handle) = start_test_server().await;
 
@@ -155,7 +155,7 @@ async fn test_mail_from_with_size() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_rcpt_to() {
     let (port, _handle) = start_test_server().await;
 
@@ -176,7 +176,7 @@ async fn test_rcpt_to() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_multiple_recipients() {
     let (port, _handle) = start_test_server().await;
 
@@ -203,7 +203,7 @@ async fn test_multiple_recipients() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_complete_transaction() {
     let (port, _handle) = start_test_server().await;
 
@@ -232,7 +232,7 @@ async fn test_complete_transaction() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_full_session_with_quit() {
     let (port, _handle) = start_test_server().await;
 
@@ -255,7 +255,7 @@ async fn test_full_session_with_quit() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_rset_command() {
     let (port, _handle) = start_test_server().await;
 
@@ -278,7 +278,7 @@ async fn test_rset_command() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_raw_command() {
     let (port, _handle) = start_test_server().await;
 
@@ -297,7 +297,7 @@ async fn test_raw_command() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_builder_build_method() {
     let (port, _handle) = start_test_server().await;
 
@@ -323,7 +323,7 @@ async fn test_builder_build_method() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_response_inspection() {
     let (port, _handle) = start_test_server().await;
 
@@ -346,7 +346,7 @@ async fn test_response_inspection() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_size_exceeded() {
     let (port, _handle) = start_test_server().await;
 
@@ -370,7 +370,7 @@ async fn test_size_exceeded() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_message_builder_simple() {
     let message = MessageBuilder::new()
         .from("sender@example.com")
@@ -389,7 +389,7 @@ async fn test_message_builder_simple() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_message_builder_with_attachment() {
     let message = MessageBuilder::new()
         .from("sender@example.com")
@@ -408,7 +408,7 @@ async fn test_message_builder_with_attachment() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_message_builder_auto_headers() {
     // Test that data_with_builder auto-populates FROM/TO headers
     let message = MessageBuilder::new()
@@ -426,7 +426,7 @@ async fn test_message_builder_auto_headers() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_send_with_message_builder() {
     let (port, _handle) = start_test_server().await;
 
@@ -456,7 +456,7 @@ async fn test_send_with_message_builder() {
 }
 
 #[tokio::test]
-#[cfg_attr(all(target_os = "macos", miri), ignore)]
+#[cfg_attr(miri, ignore)]
 async fn test_data_with_builder_closure() {
     let (port, _handle) = start_test_server().await;
 

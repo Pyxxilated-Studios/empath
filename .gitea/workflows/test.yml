@@ -86,4 +86,4 @@ jobs:
           tool: nextest
 
       - name: Test Server
-        run: cargo miri nextest run && cargo test --doc
+        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run && cargo test --doc

@@ -422,7 +422,7 @@ Location: `empath-ffi/src/string.rs`
 - **Integration tests**: Use `MemoryBackedSpool` for spool operations with `wait_for_count()` for async verification
 - **FSM tests**: Test state transitions with various command sequences
 - **Module tests**: Use `Module::TestModule` for testing without loading shared libraries
-- **Async tests**: Mark with `#[tokio::test]` and `#[cfg_attr(all(target_os = "macos", miri), ignore)]`
+- **Async tests**: Mark with `#[tokio::test]`
 
 Example: `empath-smtp/src/session.rs:537` (spool_integration test)
 

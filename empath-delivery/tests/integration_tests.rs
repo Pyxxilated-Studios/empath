@@ -39,6 +39,7 @@ fn create_test_context(from: &str, to: &str) -> Context {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_domain_config_mx_override() {
     // Create a domain config registry with an MX override
     let mut domains = DomainConfigRegistry::new();
@@ -60,6 +61,7 @@ async fn test_domain_config_mx_override() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_delivery_with_mx_override_integration() {
     // Create a memory-backed spool
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
@@ -129,6 +131,7 @@ fn test_domain_config_multiple_domains() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_delivery_queue_domain_grouping() {
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
@@ -160,6 +163,7 @@ async fn test_delivery_queue_domain_grouping() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_graceful_shutdown() {
     use tokio::sync::broadcast;
 
@@ -208,6 +212,7 @@ async fn test_graceful_shutdown() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_graceful_shutdown_respects_timeout() {
     use tokio::sync::broadcast;
 
@@ -255,6 +260,7 @@ async fn test_graceful_shutdown_respects_timeout() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_message_expiration() {
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
@@ -276,6 +282,7 @@ async fn test_message_expiration() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_retry_scheduling_with_backoff() {
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
@@ -337,6 +344,7 @@ fn test_smtp_timeouts_default() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_delivery_info_operations() {
     let msg_id = SpooledMessageId::new(ulid::Ulid::new());
     let info = DeliveryInfo::new(msg_id.clone(), "example.com".to_string());

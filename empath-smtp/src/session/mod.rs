@@ -416,7 +416,7 @@ mod test {
     };
 
     #[tokio::test]
-    #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn session() {
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
@@ -450,7 +450,7 @@ mod test {
     }
 
     #[tokio::test]
-    #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn helo() {
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
@@ -497,7 +497,7 @@ mod test {
     }
 
     #[tokio::test]
-    #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn spool_integration() {
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
@@ -567,7 +567,7 @@ mod test {
     }
 
     #[tokio::test]
-    #[cfg_attr(all(target_os = "macos", miri), ignore)]
+    #[cfg_attr(miri, ignore)]
     async fn modules() {
         let banner = "testing";
         let mut context = Context {

@@ -62,6 +62,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_exponential_backoff_calculation() {
         // Test exponential backoff with base=60s, max=86400s, jitter=0
         // We'll test with jitter=0 for predictable results

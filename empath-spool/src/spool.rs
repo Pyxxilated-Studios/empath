@@ -570,6 +570,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_memory_store_basic_operations() {
         let store = MemoryBackingStore::new();
         let mut context = create_test_context("test message");
@@ -595,6 +596,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_memory_store_capacity_limit() {
         let store = MemoryBackingStore::with_capacity(2);
 
@@ -630,6 +632,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_unique_id_generation() {
         let store = MemoryBackingStore::new();
 
@@ -661,6 +664,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_spool_wrapper() {
         let store = MemoryBackingStore::new();
         let spool = Spool::new(store);
@@ -688,6 +692,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_polymorphic_backing_store() {
         // Test that we can use trait objects
         let store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::new());
@@ -704,6 +709,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_message_ordering() {
         let store = MemoryBackingStore::new();
 
