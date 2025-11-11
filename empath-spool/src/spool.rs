@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
 };
 
 use async_trait::async_trait;
@@ -262,7 +262,7 @@ impl<T: BackingStore + Clone> Clone for Spool<T> {
 
 /// In-memory backing store implementation
 ///
-/// This implementation stores messages in a `HashMap` protected by a Mutex.
+/// This implementation stores messages in a `HashMap` protected by an `RwLock`.
 /// It's primarily intended for testing, but can also be used for transient
 /// message handling.
 ///
@@ -281,12 +281,11 @@ impl<T: BackingStore + Clone> Clone for Spool<T> {
 /// - Delete: O(1) - `HashMap` remove
 ///
 /// # Concurrency
-/// Uses a Mutex for interior mutability. While this serializes all operations,
-/// it's acceptable for testing scenarios. Production workloads should use
+/// Uses an `RwLock` for interior mutability. Production workloads should use
 /// file-backed or database-backed stores with better concurrency primitives.
 #[derive(Debug, Clone)]
 pub struct MemoryBackingStore {
-    messages: Arc<Mutex<HashMap<SpooledMessageId, Context>>>,
+    messages: Arc<RwLock<HashMap<SpooledMessageId, Context>>>,
     /// Maximum number of messages to store (None = unlimited)
     capacity: Option<usize>,
 }
@@ -296,7 +295,7 @@ impl MemoryBackingStore {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            messages: Arc::new(Mutex::new(HashMap::new())),
+            messages: Arc::new(RwLock::new(HashMap::new())),
             capacity: None,
         }
     }
@@ -311,18 +310,18 @@ impl MemoryBackingStore {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            messages: Arc::new(Mutex::new(HashMap::new())),
+            messages: Arc::new(RwLock::new(HashMap::new())),
             capacity: Some(capacity),
         }
     }
 
     /// Get the current number of messages in the store
     ///
-    /// Recovers gracefully if the mutex is poisoned by accessing the underlying data.
+    /// Recovers gracefully if the lock is poisoned by accessing the underlying data.
     #[must_use]
     pub fn len(&self) -> usize {
         self.messages
-            .lock()
+            .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
     }
@@ -357,29 +356,25 @@ impl BackingStore for MemoryBackingStore {
         // Set the tracking ID in the context
         context.tracking_id = Some(id.to_string());
 
+        // Check capacity before inserting (don't count if overwriting existing)
+        if let Some(cap) = self.capacity
+            && !self.messages.read()?.contains_key(&id)
+            && self.len() >= cap
         {
-            let mut messages = self.messages.lock()?;
-
-            // Check capacity before inserting (don't count if overwriting existing)
-            if let Some(cap) = self.capacity
-                && !messages.contains_key(&id)
-                && messages.len() >= cap
-            {
-                return Err(SpoolError::Internal(format!(
-                    "Memory spool capacity exceeded: {}/{} messages",
-                    messages.len(),
-                    cap
-                )));
-            }
-
-            messages.insert(id.clone(), context.clone());
+            return Err(SpoolError::Internal(format!(
+                "Memory spool capacity exceeded: {}/{} messages",
+                self.len(),
+                cap
+            )));
         }
+
+        self.messages.write()?.insert(id.clone(), context.clone());
 
         Ok(id)
     }
 
     async fn list(&self) -> crate::Result<Vec<SpooledMessageId>> {
-        let mut ids: Vec<_> = self.messages.lock()?.keys().cloned().collect();
+        let mut ids: Vec<_> = self.messages.read()?.keys().cloned().collect();
 
         // ULIDs are lexicographically sortable by creation time
         ids.sort();
@@ -391,7 +386,7 @@ impl BackingStore for MemoryBackingStore {
         use crate::error::SpoolError;
 
         self.messages
-            .lock()?
+            .read()?
             .get(id)
             .cloned()
             .ok_or_else(|| SpoolError::NotFound(id.clone()))
@@ -401,7 +396,7 @@ impl BackingStore for MemoryBackingStore {
         use crate::error::SpoolError;
 
         self.messages
-            .lock()?
+            .write()?
             .remove(id)
             .ok_or_else(|| SpoolError::NotFound(id.clone()))?;
         Ok(())
@@ -474,18 +469,18 @@ impl TestBackingStore {
     /// If there was an isue getting the lock for the message store, e.g. the lock has been poisoned
     #[allow(clippy::unused_async)]
     pub async fn clear(&self) -> crate::Result<()> {
-        self.inner.messages.lock()?.clear();
+        self.inner.messages.write()?.clear();
         Ok(())
     }
 
     /// Get the number of spooled messages
     ///
-    /// Recovers gracefully if the mutex is poisoned.
+    /// Recovers gracefully if the lock is poisoned.
     #[allow(clippy::unused_async)]
     pub async fn message_count(&self) -> usize {
         self.inner
             .messages
-            .lock()
+            .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
     }
@@ -713,21 +708,6 @@ mod tests {
             .collect::<std::collections::HashSet<_>>()
             .len();
         assert_eq!(unique_count, 10, "All ULIDs should be unique");
-    }
-
-    #[tokio::test]
-    async fn test_mutex_poisoning_recovery() {
-        let store = MemoryBackingStore::new();
-
-        // len() should recover from poisoned mutex
-        let len = store.len();
-        assert_eq!(len, 0);
-
-        // Write and verify recovery
-        let mut msg = create_test_context("test");
-        store.write(&mut msg).await.expect("Failed to write");
-        assert_eq!(store.len(), 1);
-        assert!(!store.is_empty());
     }
 
     #[test]

@@ -31,7 +31,7 @@ pub enum SpoolError {
     #[error("Spool validation error: {0}")]
     Validation(#[from] ValidationError),
 
-    /// Internal error (mutex poisoning, etc.).
+    /// Internal error (lock poisoning, etc.).
     #[error("Internal error: {0}")]
     Internal(String),
 
@@ -91,10 +91,10 @@ pub enum ValidationError {
 /// Specialized `Result` type for spool operations.
 pub type Result<T> = std::result::Result<T, SpoolError>;
 
-// Convenience conversion for mutex poisoning
+// Convenience conversion for lock poisoning
 impl<T> From<std::sync::PoisonError<T>> for SpoolError {
     fn from(e: std::sync::PoisonError<T>) -> Self {
-        Self::Internal(format!("Mutex poisoned: {e}"))
+        Self::Internal(format!("Lock poisoned: {e}"))
     }
 }
 

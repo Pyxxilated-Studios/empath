@@ -1,5 +1,5 @@
 use std::{
-    fmt::{Debug, Display},
+    fmt::{self, Debug, Display},
     ops::{Deref, DerefMut},
 };
 
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize, de};
 pub struct Address(pub MailAddr);
 
 impl Display for Address {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -39,7 +39,7 @@ impl DerefMut for Address {
 pub struct AddressList(pub Vec<Address>);
 
 impl Display for AddressList {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut last_was_group = false;
         for (i, addr) in self.iter().enumerate() {
             if i > 0 {
@@ -105,7 +105,7 @@ impl<'de> Deserialize<'de> for Address {
         impl de::Visitor<'_> for Addr {
             type Value = Address;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("bytes")
             }
 

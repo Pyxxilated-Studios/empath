@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
 };
 
 use empath_common::{context::Context, internal};
@@ -97,7 +97,7 @@ pub enum Error {
     Validation(String),
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Test {
     pub events_called: Vec<Ev>,
     pub validators_called: Vec<validate::Event>,
@@ -107,7 +107,7 @@ pub struct Test {
 #[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(library::Shared),
-    TestModule(Arc<Mutex<Test>>),
+    TestModule(Arc<[Test]>),
     /// Core validation module with session-specific configuration.
     /// Not deserialized - created programmatically by each session.
     #[serde(skip)]
@@ -211,7 +211,7 @@ pub mod test {
 
     pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
         if let Module::TestModule(mute) = module {
-            let mut inner = mute.lock().unwrap();
+            let mut inner = mute.first().expect("Test Module should exist").clone();
             match event {
                 Event::Validate(ev) => inner.validators_called.push(ev),
                 Event::Event(ev) => inner.events_called.push(ev),
