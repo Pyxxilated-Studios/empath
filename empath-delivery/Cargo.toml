@@ -19,13 +19,13 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bincode = "1"
+dashmap = "6"
 empath-common = { path = "../empath-common", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
 empath-smtp = { path = "../empath-smtp", version = "*" }
 empath-spool = { path = "../empath-spool", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 hickory-resolver = "0.24"
-lru = "0.12"
 mailparse = "0.16"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
