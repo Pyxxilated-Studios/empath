@@ -103,6 +103,7 @@ enum StatusFilter {
     Completed,
     Failed,
     Retry,
+    Expired,
 }
 
 static PENDING_STR: &str = "Pending";
@@ -110,6 +111,7 @@ static IN_PROGRESS_STR: &str = "In Progress";
 static COMPLETED_STR: &str = "Completed";
 static FAILED_STR: &str = "Failed";
 static RETRY_STR: &str = "Retry";
+static EXPIRED_STR: &str = "Expired";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -374,7 +376,8 @@ async fn cmd_retry(
     // Check if message can be retried
     match &info.status {
         empath_delivery::DeliveryStatus::Failed(_)
-        | empath_delivery::DeliveryStatus::Retry { .. } => {
+        | empath_delivery::DeliveryStatus::Retry { .. }
+        | empath_delivery::DeliveryStatus::Expired => {
             // OK to retry
         }
         empath_delivery::DeliveryStatus::Completed => {
@@ -533,6 +536,7 @@ async fn display_stats(queue_state_path: &std::path::Path) -> anyhow::Result<()>
                 empath_delivery::DeliveryStatus::Completed => COMPLETED_STR,
                 empath_delivery::DeliveryStatus::Failed(_) => FAILED_STR,
                 empath_delivery::DeliveryStatus::Retry { .. } => RETRY_STR,
+                empath_delivery::DeliveryStatus::Expired => EXPIRED_STR,
             };
             *counts.entry(status_key).or_insert(0) += 1;
         }
@@ -543,6 +547,7 @@ async fn display_stats(queue_state_path: &std::path::Path) -> anyhow::Result<()>
             IN_PROGRESS_STR,
             RETRY_STR,
             FAILED_STR,
+            EXPIRED_STR,
             COMPLETED_STR,
         ] {
             println!("{s}: {}", counts.get(s).unwrap_or(&0));
@@ -632,6 +637,9 @@ const fn status_matches(status: &empath_delivery::DeliveryStatus, filter: Status
         ) | (
             empath_delivery::DeliveryStatus::Retry { .. },
             StatusFilter::Retry
+        ) | (
+            empath_delivery::DeliveryStatus::Expired,
+            StatusFilter::Expired
         )
     )
 }
@@ -646,6 +654,7 @@ fn format_status(status: &empath_delivery::DeliveryStatus) -> String {
         empath_delivery::DeliveryStatus::Retry { attempts, .. } => {
             format!("{RETRY_STR} ({attempts})")
         }
+        empath_delivery::DeliveryStatus::Expired => EXPIRED_STR.to_string(),
     }
 }
 

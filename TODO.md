@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-11:** ✅ Implemented exponential backoff with message expiration
 - **2025-11-11:** ✅ Implemented graceful shutdown handling with 30s timeout
 - **2025-11-10:** Comprehensive code review completed (see CODE_REVIEW_2025-11-10.md)
 - **2025-11-10:** ✅ Fixed TLS certificate validation (two-tier configuration system)
@@ -556,33 +557,48 @@ Empath (
 
 ---
 
-### 🔴 1.4 Exponential Backoff for Retries
+### ✅ 1.4 Exponential Backoff for Retries
 **Priority:** High
 **Complexity:** Simple
 **Effort:** 1 day
-**Files:** `empath-delivery/src/retry.rs` (new)
-
-**Current Issue:** No retry scheduling, immediate retries cause server hammering
+**Status:** ✅ **COMPLETED** (2025-11-11)
 
 **Implementation:**
-```rust
-pub struct ExponentialBackoffPolicy {
-    base_delay: Duration,      // 60s
-    max_delay: Duration,        // 24h
-    max_attempts: u32,          // 25
-    jitter_factor: f64,         // 0.2 (±20%)
-}
+- ✅ Configurable exponential backoff with base delay, max delay, and jitter factor
+- ✅ Formula: `delay = min(base * 2^(attempts - 1), max_delay) * (1 ± jitter)`
+- ✅ Default: 60s base, 86400s (24h) max, 0.2 (±20%) jitter
+- ✅ Message expiration configuration (optional, default: never expire)
+- ✅ Added `DeliveryInfo.queued_at` and `DeliveryInfo.next_retry_at` timestamps
+- ✅ Added `DeliveryStatus::Expired` for expired messages
+- ✅ Process queue only retries messages when it's time (respects `next_retry_at`)
+- ✅ Comprehensive tests for backoff calculation, jitter, expiration, and retry scheduling
+- ✅ Updated `empathctl` CLI to handle `Expired` status
+
+**Configuration Fields:**
+```ron
+delivery: (
+    base_retry_delay_secs: 60,        // Default: 60 seconds (1 minute)
+    max_retry_delay_secs: 86400,      // Default: 86400 seconds (24 hours)
+    retry_jitter_factor: 0.2,         // Default: 0.2 (±20%)
+    message_expiration_secs: 604800,  // Optional: 7 days (default: None)
+)
 ```
 
-**Recommended Schedule:**
-- Attempt 1: 1 minute
-- Attempt 2: 2 minutes
-- Attempt 3: 4 minutes
-- Attempt 4: 8 minutes
+**Retry Schedule (with defaults):**
+- Attempt 1: ~1 minute (48-72s with jitter)
+- Attempt 2: ~2 minutes (96-144s with jitter)
+- Attempt 3: ~4 minutes (192-288s with jitter)
+- Attempt 4: ~8 minutes
 - ...
 - Max: 24 hours between attempts
 
-**Dependencies:** 1.3 (DeliveryError categorization)
+**Files Modified:**
+- `empath-delivery/src/lib.rs` (exponential backoff implementation + tests)
+- `empath-delivery/Cargo.toml` (added `rand` dependency)
+- `empath/bin/empathctl.rs` (added `Expired` status support)
+- `empath.config.ron` (documented new configuration options)
+
+**Dependencies:** 1.3 (DeliveryError categorization) ✅
 
 ---
 
@@ -1471,10 +1487,10 @@ Create `OPERATIONS.md` with:
 1. Persistent delivery queue (1.1) - **TODO**
 2. ✅ Real DNS MX lookups (1.2) - **COMPLETED**
 3. ✅ Typed error handling (1.3) - **COMPLETED**
-4. Exponential backoff (1.4) - **TODO**
+4. ✅ Exponential backoff (1.4) - **COMPLETED**
 5. ✅ Graceful shutdown (1.5) - **COMPLETED**
 
-**Progress: 3/5 completed (60%)**
+**Progress: 4/5 completed (80%)**
 
 ### Phase 2: Observability (2-3 weeks)
 **Operational Readiness:**

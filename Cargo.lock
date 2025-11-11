@@ -571,6 +571,7 @@ dependencies = [
  "empath-tracing",
  "hickory-resolver",
  "mailparse",
+ "rand 0.8.5",
  "ron",
  "serde",
  "thiserror 2.0.17",

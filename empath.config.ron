@@ -60,6 +60,26 @@ Empath (
         scan_interval_secs: 30,
         process_interval_secs: 10,
         max_attempts: 25,
+
+        // Exponential backoff configuration for retry scheduling
+        // Base delay for first retry (in seconds). Subsequent retries double this delay.
+        // Default: 60 seconds (1 minute)
+        base_retry_delay_secs: 60,
+
+        // Maximum delay between retry attempts (in seconds). Caps exponential growth.
+        // Default: 86400 seconds (24 hours)
+        max_retry_delay_secs: 86400,
+
+        // Jitter factor for randomizing retry delays (0.0 to 1.0)
+        // Adds ±20% randomness to prevent thundering herd. Default: 0.2
+        retry_jitter_factor: 0.2,
+
+        // Message expiration time (in seconds)
+        // Messages older than this will be marked as expired.
+        // Set to None to never expire messages. Default: None
+        // Example: 604800 = 7 days
+        // message_expiration_secs: 604800,
+
         // SECURITY WARNING: Accept invalid TLS certificates globally (for testing only)
         // Default: false (secure). Only enable for testing with self-signed certificates.
         // accept_invalid_certs: false,

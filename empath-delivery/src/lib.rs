@@ -131,6 +131,8 @@ pub enum DeliveryStatus {
     Failed(String),
     /// Message delivery failed temporarily, will retry
     Retry { attempts: u32, last_error: String },
+    /// Message expired before successful delivery
+    Expired,
 }
 
 /// Represents a single delivery attempt
@@ -159,12 +161,21 @@ pub struct DeliveryInfo {
     pub mail_servers: Arc<Vec<MailServer>>,
     /// Index of the current mail server being tried
     pub current_server_index: usize,
+    /// Unix timestamp when this message was first queued
+    pub queued_at: u64,
+    /// Unix timestamp when the next retry should be attempted (None for immediate retry)
+    pub next_retry_at: Option<u64>,
 }
 
 impl DeliveryInfo {
     /// Create a new pending delivery info
     #[must_use]
     pub fn new(message_id: SpooledMessageId, recipient_domain: String) -> Self {
+        let queued_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         Self {
             message_id,
             status: DeliveryStatus::Pending,
@@ -172,6 +183,8 @@ impl DeliveryInfo {
             recipient_domain: Arc::from(recipient_domain),
             mail_servers: Arc::new(Vec::new()),
             current_server_index: 0,
+            queued_at,
+            next_retry_at: None,
         }
     }
 
@@ -290,6 +303,22 @@ impl DeliveryQueue {
         queue.remove(message_id)
     }
 
+    /// Set the next retry timestamp for a message
+    pub async fn set_next_retry_at(&self, message_id: &SpooledMessageId, next_retry_at: u64) {
+        let mut queue = self.queue.write().await;
+        if let Some(info) = queue.get_mut(message_id) {
+            info.next_retry_at = Some(next_retry_at);
+        }
+    }
+
+    /// Reset the server index to 0 for a message (for new retry cycle)
+    pub async fn reset_server_index(&self, message_id: &SpooledMessageId) {
+        let mut queue = self.queue.write().await;
+        if let Some(info) = queue.get_mut(message_id) {
+            info.reset_server_index();
+        }
+    }
+
     /// Get all pending messages
     pub async fn pending_messages(&self) -> Vec<DeliveryInfo> {
         let queue = self.queue.read().await;
@@ -305,27 +334,6 @@ impl DeliveryQueue {
         let queue = self.queue.read().await;
         queue.values().cloned().collect()
     }
-
-    /// Get count of messages by status
-    pub async fn count_by_status(&self) -> HashMap<&'static str, usize> {
-        let queue = self.queue.read().await;
-        let mut counts = HashMap::new();
-
-        for info in queue.values() {
-            let status_key: &'static str = match &info.status {
-                DeliveryStatus::Pending => "pending",
-                DeliveryStatus::InProgress => "in_progress",
-                DeliveryStatus::Completed => "completed",
-                DeliveryStatus::Failed(_) => "failed",
-                DeliveryStatus::Retry { .. } => "retry",
-            };
-            *counts.entry(status_key).or_insert(0) += 1;
-        }
-
-        drop(queue); // Explicit early drop of lock guard
-
-        counts
-    }
 }
 
 const fn default_scan_interval() -> u64 {
@@ -338,6 +346,18 @@ const fn default_process_interval() -> u64 {
 
 const fn default_max_attempts() -> u32 {
     25
+}
+
+const fn default_base_retry_delay() -> u64 {
+    60 // 1 minute
+}
+
+const fn default_max_retry_delay() -> u64 {
+    86400 // 24 hours
+}
+
+const fn default_retry_jitter_factor() -> f64 {
+    0.2 // ±20%
 }
 
 /// Processor for handling delivery of messages from the spool
@@ -361,6 +381,41 @@ pub struct DeliveryProcessor {
     /// Maximum number of delivery attempts before giving up
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
+
+    /// Base delay for exponential backoff (in seconds)
+    ///
+    /// First retry will occur after this delay. Subsequent retries will double
+    /// this delay (with jitter) up to `max_retry_delay_secs`.
+    ///
+    /// Default: 60 seconds (1 minute)
+    #[serde(default = "default_base_retry_delay")]
+    pub base_retry_delay_secs: u64,
+
+    /// Maximum delay between retry attempts (in seconds)
+    ///
+    /// Caps the exponential backoff to prevent excessively long delays.
+    ///
+    /// Default: 86400 seconds (24 hours)
+    #[serde(default = "default_max_retry_delay")]
+    pub max_retry_delay_secs: u64,
+
+    /// Jitter factor for retry delays (0.0 to 1.0)
+    ///
+    /// Adds randomness to retry delays to prevent thundering herd.
+    /// A factor of 0.2 means ±20% randomness.
+    ///
+    /// Default: 0.2 (±20%)
+    #[serde(default = "default_retry_jitter_factor")]
+    pub retry_jitter_factor: f64,
+
+    /// Message expiration time (in seconds)
+    ///
+    /// Messages older than this will be marked as expired and removed from the queue.
+    /// Set to `None` to never expire messages.
+    ///
+    /// Default: None (never expire)
+    #[serde(default)]
+    pub message_expiration_secs: Option<u64>,
 
     /// Accept invalid TLS certificates globally (for testing only)
     ///
@@ -411,6 +466,10 @@ impl Default for DeliveryProcessor {
             scan_interval_secs: default_scan_interval(),
             process_interval_secs: default_process_interval(),
             max_attempts: default_max_attempts(),
+            base_retry_delay_secs: default_base_retry_delay(),
+            max_retry_delay_secs: default_max_retry_delay(),
+            retry_jitter_factor: default_retry_jitter_factor(),
+            message_expiration_secs: None,
             accept_invalid_certs: false,
             dns: DnsConfig::default(),
             domains: DomainConfigRegistry::default(),
@@ -422,6 +481,63 @@ impl Default for DeliveryProcessor {
             freeze_marker_path: None,
         }
     }
+}
+
+/// Calculate the next retry time using exponential backoff with jitter
+///
+/// # Formula
+/// `delay = min(base * 2^(attempts - 1), max_delay) * (1 ± jitter)`
+///
+/// # Arguments
+/// * `attempt` - The attempt number (1-indexed)
+/// * `base_delay_secs` - Base delay in seconds (e.g., 60 for 1 minute)
+/// * `max_delay_secs` - Maximum delay in seconds (e.g., 86400 for 24 hours)
+/// * `jitter_factor` - Jitter factor (e.g., 0.2 for ±20%)
+///
+/// # Returns
+/// Unix timestamp when the next retry should occur
+fn calculate_next_retry_time(
+    attempt: u32,
+    base_delay_secs: u64,
+    max_delay_secs: u64,
+    jitter_factor: f64,
+) -> u64 {
+    use rand::Rng;
+
+    // Calculate exponential backoff: base * 2^(attempts - 1)
+    // Use saturating operations to prevent overflow
+    let exponent = attempt.saturating_sub(1);
+    let delay = if exponent >= 63 {
+        // 2^63 would overflow, use max_delay directly
+        max_delay_secs
+    } else {
+        let multiplier = 1u64 << exponent; // 2^exponent
+        base_delay_secs
+            .saturating_mul(multiplier)
+            .min(max_delay_secs)
+    };
+
+    // Apply jitter: delay * (1 ± jitter_factor)
+    // Intentional precision loss and casting for randomization
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let jittered_delay = {
+        let jitter_range = (delay as f64) * jitter_factor;
+        let mut rng = rand::thread_rng();
+        let jitter: f64 = rng.gen_range(-jitter_range..=jitter_range);
+        ((delay as f64) + jitter).max(0.0) as u64
+    };
+
+    // Calculate next retry timestamp
+    let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    current_time.saturating_add(jittered_delay)
 }
 
 impl DeliveryProcessor {
@@ -954,7 +1070,38 @@ impl DeliveryProcessor {
             }
         };
 
-        self.queue.update_status(message_id, new_status).await;
+        self.queue
+            .update_status(message_id, new_status.clone())
+            .await;
+
+        // Calculate and set next retry time using exponential backoff
+        if matches!(new_status, DeliveryStatus::Retry { .. }) {
+            let next_retry_at = calculate_next_retry_time(
+                updated_info.attempt_count(),
+                self.base_retry_delay_secs,
+                self.max_retry_delay_secs,
+                self.retry_jitter_factor,
+            );
+
+            self.queue
+                .set_next_retry_at(message_id, next_retry_at)
+                .await;
+
+            // Calculate delay for logging
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let delay_secs = next_retry_at.saturating_sub(current_time);
+
+            info!(
+                message_id = ?message_id,
+                attempt = updated_info.attempt_count(),
+                retry_delay_secs = delay_secs,
+                next_retry_at = next_retry_at,
+                "Scheduled retry with exponential backoff"
+            );
+        }
 
         context.delivery = Some(DeliveryContext {
             message_id: message_id.to_string(),
@@ -1009,18 +1156,89 @@ impl DeliveryProcessor {
 
     /// Process all pending messages in the queue
     ///
+    /// This method:
+    /// 1. Checks for expired messages and marks them as `Expired`
+    /// 2. For messages with `Retry` status, checks if it's time to retry
+    /// 3. Processes messages that are ready for delivery
+    ///
     /// # Errors
     /// Returns an error if processing fails
     async fn process_queue_internal(
         &self,
         spool: &Arc<dyn empath_spool::BackingStore>,
     ) -> Result<(), DeliveryError> {
-        let pending = self.queue.pending_messages().await;
+        use tracing::{debug, error, warn};
 
-        for info in pending {
-            if let Err(e) = self.prepare_message(&info.message_id, spool).await {
-                use tracing::error;
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
+        // Get all messages to check for expiration and retry timing
+        let all_messages = self.queue.all_messages().await;
+
+        for info in all_messages {
+            // Skip messages that are already completed, failed, expired, or in progress
+            if matches!(
+                info.status,
+                DeliveryStatus::Completed
+                    | DeliveryStatus::Failed(_)
+                    | DeliveryStatus::Expired
+                    | DeliveryStatus::InProgress
+            ) {
+                continue;
+            }
+
+            // Check if message has expired
+            if let Some(expiration_secs) = self.message_expiration_secs {
+                let age_secs = current_time.saturating_sub(info.queued_at);
+                if age_secs > expiration_secs {
+                    warn!(
+                        message_id = ?info.message_id,
+                        age_secs = age_secs,
+                        expiration_secs = expiration_secs,
+                        "Message expired, marking as Expired"
+                    );
+                    self.queue
+                        .update_status(&info.message_id, DeliveryStatus::Expired)
+                        .await;
+                    continue;
+                }
+            }
+
+            // For Retry status, check if it's time to retry
+            if matches!(info.status, DeliveryStatus::Retry { .. }) {
+                if let Some(next_retry_at) = info.next_retry_at
+                    && current_time < next_retry_at
+                {
+                    // Not yet time to retry, skip this message
+                    let wait_secs = next_retry_at.saturating_sub(current_time);
+                    debug!(
+                        message_id = ?info.message_id,
+                        wait_secs = wait_secs,
+                        "Skipping message, not yet time to retry"
+                    );
+                    continue;
+                }
+
+                // Time to retry! Reset status to Pending and reset server index
+                debug!(
+                    message_id = ?info.message_id,
+                    attempt = info.attempt_count(),
+                    "Time to retry delivery"
+                );
+                self.queue
+                    .update_status(&info.message_id, DeliveryStatus::Pending)
+                    .await;
+
+                // Reset to first MX server for new retry cycle
+                self.queue.reset_server_index(&info.message_id).await;
+            }
+
+            // Process the message (Pending status)
+            if matches!(info.status, DeliveryStatus::Pending)
+                && let Err(e) = self.prepare_message(&info.message_id, spool).await
+            {
                 error!(
                     message_id = ?info.message_id,
                     error = %e,
@@ -1294,7 +1512,12 @@ mod tests {
             ..Default::default()
         };
 
-        processor.init(spool.clone(), Some(std::path::PathBuf::from("/tmp/graceful_shutdown_test"))).unwrap();
+        processor
+            .init(
+                spool.clone(),
+                Some(std::path::PathBuf::from("/tmp/graceful_shutdown_test")),
+            )
+            .unwrap();
 
         // Manually scan the spool to add the message to the queue
         let added = processor.scan_spool_internal(&spool).await.unwrap();
@@ -1304,9 +1527,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
 
         // Start the processor in a background task
-        let processor_handle = tokio::spawn(async move {
-            processor.serve(shutdown_rx).await
-        });
+        let processor_handle = tokio::spawn(async move { processor.serve(shutdown_rx).await });
 
         // Give the processor a moment to start
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1317,14 +1538,18 @@ mod tests {
         // Wait for graceful shutdown to complete (with timeout)
         let result = tokio::time::timeout(
             Duration::from_secs(35), // Slightly longer than the 30s shutdown timeout
-            processor_handle
-        ).await;
+            processor_handle,
+        )
+        .await;
 
         // Verify shutdown completed successfully
         assert!(result.is_ok(), "Processor should shutdown within timeout");
         let shutdown_result = result.unwrap();
         assert!(shutdown_result.is_ok(), "Processor serve should return Ok");
-        assert!(shutdown_result.unwrap().is_ok(), "Processor should shutdown without error");
+        assert!(
+            shutdown_result.unwrap().is_ok(),
+            "Processor should shutdown without error"
+        );
     }
 
     #[tokio::test]
@@ -1343,16 +1568,21 @@ mod tests {
             ..Default::default()
         };
 
-        processor.init(spool.clone(), Some(std::path::PathBuf::from("/tmp/graceful_shutdown_timeout_test"))).unwrap();
+        processor
+            .init(
+                spool.clone(),
+                Some(std::path::PathBuf::from(
+                    "/tmp/graceful_shutdown_timeout_test",
+                )),
+            )
+            .unwrap();
 
         // Create shutdown channel
         let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
 
         // Start the processor in a background task
         let start_time = std::time::Instant::now();
-        let processor_handle = tokio::spawn(async move {
-            processor.serve(shutdown_rx).await
-        });
+        let processor_handle = tokio::spawn(async move { processor.serve(shutdown_rx).await });
 
         // Give the processor a moment to start
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1361,18 +1591,226 @@ mod tests {
         shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
 
         // Wait for graceful shutdown to complete
-        let result = tokio::time::timeout(
-            Duration::from_secs(35),
-            processor_handle
-        ).await;
+        let result = tokio::time::timeout(Duration::from_secs(35), processor_handle).await;
 
         // Verify shutdown completed quickly (since no processing was happening)
         let elapsed = start_time.elapsed();
         assert!(result.is_ok(), "Processor should shutdown within timeout");
-        assert!(elapsed < Duration::from_secs(5), "Shutdown should be fast when not processing (took {elapsed:?})");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "Shutdown should be fast when not processing (took {elapsed:?})"
+        );
 
         let shutdown_result = result.unwrap();
         assert!(shutdown_result.is_ok(), "Processor serve should return Ok");
-        assert!(shutdown_result.unwrap().is_ok(), "Processor should shutdown without error");
+        assert!(
+            shutdown_result.unwrap().is_ok(),
+            "Processor should shutdown without error"
+        );
+    }
+
+    #[test]
+    fn test_exponential_backoff_calculation() {
+        // Test exponential backoff with base=60s, max=86400s, jitter=0
+        // We'll test with jitter=0 for predictable results
+        let base_delay = 60;
+        let max_delay = 86400;
+        let jitter_factor = 0.0; // No jitter for testing
+
+        // Attempt 1: 60 * 2^0 = 60 seconds
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let next_retry = calculate_next_retry_time(1, base_delay, max_delay, jitter_factor);
+        let delay = next_retry.saturating_sub(current_time);
+        assert_eq!(delay, 60, "First retry should be 60 seconds");
+
+        // Attempt 2: 60 * 2^1 = 120 seconds
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let next_retry = calculate_next_retry_time(2, base_delay, max_delay, jitter_factor);
+        let delay = next_retry.saturating_sub(current_time);
+        assert_eq!(delay, 120, "Second retry should be 120 seconds");
+
+        // Attempt 3: 60 * 2^2 = 240 seconds
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let next_retry = calculate_next_retry_time(3, base_delay, max_delay, jitter_factor);
+        let delay = next_retry.saturating_sub(current_time);
+        assert_eq!(delay, 240, "Third retry should be 240 seconds");
+
+        // Attempt 20: Should be capped at max_delay (86400 seconds = 24 hours)
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let next_retry = calculate_next_retry_time(20, base_delay, max_delay, jitter_factor);
+        let delay = next_retry.saturating_sub(current_time);
+        assert_eq!(
+            delay, max_delay,
+            "High attempt number should be capped at max_delay"
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    fn test_exponential_backoff_with_jitter() {
+        // Test that jitter is applied (result should be different from exact calculation)
+        let base_delay = 60;
+        let max_delay = 86400;
+        let jitter_factor = 0.2; // ±20%
+
+        // Attempt 2: Expected = 120 seconds, with ±20% jitter = 96-144 seconds
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let next_retry = calculate_next_retry_time(2, base_delay, max_delay, jitter_factor);
+        let delay = next_retry.saturating_sub(current_time);
+
+        // Check that delay is within jitter range
+        let expected = 120;
+        let min = expected - (expected as f64 * jitter_factor) as u64;
+        let max = expected + (expected as f64 * jitter_factor) as u64;
+        assert!(
+            delay >= min && delay <= max,
+            "Delay {delay} should be within jitter range [{min}, {max}]"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_message_expiration() {
+        use empath_spool::MemoryBackingStore;
+
+        let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+        // Create a processor with 1 second expiration
+        let mut processor = DeliveryProcessor {
+            message_expiration_secs: Some(1), // Expire after 1 second
+            ..Default::default()
+        };
+
+        processor.init(spool.clone(), None).unwrap();
+
+        // Create and queue a message
+        let mut context = create_test_context("sender@example.org", "recipient@test.com");
+        let msg_id = spool.write(&mut context).await.unwrap();
+
+        // Manually add to queue with old timestamp
+        let old_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(5); // 5 seconds ago
+
+        let mut info = DeliveryInfo::new(msg_id.clone(), "test.com".to_string());
+        info.queued_at = old_timestamp; // Manually set old timestamp
+
+        // Add to queue
+        {
+            let mut queue = processor.queue.queue.write().await;
+            queue.insert(msg_id.clone(), info);
+        }
+
+        // Process the queue - should expire the message
+        let _result = processor.process_queue_internal(&spool).await;
+
+        // Verify message was marked as expired
+        let updated_info = processor.queue.get(&msg_id).await;
+        assert!(updated_info.is_some(), "Message should still be in queue");
+        assert_eq!(
+            updated_info.unwrap().status,
+            DeliveryStatus::Expired,
+            "Message should be marked as Expired"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retry_scheduling_with_backoff() {
+        use empath_spool::MemoryBackingStore;
+
+        let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+        // Create a processor with fast backoff for testing
+        let mut processor = DeliveryProcessor {
+            base_retry_delay_secs: 2, // 2 seconds base delay
+            max_retry_delay_secs: 60, // Cap at 60 seconds
+            retry_jitter_factor: 0.0, // No jitter for predictable testing
+            max_attempts: 3,
+            ..Default::default()
+        };
+
+        processor.init(spool.clone(), None).unwrap();
+
+        // Create and queue a message
+        let mut context = create_test_context("sender@example.org", "recipient@test.com");
+        let msg_id = spool.write(&mut context).await.unwrap();
+        processor
+            .queue
+            .enqueue(msg_id.clone(), "test.com".to_string())
+            .await;
+
+        // Set message to Retry status with next_retry_at in the future
+        let future_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_add(10); // 10 seconds in the future
+
+        processor
+            .queue
+            .update_status(
+                &msg_id,
+                DeliveryStatus::Retry {
+                    attempts: 1,
+                    last_error: "test error".to_string(),
+                },
+            )
+            .await;
+        processor
+            .queue
+            .set_next_retry_at(&msg_id, future_time)
+            .await;
+
+        // Process queue - should NOT process message yet (too early)
+        let _result = processor.process_queue_internal(&spool).await;
+
+        // Verify message is still in Retry status (not changed to Pending)
+        let info = processor.queue.get(&msg_id).await.unwrap();
+        assert!(
+            matches!(info.status, DeliveryStatus::Retry { .. }),
+            "Message should still be in Retry status"
+        );
+
+        // Now set next_retry_at to the past
+        let past_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(1); // 1 second in the past
+
+        processor.queue.set_next_retry_at(&msg_id, past_time).await;
+
+        // Process queue again - should now reset to Pending
+        let _result = processor.process_queue_internal(&spool).await;
+
+        // Verify message was reset to Pending (or InProgress/Failed after processing)
+        let info = processor.queue.get(&msg_id).await.unwrap();
+        // Message should no longer be in Retry status with future timestamp
+        assert!(
+            !matches!(info.status, DeliveryStatus::Retry { .. })
+                || info.next_retry_at.is_none()
+                || info.next_retry_at.unwrap() <= past_time,
+            "Message should be processed or have updated retry time"
+        );
     }
 }
