@@ -425,10 +425,6 @@ pub struct DeliveryProcessor {
     #[serde(skip)]
     dns_resolver: Option<DnsResolver>,
 
-    /// Path to persist queue state (JSON file for CLI access)
-    #[serde(skip)]
-    queue_state_path: Option<std::path::PathBuf>,
-
     /// Path to freeze marker file (presence indicates queue is frozen)
     #[serde(skip)]
     freeze_marker_path: Option<std::path::PathBuf>,
@@ -451,7 +447,6 @@ impl Default for DeliveryProcessor {
             spool: None,
             queue: DeliveryQueue::new(),
             dns_resolver: None,
-            queue_state_path: None,
             freeze_marker_path: None,
         }
     }
@@ -540,10 +535,9 @@ impl DeliveryProcessor {
             self.dns.cache_size
         );
 
-        // Set up queue state persistence paths based on spool directory
+        // Set up freeze marker path based on spool directory
         // If spool_path is provided, derive paths from it, otherwise use /tmp/spool
         let base_path = spool_path.unwrap_or_else(|| std::path::PathBuf::from("/tmp/spool"));
-        self.queue_state_path = Some(base_path.join("queue_state.bin"));
         self.freeze_marker_path = Some(base_path.join("queue_frozen"));
 
         Ok(())
@@ -638,10 +632,8 @@ impl DeliveryProcessor {
                     processing.store(false, std::sync::atomic::Ordering::SeqCst);
                 }
                 _ = state_save_timer.tick() => {
-                    // Periodically persist queue state for CLI access
-                    if let Err(e) = self.save_queue_state().await {
-                        tracing::warn!("Failed to save queue state: {e}");
-                    }
+                    // Queue state is now persisted to spool on every status change
+                    // This timer tick is no longer needed but kept for potential future use
                 }
                 sig = shutdown.recv() => {
                     match sig {
@@ -672,14 +664,7 @@ impl DeliveryProcessor {
                                 internal!("All in-flight deliveries completed successfully");
                             }
 
-                            // Save final queue state before shutdown
-                            internal!("Saving final queue state before shutdown");
-                            if let Err(e) = self.save_queue_state().await {
-                                tracing::error!("Failed to save queue state during shutdown: {e}");
-                            } else {
-                                internal!("Queue state saved successfully");
-                            }
-
+                            // Queue state is automatically persisted to spool on every status change
                             internal!("Delivery processor shutdown complete");
                             break;
                         }
@@ -709,50 +694,6 @@ impl DeliveryProcessor {
             .is_some_and(|path| path.exists())
     }
 
-    /// Save the current queue state to a bincode file for CLI access
-    ///
-    /// This allows the `empathctl` CLI tool to inspect queue status without
-    /// requiring a running API server or IPC mechanism.
-    ///
-    /// # Errors
-    /// Returns an error if the queue state cannot be serialized or written
-    async fn save_queue_state(&self) -> Result<(), DeliveryError> {
-        if let Some(ref state_path) = self.queue_state_path {
-            let queue_data = self.queue.all_messages().await;
-
-            // Convert to a HashMap keyed by message ID string for easier CLI access
-            let state_map: std::collections::HashMap<String, DeliveryInfo> = queue_data
-                .into_iter()
-                .map(|info| (info.message_id.to_string(), info))
-                .collect();
-
-            let encoded = bincode::serialize(&state_map).map_err(|e| {
-                SystemError::Internal(format!("Failed to serialize queue state: {e}"))
-            })?;
-
-            // Create parent directory if it doesn't exist
-            if let Some(parent) = state_path.parent() {
-                let _ignore_error = tokio::fs::create_dir_all(parent).await;
-            }
-
-            // Write to temporary file first, then rename for atomic update
-            let temp_path = state_path.with_extension("tmp");
-            tokio::fs::write(&temp_path, encoded)
-                .await
-                .map_err(|e| SystemError::Internal(format!("Failed to write queue state: {e}")))?;
-
-            tokio::fs::rename(&temp_path, state_path)
-                .await
-                .map_err(|e| {
-                    SystemError::Internal(format!("Failed to rename queue state file: {e}"))
-                })?;
-
-            tracing::trace!("Queue state saved to {:?}", state_path);
-        }
-
-        Ok(())
-    }
-
     /// Scan the spool for new messages and add them to the queue
     ///
     /// # Errors
@@ -773,14 +714,35 @@ impl DeliveryProcessor {
                 continue;
             }
 
-            // Read the message to get recipient domains
-            let message = spool
+            // Read the message to get context (potentially with delivery state)
+            let context = spool
                 .read(&msg_id)
                 .await
                 .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
 
+            // Check if this message already has delivery state persisted
+            if let Some(delivery_ctx) = &context.delivery {
+                // Restore from persisted state
+                let info = DeliveryInfo {
+                    message_id: msg_id.clone(),
+                    status: delivery_ctx.status.clone(),
+                    attempts: delivery_ctx.attempt_history.clone(),
+                    recipient_domain: delivery_ctx.domain.clone(),
+                    mail_servers: Arc::new(Vec::new()), // Will be resolved again if needed
+                    current_server_index: delivery_ctx.current_server_index,
+                    queued_at: delivery_ctx.queued_at,
+                    next_retry_at: delivery_ctx.next_retry_at,
+                };
+
+                // Add to queue with existing state
+                self.queue.queue.write().await.insert(msg_id.clone(), info);
+                added += 1;
+                continue;
+            }
+
+            // New message without delivery state - create fresh DeliveryInfo
             // Group recipients by domain (handle multi-recipient messages)
-            let Some(recipients) = message.envelope.recipients() else {
+            let Some(recipients) = context.envelope.recipients() else {
                 use tracing::warn;
                 warn!("Message {:?} has no recipients, skipping", msg_id);
                 continue;
@@ -836,6 +798,10 @@ impl DeliveryProcessor {
     ///
     /// # Errors
     /// Returns an error if the message cannot be read, DNS lookup fails, or SMTP connection fails
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Persistence logic adds necessary lines"
+    )]
     async fn prepare_message(
         &self,
         message_id: &SpooledMessageId,
@@ -846,6 +812,17 @@ impl DeliveryProcessor {
         self.queue
             .update_status(message_id, DeliveryStatus::InProgress)
             .await;
+
+        // Persist the InProgress status to spool
+        if let Err(e) = self.persist_delivery_state(message_id, spool).await {
+            use tracing::warn;
+            warn!(
+                message_id = ?message_id,
+                error = %e,
+                "Failed to persist delivery state after status update to InProgress"
+            );
+            // Continue anyway - this is not critical for delivery
+        }
 
         let mut context = spool
             .read(message_id)
@@ -944,6 +921,18 @@ impl DeliveryProcessor {
                     .update_status(message_id, DeliveryStatus::Completed)
                     .await;
 
+                // Persist the Completed status to spool before deletion
+                // Note: This will be immediately deleted, but it's important for consistency
+                // in case the deletion fails
+                if let Err(e) = self.persist_delivery_state(message_id, spool).await {
+                    use tracing::warn;
+                    warn!(
+                        message_id = ?message_id,
+                        error = %e,
+                        "Failed to persist delivery state after successful delivery"
+                    );
+                }
+
                 // Delete the message from the spool after successful delivery
                 if let Err(e) = spool.delete(message_id).await {
                     use tracing::error;
@@ -990,6 +979,10 @@ impl DeliveryProcessor {
     ///
     /// # Errors
     /// Returns the original error after recording it
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Persistence logic adds necessary lines"
+    )]
     async fn handle_delivery_error(
         &self,
         message_id: &SpooledMessageId,
@@ -1040,6 +1033,19 @@ impl DeliveryProcessor {
             self.queue
                 .update_status(message_id, DeliveryStatus::Pending)
                 .await;
+
+            // Persist the Pending status for next MX server attempt
+            if let Some(spool) = &self.spool
+                && let Err(e) = self.persist_delivery_state(message_id, spool).await
+            {
+                use tracing::warn;
+                warn!(
+                    message_id = ?message_id,
+                    error = %e,
+                    "Failed to persist delivery state after MX server fallback"
+                );
+            }
+
             return error;
         }
 
@@ -1087,6 +1093,17 @@ impl DeliveryProcessor {
             );
         }
 
+        // Persist the updated status (Retry or Failed) to spool
+        if let Some(spool) = &self.spool
+            && let Err(e) = self.persist_delivery_state(message_id, spool).await
+        {
+            warn!(
+                message_id = ?message_id,
+                error = %e,
+                "Failed to persist delivery state after handling delivery error"
+            );
+        }
+
         context.delivery = Some(DeliveryContext {
             message_id: message_id.to_string(),
             domain: updated_info.recipient_domain.clone(),
@@ -1103,6 +1120,59 @@ impl DeliveryProcessor {
         modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
 
         error
+    }
+
+    /// Persist the current delivery queue state to the spool's Context.delivery field
+    ///
+    /// This method synchronizes the in-memory queue state (status, attempts, retry timing)
+    /// to the spool's persistent storage. This ensures queue state survives restarts.
+    ///
+    /// # Errors
+    /// Returns an error if the message is not in the queue or if spool update fails
+    async fn persist_delivery_state(
+        &self,
+        message_id: &SpooledMessageId,
+        spool: &Arc<dyn empath_spool::BackingStore>,
+    ) -> Result<(), DeliveryError> {
+        use empath_common::context::DeliveryContext;
+
+        // Get current queue info
+        let info = self.queue.get(message_id).await.ok_or_else(|| {
+            SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
+        })?;
+
+        // Read context from spool
+        let mut context = spool
+            .read(message_id)
+            .await
+            .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+
+        // Update the delivery field with current queue state
+        context.delivery = Some(DeliveryContext {
+            message_id: message_id.to_string(),
+            domain: info.recipient_domain.clone(),
+            server: info.current_mail_server().map(MailServer::address),
+            error: match &info.status {
+                DeliveryStatus::Failed(e) | DeliveryStatus::Retry { last_error: e, .. } => {
+                    Some(e.clone())
+                }
+                _ => None,
+            },
+            attempts: Some(info.attempt_count()),
+            status: info.status.clone(),
+            attempt_history: info.attempts.clone(),
+            queued_at: info.queued_at,
+            next_retry_at: info.next_retry_at,
+            current_server_index: info.current_server_index,
+        });
+
+        // Atomically update spool
+        spool
+            .update(message_id, &context)
+            .await
+            .map_err(|e| SystemError::SpoolWrite(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Deliver a message via SMTP (complete transaction including DATA)
@@ -1191,6 +1261,16 @@ impl DeliveryProcessor {
                     self.queue
                         .update_status(&info.message_id, DeliveryStatus::Expired)
                         .await;
+
+                    // Persist the Expired status to spool
+                    if let Err(e) = self.persist_delivery_state(&info.message_id, spool).await {
+                        warn!(
+                            message_id = ?info.message_id,
+                            error = %e,
+                            "Failed to persist delivery state after marking message as Expired"
+                        );
+                    }
+
                     continue;
                 }
             }
@@ -1222,6 +1302,15 @@ impl DeliveryProcessor {
 
                 // Reset to first MX server for new retry cycle
                 self.queue.reset_server_index(&info.message_id).await;
+
+                // Persist the Pending status for retry
+                if let Err(e) = self.persist_delivery_state(&info.message_id, spool).await {
+                    warn!(
+                        message_id = ?info.message_id,
+                        error = %e,
+                        "Failed to persist delivery state after marking message for retry"
+                    );
+                }
             }
 
             // Process the message (Pending status)

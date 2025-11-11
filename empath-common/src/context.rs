@@ -12,9 +12,10 @@ pub enum Capability {
 }
 
 /// Status of a message in the delivery queue
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DeliveryStatus {
     /// Message is pending delivery
+    #[default]
     Pending,
     /// Message delivery is in progress
     InProgress,
@@ -26,12 +27,6 @@ pub enum DeliveryStatus {
     Retry { attempts: u32, last_error: String },
     /// Message expired before successful delivery
     Expired,
-}
-
-impl Default for DeliveryStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 /// Represents a single delivery attempt
@@ -64,7 +59,6 @@ pub struct DeliveryContext {
     /// Error message if delivery failed
     pub error: Option<String>,
     /// Number of delivery attempts made
-    #[deprecated(since = "0.1.0", note = "Use attempts.len() instead")]
     pub attempts: Option<u32>,
 
     // Queue state fields for persistent delivery tracking

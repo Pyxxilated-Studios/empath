@@ -140,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
                 cmd_view(&cli.spool_path, &queue_state_path, &message_id).await?;
             }
             QueueAction::Retry { message_id, force } => {
-                cmd_retry(&queue_state_path, &message_id, force).await?;
+                cmd_retry(&cli.spool_path, &queue_state_path, &message_id, force).await?;
             }
             QueueAction::Delete { message_id, yes } => {
                 cmd_delete(&cli.spool_path, &queue_state_path, &message_id, yes).await?;
@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
                 cmd_unfreeze(&queue_state_path).await?;
             }
             QueueAction::Stats { watch, interval } => {
-                cmd_stats(&queue_state_path, watch, interval).await?;
+                cmd_stats(&cli.spool_path, &queue_state_path, watch, interval).await?;
             }
         },
     }
@@ -163,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
 /// List messages in the queue
 async fn cmd_list(
     spool_path: &std::path::Path,
-    queue_state_path: &std::path::Path,
+    _queue_state_path: &std::path::Path,
     status_filter: Option<StatusFilter>,
     format: &str,
 ) -> anyhow::Result<()> {
@@ -175,8 +175,8 @@ async fn cmd_list(
         .build()?;
     let message_ids = spool.list().await?;
 
-    // Load queue state if available
-    let queue_state = load_queue_state(queue_state_path).await.ok();
+    // Load queue state from spool
+    let queue_state = load_queue_state(&spool).await.ok();
 
     // Filter messages by status if requested
     let filtered: Vec<_> = status_filter.map_or_else(
@@ -252,7 +252,7 @@ async fn cmd_list(
 /// View detailed information about a message
 async fn cmd_view(
     spool_path: &std::path::Path,
-    queue_state_path: &std::path::Path,
+    _queue_state_path: &std::path::Path,
     message_id: &str,
 ) -> anyhow::Result<()> {
     use empath_spool::BackingStore;
@@ -267,8 +267,8 @@ async fn cmd_view(
     // Read message
     let context = spool.read(&id).await?;
 
-    // Load queue state
-    let queue_state = load_queue_state(queue_state_path).await.ok();
+    // Load queue state from spool
+    let queue_state = load_queue_state(&spool).await.ok();
     let delivery_info = queue_state.as_ref().and_then(|s| s.get(&id.to_string()));
 
     // Display message details
@@ -359,22 +359,30 @@ async fn cmd_view(
 
 /// Retry delivery of a message
 async fn cmd_retry(
-    queue_state_path: &std::path::Path,
+    spool_path: &std::path::Path,
+    _queue_state_path: &std::path::Path,
     message_id: &str,
     force: bool,
 ) -> anyhow::Result<()> {
+    use empath_spool::BackingStore;
+
     let id = parse_message_id(message_id)?;
 
-    // Load queue state
-    let mut queue_state = load_queue_state(queue_state_path).await?;
+    // Load spool
+    let spool = empath_spool::FileBackingStore::builder()
+        .path(spool_path.to_path_buf())
+        .build()?;
 
-    // Find message in queue
-    let info = queue_state
-        .get_mut(&id.to_string())
-        .ok_or_else(|| anyhow::anyhow!("Message {id} not found in queue"))?;
+    // Read context from spool
+    let mut context = spool.read(&id).await?;
+
+    // Get delivery info from context
+    let Some(delivery_ctx) = &mut context.delivery else {
+        anyhow::bail!("Message {id} has no delivery information");
+    };
 
     // Check if message can be retried
-    match &info.status {
+    match &delivery_ctx.status {
         empath_delivery::DeliveryStatus::Failed(_)
         | empath_delivery::DeliveryStatus::Retry { .. }
         | empath_delivery::DeliveryStatus::Expired => {
@@ -395,11 +403,11 @@ async fn cmd_retry(
     }
 
     // Reset status to pending
-    info.status = empath_delivery::DeliveryStatus::Pending;
-    info.reset_server_index();
+    delivery_ctx.status = empath_delivery::DeliveryStatus::Pending;
+    delivery_ctx.current_server_index = 0;
 
-    // Save updated state
-    save_queue_state(queue_state_path, &queue_state).await?;
+    // Save updated context back to spool
+    spool.update(&id, &context).await?;
 
     println!("Message {id} marked for retry");
 
@@ -409,7 +417,7 @@ async fn cmd_retry(
 /// Delete a message from queue and spool
 async fn cmd_delete(
     spool_path: &std::path::Path,
-    queue_state_path: &std::path::Path,
+    _queue_state_path: &std::path::Path,
     message_id: &str,
     skip_confirm: bool,
 ) -> anyhow::Result<()> {
@@ -432,17 +440,11 @@ async fn cmd_delete(
         }
     }
 
-    // Delete from spool
+    // Delete from spool (this also removes the delivery context)
     let spool = empath_spool::FileBackingStore::builder()
         .path(spool_path.to_path_buf())
         .build()?;
     spool.delete(&id).await?;
-
-    // Remove from queue state
-    if let Ok(mut queue_state) = load_queue_state(queue_state_path).await {
-        queue_state.remove(&id.to_string());
-        let _ignore_error = save_queue_state(queue_state_path, &queue_state).await;
-    }
 
     println!("Message {id} deleted");
 
@@ -484,6 +486,7 @@ async fn cmd_unfreeze(queue_state_path: &std::path::Path) -> anyhow::Result<()> 
 
 /// Show queue statistics
 async fn cmd_stats(
+    spool_path: &std::path::Path,
     queue_state_path: &std::path::Path,
     watch: bool,
     interval: u64,
@@ -494,7 +497,7 @@ async fn cmd_stats(
             // Clear screen
             print!("\x1B[2J\x1B[1;1H");
 
-            display_stats(queue_state_path).await?;
+            display_stats(spool_path, queue_state_path).await?;
 
             println!("\nPress Ctrl+C to exit");
 
@@ -502,15 +505,23 @@ async fn cmd_stats(
         }
     } else {
         // Single display
-        display_stats(queue_state_path).await?;
+        display_stats(spool_path, queue_state_path).await?;
     }
 
     Ok(())
 }
 
 /// Display queue statistics
-async fn display_stats(queue_state_path: &std::path::Path) -> anyhow::Result<()> {
-    let queue_state = load_queue_state(queue_state_path).await.ok();
+async fn display_stats(
+    spool_path: &std::path::Path,
+    queue_state_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    // Load spool
+    let spool = empath_spool::FileBackingStore::builder()
+        .path(spool_path.to_path_buf())
+        .build()?;
+
+    let queue_state = load_queue_state(&spool).await.ok();
 
     let freeze_path = queue_state_path
         .parent()
@@ -601,21 +612,36 @@ fn parse_message_id(s: &str) -> anyhow::Result<empath_spool::SpooledMessageId> {
 
 /// Load queue state from bincode file
 async fn load_queue_state(
-    path: &std::path::Path,
+    spool: &empath_spool::FileBackingStore,
 ) -> anyhow::Result<std::collections::HashMap<String, empath_delivery::DeliveryInfo>> {
-    let content = tokio::fs::read(path).await?;
-    let state = bincode::deserialize(&content)?;
-    Ok(state)
-}
+    use std::sync::Arc;
 
-/// Save queue state to bincode file
-async fn save_queue_state(
-    path: &std::path::Path,
-    state: &std::collections::HashMap<String, empath_delivery::DeliveryInfo>,
-) -> anyhow::Result<()> {
-    let encoded = bincode::serialize(state)?;
-    tokio::fs::write(path, encoded).await?;
-    Ok(())
+    use empath_spool::BackingStore;
+
+    let message_ids = spool.list().await?;
+    let mut state = std::collections::HashMap::new();
+
+    for msg_id in message_ids {
+        // Read context from spool
+        let context = spool.read(&msg_id).await?;
+
+        // Extract delivery info from context.delivery if it exists
+        if let Some(delivery_ctx) = context.delivery {
+            let info = empath_delivery::DeliveryInfo {
+                message_id: msg_id.clone(),
+                status: delivery_ctx.status,
+                attempts: delivery_ctx.attempt_history,
+                recipient_domain: delivery_ctx.domain,
+                mail_servers: Arc::new(Vec::new()), // Not stored, will be resolved if needed
+                current_server_index: delivery_ctx.current_server_index,
+                queued_at: delivery_ctx.queued_at,
+                next_retry_at: delivery_ctx.next_retry_at,
+            };
+            state.insert(msg_id.to_string(), info);
+        }
+    }
+
+    Ok(state)
 }
 
 /// Check if a status matches the filter

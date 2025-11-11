@@ -405,9 +405,8 @@ impl BackingStore for MemoryBackingStore {
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
         use crate::error::SpoolError;
 
-        let mut messages = self.messages.write()?;
-        if messages.contains_key(id) {
-            messages.insert(id.clone(), context.clone());
+        if self.messages.read()?.contains_key(id) {
+            self.messages.write()?.insert(id.clone(), context.clone());
             Ok(())
         } else {
             Err(SpoolError::NotFound(id.clone()))

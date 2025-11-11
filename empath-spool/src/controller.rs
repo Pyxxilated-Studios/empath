@@ -402,7 +402,7 @@ impl BackingStore for FileBackingStore {
 
         // Check that the message exists
         if !tokio::fs::try_exists(&meta_path).await.unwrap_or(false) {
-            return Err(crate::error::SpoolError::NotFound(msg_id.clone()).into());
+            return Err(crate::error::SpoolError::NotFound(msg_id.clone()));
         }
 
         // Write to temporary file first, then atomically rename
