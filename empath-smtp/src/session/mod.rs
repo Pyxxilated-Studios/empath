@@ -1,7 +1,9 @@
 use std::{borrow::Cow, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use ahash::AHashMap;
-use empath_common::{Signal, context, error::SessionError, internal, outgoing, status::Status, tracing};
+use empath_common::{
+    Signal, context, error::SessionError, internal, outgoing, status::Status, tracing,
+};
 use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -297,10 +299,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     };
 
                     if empath_ffi::modules::dispatch(
-                        empath_ffi::modules::Event::Validate(empath_ffi::modules::validate::Event::StartTls),
+                        empath_ffi::modules::Event::Validate(
+                            empath_ffi::modules::validate::Event::StartTls,
+                        ),
                         validate_context,
                     ) {
-                        internal!(level = DEBUG, "Connection successfully upgraded with {info:#?}");
+                        internal!(
+                            level = DEBUG,
+                            "Connection successfully upgraded with {info:#?}"
+                        );
                     } else {
                         session.context.sent = false;
                         session.context.state = State::Reject(state::Reject);
@@ -308,7 +315,9 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                             Some((Status::Error, Cow::Borrowed("STARTTLS failed")));
                     }
                 } else {
-                    session.handle_command_loop(validate_context, &mut signal).await?;
+                    session
+                        .handle_command_loop(validate_context, &mut signal)
+                        .await?;
                 }
             }
         }
@@ -391,10 +400,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
 #[cfg(test)]
 mod test {
-    use std::{io::Cursor, sync::Arc};
+    use std::{
+        io::Cursor,
+        sync::{Arc, RwLock},
+    };
 
     use empath_common::{context::Context, status::Status};
-    use empath_ffi::modules::{self, Module};
+    use empath_ffi::modules::{self, MODULE_STORE, Module, validate::Event};
     use empath_spool::{BackingStore, TestBackingStore};
 
     use crate::{
@@ -569,7 +581,7 @@ mod test {
             .get_mut()
             .extend_from_slice(b"MAIL FROM: test@gmail.com");
 
-        let module = Module::TestModule(Arc::default());
+        let module = Module::TestModule(RwLock::default());
         let inited = modules::init(vec![module]);
         assert!(inited.is_ok());
 
@@ -601,17 +613,19 @@ mod test {
         let response = session.receive(&mut context).await;
         assert!(response.is_ok_and(|v| v));
 
-        // TODO: Need to fix the above so it spawns its own server that actually does the emitting
-        //       Would possibly be better to make a mock SMTP client or something that we can test with?
-        // if let Module::TestModule(mute) = MODULE_STORE.read().unwrap().first().unwrap() {
-        //     assert!(
-        //         mute.lock()
-        //             .unwrap()
-        //             .validators_called
-        //             .contains(&validate::Event::MailFrom)
-        //     );
-        // } else {
-        //     panic!("Expected TestModule to exist");
-        // }
+        for module in MODULE_STORE.get().cloned().unwrap().iter() {
+            if let Module::TestModule(mute) = module {
+                assert!(
+                    mute.read()
+                        .unwrap()
+                        .validators_called
+                        .contains(&Event::MailFrom)
+                );
+
+                return;
+            }
+        }
+
+        panic!("Expected TestModule to exist");
     }
 }

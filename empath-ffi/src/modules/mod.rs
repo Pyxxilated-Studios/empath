@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display},
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 use empath_common::{context::Context, internal};
@@ -107,7 +107,7 @@ pub struct Test {
 #[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(library::Shared),
-    TestModule(Arc<[Test]>),
+    TestModule(RwLock<Test>),
     /// Core validation module with session-specific configuration.
     /// Not deserialized - created programmatically by each session.
     #[serde(skip)]
@@ -211,7 +211,8 @@ pub mod test {
 
     pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
         if let Module::TestModule(mute) = module {
-            let mut inner = mute.first().expect("Test Module should exist").clone();
+            eprintln!("{mute:?}");
+            let mut inner = mute.write().expect("Poisoned Lock");
             match event {
                 Event::Validate(ev) => inner.validators_called.push(ev),
                 Event::Event(ev) => inner.events_called.push(ev),

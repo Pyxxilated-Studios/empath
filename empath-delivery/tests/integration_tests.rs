@@ -3,10 +3,10 @@
 use std::{sync::Arc, time::Duration};
 
 use empath_common::{
+    DeliveryStatus,
     address::{Address, AddressList},
     context::Context,
     envelope::Envelope,
-    DeliveryStatus,
 };
 use empath_delivery::{
     DeliveryInfo, DeliveryProcessor, DomainConfig, DomainConfigRegistry, SmtpTimeouts,
@@ -86,7 +86,7 @@ async fn test_delivery_with_mx_override_integration() {
     processor.process_interval_secs = 1;
     processor.max_attempts = 3;
 
-    processor.init(spool.clone(), None).unwrap();
+    processor.init(spool.clone()).unwrap();
 
     // Verify the processor was initialized correctly
     // The queue starts empty
@@ -152,7 +152,7 @@ async fn test_delivery_queue_domain_grouping() {
     let msg_id = spool.write(&mut context).await.unwrap();
 
     let mut processor = DeliveryProcessor::default();
-    processor.init(spool.clone(), None).unwrap();
+    processor.init(spool.clone()).unwrap();
 
     // Note: Since scan_spool_internal is now private, we can't test it directly here
     // The message won't be in the queue until a scan happens
@@ -176,12 +176,7 @@ async fn test_graceful_shutdown() {
     processor.process_interval_secs = 1;
     processor.max_attempts = 3;
 
-    processor
-        .init(
-            spool.clone(),
-            Some(std::path::PathBuf::from("/tmp/graceful_shutdown_test")),
-        )
-        .unwrap();
+    processor.init(spool.clone()).unwrap();
 
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
@@ -193,9 +188,7 @@ async fn test_graceful_shutdown() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Send shutdown signal
-    shutdown_tx
-        .send(empath_common::Signal::Shutdown)
-        .unwrap();
+    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
 
     // Wait for graceful shutdown to complete (with timeout)
     let result = tokio::time::timeout(
@@ -227,14 +220,7 @@ async fn test_graceful_shutdown_respects_timeout() {
     processor.process_interval_secs = 1;
     processor.max_attempts = 3;
 
-    processor
-        .init(
-            spool.clone(),
-            Some(std::path::PathBuf::from(
-                "/tmp/graceful_shutdown_timeout_test",
-            )),
-        )
-        .unwrap();
+    processor.init(spool.clone()).unwrap();
 
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
@@ -247,9 +233,7 @@ async fn test_graceful_shutdown_respects_timeout() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Send shutdown signal
-    shutdown_tx
-        .send(empath_common::Signal::Shutdown)
-        .unwrap();
+    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
 
     // Wait for graceful shutdown to complete
     let result = tokio::time::timeout(Duration::from_secs(35), processor_handle).await;
@@ -278,7 +262,7 @@ async fn test_message_expiration() {
     let mut processor = DeliveryProcessor::default();
     processor.message_expiration_secs = Some(1); // Expire after 1 second
 
-    processor.init(spool.clone(), None).unwrap();
+    processor.init(spool.clone()).unwrap();
 
     // Create and queue a message
     let mut context = create_test_context("sender@example.org", "recipient@test.com");
@@ -302,7 +286,7 @@ async fn test_retry_scheduling_with_backoff() {
     processor.retry_jitter_factor = 0.0; // No jitter for predictable testing
     processor.max_attempts = 3;
 
-    processor.init(spool.clone(), None).unwrap();
+    processor.init(spool.clone()).unwrap();
 
     // Create and queue a message
     let mut context = create_test_context("sender@example.org", "recipient@test.com");

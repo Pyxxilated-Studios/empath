@@ -132,10 +132,6 @@ pub struct DeliveryProcessor {
     /// DNS resolver for MX record lookups (initialized in `init()`)
     #[serde(skip)]
     pub(crate) dns_resolver: Option<DnsResolver>,
-
-    /// Path to freeze marker file (presence indicates queue is frozen)
-    #[serde(skip)]
-    freeze_marker_path: Option<std::path::PathBuf>,
 }
 
 impl Default for DeliveryProcessor {
@@ -155,7 +151,6 @@ impl Default for DeliveryProcessor {
             spool: None,
             queue: DeliveryQueue::new(),
             dns_resolver: None,
-            freeze_marker_path: None,
         }
     }
 }
@@ -169,7 +164,6 @@ impl DeliveryProcessor {
     pub fn init(
         &mut self,
         spool: Arc<dyn empath_spool::BackingStore>,
-        spool_path: Option<std::path::PathBuf>,
     ) -> Result<(), DeliveryError> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
@@ -186,11 +180,6 @@ impl DeliveryProcessor {
             self.dns.cache_size
         );
 
-        // Set up freeze marker path based on spool directory
-        // If spool_path is provided, derive paths from it, otherwise use /tmp/spool
-        let base_path = spool_path.unwrap_or_else(|| std::path::PathBuf::from("/tmp/spool"));
-        self.freeze_marker_path = Some(base_path.join("queue_frozen"));
-
         Ok(())
     }
 
@@ -205,8 +194,7 @@ impl DeliveryProcessor {
     /// When a shutdown signal is received:
     /// 1. Stop accepting new work (scan/process ticks)
     /// 2. Wait for any in-flight delivery to complete (with 30s timeout)
-    /// 3. Save queue state to disk
-    /// 4. Exit cleanly
+    /// 3. Exit cleanly
     ///
     /// In-flight deliveries that don't complete within the shutdown timeout
     /// will be marked as pending and retried on the next restart.
@@ -230,16 +218,13 @@ impl DeliveryProcessor {
 
         let scan_interval = Duration::from_secs(self.scan_interval_secs);
         let process_interval = Duration::from_secs(self.process_interval_secs);
-        let state_save_interval = Duration::from_secs(30); // Save queue state every 30s
 
         let mut scan_timer = tokio::time::interval(scan_interval);
         let mut process_timer = tokio::time::interval(process_interval);
-        let mut state_save_timer = tokio::time::interval(state_save_interval);
 
         // Skip the first tick to avoid immediate execution
         scan_timer.tick().await;
         process_timer.tick().await;
-        state_save_timer.tick().await;
 
         // Track if we're currently processing a delivery
         let processing = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -261,11 +246,6 @@ impl DeliveryProcessor {
                     }
                 }
                 _ = process_timer.tick() => {
-                    // Check if queue is frozen before processing
-                    if self.is_frozen() {
-                        empath_common::tracing::debug!("Delivery queue is frozen, skipping processing");
-                        continue;
-                    }
 
                     // Mark that we're processing
                     processing.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -281,10 +261,6 @@ impl DeliveryProcessor {
 
                     // Mark that we're done processing
                     processing.store(false, std::sync::atomic::Ordering::SeqCst);
-                }
-                _ = state_save_timer.tick() => {
-                    // Queue state is now persisted to spool on every status change
-                    // This timer tick is no longer needed but kept for potential future use
                 }
                 sig = shutdown.recv() => {
                     match sig {
@@ -334,14 +310,5 @@ impl DeliveryProcessor {
     /// Get a reference to the delivery queue
     pub const fn queue(&self) -> &DeliveryQueue {
         &self.queue
-    }
-
-    /// Check if the delivery queue is frozen
-    ///
-    /// Returns `true` if the freeze marker file exists, `false` otherwise.
-    fn is_frozen(&self) -> bool {
-        self.freeze_marker_path
-            .as_ref()
-            .is_some_and(|path| path.exists())
     }
 }

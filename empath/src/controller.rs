@@ -81,9 +81,6 @@ impl Empath {
 
         modules::init(self.modules)?;
 
-        // Extract spool path before consuming config
-        let spool_path = self.spool.path().map(std::path::Path::to_path_buf);
-
         // Initialize the spool from configuration
         let spool = self.spool.into_spool()?;
 
@@ -96,7 +93,7 @@ impl Empath {
         self.smtp_controller.init()?;
 
         // Initialize delivery controller with the same backing store and spool path
-        self.delivery.init(backing_store, spool_path)?;
+        self.delivery.init(backing_store)?;
 
         let ret = tokio::select! {
             r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
