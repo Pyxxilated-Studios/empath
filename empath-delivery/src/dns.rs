@@ -1,7 +1,14 @@
 //! DNS resolution for mail delivery.
 //!
 //! Implements MX record lookups with A/AAAA fallback per RFC 5321 section 5.1.
-//! Includes lock-free concurrent caching with TTL tracking for high performance.
+//! Includes lock-free concurrent caching using DNS record TTLs with configurable bounds.
+//!
+//! # Caching Strategy
+//!
+//! - **DNS TTL by default**: Uses the actual TTL from DNS records (respects authoritative server guidance)
+//! - **Bounded TTLs**: Applies min (60s) and max (3600s) bounds to prevent extremes
+//! - **Optional override**: `cache_ttl_secs` config can override DNS TTL for all entries (useful for testing)
+//! - **Lock-free**: `DashMap` provides concurrent access without mutex contention
 
 use std::{
     sync::Arc,
@@ -52,10 +59,21 @@ pub struct DnsConfig {
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 
-    /// Cache TTL override in seconds (default: 300 = 5 minutes)
-    /// If set, overrides the DNS record's TTL
-    #[serde(default = "default_cache_ttl_secs")]
-    pub cache_ttl_secs: u64,
+    /// Cache TTL override in seconds (optional)
+    /// If set, overrides the DNS record's TTL for all cached entries
+    /// If not set, uses the actual DNS record TTL (recommended)
+    #[serde(default)]
+    pub cache_ttl_secs: Option<u64>,
+
+    /// Minimum cache TTL in seconds (default: 60 = 1 minute)
+    /// Prevents excessive DNS queries for records with very short TTLs
+    #[serde(default = "default_min_cache_ttl_secs")]
+    pub min_cache_ttl_secs: u64,
+
+    /// Maximum cache TTL in seconds (default: 3600 = 1 hour)
+    /// Ensures eventual refresh even for records with very long TTLs
+    #[serde(default = "default_max_cache_ttl_secs")]
+    pub max_cache_ttl_secs: u64,
 
     /// Maximum cache size hint (default: 1000)
     /// Note: With `DashMap`, this is not strictly enforced for performance.
@@ -68,8 +86,12 @@ const fn default_timeout_secs() -> u64 {
     5
 }
 
-const fn default_cache_ttl_secs() -> u64 {
-    300 // 5 minutes
+const fn default_min_cache_ttl_secs() -> u64 {
+    60 // 1 minute
+}
+
+const fn default_max_cache_ttl_secs() -> u64 {
+    3600 // 1 hour
 }
 
 const fn default_cache_size() -> usize {
@@ -80,7 +102,9 @@ impl Default for DnsConfig {
     fn default() -> Self {
         Self {
             timeout_secs: default_timeout_secs(),
-            cache_ttl_secs: default_cache_ttl_secs(),
+            cache_ttl_secs: None,
+            min_cache_ttl_secs: default_min_cache_ttl_secs(),
+            max_cache_ttl_secs: default_max_cache_ttl_secs(),
             cache_size: default_cache_size(),
         }
     }
@@ -191,7 +215,7 @@ impl DnsResolver {
     /// 1. Check cache for unexpired entry
     /// 2. Look up MX records and return them sorted by priority (lower = higher priority)
     /// 3. If no MX records exist, fall back to A/AAAA records (implicit MX with priority 0)
-    /// 4. Cache the result with configured TTL
+    /// 4. Cache the result using DNS record TTL (bounded by min/max config)
     ///
     /// # Errors
     ///
@@ -215,10 +239,20 @@ impl DnsResolver {
         }
 
         // Cache miss or expired, perform DNS lookup
-        let servers = Arc::new(self.resolve_mail_servers_uncached(domain).await?);
+        let (servers, dns_ttl) = self.resolve_mail_servers_uncached(domain).await?;
+        let servers = Arc::new(servers);
+
+        // Determine cache TTL: use override if set, otherwise use DNS TTL with bounds
+        let cache_ttl = self.config.cache_ttl_secs.unwrap_or_else(|| {
+            // Apply min/max bounds to DNS TTL
+            u64::from(dns_ttl).clamp(
+                self.config.min_cache_ttl_secs,
+                self.config.max_cache_ttl_secs,
+            )
+        });
 
         // Cache the result (lock-free write)
-        let expires_at = Instant::now() + Duration::from_secs(self.config.cache_ttl_secs);
+        let expires_at = Instant::now() + Duration::from_secs(cache_ttl);
         let cached_result = CachedResult {
             servers: Arc::clone(&servers),
             expires_at,
@@ -227,20 +261,31 @@ impl DnsResolver {
         self.cache.insert(domain.to_string(), cached_result);
 
         debug!(
-            "Cached result for {domain}, expires in {}s",
-            self.config.cache_ttl_secs
+            "Cached result for {domain}, DNS TTL: {dns_ttl}s, cache TTL: {cache_ttl}s, {} server(s)",
+            servers.len()
         );
         Ok(servers)
     }
 
     /// Performs uncached DNS lookup for mail servers.
+    ///
+    /// Returns a tuple of (servers, ttl) where ttl is the minimum TTL from all records.
     async fn resolve_mail_servers_uncached(
         &self,
         domain: &str,
-    ) -> Result<Vec<MailServer>, DnsError> {
+    ) -> Result<(Vec<MailServer>, u32), DnsError> {
         // Try MX lookup first
         match self.resolver.mx_lookup(domain).await {
             Ok(mx_lookup) => {
+                // Extract minimum TTL from all MX records
+                let min_ttl = mx_lookup
+                    .as_lookup()
+                    .records()
+                    .iter()
+                    .map(hickory_resolver::proto::rr::Record::ttl)
+                    .min()
+                    .unwrap_or(300); // Default to 5 minutes if no TTL found
+
                 let mut servers: Vec<MailServer> = mx_lookup
                     .iter()
                     .map(|mx| {
@@ -258,8 +303,11 @@ impl DnsResolver {
 
                 // Sort by priority (lower number = higher priority)
                 servers.sort_by_key(|s| s.priority);
-                debug!("Resolved {} MX record(s) for {domain}", servers.len());
-                Ok(servers)
+                debug!(
+                    "Resolved {} MX record(s) for {domain} with TTL {min_ttl}s",
+                    servers.len()
+                );
+                Ok((servers, min_ttl))
             }
             Err(err) => {
                 // Check if this is NoRecordsFound (no MX records exist)
@@ -279,12 +327,23 @@ impl DnsResolver {
 
     /// Falls back to A/AAAA records when no MX records exist (RFC 5321).
     ///
-    /// Returns IP addresses as implicit MX records with priority 0.
-    async fn fallback_to_a_aaaa(&self, domain: &str) -> Result<Vec<MailServer>, DnsError> {
+    /// Returns IP addresses as implicit MX records with priority 0, along with the minimum TTL.
+    async fn fallback_to_a_aaaa(&self, domain: &str) -> Result<(Vec<MailServer>, u32), DnsError> {
         debug!("Attempting A/AAAA fallback for {domain}");
 
         match self.resolver.lookup_ip(domain).await {
             Ok(ip_lookup) => {
+                // Extract minimum TTL from all A/AAAA records
+                // Note: clippy suggests using Record::ttl directly, but the path it suggests doesn't exist
+                #[allow(clippy::redundant_closure_for_method_calls)]
+                let min_ttl = ip_lookup
+                    .as_lookup()
+                    .records()
+                    .iter()
+                    .map(|r| r.ttl())
+                    .min()
+                    .unwrap_or(300); // Default to 5 minutes if no TTL found
+
                 let servers: Vec<MailServer> = ip_lookup
                     .iter()
                     .map(|ip| {
@@ -297,8 +356,11 @@ impl DnsResolver {
                 if servers.is_empty() {
                     Err(DnsError::NoMailServers(domain.to_string()))
                 } else {
-                    debug!("Resolved {} A/AAAA record(s) for {domain}", servers.len());
-                    Ok(servers)
+                    debug!(
+                        "Resolved {} A/AAAA record(s) for {domain} with TTL {min_ttl}s",
+                        servers.len()
+                    );
+                    Ok((servers, min_ttl))
                 }
             }
             Err(err) => {

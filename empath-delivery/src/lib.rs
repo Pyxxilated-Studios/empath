@@ -439,9 +439,14 @@ impl DeliveryProcessor {
         self.spool = Some(spool);
         self.dns_resolver = Some(DnsResolver::with_dns_config(self.dns.clone())?);
         internal!(
-            "DNS resolver initialized with timeout={}s, cache_ttl={}s, cache_size={}",
+            "DNS resolver initialized with timeout={}s, cache_ttl={}, min_ttl={}s, max_ttl={}s, cache_size={}",
             self.dns.timeout_secs,
-            self.dns.cache_ttl_secs,
+            self.dns.cache_ttl_secs.map_or_else(
+                || "DNS record TTL".to_string(),
+                |ttl| format!("{ttl}s (override)")
+            ),
+            self.dns.min_cache_ttl_secs,
+            self.dns.max_cache_ttl_secs,
             self.dns.cache_size
         );
 

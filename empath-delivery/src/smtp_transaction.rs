@@ -14,8 +14,8 @@ use empath_common::{context::Context, tracing};
 use empath_smtp::client::SmtpClient;
 
 use crate::{
-    error::{DeliveryError, PermanentError, SystemError, TemporaryError},
     SmtpTimeouts,
+    error::{DeliveryError, PermanentError, SystemError, TemporaryError},
 };
 
 /// Outcome of TLS negotiation attempt
@@ -211,7 +211,10 @@ impl<'a> SmtpTransaction<'a> {
     ///
     /// # Errors
     /// Returns an error if TLS is required but fails
-    async fn negotiate_tls(&self, client: &mut SmtpClient) -> Result<TlsNegotiationOutcome, DeliveryError> {
+    async fn negotiate_tls(
+        &self,
+        client: &mut SmtpClient,
+    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
         let helo_domain = &self.context.id;
 
         // Send initial EHLO
@@ -301,7 +304,10 @@ impl<'a> SmtpTransaction<'a> {
                 .into());
             }
 
-            tracing::debug!(domain = helo_domain, "TLS successfully negotiated via STARTTLS");
+            tracing::debug!(
+                domain = helo_domain,
+                "TLS successfully negotiated via STARTTLS"
+            );
             Ok(TlsNegotiationOutcome::Success)
         } else {
             // This branch shouldn't be reached given the earlier check, but handle it for completeness
