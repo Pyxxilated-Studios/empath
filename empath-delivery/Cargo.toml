@@ -34,4 +34,7 @@ tokio = { version = "1", default-features = false, features = ["sync", "fs", "ti
 tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]
+mailparse = "0.16"
 ron = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+ulid = "1"
