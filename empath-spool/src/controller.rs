@@ -380,6 +380,47 @@ impl BackingStore for FileBackingStore {
         Ok(context)
     }
 
+    /// Update an existing message's metadata in the spool
+    ///
+    /// Updates only the metadata (.bin) file, leaving the data (.eml) file unchanged.
+    /// Uses atomic writes to ensure consistency:
+    /// 1. Write updated metadata to temporary file `.tmp_{tracking_id}.bin`
+    /// 2. Atomically rename to replace the existing metadata file
+    ///
+    /// # Errors
+    /// - If the message doesn't exist
+    /// - If the metadata cannot be serialized or written
+    ///
+    /// # Usage
+    /// This is primarily used by the delivery processor to persist delivery state
+    /// changes (attempt count, status, retry times) without rewriting the message data.
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self, context), fields(id = %msg_id)), timing(precision = "ms"))]
+    async fn update(&self, msg_id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
+        let tracking_str = msg_id.to_string();
+        let meta_filename = format!("{tracking_str}.bin");
+        let meta_path = self.path.join(&meta_filename);
+
+        // Check that the message exists
+        if !tokio::fs::try_exists(&meta_path).await.unwrap_or(false) {
+            return Err(crate::error::SpoolError::NotFound(msg_id.clone()).into());
+        }
+
+        // Write to temporary file first, then atomically rename
+        let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
+
+        // Serialize metadata to bincode
+        let metadata =
+            bincode::serialize(&context).map_err(crate::error::SerializationError::from)?;
+        fs::write(&temp_meta_path, &metadata).await?;
+
+        // Atomically replace the existing metadata file
+        fs::rename(&temp_meta_path, &meta_path).await?;
+
+        internal!(level = DEBUG, "Updated message {msg_id} metadata in spool");
+
+        Ok(())
+    }
+
     /// Delete a message from the spool
     ///
     /// Removes both the data (.eml) and metadata (.bin) files for the specified message.

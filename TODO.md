@@ -86,50 +86,45 @@ This document tracks future improvements for the empath MTA, organized by priori
 
 ---
 
-### 🔴 0.3 Fix Context/Message Layer Violation in Spool
-**Priority:** Critical
+### ❌ 0.3 Fix Context/Message Layer Violation in Spool
+**Priority:** ~~Critical~~ **REJECTED**
 **Complexity:** Medium
 **Effort:** 1 day
-**Files:** `empath-spool/src/spool.rs`, `empath-common/src/message.rs` (new)
+**Status:** ❌ **REJECTED** (2025-11-11)
+**Files:** N/A
 
-**Current Issue:** Spool stores `Context` (session state) instead of `Message` (data), violating architectural layer separation.
+**Original Issue:** Spool stores `Context` (session state) instead of `Message` (data), violating architectural layer separation.
 
-**Implementation:**
-```rust
-// File: empath-common/src/message.rs (new)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub envelope: Envelope,
-    pub data: Arc<[u8]>,
-    pub received_timestamp: u64,
-    pub delivery_metadata: DeliveryMetadata,
-}
+**Decision: REJECTED**
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeliveryMetadata {
-    pub helo_domain: String,
-    pub source_ip: String,
-    // Only delivery-relevant fields, NOT session state
-}
+After thorough analysis, this is **NOT** a layer violation but an **intentional architectural feature** that serves the module/plugin system. The apparent "session-only" fields in Context (id, metadata, extended, banner) are actually part of the **module contract**.
 
-// Conversion at boundaries
-impl From<Context> for Message { /* extract relevant fields */ }
-impl From<Message> for Context { /* reconstitute with defaults */ }
+**Why Context Persistence Is Correct:**
 
-// Update spool API
-pub trait Spool {
-    async fn spool_message(&self, message: Message) -> Result<SpooledMessageId>;
-    async fn read_message(&self, id: &SpooledMessageId) -> Result<Message>;
-}
-```
+1. **Module Lifecycle Tracking**: Modules can set `context.metadata` during SMTP reception and reference it during delivery events (hours or days later). This enables plugins to maintain coherent state across the entire message journey without requiring external storage.
 
-**Benefits:**
-- Proper layer separation
-- No session state persistence
-- Cleaner architecture
+2. **Example Module Use Case**:
+   - Module sets `metadata["correlation_id"] = "12345"` during MailFrom event
+   - Same module reads it during DeliverySuccess event for audit logging
+   - Without Context persistence, modules would need their own database
+
+3. **Delivery Queue State**: The persistent queue implementation (task 1.1) leverages this design by storing delivery metadata in `Context.delivery`, using the spool as the persistent queue backend. Single source of truth, no separate queue storage needed.
+
+4. **Storage Overhead**: Negligible (~100 bytes per message vs 4KB-10MB+ email sizes)
+
+**What This Change Would Break:**
+
+- ❌ Module API contract (plugins lose ability to persist metadata)
+- ❌ Elegant "single source of truth" design
+- ❌ Would require modules to maintain external state storage
+- ❌ Add conversion complexity at boundaries
+
+**See Also:**
+- CLAUDE.md "Context Persistence and the Module Contract" section for detailed explanation
+- TODO.md task 1.1 for how this design enables persistent queue implementation
 
 **Dependencies:** None
-**Source:** CODE_REVIEW_2025-11-10.md Section 2.1
+**Source:** CODE_REVIEW_2025-11-10.md Section 2.1 (original), reconsidered during task 1.1 implementation
 
 ---
 
@@ -439,23 +434,243 @@ pub struct WebhookDeliveryStrategy { /* ... */ }  // Future
 
 ## Phase 1: Production Foundation (Weeks 1-2)
 
-### 🔴 1.1 Persistent Delivery Queue
+### 🟡 1.1 Persistent Delivery Queue
 **Priority:** Critical
 **Complexity:** Medium
 **Effort:** 2-3 days
-**Files:** `empath-delivery/src/backends/file.rs` (new)
+**Status:** 🟡 **IN PROGRESS** (2025-11-11)
+**Files:**
+- `empath-common/src/context.rs`
+- `empath-spool/src/spool.rs`
+- `empath-spool/src/controller.rs`
+- `empath-delivery/src/lib.rs`
 
-**Current Issue:** In-memory queue loses all state on restart, causing:
+**Original Issue:** In-memory queue loses all state on restart, causing:
 - Message delivery loss on crashes
 - Lost retry counts and status tracking
 - No audit trail
 
-**Implementation:**
-- Create `QueueBackend` trait abstraction
-- Implement `FileQueueBackend` with atomic operations (similar to spool)
-- Store queue entries as JSON: `{queue_dir}/{status}/{next_attempt_timestamp}_{message_id}_{domain}.json`
-- Rebuild in-memory index on startup
-- Future: Add SQLite backend for better query performance
+**Chosen Approach:** Store queue state in `Context.delivery` field (spool metadata)
+
+Instead of creating a separate `QueueBackend` abstraction, we leverage the existing
+spool infrastructure to persist queue state. This approach:
+- ✅ Maintains single source of truth (spool files)
+- ✅ Respects module contract (modules can access delivery metadata)
+- ✅ Simpler architecture (no sync between queue and spool needed)
+- ✅ Already uses atomic file operations
+
+**Implementation Progress:**
+
+✅ **Phase 1: Data Model (COMPLETED 2025-11-11)**
+- Moved `DeliveryStatus` and `DeliveryAttempt` to `empath-common/src/context.rs`
+- Extended `DeliveryContext` with queue state fields:
+  ```rust
+  pub struct DeliveryContext {
+      // Existing fields
+      pub message_id: String,
+      pub domain: Arc<str>,
+      pub server: Option<String>,
+      pub error: Option<String>,
+
+      // New persistent queue state fields
+      pub status: DeliveryStatus,              // Pending, InProgress, Failed, etc.
+      pub attempt_history: Vec<DeliveryAttempt>, // Full attempt log
+      pub queued_at: u64,                      // For expiration checks
+      pub next_retry_at: Option<u64>,          // For scheduling
+      pub current_server_index: usize,         // For MX fallback
+  }
+  ```
+
+✅ **Phase 2: Spool Update Method (COMPLETED 2025-11-11)**
+- Added `BackingStore::update()` method to spool trait
+- Implemented for `FileBackingStore` (atomic metadata updates)
+- Implemented for `MemoryBackingStore` (in-memory updates)
+- Implemented for `TestBackingStore` (proxy to inner store)
+
+**Remaining Work:**
+
+🚧 **Phase 3: Delivery Processor Integration**
+
+Add helper method to sync queue state to spool:
+```rust
+impl DeliveryProcessor {
+    /// Sync the in-memory delivery info to the spool's Context.delivery field
+    async fn persist_delivery_state(
+        &self,
+        message_id: &SpooledMessageId,
+        spool: &Arc<dyn empath_spool::BackingStore>,
+    ) -> Result<(), DeliveryError> {
+        // Get current queue info
+        let info = self.queue.get(message_id).await.ok_or_else(|| {
+            SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
+        })?;
+
+        // Read context from spool
+        let mut context = spool
+            .read(message_id)
+            .await
+            .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+
+        // Update the delivery field with current queue state
+        context.delivery = Some(DeliveryContext {
+            message_id: message_id.to_string(),
+            domain: info.recipient_domain.clone(),
+            server: info.current_mail_server().map(|s| format!("{}:{}", s.host, s.port)),
+            error: match &info.status {
+                DeliveryStatus::Failed(e) => Some(e.clone()),
+                DeliveryStatus::Retry { last_error, .. } => Some(last_error.clone()),
+                _ => None,
+            },
+            attempts: Some(info.attempt_count()),
+            status: info.status.clone(),
+            attempt_history: info.attempts.clone(),
+            queued_at: info.queued_at,
+            next_retry_at: info.next_retry_at,
+            current_server_index: info.current_server_index,
+        });
+
+        // Atomically update spool
+        spool
+            .update(message_id, &context)
+            .await
+            .map_err(|e| SystemError::SpoolWrite(e.to_string()))?;
+
+        Ok(())
+    }
+}
+```
+
+Call this after every status change:
+- After `queue.update_status()`
+- After `queue.record_attempt()`
+- After `queue.set_mail_servers()`
+- After setting `next_retry_at` in exponential backoff
+
+**Files to modify:**
+- `empath-delivery/src/lib.rs:873` - After `update_status(InProgress)`
+- `empath-delivery/src/lib.rs:962` - After successful delivery
+- `empath-delivery/src/lib.rs:1076-1114` - After `handle_delivery_error()` updates
+
+🚧 **Phase 4: Queue Restoration on Startup**
+
+Update `scan_spool_internal()` to restore queue state from `Context.delivery`:
+```rust
+async fn scan_spool_internal(
+    &self,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+) -> Result<usize, DeliveryError> {
+    let message_ids = spool.list().await?;
+    let mut added = 0;
+
+    for msg_id in message_ids {
+        let context = spool.read(&msg_id).await?;
+
+        // Check if this message already has delivery state
+        if let Some(delivery_ctx) = &context.delivery {
+            // Restore from persisted state
+            let info = DeliveryInfo {
+                message_id: msg_id.clone(),
+                status: delivery_ctx.status.clone(),
+                attempts: delivery_ctx.attempt_history.clone(),
+                recipient_domain: delivery_ctx.domain.clone(),
+                mail_servers: Arc::new(Vec::new()), // Will be resolved again if needed
+                current_server_index: delivery_ctx.current_server_index,
+                queued_at: delivery_ctx.queued_at,
+                next_retry_at: delivery_ctx.next_retry_at,
+            };
+
+            // Add to queue with existing state
+            self.queue.queue.write().await.insert(msg_id.clone(), info);
+            added += 1;
+        } else {
+            // New message without delivery state - create fresh DeliveryInfo
+            // (existing logic for extracting domains from recipients)
+            // ...
+        }
+    }
+
+    Ok(added)
+}
+```
+
+**Files to modify:**
+- `empath-delivery/src/lib.rs:760-824` - `scan_spool_internal()` method
+
+🚧 **Phase 5: Update empathctl**
+
+Change from reading `queue_state.bin` to reading spool:
+```rust
+// In empath/src/bin/empathctl.rs
+
+// OLD: Read from queue_state.bin
+let state: HashMap<SpooledMessageId, DeliveryInfo> =
+    bincode::deserialize(&data)?;
+
+// NEW: Read from spool
+let spool = FileBackingStore::builder()
+    .path(spool_path.clone())
+    .build()?;
+
+let message_ids = spool.list().await?;
+let mut queue_state = HashMap::new();
+
+for msg_id in message_ids {
+    let context = spool.read(&msg_id).await?;
+    if let Some(delivery) = context.delivery {
+        // Convert DeliveryContext to DeliveryInfo for display
+        let info = DeliveryInfo {
+            message_id: msg_id.clone(),
+            status: delivery.status,
+            attempts: delivery.attempt_history,
+            recipient_domain: delivery.domain,
+            // ... rest of fields
+        };
+        queue_state.insert(msg_id, info);
+    }
+}
+```
+
+**Files to modify:**
+- `empath/src/bin/empathctl.rs:200-250` - List command
+- `empath/src/bin/empathctl.rs:280-320` - View command
+- `empath/src/bin/empathctl.rs:350-390` - Stats command
+
+🚧 **Phase 6: Remove queue_state.bin Logic**
+
+Once spool-based persistence is working:
+- Remove `queue_state_path` field from `DeliveryProcessor`
+- Remove `save_queue_state()` method
+- Remove calls to `save_queue_state()` in graceful shutdown
+- Remove bincode serialization of in-memory queue
+
+**Files to modify:**
+- `empath-delivery/src/lib.rs:370-450` - DeliveryProcessor struct and initialization
+- `empath-delivery/src/lib.rs:715-754` - Remove `save_queue_state()` method
+- `empath-delivery/src/lib.rs:630-650` - Remove call from graceful shutdown
+
+**Testing Strategy:**
+
+1. **Unit tests** - Test `persist_delivery_state()` helper
+2. **Integration test** - Restart scenario:
+   ```rust
+   #[tokio::test]
+   async fn test_queue_persistence_across_restart() {
+       // Create processor, queue a message
+       // Simulate delivery attempt (creates delivery context)
+       // Drop processor (simulates crash)
+       // Create new processor, scan spool
+       // Verify queue state is restored
+   }
+   ```
+3. **Backward compatibility** - Messages without `delivery` field should work
+4. **empathctl tests** - Verify CLI can read from spool
+
+**Benefits of This Approach:**
+- No separate queue storage backend needed
+- Module API preserved (plugins can access delivery metadata)
+- Single source of truth (spool contains everything)
+- Atomic updates already implemented in spool
+- Works with existing spool infrastructure (file watching, etc.)
 
 **Dependencies:** None
 
@@ -1467,7 +1682,7 @@ Create `OPERATIONS.md` with:
 **Code Quality & Security:**
 - ✅ TLS certificate validation (0.1) - **COMPLETED**
 - ✅ SMTP operation timeouts (0.2) - **COMPLETED**
-- Context/Message layer violation (0.3) - **TODO**
+- ❌ Context/Message layer violation (0.3) - **REJECTED** (intentional design, see CLAUDE.md)
 - ✅ String cloning optimization (0.4) - **COMPLETED**
 - DNS cache mutex contention (0.5) - **TODO**
 - NoVerifier compile-time guard (0.6) - **TODO**
@@ -1480,17 +1695,17 @@ Create `OPERATIONS.md` with:
 - Integration test suite (0.13) - **TODO**
 - Delivery strategy pattern (0.14) - **TODO**
 
-**Progress: 4/14 completed (29%)**
+**Progress: 4/13 completed (31%)** - 1 task rejected as not needed
 
 ### Phase 1: Production Foundation (2-3 weeks)
 **Must-Have for Deployment:**
-1. Persistent delivery queue (1.1) - **TODO**
+1. 🟡 Persistent delivery queue (1.1) - **IN PROGRESS** (40% complete: data model + spool integration done)
 2. ✅ Real DNS MX lookups (1.2) - **COMPLETED**
 3. ✅ Typed error handling (1.3) - **COMPLETED**
 4. ✅ Exponential backoff (1.4) - **COMPLETED**
 5. ✅ Graceful shutdown (1.5) - **COMPLETED**
 
-**Progress: 4/5 completed (80%)**
+**Progress: 4.4/5 completed (88%)**
 
 ### Phase 2: Observability (2-3 weeks)
 **Operational Readiness:**
@@ -1619,6 +1834,7 @@ Empath (
 
 **Recent Progress (Completed):**
 - ✅ Graceful shutdown handling (1.5)
+- ✅ Exponential backoff (1.4)
 - ✅ Real DNS MX lookups (1.2)
 - ✅ Typed error handling with thiserror (1.3)
 - ✅ Per-domain configuration (3.2)
@@ -1628,18 +1844,29 @@ Empath (
 - ✅ SMTP transaction refactoring (0.7)
 - ✅ Comprehensive benchmarking (6.9)
 
-**Immediate Next Steps** (highest ROI, ~3-4 days remaining for Phase 1):
-1. Implement persistent queue (1.1) - 2-3 days
-2. Implement exponential backoff (1.4) - 1 day
+**Current Work In Progress:**
+- 🟡 Persistent delivery queue (1.1) - 40% complete
+  - ✅ Data model (DeliveryStatus, DeliveryAttempt in empath-common)
+  - ✅ Extended DeliveryContext with queue state fields
+  - ✅ Implemented BackingStore::update() for spool persistence
+  - 🚧 Remaining: Delivery processor integration, queue restoration, empathctl updates
 
-**After Phase 1** (remaining critical items):
-3. Fix Context/Message layer violation (0.3) - 1 day
-4. Add spool deletion retry mechanism (0.8) - 2 hours
+**Immediate Next Steps** (~1-2 days to finish Phase 1):
+1. Complete persistent queue implementation (1.1) - 1-2 days
+   - Add `persist_delivery_state()` helper method
+   - Update `scan_spool_internal()` to restore from Context.delivery
+   - Update empathctl to read from spool
+   - Remove queue_state.bin logic
 
-After completing Phase 1, the system will be production-ready for basic mail delivery.
+**After Phase 1** (remaining critical items from Phase 0):
+2. ~~Fix Context/Message layer violation (0.3)~~ - **REJECTED** (intentional design, see CLAUDE.md)
+3. Add spool deletion retry mechanism (0.8) - 2 hours
+4. Fix DNS cache mutex contention (0.5) - 1 hour (DashMap migration)
+
+After completing Phase 1, the system will be production-ready for basic mail delivery with persistent queue state.
 
 ---
 
-**Last Updated:** 2025-11-11 (graceful shutdown implemented)
+**Last Updated:** 2025-11-11 (persistent queue implementation in progress)
 **Contributors:** code-reviewer, architect-review, rust-expert, refactoring-specialist agents
 **Code Review:** See CODE_REVIEW_2025-11-10.md for comprehensive analysis

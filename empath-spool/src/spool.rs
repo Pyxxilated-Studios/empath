@@ -145,6 +145,16 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     /// Returns an error if the message cannot be found or read
     async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context>;
 
+    /// Update an existing message in the backing store
+    ///
+    /// This allows updating the context (especially delivery metadata) without
+    /// changing the tracking ID. Used by the delivery processor to persist
+    /// delivery state changes.
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be found or updated
+    async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()>;
+
     /// Delete a message
     ///
     /// # Errors
@@ -392,6 +402,18 @@ impl BackingStore for MemoryBackingStore {
             .ok_or_else(|| SpoolError::NotFound(id.clone()))
     }
 
+    async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
+        use crate::error::SpoolError;
+
+        let mut messages = self.messages.write()?;
+        if messages.contains_key(id) {
+            messages.insert(id.clone(), context.clone());
+            Ok(())
+        } else {
+            Err(SpoolError::NotFound(id.clone()))
+        }
+    }
+
     async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()> {
         use crate::error::SpoolError;
 
@@ -513,6 +535,10 @@ impl BackingStore for TestBackingStore {
 
     async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context> {
         self.inner.read(id).await
+    }
+
+    async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
+        self.inner.update(id, context).await
     }
 
     async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()> {

@@ -11,8 +11,49 @@ pub enum Capability {
     Auth,
 }
 
+/// Status of a message in the delivery queue
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeliveryStatus {
+    /// Message is pending delivery
+    Pending,
+    /// Message delivery is in progress
+    InProgress,
+    /// Message was successfully delivered
+    Completed,
+    /// Message delivery failed permanently
+    Failed(String),
+    /// Message delivery failed temporarily, will retry
+    Retry { attempts: u32, last_error: String },
+    /// Message expired before successful delivery
+    Expired,
+}
+
+impl Default for DeliveryStatus {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+/// Represents a single delivery attempt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliveryAttempt {
+    /// Timestamp of the attempt
+    pub timestamp: u64,
+    /// Error message if the attempt failed
+    pub error: Option<String>,
+    /// SMTP server that was contacted
+    pub server: String,
+}
+
 /// Delivery-specific context information for outbound mail delivery.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// This struct maintains the complete delivery state for a message throughout
+/// its lifecycle, including retry tracking, attempt history, and status.
+/// By storing this in the Context, we enable:
+/// - Persistent queue state across restarts
+/// - Module access to delivery metadata via the module API
+/// - Single source of truth for message state
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryContext {
     /// The message ID being delivered
     pub message_id: String,
@@ -23,7 +64,42 @@ pub struct DeliveryContext {
     /// Error message if delivery failed
     pub error: Option<String>,
     /// Number of delivery attempts made
+    #[deprecated(since = "0.1.0", note = "Use attempts.len() instead")]
     pub attempts: Option<u32>,
+
+    // Queue state fields for persistent delivery tracking
+    /// Current delivery status
+    #[serde(default)]
+    pub status: DeliveryStatus,
+    /// List of delivery attempts with timestamps and errors
+    #[serde(default)]
+    pub attempt_history: Vec<DeliveryAttempt>,
+    /// Unix timestamp when this message was first queued
+    #[serde(default)]
+    pub queued_at: u64,
+    /// Unix timestamp when the next retry should be attempted (None for immediate retry)
+    #[serde(default)]
+    pub next_retry_at: Option<u64>,
+    /// Index of the current mail server being tried (for MX fallback)
+    #[serde(default)]
+    pub current_server_index: usize,
+}
+
+impl Default for DeliveryContext {
+    fn default() -> Self {
+        Self {
+            message_id: String::new(),
+            domain: Arc::from(""),
+            server: None,
+            error: None,
+            attempts: None,
+            status: DeliveryStatus::default(),
+            attempt_history: Vec::new(),
+            queued_at: 0,
+            next_retry_at: None,
+            current_server_index: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -179,6 +179,47 @@ Modules extend functionality without core modifications. Two types:
 Example: `empath-ffi/examples/example.c`
 Module loading: `empath-ffi/src/modules/library.rs`
 
+**Context Persistence and the Module Contract:**
+
+The `Context` struct (in `empath-common/src/context.rs`) is deliberately designed to persist **all** fields to the spool, including what might initially appear to be "session-only" fields like:
+- `id` - Session identifier
+- `metadata` - Custom key-value pairs
+- `extended` - Whether client used EHLO vs HELO
+- `banner` - Server hostname
+
+**Why This Is NOT a Layer Violation:**
+
+This design is intentional and serves a critical purpose for the module system:
+
+1. **Module Lifecycle Tracking**: Modules can set `metadata` during SMTP reception and reference it during delivery events. This enables plugins to maintain coherent state across the entire message journey without requiring external storage.
+
+2. **Example Use Case**:
+   ```c
+   // Module during MailFrom event (SMTP reception)
+   em_context_set_metadata(ctx, "correlation_id", "12345");
+   em_context_set_metadata(ctx, "client_ip", "192.168.1.100");
+
+   // Same module during DeliverySuccess event (hours/days later)
+   String correlation_id = em_context_get_metadata(ctx, "correlation_id");
+   // Module can now log or audit the delivery with the original correlation ID
+   ```
+
+3. **Single Source of Truth**: By storing everything in `Context`, modules have one consistent interface. They don't need to know about separate queue backends or maintain their own persistence layer.
+
+4. **Delivery Queue State**: The `Context.delivery` field contains delivery-specific metadata (attempt count, retry times, status). This is persisted alongside the message in the spool, making queue state durable across restarts without requiring a separate queue storage backend.
+
+**Storage Overhead**: The "session" fields add ~100 bytes per spooled message - negligible compared to typical email sizes (4KB-10MB+).
+
+**Architectural Decision**: In TODO.md, task 0.3 originally suggested splitting Context into separate Message/DeliveryContext types as a "layer violation fix." This was reconsidered and rejected because it would:
+- ❌ Break the module API contract
+- ❌ Require modules to maintain external state storage
+- ❌ Add complexity with conversion logic at boundaries
+- ❌ Lose the elegant "single source of truth" design
+
+Instead, we leverage Context persistence for queue state (task 1.1), storing delivery metadata in `Context.delivery` and using the spool as the persistent queue backend.
+
+**Location**: `empath-common/src/context.rs` (Context, DeliveryContext, DeliveryStatus, DeliveryAttempt)
+
 #### 4. Controller/Listener Pattern
 
 Two-tier connection management:

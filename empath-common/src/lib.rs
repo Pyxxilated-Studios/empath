@@ -21,6 +21,7 @@ pub mod mime;
 pub mod status;
 pub mod traits;
 
+pub use context::{DeliveryAttempt, DeliveryContext, DeliveryStatus};
 pub use tracing;
 
 #[derive(Debug, Clone, Copy)]

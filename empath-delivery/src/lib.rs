@@ -18,6 +18,8 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 pub use dns::{DnsConfig, DnsError, DnsResolver, MailServer};
 pub use domain_config::{DomainConfig, DomainConfigRegistry};
+// Re-export DeliveryAttempt and DeliveryStatus for consumers of this crate
+pub use empath_common::{DeliveryAttempt, DeliveryStatus};
 use empath_common::{Signal, context::Context, internal, tracing};
 use empath_ffi::modules::{self, Ev, Event};
 use empath_spool::SpooledMessageId;
@@ -116,34 +118,6 @@ const fn default_data_timeout() -> u64 {
 
 const fn default_quit_timeout() -> u64 {
     10
-}
-
-/// Status of a message in the delivery queue
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DeliveryStatus {
-    /// Message is pending delivery
-    Pending,
-    /// Message delivery is in progress
-    InProgress,
-    /// Message was successfully delivered
-    Completed,
-    /// Message delivery failed permanently
-    Failed(String),
-    /// Message delivery failed temporarily, will retry
-    Retry { attempts: u32, last_error: String },
-    /// Message expired before successful delivery
-    Expired,
-}
-
-/// Represents a single delivery attempt
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeliveryAttempt {
-    /// Timestamp of the attempt
-    pub timestamp: u64,
-    /// Error message if the attempt failed
-    pub error: Option<String>,
-    /// SMTP server that was contacted
-    pub server: String,
 }
 
 /// Information about a message in the delivery queue
@@ -889,6 +863,11 @@ impl DeliveryProcessor {
                 server: None, // Server not yet determined at this point
                 error: None,
                 attempts: Some(info.attempt_count()),
+                status: info.status.clone(),
+                attempt_history: info.attempts.clone(),
+                queued_at: info.queued_at,
+                next_retry_at: info.next_retry_at,
+                current_server_index: info.current_server_index,
             });
 
             modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
@@ -984,6 +963,11 @@ impl DeliveryProcessor {
                     server: Some(mx_address.clone()),
                     error: None,
                     attempts: Some(info.attempt_count()),
+                    status: info.status.clone(),
+                    attempt_history: info.attempts.clone(),
+                    queued_at: info.queued_at,
+                    next_retry_at: info.next_retry_at,
+                    current_server_index: info.current_server_index,
                 });
                 modules::dispatch(Event::Event(Ev::DeliverySuccess), &mut context);
 
@@ -1109,6 +1093,11 @@ impl DeliveryProcessor {
             server: Some(server),
             error: Some(error.to_string()),
             attempts: Some(updated_info.attempt_count()),
+            status: updated_info.status.clone(),
+            attempt_history: updated_info.attempts.clone(),
+            queued_at: updated_info.queued_at,
+            next_retry_at: updated_info.next_retry_at,
+            current_server_index: updated_info.current_server_index,
         });
 
         modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
