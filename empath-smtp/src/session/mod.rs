@@ -1,17 +1,17 @@
-use core::bstr;
 use std::{borrow::Cow, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use ahash::AHashMap;
-use empath_common::{
-    Signal, context, error::SessionError, incoming, internal, outgoing, status::Status, tracing,
-};
-use empath_ffi::modules::{self, validate};
+use empath_common::{Signal, context, error::SessionError, internal, outgoing, status::Status, tracing};
 use empath_tracing::traced;
-use mailparse::MailParseError;
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, command::Command, connection::Connection, extensions::Extension, state};
+use crate::{State, connection::Connection, extensions::Extension, state};
+
+// Submodules containing implementation details
+mod events;
+mod io;
+mod response;
 
 #[repr(C)]
 #[derive(PartialEq, Eq, Debug)]
@@ -27,31 +27,7 @@ pub struct Context {
     pub sent: bool,
 }
 
-#[allow(dead_code)]
-pub struct SMTPError {
-    pub status: Status,
-    pub message: String,
-}
-
 pub type Response = (Option<Vec<String>>, Event);
-
-impl From<MailParseError> for SMTPError {
-    fn from(err: MailParseError) -> Self {
-        Self {
-            status: Status::Error,
-            message: err.to_string(),
-        }
-    }
-}
-
-impl From<modules::Error> for SMTPError {
-    fn from(value: modules::Error) -> Self {
-        Self {
-            status: Status::Error,
-            message: format!("{value}"),
-        }
-    }
-}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TlsContext {
@@ -160,12 +136,12 @@ impl SessionConfigBuilder {
 
 pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     peer: SocketAddr,
-    context: Context,
+    pub(super) context: Context,
     extensions: Vec<Extension>,
-    banner: Arc<str>,
-    tls_context: Option<TlsContext>,
-    spool: Option<Arc<dyn empath_spool::BackingStore>>,
-    connection: Connection<Stream>,
+    pub(super) banner: Arc<str>,
+    pub(super) tls_context: Option<TlsContext>,
+    pub(super) spool: Option<Arc<dyn empath_spool::BackingStore>>,
+    pub(super) connection: Connection<Stream>,
     init_context: Arc<AHashMap<Cow<'static, str>, String>>,
     /// Maximum message size in bytes as advertised via SIZE extension (RFC 1870).
     ///
@@ -177,7 +153,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     ///
     /// When the limit is exceeded, the server rejects with SMTP status code 552
     /// (Exceeded Storage Allocation).
-    max_message_size: usize,
+    pub(super) max_message_size: usize,
     /// Server-side timeout configuration
     timeouts: crate::SmtpServerTimeouts,
     /// Start time for tracking connection lifetime
@@ -241,8 +217,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// - `PostDot`: 10 minutes (for processing after final dot)
     /// - Regular commands: 5 minutes (EHLO, MAIL FROM, RCPT TO, etc.)
     const fn get_timeout_secs(&self) -> u64 {
-        use crate::state::State;
-
         match &self.context.state {
             State::Reading(_) => self.timeouts.data_block_secs,
             State::Data(_) => self.timeouts.data_init_secs,
@@ -298,6 +272,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 } else if let Some(tls_context) = session.tls_context.as_ref()
                     && matches!(session.context.state, State::StartTls(_))
                 {
+                    // Handle TLS upgrade inline to avoid borrowing issues
                     let (conn, info) = session
                         .connection
                         .upgrade(tls_context)
@@ -321,14 +296,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                         ..Default::default()
                     };
 
-                    if modules::dispatch(
-                        modules::Event::Validate(validate::Event::StartTls),
+                    if empath_ffi::modules::dispatch(
+                        empath_ffi::modules::Event::Validate(empath_ffi::modules::validate::Event::StartTls),
                         validate_context,
                     ) {
-                        internal!(
-                            level = DEBUG,
-                            "Connection successfully upgraded with {info:#?}"
-                        );
+                        internal!(level = DEBUG, "Connection successfully upgraded with {info:#?}");
                     } else {
                         session.context.sent = false;
                         session.context.state = State::Reject(state::Reject);
@@ -336,34 +308,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                             Some((Status::Error, Cow::Borrowed("STARTTLS failed")));
                     }
                 } else {
-                    // Get state-aware timeout
-                    let timeout_secs = session.get_timeout_secs();
-                    let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-
-                    tokio::select! {
-                        _ = signal.recv() => {
-                            session.context.sent = false;
-                            session.context.state = State::Close(state::Close);
-                            validate_context.response =
-                                Some((Status::Unavailable, Cow::Borrowed("Server shutting down")));
-                        }
-                        result = tokio::time::timeout(timeout_duration, session.receive(validate_context)) => {
-                            if let Ok(close) = result {
-                                if close.unwrap_or(true) {
-                                    return Ok(());
-                                }
-                            } else {
-                                // Timeout occurred
-                                tracing::warn!(
-                                    peer = ?session.peer,
-                                    state = ?session.context.state,
-                                    timeout_secs = timeout_secs,
-                                    "Client connection timed out"
-                                );
-                                return Err(SessionError::Timeout(timeout_secs));
-                            }
-                        }
-                    }
+                    session.handle_command_loop(validate_context, &mut signal).await?;
                 }
             }
         }
@@ -394,293 +339,51 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         let result = run_inner(self, &mut validate_context, signal).await;
 
         internal!("Connection closed");
-        modules::dispatch(
-            modules::Event::Event(modules::Ev::ConnectionClosed),
+        empath_ffi::modules::dispatch(
+            empath_ffi::modules::Event::Event(empath_ffi::modules::Ev::ConnectionClosed),
             &mut validate_context,
         );
 
         result
     }
 
-    /// Handle validation and work for each state
+    /// Handle the main command receive loop with timeout and shutdown handling
     ///
-    /// Flow:
-    /// 1. Dispatch to core module first (sets default responses, validation)
-    /// 2. Then dispatch to user modules (can override responses, reject)
-    /// 3. If validation passed, do the work (spooling)
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    async fn emit(&mut self, validate_context: &mut context::Context) {
-        match self.context.state {
-            State::Connect(_) => {
-                modules::dispatch(
-                    modules::Event::Event(modules::Ev::ConnectionOpened),
-                    validate_context,
-                );
-
-                if !modules::dispatch(
-                    modules::Event::Validate(validate::Event::Connect),
-                    validate_context,
-                ) {
-                    self.context.state = State::Reject(state::Reject);
-                }
-            }
-            State::Helo(_) | State::Ehlo(_) => {
-                if !modules::dispatch(
-                    modules::Event::Validate(validate::Event::Ehlo),
-                    validate_context,
-                ) {
-                    self.context.state = State::Reject(state::Reject);
-                }
-            }
-            State::MailFrom(_) => {
-                if !modules::dispatch(
-                    modules::Event::Validate(validate::Event::MailFrom),
-                    validate_context,
-                ) {
-                    // Don't change state for validation failures like SIZE - just return error
-                    return;
-                }
-            }
-            State::RcptTo(_) => {
-                if !modules::dispatch(
-                    modules::Event::Validate(validate::Event::RcptTo),
-                    validate_context,
-                ) {
-                    self.context.state = State::Reject(state::Reject);
-                }
-            }
-            State::PostDot(_) => {
-                // Dispatch validation
-                let valid = modules::dispatch(
-                    modules::Event::Validate(validate::Event::Data),
-                    validate_context,
-                );
-
-                // If validation passed, do the work (spooling)
-                if valid {
-                    // Check if any module set a rejection response
-                    // Positive responses are < 400 (2xx and 3xx codes)
-                    let should_spool = validate_context
-                        .response
-                        .as_ref()
-                        .is_none_or(|(status, _)| !status.is_temporary() && !status.is_permanent());
-
-                    if should_spool {
-                        self.spool_message(validate_context).await;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Spool message after validation passes
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    async fn spool_message(&self, validate_context: &mut context::Context) {
-        internal!("Spooling message");
-
-        let tracking_id = if let Some(spool) = &self.spool
-            && validate_context.data.is_some()
-        {
-            match spool.write(validate_context).await {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    internal!(level = ERROR, "Failed to spool message: {e}");
-                    validate_context.response = Some((
-                        Status::ActionUnavailable,
-                        Cow::Borrowed("Please try again later"),
-                    ));
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-
-        // Clear transaction state after successful acceptance
-        validate_context.metadata.remove("declared_size");
-
-        // Set success response with tracking ID
-        validate_context.response = Some((
-            Status::Ok,
-            tracking_id.as_ref().map_or_else(
-                || Cow::Borrowed("Ok: queued"),
-                |id| Cow::Owned(format!("Ok: queued as {id}")),
-            ),
-        ));
-    }
-
-    /// Format and return the response to send to the client
-    ///
-    /// This is a pure formatter - all validation and work happens in `emit()`.
-    /// Just formats the response based on state and what `emit()` set in the context.
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "ns"))]
-    async fn response(&mut self, validate_context: &mut context::Context) -> Response {
-        if self.context.sent {
-            return (None, Event::ConnectionKeepAlive);
-        }
-
-        // Emit events, do validation and work first
-        self.emit(validate_context).await;
-
-        // If emit() set a response in the context, use it
-        // Only close connection for Reject state, not all permanent errors
-        if let Some((status, ref message)) = validate_context.response {
-            let event = if matches!(self.context.state, State::Reject(_)) && status.is_permanent() {
-                Event::ConnectionClose
-            } else {
-                Event::ConnectionKeepAlive
-            };
-
-            return (Some(vec![format!("{status} {message}")]), event);
-        }
-
-        // Otherwise, provide default responses for states not handled by emit()
-        match &self.context.state {
-            State::Helo(_) => (
-                Some(vec![format!(
-                    "{} {} says hello to {}",
-                    Status::Ok,
-                    self.banner,
-                    bstr::ByteStr::new(&self.context.message)
-                )]),
-                Event::ConnectionKeepAlive,
-            ),
-            State::StartTls(_) => {
-                if self.tls_context.is_some() {
-                    (
-                        Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
-                        Event::ConnectionKeepAlive,
-                    )
-                } else {
-                    (
-                        Some(vec![format!("{} TLS not available", Status::Error)]),
-                        Event::ConnectionClose,
-                    )
-                }
-            }
-            State::Data(_) => {
-                self.context.state = State::Reading(state::Reading);
-
-                // Pre-allocate message buffer based on SIZE parameter if declared
-                if let Some(params) = validate_context.envelope.mail_params()
-                    && let Some(Some(size_str)) = params.get("SIZE")
-                    && let Ok(declared_size) = size_str.parse::<usize>()
-                {
-                    // Reserve capacity to avoid reallocations during message receipt
-                    self.context.message.reserve(declared_size);
-                }
-
-                (
-                    Some(vec![format!(
-                        "{} End data with <CR><LF>.<CR><LF>",
-                        Status::StartMailInput
-                    )]),
-                    Event::ConnectionKeepAlive,
-                )
-            }
-            State::Quit(_) => (
-                Some(vec![format!("{} Bye", Status::GoodBye)]),
-                Event::ConnectionClose,
-            ),
-            State::Invalid(_) => (
-                Some(vec![format!(
-                    "{} {}",
-                    Status::InvalidCommandSequence,
-                    self.context.state
-                )]),
-                Event::ConnectionClose,
-            ),
-            State::Reject(_) => {
-                // Reject should have response set by emit(), but provide fallback
-                (
-                    Some(vec![format!("{} Unavailable", Status::Unavailable)]),
-                    Event::ConnectionClose,
-                )
-            }
-            // States handled by emit() (Connect, Ehlo, MailFrom, RcptTo, PostDot) should have set a response
-            // States like Reading, Close, and others that don't need responses
-            _ => (None, Event::ConnectionKeepAlive),
-        }
-    }
-
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing)]
-    async fn receive(
+    /// # Errors
+    /// Returns `SessionError` if a timeout occurs or connection error happens.
+    async fn handle_command_loop(
         &mut self,
         validate_context: &mut context::Context,
-    ) -> Result<bool, SessionError> {
-        let mut received_data = [0; 4096];
+        signal: &mut tokio::sync::broadcast::Receiver<Signal>,
+    ) -> Result<(), SessionError> {
+        // Get state-aware timeout
+        let timeout_secs = self.get_timeout_secs();
+        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
 
-        match self.connection.receive(&mut received_data).await {
-            // Consider any errors received here to be fatal
-            Err(err) => {
-                internal!("Error: {err}");
-                Err(SessionError::Protocol(err.to_string()))
+        tokio::select! {
+            _ = signal.recv() => {
+                self.context.sent = false;
+                self.context.state = State::Close(state::Close);
+                validate_context.response =
+                    Some((Status::Unavailable, Cow::Borrowed("Server shutting down")));
+                Ok(())
             }
-            Ok(0) => {
-                // Reading 0 bytes means the other side has closed the
-                // connection or is done writing, then so are we.
-                Ok(true)
-            }
-            Ok(bytes_read) => {
-                let received = &received_data[..bytes_read];
-
-                if matches!(self.context.state, State::Reading(_)) {
-                    // Check if adding received data would exceed limit (BEFORE extending buffer)
-                    // This prevents the buffer overflow vulnerability where an attacker could
-                    // consume up to max_message_size + 4095 bytes before being rejected
-                    // Use checked_add to prevent integer overflow on 32-bit systems
-                    if self.max_message_size > 0 {
-                        let total_size = self.context.message.len().saturating_add(received.len());
-
-                        if total_size > self.max_message_size {
-                            validate_context.response = Some((
-                                Status::ExceededStorage,
-                                Cow::Owned(format!(
-                                    "Actual message size {} bytes exceeds maximum allowed size {} bytes",
-                                    total_size, self.max_message_size
-                                )),
-                            ));
-                            self.context.state = State::Close(state::Close);
-                            self.context.sent = false;
-                            return Ok(false);
-                        }
-                    }
-
-                    self.context.message.extend(received);
-
-                    if self.context.message.ends_with(b"\r\n.\r\n") {
-                        // Move the message buffer to avoid double cloning
-                        let message = std::mem::take(&mut self.context.message);
-
-                        self.context = Context {
-                            state: State::PostDot(state::PostDot),
-                            message: message.clone(),
-                            sent: false,
-                        };
-
-                        validate_context.data = Some(message.into());
+            result = tokio::time::timeout(timeout_duration, self.receive(validate_context)) => {
+                if let Ok(close) = result {
+                    if close.unwrap_or(true) {
+                        return Ok(());
                     }
                 } else {
-                    let command = Command::try_from(received).unwrap_or_else(|e| e);
-                    let message = command.inner().as_bytes().to_vec();
-
-                    incoming!("{command}");
-
-                    self.context = Context {
-                        state: self
-                            .context
-                            .state
-                            .clone()
-                            .transition(command, validate_context),
-                        message,
-                        sent: false,
-                    };
-
-                    tracing::debug!("Transitioned to {:#?}", self.context);
+                    // Timeout occurred
+                    tracing::warn!(
+                        peer = ?self.peer,
+                        state = ?self.context.state,
+                        timeout_secs = timeout_secs,
+                        "Client connection timed out"
+                    );
+                    return Err(SessionError::Timeout(timeout_secs));
                 }
-
-                Ok(false)
+                Ok(())
             }
         }
     }
@@ -784,8 +487,6 @@ mod test {
     #[tokio::test]
     #[cfg_attr(all(target_os = "macos", miri), ignore)]
     async fn spool_integration() {
-        use std::sync::Arc;
-
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
 
