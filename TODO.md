@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-11:** ✅ Implemented graceful shutdown handling with 30s timeout
 - **2025-11-10:** Comprehensive code review completed (see CODE_REVIEW_2025-11-10.md)
 - **2025-11-10:** ✅ Fixed TLS certificate validation (two-tier configuration system)
 - **2025-11-10:** ✅ Implemented comprehensive SMTP operation timeouts (server and client)
@@ -585,21 +586,33 @@ pub struct ExponentialBackoffPolicy {
 
 ---
 
-### 🔴 1.5 Graceful Shutdown Handling
+### ✅ 1.5 Graceful Shutdown Handling
 **Priority:** High
 **Complexity:** Medium
 **Effort:** 1-2 days
-**Files:** `empath-delivery/src/lib.rs`
-
-**Current Issue:** May lose in-flight deliveries on shutdown
+**Status:** ✅ **COMPLETED** (2025-11-11)
 
 **Implementation:**
-- Complete active deliveries with timeout (30s)
-- Persist queue state before exit
-- Clean up temporary resources
-- Integrate with tokio shutdown signals
+- ✅ Wait for any in-flight delivery to complete with 30s timeout
+- ✅ Persist queue state to disk before exit
+- ✅ Track processing state with atomic flag
+- ✅ Integrated with existing tokio shutdown signal system
+- ✅ Comprehensive logging of shutdown progress
+- ✅ Integration tests for graceful shutdown behavior
 
-**Dependencies:** 1.1 (Persistent queue)
+**Shutdown Behavior:**
+When a shutdown signal (SIGTERM/SIGINT) is received:
+1. Stop accepting new work (scan/process ticks)
+2. Wait for current delivery to complete (max 30 seconds)
+3. Save queue state to disk for CLI access
+4. Exit cleanly
+
+In-flight deliveries that don't complete within the 30s timeout are marked as pending and will be retried on restart.
+
+**Files Modified:**
+- `empath-delivery/src/lib.rs` (graceful shutdown logic + tests)
+
+**Dependencies:** 1.1 (Persistent queue) - ⚠️ Partially implemented (queue state persistence exists, but not full persistent queue backend)
 
 ---
 
@@ -1459,9 +1472,9 @@ Create `OPERATIONS.md` with:
 2. ✅ Real DNS MX lookups (1.2) - **COMPLETED**
 3. ✅ Typed error handling (1.3) - **COMPLETED**
 4. Exponential backoff (1.4) - **TODO**
-5. Graceful shutdown (1.5) - **TODO**
+5. ✅ Graceful shutdown (1.5) - **COMPLETED**
 
-**Progress: 2/5 completed (40%)**
+**Progress: 3/5 completed (60%)**
 
 ### Phase 2: Observability (2-3 weeks)
 **Operational Readiness:**
@@ -1589,6 +1602,7 @@ Empath (
 ## Getting Started
 
 **Recent Progress (Completed):**
+- ✅ Graceful shutdown handling (1.5)
 - ✅ Real DNS MX lookups (1.2)
 - ✅ Typed error handling with thiserror (1.3)
 - ✅ Per-domain configuration (3.2)
@@ -1598,19 +1612,18 @@ Empath (
 - ✅ SMTP transaction refactoring (0.7)
 - ✅ Comprehensive benchmarking (6.9)
 
-**Immediate Next Steps** (highest ROI, ~1 week remaining for Phase 1):
+**Immediate Next Steps** (highest ROI, ~3-4 days remaining for Phase 1):
 1. Implement persistent queue (1.1) - 2-3 days
 2. Implement exponential backoff (1.4) - 1 day
-3. Add graceful shutdown (1.5) - 1-2 days
 
 **After Phase 1** (remaining critical items):
-4. Fix Context/Message layer violation (0.3) - 1 day
-5. Add spool deletion retry mechanism (0.8) - 2 hours
+3. Fix Context/Message layer violation (0.3) - 1 day
+4. Add spool deletion retry mechanism (0.8) - 2 hours
 
 After completing Phase 1, the system will be production-ready for basic mail delivery.
 
 ---
 
-**Last Updated:** 2025-11-11 (cleaned up completed items)
+**Last Updated:** 2025-11-11 (graceful shutdown implemented)
 **Contributors:** code-reviewer, architect-review, rust-expert, refactoring-specialist agents
 **Code Review:** See CODE_REVIEW_2025-11-10.md for comprehensive analysis

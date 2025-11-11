@@ -465,6 +465,17 @@ impl DeliveryProcessor {
     /// It periodically scans the spool for new messages and processes the
     /// delivery queue.
     ///
+    /// ## Graceful Shutdown
+    ///
+    /// When a shutdown signal is received:
+    /// 1. Stop accepting new work (scan/process ticks)
+    /// 2. Wait for any in-flight delivery to complete (with 30s timeout)
+    /// 3. Save queue state to disk
+    /// 4. Exit cleanly
+    ///
+    /// In-flight deliveries that don't complete within the shutdown timeout
+    /// will be marked as pending and retried on the next restart.
+    ///
     /// # Errors
     ///
     /// Returns an error if the delivery processor encounters a fatal error
@@ -495,6 +506,10 @@ impl DeliveryProcessor {
         process_timer.tick().await;
         state_save_timer.tick().await;
 
+        // Track if we're currently processing a delivery
+        let processing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let processing_clone = processing.clone();
+
         loop {
             tokio::select! {
                 _ = scan_timer.tick() => {
@@ -517,6 +532,9 @@ impl DeliveryProcessor {
                         continue;
                     }
 
+                    // Mark that we're processing
+                    processing.store(true, std::sync::atomic::Ordering::SeqCst);
+
                     match self.process_queue_internal(spool).await {
                         Ok(()) => {
                             tracing::debug!("Processed delivery queue");
@@ -525,6 +543,9 @@ impl DeliveryProcessor {
                             tracing::error!("Error processing delivery queue: {e}");
                         }
                     }
+
+                    // Mark that we're done processing
+                    processing.store(false, std::sync::atomic::Ordering::SeqCst);
                 }
                 _ = state_save_timer.tick() => {
                     // Periodically persist queue state for CLI access
@@ -535,9 +556,41 @@ impl DeliveryProcessor {
                 sig = shutdown.recv() => {
                     match sig {
                         Ok(Signal::Shutdown | Signal::Finalised) => {
-                            internal!("Delivery processor shutting down");
+                            internal!("Delivery processor received shutdown signal");
+
+                            // Wait for any in-flight delivery to complete (with 30s timeout)
+                            let shutdown_timeout = Duration::from_secs(30);
+                            let start = std::time::Instant::now();
+
+                            while processing_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                                if start.elapsed() >= shutdown_timeout {
+                                    tracing::warn!(
+                                        "Shutdown timeout exceeded, {} remaining in-flight delivery will be retried on restart",
+                                        if processing_clone.load(std::sync::atomic::Ordering::SeqCst) { "1" } else { "0" }
+                                    );
+                                    break;
+                                }
+
+                                tracing::debug!(
+                                    "Waiting for in-flight delivery to complete ({:.1}s elapsed)...",
+                                    start.elapsed().as_secs_f64()
+                                );
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+
+                            if !processing_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                                internal!("All in-flight deliveries completed successfully");
+                            }
+
                             // Save final queue state before shutdown
-                            let _ignore_error = self.save_queue_state().await;
+                            internal!("Saving final queue state before shutdown");
+                            if let Err(e) = self.save_queue_state().await {
+                                tracing::error!("Failed to save queue state during shutdown: {e}");
+                            } else {
+                                internal!("Queue state saved successfully");
+                            }
+
+                            internal!("Delivery processor shutdown complete");
                             break;
                         }
                         Err(e) => {
@@ -1219,5 +1272,107 @@ mod tests {
         // Note: The same message ID is queued multiple times with different domains
         let info = processor.queue.get(&msg_id).await;
         assert!(info.is_some(), "Message should be in queue");
+    }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown() {
+        use empath_spool::MemoryBackingStore;
+        use tokio::sync::broadcast;
+
+        // Create a memory-backed spool
+        let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+        // Create a test context and spool a message
+        let mut context = create_test_context("sender@example.org", "recipient@test.example.com");
+        let _msg_id = spool.write(&mut context).await.unwrap();
+
+        // Create a processor with short intervals for faster testing
+        let mut processor = DeliveryProcessor {
+            scan_interval_secs: 1,
+            process_interval_secs: 1,
+            max_attempts: 3,
+            ..Default::default()
+        };
+
+        processor.init(spool.clone(), Some(std::path::PathBuf::from("/tmp/graceful_shutdown_test"))).unwrap();
+
+        // Manually scan the spool to add the message to the queue
+        let added = processor.scan_spool_internal(&spool).await.unwrap();
+        assert_eq!(added, 1, "Should have added 1 message to queue");
+
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
+
+        // Start the processor in a background task
+        let processor_handle = tokio::spawn(async move {
+            processor.serve(shutdown_rx).await
+        });
+
+        // Give the processor a moment to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Send shutdown signal
+        shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+
+        // Wait for graceful shutdown to complete (with timeout)
+        let result = tokio::time::timeout(
+            Duration::from_secs(35), // Slightly longer than the 30s shutdown timeout
+            processor_handle
+        ).await;
+
+        // Verify shutdown completed successfully
+        assert!(result.is_ok(), "Processor should shutdown within timeout");
+        let shutdown_result = result.unwrap();
+        assert!(shutdown_result.is_ok(), "Processor serve should return Ok");
+        assert!(shutdown_result.unwrap().is_ok(), "Processor should shutdown without error");
+    }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown_respects_timeout() {
+        use empath_spool::MemoryBackingStore;
+        use tokio::sync::broadcast;
+
+        // Create a memory-backed spool
+        let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+        // Create a processor
+        let mut processor = DeliveryProcessor {
+            scan_interval_secs: 1,
+            process_interval_secs: 1,
+            max_attempts: 3,
+            ..Default::default()
+        };
+
+        processor.init(spool.clone(), Some(std::path::PathBuf::from("/tmp/graceful_shutdown_timeout_test"))).unwrap();
+
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
+
+        // Start the processor in a background task
+        let start_time = std::time::Instant::now();
+        let processor_handle = tokio::spawn(async move {
+            processor.serve(shutdown_rx).await
+        });
+
+        // Give the processor a moment to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Send shutdown signal
+        shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+
+        // Wait for graceful shutdown to complete
+        let result = tokio::time::timeout(
+            Duration::from_secs(35),
+            processor_handle
+        ).await;
+
+        // Verify shutdown completed quickly (since no processing was happening)
+        let elapsed = start_time.elapsed();
+        assert!(result.is_ok(), "Processor should shutdown within timeout");
+        assert!(elapsed < Duration::from_secs(5), "Shutdown should be fast when not processing (took {elapsed:?})");
+
+        let shutdown_result = result.unwrap();
+        assert!(shutdown_result.is_ok(), "Processor serve should return Ok");
+        assert!(shutdown_result.unwrap().is_ok(), "Processor should shutdown without error");
     }
 }

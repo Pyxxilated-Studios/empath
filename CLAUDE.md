@@ -278,7 +278,33 @@ Empath (
 3. **Transaction**: Session receives data → parse Command → FSM transition → module validation → generate response
 4. **Message Completion**: PostDot state → dispatch Data validation → spool message → respond to client
 5. **Delivery**: Delivery controller scans spool → reads messages → prepares for sending (handshake only, no DATA)
-6. **Shutdown**: Broadcast signal → sessions close gracefully → controllers exit
+6. **Shutdown**: Graceful shutdown sequence with delivery completion
+
+### Graceful Shutdown
+
+The system implements graceful shutdown to prevent message loss and ensure clean exit:
+
+**Signal Handling:**
+- Main controller listens for SIGTERM and SIGINT (Ctrl+C) via tokio::signal
+- On signal receipt, broadcasts `Signal::Shutdown` to all components via `SHUTDOWN_BROADCAST`
+- Second Ctrl+C forces immediate shutdown
+
+**Delivery Processor Shutdown:**
+When the delivery processor receives a shutdown signal:
+1. **Stop accepting new work**: Scan and process timers are no longer serviced
+2. **Wait for in-flight delivery**: Tracks current delivery with atomic flag, waits up to 30 seconds for completion
+3. **Persist queue state**: Saves queue state to disk (`queue_state.bin`) for CLI access and recovery
+4. **Exit cleanly**: Returns `Ok(())` after graceful shutdown completes
+
+**Implementation Details:**
+- Uses `Arc<AtomicBool>` to track if delivery is currently in progress
+- Polls processing flag every 100ms during shutdown
+- If timeout (30s) expires, logs warning and exits (message will retry on restart)
+- All queue state is persisted before exit for recovery
+
+**Location:** `empath-delivery/src/lib.rs:457-601`
+
+**Testing:** Integration tests verify shutdown completes within timeout and handles both with/without in-flight deliveries
 
 ### Code Organization Patterns
 

@@ -614,7 +614,7 @@ async fn save_queue_state(
 }
 
 /// Check if a status matches the filter
-fn status_matches(status: &empath_delivery::DeliveryStatus, filter: StatusFilter) -> bool {
+const fn status_matches(status: &empath_delivery::DeliveryStatus, filter: StatusFilter) -> bool {
     matches!(
         (status, filter),
         (
