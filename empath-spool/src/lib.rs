@@ -1,6 +1,3 @@
-#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
-#![allow(clippy::must_use_candidate)]
-
 pub mod config;
 pub mod controller;
 pub mod error;

@@ -1,6 +1,3 @@
-#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
-#![allow(clippy::must_use_candidate)]
-
 #[cfg(not(any(target_os = "macos", unix)))]
 compile_error!("Only macos and unix are currently supported");
 

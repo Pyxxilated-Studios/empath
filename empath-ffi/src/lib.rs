@@ -1,6 +1,4 @@
 #![feature(bstr, slice_pattern, result_option_map_or_default, vec_into_raw_parts)]
-#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
-#![allow(clippy::must_use_candidate)]
 
 use core::slice::SlicePattern;
 use std::{borrow::Cow, ffi::CStr};

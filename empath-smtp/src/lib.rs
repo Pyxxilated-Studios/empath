@@ -1,6 +1,4 @@
 #![feature(bstr, result_option_map_or_default)]
-#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
-#![allow(clippy::must_use_candidate)]
 
 pub mod client;
 pub mod command;

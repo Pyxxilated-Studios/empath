@@ -2249,11 +2249,9 @@ After completing Phase 1, the system will be production-ready for basic mail del
 default:
     @just --list
 
-# Run strict clippy checks (project standard)
+# Run strict clippy checks (project standard - configured via workspace lints)
 lint:
-    cargo clippy --all-targets --all-features -- \
-        -D clippy::all -D clippy::pedantic -D clippy::nursery \
-        -A clippy::must_use_candidate
+    cargo clippy --all-targets --all-features
 
 # Run tests with nextest (faster)
 test:
@@ -2324,9 +2322,9 @@ setup:
 
 ```toml
 [alias]
-# Linting
-l = "clippy --all-targets --all-features -- -D clippy::all -D clippy::pedantic -D clippy::nursery -A clippy::must_use_candidate"
-lfix = "clippy --all-targets --all-features --fix -- -D clippy::all -D clippy::pedantic -D clippy::nursery -A clippy::must_use_candidate"
+# Linting (lints configured via workspace Cargo.toml)
+l = "clippy --all-targets --all-features"
+lfix = "clippy --all-targets --all-features --fix"
 
 # Testing
 t = "nextest run"
@@ -2444,13 +2442,7 @@ setup:
 {
   "rust-analyzer.cargo.features": "all",
   "rust-analyzer.check.command": "clippy",
-  "rust-analyzer.check.extraArgs": [
-    "--all-targets", "--all-features", "--",
-    "-D", "clippy::all",
-    "-D", "clippy::pedantic",
-    "-D", "clippy::nursery",
-    "-A", "clippy::must_use_candidate"
-  ],
+  "rust-analyzer.check.extraArgs": ["--all-targets", "--all-features"],
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.formatOnSave": true,
@@ -2462,6 +2454,8 @@ setup:
   }
 }
 ```
+
+Note: Clippy lints are configured at the workspace level, so no need to pass them via extraArgs.
 
 **Benefits:**
 - **Format on save** reduces manual cargo fmt runs

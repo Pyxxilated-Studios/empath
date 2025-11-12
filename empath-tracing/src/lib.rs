@@ -1,6 +1,4 @@
 #![feature(fn_traits, unboxed_closures)]
-#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
-#![allow(clippy::must_use_candidate)]
 
 extern crate proc_macro;
 

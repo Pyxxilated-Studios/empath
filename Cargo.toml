@@ -2,6 +2,12 @@
 members = ["empath", "empath-common", "empath-delivery", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing"]
 resolver = "3"
 
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+must_use_candidate = "allow"
+
 [profile.release]
 lto = "thin"
 opt-level = 2

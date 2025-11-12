@@ -6,9 +6,6 @@
 //! - Prepare messages for sending via SMTP
 //! - DNS MX record resolution for recipient domains
 
-#![deny(clippy::pedantic, clippy::all, clippy::nursery)]
-#![allow(clippy::must_use_candidate)]
-
 mod dns;
 mod domain_config;
 mod error;

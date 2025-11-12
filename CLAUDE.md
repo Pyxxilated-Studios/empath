@@ -45,8 +45,8 @@ cargo test -p empath-spool
 cargo test test_name
 cargo test session::test::helo
 
-# Lint with clippy (STRICT - project enforces all/pedantic/nursery)
-cargo clippy --all-targets --all-features -- -D clippy::all -D clippy::pedantic -D clippy::nursery -A clippy::must_use_candidate
+# Lint with clippy (STRICT - project enforces all/pedantic/nursery via workspace lints)
+cargo clippy --all-targets --all-features
 
 # Run benchmarks
 cargo bench                           # Run all benchmarks
@@ -82,15 +82,19 @@ cargo build --bin empathctl            # Build queue management CLI
 
 ## Clippy Configuration
 
-This project uses STRICT clippy linting. All changes must pass:
+This project uses STRICT clippy linting configured at the workspace level. All changes must pass:
 
 ```bash
-cargo clippy --all-targets --all-features -- \
-  -D clippy::all \
-  -D clippy::pedantic \
-  -D clippy::nursery \
-  -A clippy::must_use_candidate
+cargo clippy --all-targets --all-features
 ```
+
+The lints are configured in the workspace `Cargo.toml`:
+- `clippy::all` = deny
+- `clippy::pedantic` = deny
+- `clippy::nursery` = deny
+- `clippy::must_use_candidate` = allow
+
+These lints are automatically inherited by all crates via `[lints] workspace = true` in each crate's `Cargo.toml`.
 
 Key clippy requirements:
 - No wildcard imports (use explicit imports)

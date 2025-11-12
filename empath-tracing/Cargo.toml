@@ -12,6 +12,9 @@ readme = "README.md"
 categories = ["command-line-utilities", "email", "network-programming"]
 keywords = ["email"]
 
+[lints]
+workspace = true
+
 [lib]
 proc-macro = true
 
