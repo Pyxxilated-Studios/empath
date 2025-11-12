@@ -2,20 +2,20 @@ Empath (
     smtp_controller: (
         listeners: [
             {
-                socket: "[::]:1025",
-                context: {
+                "socket": "[::]:1025",
+                "context": {
                     "service": "smtp",
                 },
                 // Server-side timeout configuration (RFC 5321 compliant defaults)
                 // These timeouts prevent resource exhaustion from slow or malicious clients
-                timeouts: (
+                "timeouts": (
                     command_secs: 300,          // 5 minutes for regular commands (EHLO, MAIL FROM, etc.)
                     data_init_secs: 120,        // 2 minutes for DATA command
                     data_block_secs: 180,       // 3 minutes between data chunks
                     data_termination_secs: 600, // 10 minutes for processing after final dot
                     connection_secs: 1800,      // 30 minutes maximum session lifetime
                 ),
-                extensions: [
+                "extensions": [
                     {
                         "size": 10000,
                     },
@@ -28,8 +28,8 @@ Empath (
                 ]
             },
             {
-                socket: "[::]:1026",
-                context: {
+                "socket": "[::]:1026",
+                "context": {
                     "service": "smtps",
                 },
             },

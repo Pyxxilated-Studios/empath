@@ -38,6 +38,6 @@ tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 mailparse = "0.16"
-ron = "0.11"
+ron = "0.12"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ulid = "1"

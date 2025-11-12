@@ -43,7 +43,7 @@ empath-tracing = { path = "../empath-tracing", version = "*" }
 futures-util = "0.3"
 libc = "0.2"
 mailparse = "0.16"
-ron = "0.11"
+ron = "0.12"
 rustls-pemfile = "2.2"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
