@@ -6,10 +6,10 @@
 //! - ULID generation and parsing
 //! - In-memory spool operations (write, read, list, delete)
 
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, hint::black_box, sync::Arc};
 
 use ahash::AHashMap;
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use empath_common::{context::Context, envelope::Envelope};
 use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
 
@@ -63,88 +63,6 @@ fn bench_message_creation(c: &mut Criterion) {
             b.iter(|| {
                 let msg = create_test_message(black_box(size));
                 black_box(msg)
-            });
-        });
-    }
-
-    group.finish();
-}
-
-// ============================================================================
-// Bincode Serialization Benchmarks
-// ============================================================================
-
-fn bench_bincode_serialization(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bincode_serialization");
-
-    let sizes = vec![
-        (1024, "1KB"),
-        (10 * 1024, "10KB"),
-        (100 * 1024, "100KB"),
-        (1024 * 1024, "1MB"),
-    ];
-
-    for (size, desc) in sizes {
-        let message = create_test_message(size);
-        group.throughput(Throughput::Bytes(size as u64));
-
-        group.bench_with_input(BenchmarkId::new("serialize", desc), &message, |b, msg| {
-            b.iter(|| {
-                let serialized = bincode::serialize(black_box(msg)).expect("Serialization works");
-                black_box(serialized)
-            });
-        });
-    }
-
-    group.finish();
-}
-
-fn bench_bincode_deserialization(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bincode_deserialization");
-
-    let sizes = vec![
-        (1024, "1KB"),
-        (10 * 1024, "10KB"),
-        (100 * 1024, "100KB"),
-        (1024 * 1024, "1MB"),
-    ];
-
-    for (size, desc) in sizes {
-        let message = create_test_message(size);
-        let serialized = bincode::serialize(&message).expect("Serialization works");
-        group.throughput(Throughput::Bytes(size as u64));
-
-        group.bench_with_input(
-            BenchmarkId::new("deserialize", desc),
-            &serialized,
-            |b, data| {
-                b.iter(|| {
-                    let deserialized: Context =
-                        bincode::deserialize(black_box(data)).expect("Deserialization works");
-                    black_box(deserialized)
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-fn bench_bincode_roundtrip(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bincode_roundtrip");
-
-    let sizes = vec![(1024, "1KB"), (10 * 1024, "10KB"), (100 * 1024, "100KB")];
-
-    for (size, desc) in sizes {
-        let message = create_test_message(size);
-        group.throughput(Throughput::Bytes(size as u64));
-
-        group.bench_with_input(BenchmarkId::from_parameter(desc), &message, |b, msg| {
-            b.iter(|| {
-                let serialized = bincode::serialize(black_box(msg)).expect("Serialization works");
-                let deserialized: Context =
-                    bincode::deserialize(&serialized).expect("Deserialization works");
-                black_box(deserialized)
             });
         });
     }
@@ -327,9 +245,6 @@ fn bench_spool_full_lifecycle(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_message_creation,
-    bench_bincode_serialization,
-    bench_bincode_deserialization,
-    bench_bincode_roundtrip,
     bench_message_id_operations,
     bench_spool_write,
     bench_spool_read,

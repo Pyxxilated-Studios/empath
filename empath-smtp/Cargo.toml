@@ -29,7 +29,7 @@ empath-spool = { path = "../empath-spool", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 futures-util = "0.3"
 mailparse = "0.16"
-phf = { version = "0.11", features = ["macros"] }
+phf = { version = "0.13", features = ["macros"] }
 rustls-native-certs = "0.8"
 rustls-pemfile = "2.2"
 serde = { version = "1", features = ["derive", "rc"] }
@@ -50,7 +50,7 @@ tracing = { version = "0.1", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 
 [[bench]]
 name = "smtp_benchmarks"

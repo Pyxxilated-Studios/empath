@@ -283,8 +283,8 @@ impl BackingStore for FileBackingStore {
         }
 
         // Serialize metadata to bincode
-        let metadata =
-            bincode::serialize(&context).map_err(crate::error::SerializationError::from)?;
+        let metadata = bincode::serde::encode_to_vec(&context, bincode::config::legacy())
+            .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically rename both files
@@ -364,8 +364,9 @@ impl BackingStore for FileBackingStore {
 
         // Read and deserialize metadata
         let meta_content = fs::read(&meta_path).await?;
-        let mut context: Context =
-            bincode::deserialize(&meta_content).map_err(crate::error::SerializationError::from)?;
+        let (mut context, _): (Context, _) =
+            bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
+                .map_err(crate::error::SerializationError::from)?;
 
         // Read message data
         let data_bytes = fs::read(&data_path).await?;
@@ -409,8 +410,8 @@ impl BackingStore for FileBackingStore {
         let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
 
         // Serialize metadata to bincode
-        let metadata =
-            bincode::serialize(&context).map_err(crate::error::SerializationError::from)?;
+        let metadata = bincode::serde::encode_to_vec(context, bincode::config::legacy())
+            .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically replace the existing metadata file

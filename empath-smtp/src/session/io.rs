@@ -4,9 +4,12 @@ use empath_common::{context, error::SessionError, internal, status::Status, trac
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, command::Command, state};
-
-use super::{Context, Session};
+use crate::{
+    State,
+    command::Command,
+    session::{Context, Session},
+    state,
+};
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// Receive and process data from the client
@@ -48,11 +51,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     }
 
     /// Handle reception of message data (during DATA state)
-    fn handle_data_reception(
-        &mut self,
-        received: &[u8],
-        validate_context: &mut context::Context,
-    ) {
+    fn handle_data_reception(&mut self, received: &[u8], validate_context: &mut context::Context) {
         // Check if adding received data would exceed limit (BEFORE extending buffer)
         // This prevents the buffer overflow vulnerability where an attacker could
         // consume up to max_message_size + 4095 bytes before being rejected

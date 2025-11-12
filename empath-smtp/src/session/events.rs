@@ -5,9 +5,7 @@ use empath_ffi::modules;
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, state};
-
-use super::Session;
+use crate::{State, session::Session, state};
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// Handle validation and work for each state

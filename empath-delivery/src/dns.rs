@@ -17,8 +17,9 @@ use std::{
 
 use dashmap::DashMap;
 use hickory_resolver::{
-    TokioAsyncResolver,
+    TokioResolver,
     config::{ResolverConfig, ResolverOpts},
+    name_server::TokioConnectionProvider,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -33,7 +34,7 @@ pub enum DnsError {
 
     /// DNS query failed due to network or resolver issues.
     #[error("DNS lookup failed: {0}")]
-    LookupFailed(#[from] hickory_resolver::error::ResolveError),
+    LookupFailed(#[from] hickory_resolver::ResolveError),
 
     /// Domain does not exist (NXDOMAIN).
     #[error("Domain does not exist: {0}")]
@@ -154,7 +155,7 @@ impl MailServer {
 /// throughput under high load compared to mutex-based caching.
 #[derive(Debug)]
 pub struct DnsResolver {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
     cache: Arc<DashMap<String, CachedResult>>,
     config: DnsConfig,
 }
@@ -178,7 +179,9 @@ impl DnsResolver {
         let mut opts = ResolverOpts::default();
         opts.timeout = Duration::from_secs(dns_config.timeout_secs);
 
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
+        let resolver = TokioResolver::builder(TokioConnectionProvider::default())?
+            .with_options(opts)
+            .build();
 
         let cache = Arc::new(DashMap::new());
 
@@ -199,7 +202,10 @@ impl DnsResolver {
         opts: ResolverOpts,
         dns_config: DnsConfig,
     ) -> Result<Self, DnsError> {
-        let resolver = TokioAsyncResolver::tokio(resolver_config, opts);
+        let resolver =
+            TokioResolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
+                .with_options(opts)
+                .build();
 
         let cache = Arc::new(DashMap::new());
 
@@ -311,10 +317,7 @@ impl DnsResolver {
             }
             Err(err) => {
                 // Check if this is NoRecordsFound (no MX records exist)
-                if matches!(
-                    err.kind(),
-                    hickory_resolver::error::ResolveErrorKind::NoRecordsFound { .. }
-                ) {
+                if err.is_no_records_found() {
                     debug!("No MX records found for {domain}, falling back to A/AAAA");
                     self.fallback_to_a_aaaa(domain).await
                 } else {
@@ -365,10 +368,7 @@ impl DnsResolver {
             }
             Err(err) => {
                 warn!("A/AAAA lookup failed for {domain}: {err}");
-                if matches!(
-                    err.kind(),
-                    hickory_resolver::error::ResolveErrorKind::NoRecordsFound { .. }
-                ) {
+                if err.is_no_records_found() {
                     Err(DnsError::NoMailServers(domain.to_string()))
                 } else {
                     Err(DnsError::LookupFailed(err))
@@ -385,12 +385,7 @@ impl DnsResolver {
     pub async fn validate_domain(&self, domain: &str) -> Result<(), DnsError> {
         match self.resolver.lookup_ip(domain).await {
             Ok(_) => Ok(()),
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    hickory_resolver::error::ResolveErrorKind::NoRecordsFound { .. }
-                ) =>
-            {
+            Err(err) if err.is_no_records_found() || err.is_nx_domain() => {
                 Err(DnsError::DomainNotFound(domain.to_string()))
             }
             Err(err) => Err(DnsError::LookupFailed(err)),

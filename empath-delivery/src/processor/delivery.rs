@@ -119,9 +119,7 @@ pub async fn prepare_message(
             .await?;
 
         if resolved.is_empty() {
-            return Err(
-                PermanentError::NoMailServers(info.recipient_domain.to_string()).into(),
-            );
+            return Err(PermanentError::NoMailServers(info.recipient_domain.to_string()).into());
         }
 
         resolved
@@ -195,8 +193,8 @@ pub async fn prepare_message(
             Ok(())
         }
         Err(e) => {
-            let error = handle_delivery_error(processor, message_id, &mut context, e, mx_address)
-                .await;
+            let error =
+                handle_delivery_error(processor, message_id, &mut context, e, mx_address).await;
             Err(error)
         }
     }

@@ -613,7 +613,8 @@ mod test {
         let response = session.receive(&mut context).await;
         assert!(response.is_ok_and(|v| v));
 
-        for module in MODULE_STORE.get().cloned().unwrap().iter() {
+        let modules = MODULE_STORE.get().cloned().unwrap();
+        for module in modules.iter() {
             if let Module::TestModule(mute) = module {
                 assert!(
                     mute.read()

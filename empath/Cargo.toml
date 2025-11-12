@@ -31,7 +31,7 @@ path = "bin/empathctl.rs"
 
 [dependencies]
 anyhow = "1.0.93"
-bincode = "1"
+bincode = { version = "2", features = ["serde"] }
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 empath-common = { path = "../empath-common", version = "*" }
@@ -43,7 +43,7 @@ empath-tracing = { path = "../empath-tracing", version = "*" }
 futures-util = "0.3"
 libc = "0.2"
 mailparse = "0.16"
-ron = "0.8"
+ron = "0.11"
 rustls-pemfile = "2.2"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"

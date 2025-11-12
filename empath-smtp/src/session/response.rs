@@ -4,9 +4,11 @@ use empath_common::{context, status::Status, tracing};
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, state};
-
-use super::{Event, Response, Session};
+use crate::{
+    State,
+    session::{Event, Response, Session},
+    state,
+};
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// Format and return the response to send to the client

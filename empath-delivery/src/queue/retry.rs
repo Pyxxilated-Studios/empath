@@ -43,8 +43,8 @@ pub fn calculate_next_retry_time(
     )]
     let jittered_delay = {
         let jitter_range = (delay as f64) * jitter_factor;
-        let mut rng = rand::thread_rng();
-        let jitter: f64 = rng.gen_range(-jitter_range..=jitter_range);
+        let mut rng = rand::rng();
+        let jitter: f64 = rng.random_range(-jitter_range..=jitter_range);
         ((delay as f64) + jitter).max(0.0) as u64
     };
 

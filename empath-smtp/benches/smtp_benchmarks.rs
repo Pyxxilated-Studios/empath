@@ -6,9 +6,9 @@
 //! - FSM state transitions
 //! - Context operations
 
-use std::sync::Arc;
+use std::{hint::black_box, sync::Arc};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use empath_common::context::Context;
 use empath_smtp::{
     MailParameters, State,

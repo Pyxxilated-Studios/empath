@@ -152,9 +152,13 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
     internal!(level = INFO, "Initialising modules ...");
 
     // Add core module first so it runs before other validation modules
-    let mut all_modules = vec![Module::Core {
-        validators: Arc::new(core::CoreValidators::new()),
-    }];
+    let mut all_modules = vec![
+        Module::Core {
+            validators: Arc::new(core::CoreValidators::new()),
+        },
+        #[cfg(debug_assertions)]
+        Module::TestModule(RwLock::default()),
+    ];
     all_modules.extend(modules);
 
     all_modules
@@ -165,10 +169,8 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
             Module::TestModule { .. } | Module::Core { .. } => Ok(()),
         })?;
 
-    let modules: Arc<[Module]> = all_modules.into();
-
     // Set module store (ignore if already initialized, which can happen in tests)
-    let _ = MODULE_STORE.set(modules);
+    let _ = MODULE_STORE.set(all_modules.into());
 
     internal!(level = INFO, "Modules initialised");
 

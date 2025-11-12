@@ -16,16 +16,12 @@ mod types;
 
 // Re-export DNS types
 pub use dns::{DnsConfig, DnsError, DnsResolver, MailServer};
-
 // Re-export domain configuration types
 pub use domain_config::{DomainConfig, DomainConfigRegistry};
-
 // Re-export common types
 pub use empath_common::{DeliveryAttempt, DeliveryStatus};
-
 // Re-export error types
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
-
 // Re-export core types
 pub use processor::DeliveryProcessor;
 pub use queue::DeliveryQueue;

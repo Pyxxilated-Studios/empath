@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use empath_common::{DeliveryStatus, tracing::{debug, error, warn}};
+use empath_common::{
+    DeliveryStatus,
+    tracing::{debug, error, warn},
+};
 
 use crate::{
     dns::MailServer,
@@ -105,10 +108,7 @@ pub async fn process_queue_internal(
                 .await;
 
             // Reset to first MX server for new retry cycle
-            processor
-                .queue
-                .reset_server_index(&info.message_id)
-                .await;
+            processor.queue.reset_server_index(&info.message_id).await;
 
             // Persist the Pending status for retry
             if let Err(e) =

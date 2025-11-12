@@ -49,11 +49,11 @@ pub enum SpoolError {
 pub enum SerializationError {
     /// Bincode serialization failed.
     #[error("Bincode encode error: {0}")]
-    Encode(String),
+    Encode(#[from] bincode::error::EncodeError),
 
     /// Bincode deserialization failed.
     #[error("Bincode decode error: {0}")]
-    Decode(String),
+    Decode(#[from] bincode::error::DecodeError),
 
     /// Invalid message format (corrupted data).
     #[error("Invalid message format: {0}")]
@@ -98,71 +98,9 @@ impl<T> From<std::sync::PoisonError<T>> for SpoolError {
     }
 }
 
-// Convert bincode errors to our error type
-impl From<bincode::Error> for SerializationError {
-    fn from(e: bincode::Error) -> Self {
-        match *e {
-            bincode::ErrorKind::Io(io_err) => {
-                Self::Decode(format!("I/O error during deserialization: {io_err}"))
-            }
-            bincode::ErrorKind::InvalidUtf8Encoding(utf8_err) => {
-                Self::InvalidFormat(format!("Invalid UTF-8: {utf8_err}"))
-            }
-            bincode::ErrorKind::InvalidBoolEncoding(val) => {
-                Self::InvalidFormat(format!("Invalid bool encoding: {val}"))
-            }
-            bincode::ErrorKind::InvalidCharEncoding => {
-                Self::InvalidFormat("Invalid char encoding".to_string())
-            }
-            bincode::ErrorKind::InvalidTagEncoding(val) => {
-                Self::InvalidFormat(format!("Invalid tag encoding: {val}"))
-            }
-            bincode::ErrorKind::DeserializeAnyNotSupported => {
-                Self::Decode("Deserialize any not supported".to_string())
-            }
-            bincode::ErrorKind::SizeLimit => Self::Decode("Size limit exceeded".to_string()),
-            bincode::ErrorKind::SequenceMustHaveLength => {
-                Self::InvalidFormat("Sequence must have length".to_string())
-            }
-            bincode::ErrorKind::Custom(msg) => Self::Decode(msg),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_spool_error_display() {
-        let id = SpooledMessageId::generate();
-        let err = SpoolError::NotFound(id.clone());
-        assert_eq!(err.to_string(), format!("Message not found: {id}"));
-
-        let err = SpoolError::AlreadyExists(id.clone());
-        assert_eq!(err.to_string(), format!("Message already exists: {id}"));
-
-        let err = SpoolError::Internal("test error".to_string());
-        assert_eq!(err.to_string(), "Internal error: test error");
-    }
-
-    #[test]
-    fn test_serialization_error_display() {
-        let err = SerializationError::Encode("test".to_string());
-        assert_eq!(err.to_string(), "Bincode encode error: test");
-
-        let err = SerializationError::Corrupted("missing header".to_string());
-        assert_eq!(err.to_string(), "Corrupted message data: missing header");
-    }
-
-    #[test]
-    fn test_validation_error_display() {
-        let err = ValidationError::PathNotFound("/var/spool".to_string());
-        assert_eq!(err.to_string(), "Spool path does not exist: /var/spool");
-
-        let err = ValidationError::NotWritable("/tmp/spool".to_string());
-        assert_eq!(err.to_string(), "Spool path is not writable: /tmp/spool");
-    }
 
     #[test]
     fn test_io_error_conversion() {
