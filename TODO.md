@@ -2228,6 +2228,535 @@ After completing Phase 1, the system will be production-ready for basic mail del
 
 ---
 
-**Last Updated:** 2025-11-12 (completed task 4.0.1: empath-delivery code structure refactoring - 98% reduction in lib.rs)
-**Contributors:** code-reviewer, architect-review, rust-expert, refactoring-specialist agents
+## Phase 7: Developer Experience (DX) Improvements (2-4 weeks)
+
+**Status:** Added 2025-11-12 (DX Optimizer Review)
+**Overall Assessment:** Documentation: A+, Tooling: C+, Automation: B-, Setup Experience: C
+**Expected Impact:** 50-60% reduction in common task friction
+
+### 🟡 7.1 Add Task Runner (justfile)
+**Priority:** High (Highest Impact Single Item)
+**Complexity:** Low
+**Effort:** 2-3 hours
+**Files:** `justfile` (new)
+
+**Problem:** Developers must remember and type long clippy commands, benchmark invocations, and FFI build steps.
+
+**Implementation:** Add `justfile` (modern, simpler syntax than Makefile) for common tasks:
+
+```just
+# List all available commands
+default:
+    @just --list
+
+# Run strict clippy checks (project standard)
+lint:
+    cargo clippy --all-targets --all-features -- \
+        -D clippy::all -D clippy::pedantic -D clippy::nursery \
+        -A clippy::must_use_candidate
+
+# Run tests with nextest (faster)
+test:
+    cargo nextest run
+
+# Run benchmarks
+bench:
+    cargo bench
+
+# Build FFI examples
+build-ffi:
+    cd empath-ffi/examples && \
+    gcc example.c -fpic -shared -o libexample.so -l empath -L ../../target/debug && \
+    gcc event.c -fpic -shared -o libevent.so -l empath -L ../../target/debug
+
+# Full CI check locally
+ci: lint test
+
+# Setup development environment (install tools)
+setup:
+    cargo install cargo-nextest cargo-watch cargo-outdated cargo-audit just
+    ./scripts/install-hooks.sh || true
+```
+
+**Benefits:**
+- **80% reduction** in command typing for common tasks
+- Self-documenting (`just` without args lists commands)
+- Easy onboarding (`just setup` to install all tools)
+- Consistent workflow across team members
+
+**Dependencies:** None (user installs `cargo install just`)
+
+---
+
+### 🟡 7.2 Improve README.md
+**Priority:** High
+**Complexity:** Low
+**Effort:** 1 hour
+**Files:** `README.md`
+
+**Problem:** README.md is only 3 lines and doesn't guide newcomers. CLAUDE.md is excellent but not discoverable.
+
+**Implementation:** Enhance README with:
+- Quick start guide (Prerequisites, Installation, Common Commands)
+- Queue management CLI examples
+- Pointer to CLAUDE.md for detailed documentation
+- Architecture overview (7-crate workspace)
+- Contributing and License sections
+
+**Benefits:**
+- **5-minute onboarding** instead of 30+ minutes
+- Clear entry point for new developers
+- Reduces support questions
+
+**Dependencies:** None
+
+---
+
+### 🟡 7.3 Add Cargo Aliases
+**Priority:** High
+**Complexity:** Low
+**Effort:** 30 minutes
+**Files:** `.cargo/config.toml`
+
+**Problem:** Long commands even with justfile (cargo aliases are even faster).
+
+**Implementation:** Add aliases to `.cargo/config.toml`:
+
+```toml
+[alias]
+# Linting
+l = "clippy --all-targets --all-features -- -D clippy::all -D clippy::pedantic -D clippy::nursery -A clippy::must_use_candidate"
+lfix = "clippy --all-targets --all-features --fix -- -D clippy::all -D clippy::pedantic -D clippy::nursery -A clippy::must_use_candidate"
+
+# Testing
+t = "nextest run"
+tm = "miri nextest run"
+tw = "watch -x nextest run"
+tc = "check --all-targets"
+
+# Benchmarking
+b = "bench"
+
+# Quality checks
+ci = "!cargo l && cargo t"
+```
+
+**Usage:** `cargo l` (lint), `cargo t` (test), `cargo tw` (test-watch), `cargo ci` (full check)
+
+**Benefits:**
+- **Super fast** (4 characters vs 90+)
+- Works everywhere (no need to install just)
+- Muscle memory develops quickly
+
+**Dependencies:** None
+
+---
+
+### 🟢 7.4 Add .editorconfig
+**Priority:** Medium
+**Complexity:** Low
+**Effort:** 15 minutes
+**Files:** `.editorconfig` (new)
+
+**Problem:** No consistent editor settings across team members (tabs vs spaces, line endings, etc.).
+
+**Implementation:** Add `.editorconfig` file for consistent formatting:
+
+```ini
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.rs]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+[*.toml]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+```
+
+**Benefits:**
+- Consistent formatting across editors
+- Reduces diff noise
+- Supported by all major editors
+
+**Dependencies:** None
+
+---
+
+### 🟡 7.5 Enable mold Linker
+**Priority:** High
+**Complexity:** Low
+**Effort:** 15 minutes
+**Files:** `.cargo/config.toml`
+
+**Problem:** Linking is commented out in `.cargo/config.toml`, slowing down builds by 30-50%.
+
+**Implementation:** Uncomment mold linker configuration:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+```
+
+Add to setup script in justfile:
+```just
+setup:
+    # Install mold linker (faster linking)
+    @if command -v apt-get >/dev/null 2>&1; then \
+        sudo apt-get update && sudo apt-get install -y mold; \
+    elif command -v brew >/dev/null 2>&1; then \
+        brew install mold; \
+    else \
+        echo "Please install mold manually: https://github.com/rui314/mold"; \
+    fi
+```
+
+**Benefits:**
+- **30-50% faster incremental builds**
+- **Faster test iteration** (compile → run → fix cycle)
+- Already used in CI, should be used locally too
+
+**Dependencies:** None (user installs mold via package manager)
+
+---
+
+### 🟢 7.6 Add rust-analyzer Configuration
+**Priority:** Medium
+**Complexity:** Low
+**Effort:** 30 minutes
+**Files:** `.vscode/settings.json` (new), `.vscode/extensions.json` (new)
+
+**Problem:** No IDE configuration guidance, rust-analyzer may be slow or show incorrect warnings.
+
+**Implementation:** Add `.vscode/settings.json`:
+
+```json
+{
+  "rust-analyzer.cargo.features": "all",
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": [
+    "--all-targets", "--all-features", "--",
+    "-D", "clippy::all",
+    "-D", "clippy::pedantic",
+    "-D", "clippy::nursery",
+    "-A", "clippy::must_use_candidate"
+  ],
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true,
+    "editor.rulers": [120]
+  },
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/spool/**": true
+  }
+}
+```
+
+**Benefits:**
+- **Format on save** reduces manual cargo fmt runs
+- **Inline clippy warnings** catch issues immediately
+- **Faster feedback loop** (see errors while typing)
+
+**Dependencies:** None (user has VS Code and rust-analyzer extension)
+
+---
+
+### 🟢 7.7 Add Git Pre-commit Hook
+**Priority:** Medium
+**Complexity:** Low
+**Effort:** 1 hour
+**Files:** `scripts/install-hooks.sh` (new), update `justfile`
+
+**Problem:** Developers may forget to run fmt/clippy before committing, leading to CI failures.
+
+**Implementation:** Add pre-commit hook with opt-out mechanism:
+
+```bash
+#!/usr/bin/env bash
+# .git/hooks/pre-commit
+
+# Allow skipping with SKIP_HOOKS=1 git commit
+if [ -n "$SKIP_HOOKS" ]; then
+    echo "⚠️  Skipping pre-commit hooks (SKIP_HOOKS is set)"
+    exit 0
+fi
+
+echo "Running pre-commit checks..."
+
+# Check formatting
+if ! cargo fmt --all -- --check; then
+    echo "❌ Formatting check failed. Run 'cargo fmt --all' to fix."
+    exit 1
+fi
+
+# Run quick clippy check
+if ! cargo clippy --all-targets -- -D warnings 2>/dev/null; then
+    echo "❌ Clippy check failed. Run 'just lint' or 'cargo l' to see details."
+    exit 1
+fi
+
+echo "✅ Pre-commit checks passed!"
+```
+
+Add to justfile:
+```just
+install-hooks:
+    ./scripts/install-hooks.sh
+```
+
+**Benefits:**
+- **Catch issues before CI** (saves time)
+- **Prevents broken commits** entering history
+- **Opt-out available** for emergencies (`SKIP_HOOKS=1 git commit`)
+
+**Dependencies:** 7.1 (justfile for install-hooks command)
+
+---
+
+### 🟢 7.8 Add cargo-nextest Configuration
+**Priority:** Medium
+**Complexity:** Low
+**Effort:** 1 hour
+**Files:** `.config/nextest.toml` (new)
+
+**Problem:** CI uses nextest, but no local configuration file. Developers may not know about it.
+
+**Implementation:** Add `.config/nextest.toml`:
+
+```toml
+[profile.default]
+retries = 0
+fail-fast = false
+status-level = "all"
+
+[profile.ci]
+retries = 2
+fail-fast = true
+
+[profile.default.junit]
+path = "target/nextest/junit.xml"
+```
+
+**Benefits:**
+- Consistent test behavior locally and in CI
+- JUnit output for test reports
+- Retry flaky tests in CI
+
+**Dependencies:** None
+
+---
+
+### 🟢 7.9 Add cargo-deny Configuration
+**Priority:** Medium
+**Complexity:** Medium
+**Effort:** 2 hours
+**Files:** `deny.toml` (new), update justfile and CI
+
+**Problem:** No dependency license checking, security advisory scanning, or duplicate dependency detection.
+
+**Implementation:** Add `deny.toml`:
+
+```toml
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "deny"
+notice = "warn"
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "ISC",
+    "BSD-3-Clause",
+    "Unicode-DFS-2016",
+]
+copyleft = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+```
+
+Add to justfile:
+```just
+check-deps:
+    cargo deny check
+```
+
+**Benefits:**
+- Catch security vulnerabilities early
+- Enforce license compliance
+- Detect duplicate dependencies (reduce binary size)
+
+**Dependencies:** None (user installs `cargo install cargo-deny`)
+
+---
+
+### 🟢 7.10 Add Examples Directory
+**Priority:** Medium
+**Complexity:** Medium
+**Effort:** 4-6 hours
+**Files:** `examples/*.rs` (new)
+
+**Problem:** No runnable examples for common use cases. FFI examples exist but are C code, not Rust examples.
+
+**Implementation:** Add `examples/` directory with runnable Rust examples:
+- `examples/simple_mta.rs` - Basic MTA setup
+- `examples/custom_validation.rs` - Custom validation module
+- `examples/queue_management.rs` - Working with delivery queue
+- `examples/embedded_mta.rs` - Embedding in another app
+
+**Benefits:**
+- Faster onboarding (working examples)
+- Demonstrates best practices
+- Basis for integration tests
+
+**Dependencies:** None
+
+---
+
+### 🟢 7.11 Add Benchmark Baseline Tracking
+**Priority:** Medium
+**Complexity:** Low
+**Effort:** 1 hour
+**Files:** `.gitea/workflows/benchmark.yml` (new)
+
+**Problem:** Benchmarks run but no baseline comparison to detect regressions.
+
+**Implementation:** Add CI job to track benchmark baselines and upload results as artifacts.
+
+**Benefits:**
+- Detect performance regressions in PR reviews
+- Track performance improvements over time
+- Data-driven optimization decisions
+
+**Dependencies:** 6.9 (Benchmarks with criterion) ✅ COMPLETED
+
+---
+
+### 🟢 7.12 Add CONTRIBUTING.md
+**Priority:** Medium
+**Complexity:** Low
+**Effort:** 2 hours
+**Files:** `CONTRIBUTING.md` (new)
+
+**Problem:** No contribution guidelines. CLAUDE.md has technical details but not process.
+
+**Implementation:** Add `CONTRIBUTING.md` with:
+- Getting Started (fork, clone, install tools, run tests)
+- Development Workflow (branch, make changes, commit, PR)
+- Code Style (Edition 2024, formatting, linting, documentation, tests)
+- Commit Message Format (Conventional Commits)
+- Pull Request Process (tests pass, update docs, request review)
+
+**Benefits:**
+- Clear expectations for contributors
+- Reduces back-and-forth on PRs
+- Professional appearance
+
+**Dependencies:** 7.1 (justfile for setup command)
+
+---
+
+### 🔵 7.13 Add sccache for Distributed Build Caching
+**Priority:** Low
+**Complexity:** Medium
+**Effort:** 2-3 hours
+**Files:** CI configuration
+
+**Implementation:** Enable sccache in CI to cache compilation across builds.
+
+**Benefits:**
+- Faster CI builds
+- Reduced CI costs
+
+**Dependencies:** None
+
+---
+
+### 🔵 7.14 Add Documentation Tests
+**Priority:** Low
+**Complexity:** Medium
+**Effort:** 3-4 hours
+**Files:** CI configuration
+
+**Implementation:** Ensure code examples in CLAUDE.md are tested with `mdbook-test` or similar.
+
+**Benefits:**
+- Documentation stays up to date
+- Code examples are verified to work
+
+**Dependencies:** None
+
+---
+
+### 🔵 7.15 Add Docker Development Environment
+**Priority:** Low
+**Complexity:** Medium
+**Effort:** 4-6 hours
+**Files:** `Dockerfile.dev` (new), `docker-compose.yml` (new)
+
+**Implementation:** Create `Dockerfile.dev` and `docker-compose.yml` for consistent environment.
+
+**Benefits:**
+- Consistent development environment
+- Easy setup on new machines
+- Isolates dependencies
+
+**Dependencies:** None
+
+---
+
+### DX Implementation Roadmap
+
+**Phase 7.A: Quick Wins (1 day)** - RECOMMENDED TO START HERE
+1. ✅ Add justfile (7.1) - 2-3 hours
+2. ✅ Improve README.md (7.2) - 1 hour
+3. ✅ Add cargo aliases (7.3) - 30 min
+4. ✅ Add .editorconfig (7.4) - 15 min
+5. ✅ Enable mold linker (7.5) - 15 min
+
+**Phase 7.B: Developer Experience (1-2 days)**
+6. ✅ Add rust-analyzer config (7.6) - 30 min
+7. ✅ Add git pre-commit hook (7.7) - 1 hour
+8. ✅ Add cargo-nextest config (7.8) - 1 hour
+9. ✅ Add CONTRIBUTING.md (7.12) - 2 hours
+
+**Phase 7.C: Quality & Safety (2-3 days)**
+10. ✅ Add cargo-deny (7.9) - 2 hours
+11. ✅ Add examples directory (7.10) - 4-6 hours
+12. ✅ Add benchmark tracking (7.11) - 1 hour
+
+**Total Estimated Effort:** 3-4 days
+**Expected Impact:** 50-60% reduction in common task friction
+
+**Success Metrics:**
+- Time to first successful build: 30-45 min → <5 min
+- Test-fix-test cycle time: 30-60s → <15s
+- CI failure rate due to formatting/lint: Unknown → <5%
+
+---
+
+**Last Updated:** 2025-11-12 (completed task 4.0.1: empath-delivery code structure refactoring - 98% reduction in lib.rs; added Phase 7: DX improvements)
+**Contributors:** code-reviewer, architect-review, rust-expert, refactoring-specialist, dx-optimizer agents
 **Code Review:** See CODE_REVIEW_2025-11-10.md for comprehensive analysis
