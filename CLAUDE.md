@@ -20,6 +20,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Common Commands
 
+**Quick Start with justfile:**
+The project includes a comprehensive `justfile` task runner with 50+ commands for common development tasks. Install `just` with `cargo install just`, then:
+
+```bash
+just                # List all available commands
+just setup          # Install development tools (nextest, watch, audit, deny, mold)
+just ci             # Run full CI check locally (lint + fmt-check + test)
+just dev            # Development workflow (fmt + lint + test)
+just test           # Run all tests
+just lint           # Run strict clippy checks
+just bench          # Run all benchmarks
+just queue-list     # List queue messages
+just queue-watch    # Live queue statistics
+```
+
+See `just --list` for all 50+ available commands, or use the manual cargo commands below:
+
+**Manual Cargo Commands:**
+
 ```bash
 # Build entire workspace
 cargo build

@@ -2234,10 +2234,11 @@ After completing Phase 1, the system will be production-ready for basic mail del
 **Overall Assessment:** Documentation: A+, Tooling: C+, Automation: B-, Setup Experience: C
 **Expected Impact:** 50-60% reduction in common task friction
 
-### 🟡 7.1 Add Task Runner (justfile)
+### ✅ 7.1 Add Task Runner (justfile)
 **Priority:** High (Highest Impact Single Item)
 **Complexity:** Low
 **Effort:** 2-3 hours
+**Status:** ✅ **COMPLETED** (2025-11-12)
 **Files:** `justfile` (new)
 
 **Problem:** Developers must remember and type long clippy commands, benchmark invocations, and FFI build steps.
@@ -2283,6 +2284,64 @@ setup:
 - Consistent workflow across team members
 
 **Dependencies:** None (user installs `cargo install just`)
+
+**Implementation Details:**
+
+Created comprehensive `justfile` with 50+ commands organized into categories:
+
+**Core Development:**
+- `just lint` - Run strict clippy checks (all/pedantic/nursery)
+- `just lint-fix` - Auto-fix clippy issues
+- `just fmt` / `just fmt-check` - Format code
+- `just test` - Run all tests
+- `just test-nextest` - Run tests with nextest (faster)
+- `just test-watch` - Continuous testing with cargo-watch
+- `just test-miri` - Run miri for undefined behavior detection
+- `just ci` - Full CI check locally (lint + fmt-check + test)
+
+**Benchmarking:**
+- `just bench` - Run all benchmarks
+- `just bench-smtp` / `bench-spool` / `bench-delivery` - Per-crate benchmarks
+- `just bench-group GROUP` - Run specific benchmark group
+- `just bench-view` - Open benchmark report in browser
+
+**Building:**
+- `just build` / `just build-release` - Build workspace
+- `just build-ffi` - Build FFI examples (C modules)
+- `just build-empathctl` - Build queue management CLI
+- `just build-all` - Build all targets
+
+**Queue Management:**
+- `just queue-list` - List queue messages
+- `just queue-stats` - Show queue statistics
+- `just queue-watch` - Live queue stats (watch mode)
+
+**Running:**
+- `just run` - Run empath binary
+- `just run-default` - Run with empath.config.ron
+- `just run-with-config CONFIG` - Run with custom config
+
+**Dependencies:**
+- `just deps-outdated` - Check for outdated dependencies
+- `just deps-audit` - Security audit with cargo-audit
+- `just deps-deny` - Check with cargo-deny
+- `just deps-update` - Update dependencies
+
+**Development Environment:**
+- `just setup` - Install all development tools (nextest, watch, audit, deny, mold)
+- `just clean` / `just clean-spool` - Clean build artifacts
+
+**Documentation:**
+- `just docs` - Generate and open documentation
+- `just stats` - Show project statistics (lines of code, dependency tree)
+- `just timings` - View cargo build timings
+
+**Workflow Shortcuts:**
+- `just dev` - Format + lint + test
+- `just pre-commit` - Fast pre-commit checks
+- `just fix` - Auto-fix lint + format issues
+
+All commands include helpful descriptions and are self-documenting via `just --list`.
 
 ---
 
@@ -2751,6 +2810,6 @@ check-deps:
 
 ---
 
-**Last Updated:** 2025-11-12 (completed task 4.0.1: empath-delivery code structure refactoring - 98% reduction in lib.rs; added Phase 7: DX improvements)
+**Last Updated:** 2025-11-12 (completed task 7.1: Add justfile with 50+ development commands; completed task 4.0.1: empath-delivery code structure refactoring - 98% reduction in lib.rs; added Phase 7: DX improvements)
 **Contributors:** code-reviewer, architect-review, rust-expert, refactoring-specialist, dx-optimizer agents
 **Code Review:** See CODE_REVIEW_2025-11-10.md for comprehensive analysis
