@@ -15,7 +15,7 @@ mod smtp_transaction;
 mod types;
 
 // Re-export DNS types
-pub use dns::{DnsConfig, DnsError, DnsResolver, MailServer};
+pub use dns::{CacheStats, DnsConfig, DnsError, DnsResolver, MailServer};
 // Re-export domain configuration types
 pub use domain_config::{DomainConfig, DomainConfigRegistry};
 // Re-export common types

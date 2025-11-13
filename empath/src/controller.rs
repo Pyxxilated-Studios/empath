@@ -1,6 +1,7 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use empath_common::{Signal, controller::Controller, internal, logging, tracing};
+use empath_control::{ControlServer, DEFAULT_CONTROL_SOCKET};
 use empath_ffi::modules::{self, Module};
 use empath_smtp::Smtp;
 use empath_tracing::traced;
@@ -21,6 +22,13 @@ pub struct Empath {
     spool: empath_spool::SpoolConfig,
     #[serde(alias = "delivery", default)]
     delivery: empath_delivery::DeliveryProcessor,
+    /// Path to the control socket (optional, defaults to /tmp/empath.sock)
+    #[serde(alias = "control_socket", default = "default_control_socket")]
+    control_socket_path: String,
+}
+
+fn default_control_socket() -> String {
+    DEFAULT_CONTROL_SOCKET.to_string()
 }
 
 pub static SHUTDOWN_BROADCAST: LazyLock<broadcast::Sender<Signal>> = LazyLock::new(|| {
@@ -95,6 +103,16 @@ impl Empath {
         // Initialize delivery controller with the same backing store and spool path
         self.delivery.init(backing_store)?;
 
+        // Create control server
+        let delivery_arc = Arc::new(self.delivery);
+        let control_handler = Arc::new(crate::control_handler::EmpathControlHandler::new(
+            Arc::clone(&delivery_arc),
+        ));
+        let control_server = ControlServer::new(&self.control_socket_path, control_handler)
+            .map_err(|e| anyhow::anyhow!("Failed to create control server: {e}"))?;
+
+        internal!("Control server will listen on: {}", self.control_socket_path);
+
         let ret = tokio::select! {
             r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
                 r.map_err(|e| anyhow::anyhow!(e))
@@ -102,8 +120,11 @@ impl Empath {
             r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
                 r.map_err(|e| anyhow::anyhow!(e))
             }
-            r = self.delivery.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+            r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
                 r.map_err(|e| anyhow::anyhow!(e))
+            }
+            r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                r.map_err(|e| anyhow::anyhow!("Control server error: {e}"))
             }
             r = shutdown() => {
                 r

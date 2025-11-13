@@ -1,4 +1,5 @@
 pub mod controller;
+pub mod control_handler;
 
 // Import tracing items for macro expansion
 use empath_common::tracing::{Instrument, Level, event, span};

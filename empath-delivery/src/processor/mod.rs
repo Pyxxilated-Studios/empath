@@ -183,6 +183,18 @@ impl DeliveryProcessor {
         Ok(())
     }
 
+    /// Get a reference to the DNS resolver (for control interface)
+    #[must_use]
+    pub const fn dns_resolver(&self) -> &Option<DnsResolver> {
+        &self.dns_resolver
+    }
+
+    /// Get a reference to the domain configuration registry (for control interface)
+    #[must_use]
+    pub const fn domains(&self) -> &DomainConfigRegistry {
+        &self.domains
+    }
+
     /// Run the delivery processor
     ///
     /// This method runs continuously until a shutdown signal is received.

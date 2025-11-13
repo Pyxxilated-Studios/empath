@@ -1,5 +1,5 @@
 [workspace]
-members = ["empath", "empath-common", "empath-delivery", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing"]
+members = ["empath", "empath-common", "empath-control", "empath-delivery", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing"]
 resolver = "3"
 
 [workspace.lints.clippy]

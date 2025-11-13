@@ -1,10 +1,9 @@
-//! Command-line utility for managing the Empath MTA queue
+//! Command-line utility for managing the Empath MTA
 //!
-//! This tool provides operational control over the delivery queue, including:
-//! - Listing messages by status
-//! - Viewing message details
-//! - Retrying failed deliveries
-//! - Deleting messages
+//! This tool provides operational control over the MTA, including:
+//! - Queue management (list, view, retry, delete messages)
+//! - DNS cache management (list, clear, refresh)
+//! - System status and health checks
 //! - Freezing/unfreezing the queue
 //! - Viewing statistics
 
@@ -17,14 +16,15 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use empath_control::{DEFAULT_CONTROL_SOCKET, ControlClient, Request, DnsCommand, SystemCommand};
 
-/// Command-line utility for managing the Empath MTA delivery queue
+/// Command-line utility for managing the Empath MTA
 #[derive(Parser, Debug)]
 #[command(name = "empathctl")]
-#[command(about = "Manage the Empath MTA delivery queue", long_about = None)]
+#[command(about = "Manage the Empath MTA", long_about = None)]
 #[command(version)]
 struct Cli {
-    /// Path to the spool directory
+    /// Path to the spool directory (for queue commands)
     #[arg(short, long, default_value = "/tmp/spool/empath")]
     spool_path: PathBuf,
 
@@ -32,17 +32,66 @@ struct Cli {
     #[arg(short, long)]
     queue_state: Option<PathBuf>,
 
+    /// Path to the control socket (for control commands)
+    #[arg(short = 'c', long, default_value = DEFAULT_CONTROL_SOCKET)]
+    control_socket: String,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Queue management commands
+    /// Queue management commands (file-based)
     Queue {
         #[command(subcommand)]
         action: QueueAction,
     },
+    /// DNS cache management (runtime control via socket)
+    Dns {
+        #[command(subcommand)]
+        action: DnsAction,
+    },
+    /// System status and health (runtime control via socket)
+    System {
+        #[command(subcommand)]
+        action: SystemAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DnsAction {
+    /// List all cached DNS entries
+    ListCache,
+    /// Clear the entire DNS cache
+    ClearCache,
+    /// Refresh DNS records for a specific domain
+    Refresh {
+        /// Domain to refresh
+        domain: String,
+    },
+    /// List configured MX overrides
+    ListOverrides,
+    /// Set MX override for a domain (runtime only, not persisted)
+    SetOverride {
+        /// Domain to override
+        domain: String,
+        /// Mail server (host:port) to use
+        server: String,
+    },
+    /// Remove MX override for a domain
+    RemoveOverride {
+        /// Domain to remove override for
+        domain: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SystemAction {
+    /// Check if the MTA is responding
+    Ping,
+    /// Get system status and statistics
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -155,6 +204,12 @@ async fn main() -> anyhow::Result<()> {
                 cmd_stats(&cli.spool_path, &queue_state_path, watch, interval).await?;
             }
         },
+        Commands::Dns { action } => {
+            handle_dns_command_direct(&cli.control_socket, action).await?;
+        }
+        Commands::System { action } => {
+            handle_system_command_direct(&cli.control_socket, action).await?;
+        }
     }
 
     Ok(())
@@ -717,5 +772,181 @@ fn format_age(timestamp_ms: u64) -> String {
     } else {
         let days = age_secs / 86400;
         format!("{days}d")
+    }
+}
+
+// ============================================================================
+// Control Commands (via Unix socket IPC)
+// ============================================================================
+
+/// Check control socket connectivity and return client
+fn check_control_socket(socket_path: &str) -> anyhow::Result<ControlClient> {
+    let client = ControlClient::new(socket_path);
+
+    // Check if socket exists first for better error messages
+    if let Err(e) = client.check_socket_exists() {
+        anyhow::bail!(
+            "Cannot connect to Empath MTA control socket at {socket_path}.\n\
+             Error: {e}\n\
+             \n\
+             Is the Empath MTA running?\n\
+             You can configure the socket path with --control-socket or in empath.config.ron"
+        );
+    }
+
+    Ok(client)
+}
+
+/// Handle DNS commands directly
+async fn handle_dns_command_direct(
+    socket_path: &str,
+    action: DnsAction,
+) -> anyhow::Result<()> {
+    let client = check_control_socket(socket_path)?;
+    handle_dns_command(&client, action).await
+}
+
+/// Handle system commands directly
+async fn handle_system_command_direct(
+    socket_path: &str,
+    action: SystemAction,
+) -> anyhow::Result<()> {
+    let client = check_control_socket(socket_path)?;
+    handle_system_command(&client, action).await
+}
+
+/// Handle DNS cache management commands
+async fn handle_dns_command(
+    client: &ControlClient,
+    action: DnsAction,
+) -> anyhow::Result<()> {
+    use empath_control::{Response, protocol::ResponseData};
+
+    let request = match action {
+        DnsAction::ListCache => Request::Dns(DnsCommand::ListCache),
+        DnsAction::ClearCache => Request::Dns(DnsCommand::ClearCache),
+        DnsAction::Refresh { domain } => Request::Dns(DnsCommand::RefreshDomain(domain)),
+        DnsAction::ListOverrides => Request::Dns(DnsCommand::ListOverrides),
+        DnsAction::SetOverride { domain, server } => {
+            Request::Dns(DnsCommand::SetOverride {
+                domain,
+                mx_server: server,
+            })
+        }
+        DnsAction::RemoveOverride { domain } => {
+            Request::Dns(DnsCommand::RemoveOverride(domain))
+        }
+    };
+
+    let response = client.send_request(request).await?;
+
+    match response {
+        Response::Ok => {
+            println!("✓ Command completed successfully");
+        }
+        Response::Data(data) => match data {
+            ResponseData::DnsCache(cache) => {
+                if cache.is_empty() {
+                    println!("DNS cache is empty");
+                } else {
+                    println!("=== DNS Cache ({} entries) ===\n", cache.len());
+                    let mut domains: Vec<_> = cache.keys().collect();
+                    domains.sort();
+
+                    for domain in domains {
+                        let servers = &cache[domain];
+                        println!("Domain: {domain}");
+                        for server in servers {
+                            println!(
+                                "  → {}:{} (priority: {}, TTL: {}s)",
+                                server.host, server.port, server.priority, server.ttl_remaining_secs
+                            );
+                        }
+                        println!();
+                    }
+                }
+            }
+            ResponseData::MxOverrides(overrides) => {
+                if overrides.is_empty() {
+                    println!("No MX overrides configured");
+                } else {
+                    println!("=== MX Overrides ({}) ===\n", overrides.len());
+                    let mut domains: Vec<_> = overrides.keys().collect();
+                    domains.sort();
+
+                    for domain in domains {
+                        println!("{domain:<40} → {}", overrides[domain]);
+                    }
+                }
+            }
+            ResponseData::Message(msg) => {
+                println!("✓ {msg}");
+            }
+            ResponseData::SystemStatus(_) => {
+                println!("Unexpected response for DNS command: {data:?}");
+            }
+        },
+        Response::Error(err) => {
+            anyhow::bail!("Server error: {err}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle system management commands
+async fn handle_system_command(
+    client: &ControlClient,
+    action: SystemAction,
+) -> anyhow::Result<()> {
+    use empath_control::{Response, protocol::ResponseData};
+
+    let request = match action {
+        SystemAction::Ping => Request::System(SystemCommand::Ping),
+        SystemAction::Status => Request::System(SystemCommand::Status),
+    };
+
+    let response = client.send_request(request).await?;
+
+    match response {
+        Response::Ok => {
+            println!("✓ Pong! MTA is responding");
+        }
+        Response::Data(data) => match data {
+            ResponseData::SystemStatus(status) => {
+                println!("=== Empath MTA Status ===\n");
+                println!("Version:            {}", status.version);
+                println!("Uptime:             {}", format_duration(status.uptime_secs));
+                println!("Queue size:         {} message(s)", status.queue_size);
+                println!("DNS cache entries:  {}", status.dns_cache_entries);
+            }
+            ResponseData::DnsCache(_) | ResponseData::MxOverrides(_) | ResponseData::Message(_) => {
+                println!("Unexpected response for system command: {data:?}");
+            }
+        },
+        Response::Error(err) => {
+            anyhow::bail!("Server error: {err}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Format duration in human-readable form
+fn format_duration(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        let mins = secs / 60;
+        let rem_secs = secs % 60;
+        format!("{mins}m {rem_secs}s")
+    } else if secs < 86400 {
+        let hours = secs / 3600;
+        let rem_mins = (secs % 3600) / 60;
+        format!("{hours}h {rem_mins}m")
+    } else {
+        let days = secs / 86400;
+        let rem_hours = (secs % 86400) / 3600;
+        format!("{days}d {rem_hours}h")
     }
 }

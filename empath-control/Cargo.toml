@@ -1,0 +1,31 @@
+[package]
+name = "empath-control"
+version = "0.1.0"
+edition = "2024"
+authors = ["Pyxxil <pyxxil@pyxxil.tech>"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "rt"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Empath crates
+empath-common = { path = "../empath-common" }
+empath-delivery = { path = "../empath-delivery" }
+
+# Tracing
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"

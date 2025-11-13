@@ -96,6 +96,18 @@ impl DeliveryQueue {
         queue.remove(message_id)
     }
 
+    /// Get the number of messages in the queue (for control interface)
+    pub async fn len(&self) -> usize {
+        let queue = self.queue.read().await;
+        queue.len()
+    }
+
+    /// Check if the queue is empty (for control interface)
+    pub async fn is_empty(&self) -> bool {
+        let queue = self.queue.read().await;
+        queue.is_empty()
+    }
+
     /// Set the next retry timestamp for a message
     pub async fn set_next_retry_at(&self, message_id: &SpooledMessageId, next_retry_at: u64) {
         let mut queue = self.queue.write().await;

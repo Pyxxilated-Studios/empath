@@ -117,6 +117,11 @@ impl DomainConfigRegistry {
     pub fn is_empty(&self) -> bool {
         self.domains.is_empty()
     }
+
+    /// Iterate over all domain configurations (for control interface)
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &DomainConfig)> {
+        self.domains.iter()
+    }
 }
 
 #[cfg(test)]

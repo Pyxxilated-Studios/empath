@@ -86,8 +86,10 @@ cd empath-ffi/examples
 gcc example.c -fpic -shared -o libexample.so -l empath -L ../../target/debug
 gcc event.c -fpic -shared -o libevent.so -l empath -L ../../target/debug
 
-# Queue Management with empathctl
-cargo build --bin empathctl            # Build queue management CLI
+# Queue Management and Runtime Control with empathctl
+cargo build --bin empathctl            # Build empathctl CLI utility
+
+# Queue Management (file-based)
 ./target/debug/empathctl queue list    # List all messages in queue
 ./target/debug/empathctl queue list --status=failed  # List only failed messages
 ./target/debug/empathctl queue view <message-id>  # View message details
@@ -97,6 +99,17 @@ cargo build --bin empathctl            # Build queue management CLI
 ./target/debug/empathctl queue unfreeze  # Resume delivery processing
 ./target/debug/empathctl queue stats     # Show queue statistics
 ./target/debug/empathctl queue stats --watch --interval 2  # Live stats view
+
+# Runtime Control (via control socket IPC)
+./target/debug/empathctl system ping              # Health check
+./target/debug/empathctl system status            # System status
+./target/debug/empathctl dns list-cache           # List DNS cache
+./target/debug/empathctl dns clear-cache          # Clear DNS cache
+./target/debug/empathctl dns refresh example.com  # Refresh domain
+./target/debug/empathctl dns list-overrides       # List MX overrides
+
+# Use custom control socket path
+./target/debug/empathctl --control-socket /var/run/empath.sock system status
 ```
 
 ## Clippy Configuration
@@ -332,8 +345,85 @@ Empath (
             ),
         },
     ),
+    // Control socket configuration (optional)
+    control_socket: "/tmp/empath.sock",  // Path for IPC control socket
 )
 ```
+
+### Runtime Control via Control Socket
+
+The control socket provides runtime management of the MTA without requiring restarts. Commands are sent via the `empathctl` utility using Unix domain socket IPC.
+
+**Control Socket Configuration:**
+- Default path: `/tmp/empath.sock`
+- Configurable via `control_socket` field in config
+- Uses bincode for efficient serialization
+- Automatic cleanup on shutdown
+
+**Available Commands:**
+
+DNS Cache Management:
+```bash
+# List all cached DNS entries with TTL
+empathctl dns list-cache
+
+# Clear entire DNS cache
+empathctl dns clear-cache
+
+# Refresh DNS records for a specific domain
+empathctl dns refresh example.com
+
+# List configured MX overrides
+empathctl dns list-overrides
+```
+
+System Status and Health:
+```bash
+# Health check - verify MTA is responding
+empathctl system ping
+
+# View system status (version, uptime, queue size, cache stats)
+empathctl system status
+```
+
+**Output Example:**
+```bash
+$ empathctl system status
+=== Empath MTA Status ===
+
+Version:            0.0.2
+Uptime:             2d 14h 32m
+Queue size:         42 message(s)
+DNS cache entries:  15
+
+$ empathctl dns list-cache
+=== DNS Cache (3 entries) ===
+
+Domain: example.com
+  → mail.example.com:25 (priority: 10, TTL: 285s)
+  → mail2.example.com:25 (priority: 20, TTL: 285s)
+```
+
+**Custom Socket Path:**
+```bash
+# Use custom socket path
+empathctl --control-socket /var/run/empath.sock system status
+```
+
+**Security:**
+- Socket permissions inherited from umask
+- For multi-user access, adjust socket file permissions
+- Future enhancement: token-based authentication (see TODO.md task 0.13)
+
+**Implementation Details:**
+- Control server runs alongside SMTP, spool, and delivery processors
+- Graceful shutdown coordination
+- 30s timeout per control request
+- Location: `empath-control` crate, `empath/src/control_handler.rs`
+
+**Known Limitations:**
+- Runtime MX override updates not yet supported (requires DomainConfigRegistry refactor)
+- Returns helpful error directing to config file update
 
 ### Data Flow
 

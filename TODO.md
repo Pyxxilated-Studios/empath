@@ -9,6 +9,12 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-13:** ✅ Multi-agent code review completed (code-reviewer, architect-review, rust-expert)
+- **2025-11-13:** 📝 Added 7 new action items from review (tasks 0.15-0.21)
+- **2025-11-13:** ✅ Implemented control socket IPC system for runtime management
+- **2025-11-13:** ✅ Added DNS cache management (list, clear, refresh, overrides)
+- **2025-11-13:** ✅ Enhanced empathctl with control subcommands (dns, system)
+- **2025-11-13:** ✅ Added system status and health check commands
 - **2025-11-11:** ✅ Implemented exponential backoff with message expiration
 - **2025-11-11:** ✅ Implemented graceful shutdown handling with 30s timeout
 - **2025-11-10:** Comprehensive code review completed (see CODE_REVIEW_2025-11-10.md)
@@ -278,7 +284,191 @@ pub enum DeliveryStatus {
 
 ---
 
-### 🟢 0.9 Add DNSSEC Validation and Logging
+### ✅ 0.9 Control Socket IPC System for Runtime Management
+**Priority:** High
+**Complexity:** Medium
+**Effort:** 1 day
+**Status:** ✅ **COMPLETED** (2025-11-13)
+
+**Implementation:**
+- ✅ Created new `empath-control` crate with IPC framework
+  - Protocol types with bincode serialization (Request/Response)
+  - Control server using Unix domain socket
+  - Control client with timeout support
+- ✅ Added DNS cache management methods to `DnsResolver`
+  - `list_cache()` - Get all entries with remaining TTL
+  - `clear_cache()` - Clear entire cache
+  - `invalidate_domain()` - Remove specific domain entry
+  - `refresh_domain()` - Force fresh DNS lookup
+  - `cache_stats()` - Get cache size and expiration info
+- ✅ Implemented control handler in main empath binary
+  - DNS commands (list, clear, refresh cache, manage overrides)
+  - System commands (ping, status with uptime/queue/cache stats)
+- ✅ Integrated control server into main controller
+  - Runs alongside SMTP, spool, and delivery processors
+  - Default socket: `/tmp/empath.sock` (configurable)
+  - Graceful shutdown coordination
+- ✅ Enhanced `empathctl` CLI utility with control subcommands
+  - `empathctl dns list-cache` - List cached DNS entries
+  - `empathctl dns clear-cache` - Clear cache
+  - `empathctl dns refresh <domain>` - Refresh domain
+  - `empathctl dns list-overrides` - List MX overrides
+  - `empathctl system ping` - Health check
+  - `empathctl system status` - Show version, uptime, stats
+
+**Benefits:**
+- **No restart required** for DNS cache operations
+- **Real-time visibility** into system state
+- **Improved debuggability** with cache inspection
+- **Foundation for future control commands** (reload config, adjust log levels)
+
+**Files Created:**
+- `empath-control/src/lib.rs` (new crate)
+- `empath-control/src/protocol.rs` (IPC protocol types)
+- `empath-control/src/server.rs` (Unix socket server)
+- `empath-control/src/client.rs` (IPC client)
+- `empath-control/src/error.rs` (control errors)
+- `empath/src/control_handler.rs` (command handler implementation)
+
+**Files Modified:**
+- `empath-delivery/src/dns.rs` (added cache management methods)
+- `empath-delivery/src/queue/mod.rs` (added len/is_empty for control interface)
+- `empath-delivery/src/domain_config.rs` (added iter for control interface)
+- `empath-delivery/src/processor/mod.rs` (added accessor methods)
+- `empath/src/controller.rs` (integrated control server)
+- `empath/bin/empathctl.rs` (added control subcommands)
+
+**Configuration:**
+```ron
+Empath (
+    // Optional: customize control socket path
+    control_socket: "/tmp/empath.sock",
+)
+```
+
+**Known Limitations:**
+- Runtime MX override updates not yet supported (requires `Arc<DashMap>` for `DomainConfigRegistry`)
+- Returns helpful error message directing users to update config file
+
+**Future Enhancements:** See tasks 0.10, 0.11, 0.12 below
+
+**Dependencies:** None
+**Source:** User request for runtime control capabilities
+
+---
+
+### 🟢 0.10 Add Integration Tests for Control Socket
+**Priority:** Medium
+**Complexity:** Simple
+**Effort:** 4 hours
+**Status:** 📝 **TODO**
+
+**Implementation:**
+- Test control client/server communication
+- Test DNS cache operations
+- Test system status queries
+- Test error handling (socket doesn't exist, timeout, etc.)
+- Test graceful shutdown of control server
+
+**Files to Create:**
+- `empath-control/tests/integration_test.rs`
+
+**Dependencies:** 0.9 (Control Socket IPC)
+
+---
+
+### 🟢 0.11 Enable Runtime MX Override Updates
+**Priority:** Medium
+**Complexity:** Medium
+**Effort:** 4 hours
+**Status:** 📝 **TODO**
+
+**Current Issue:** `DomainConfigRegistry` uses `HashMap` without interior mutability, preventing runtime updates through the control socket.
+
+**Implementation:**
+```rust
+// In empath-delivery/src/domain_config.rs
+use dashmap::DashMap;
+
+#[derive(Debug, Clone, Default)]
+pub struct DomainConfigRegistry {
+    domains: Arc<DashMap<String, DomainConfig>>,
+}
+
+impl DomainConfigRegistry {
+    pub fn set(&self, domain: String, config: DomainConfig) {
+        self.domains.insert(domain, config);
+    }
+
+    pub fn remove(&self, domain: &str) -> Option<DomainConfig> {
+        self.domains.remove(domain).map(|(_, config)| config)
+    }
+}
+```
+
+**Benefits:**
+- Runtime MX override management without restart
+- Useful for testing and debugging
+- Dynamic routing updates
+
+**Files to Modify:**
+- `empath-delivery/src/domain_config.rs` (change HashMap to Arc<DashMap>)
+- `empath/src/control_handler.rs` (remove error, implement actual updates)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+
+---
+
+### 🟢 0.12 Add More Control Commands
+**Priority:** Low
+**Complexity:** Simple-Medium
+**Effort:** Varies
+**Status:** 📝 **TODO**
+
+**Potential Commands:**
+1. **Config reload** - Reload configuration without restart
+   - `empathctl control system reload-config`
+2. **Log level adjustment** - Change log verbosity at runtime
+   - `empathctl control system set-log-level <level>`
+3. **Connection stats** - View active SMTP connections
+   - `empathctl control smtp connections`
+4. **Rate limit adjustments** - Modify per-domain rate limits
+   - `empathctl control delivery set-rate-limit <domain> <limit>`
+5. **Manual queue processing** - Trigger immediate queue scan
+   - `empathctl control queue process-now`
+
+**Implementation:** Add new command variants to `Request` enum and handlers in `EmpathControlHandler`.
+
+**Dependencies:** 0.9 (Control Socket IPC)
+
+---
+
+### 🔵 0.13 Add Authentication/Authorization for Control Socket
+**Priority:** Low
+**Complexity:** Medium
+**Effort:** 1 day
+**Status:** 📝 **TODO**
+
+**Current Issue:** Control socket has no authentication - anyone with socket access can manage the MTA.
+
+**Implementation Options:**
+1. **Unix permissions** - Restrict socket file permissions (current approach)
+2. **Token-based auth** - Require token in requests
+   ```rust
+   pub struct Request {
+       pub token: String,
+       pub command: Command,
+   }
+   ```
+3. **mTLS** - Mutual TLS authentication (overkill for local IPC)
+
+**Recommendation:** Start with Unix permissions, add token-based auth if multi-user support needed.
+
+**Dependencies:** 0.9 (Control Socket IPC)
+
+---
+
+### 🟢 0.14 Add DNSSEC Validation and Logging
 **Priority:** Medium
 **Complexity:** Medium
 **Effort:** 2 days
@@ -312,6 +502,329 @@ delivery: (
 
 **Dependencies:** 1.2.1 (DNSSEC Validation section exists)
 **Source:** CODE_REVIEW_2025-11-10.md Section 1.3
+
+---
+
+### 🟡 0.15 Set Explicit Unix Socket Permissions (Security)
+**Priority:** High (Before Production)
+**Complexity:** Simple
+**Effort:** 1 hour
+**Status:** 📝 **TODO**
+
+**Current Issue:** Control socket inherits umask permissions, currently world-readable (`srwxr-xr-x`). On multi-user systems, any local user can connect and execute control commands.
+
+**Security Impact:** Unauthorized users could clear DNS cache, view system status, or manage MX overrides.
+
+**Implementation:**
+```rust
+// In empath-control/src/server.rs after line 74 (after binding socket)
+use std::os::unix::fs::PermissionsExt;
+
+let listener = UnixListener::bind(&self.socket_path)?;
+
+// Set restrictive permissions (owner only: rw-------)
+let metadata = tokio::fs::metadata(&self.socket_path).await?;
+let mut perms = metadata.permissions();
+perms.set_mode(0o600);  // Owner read/write only
+tokio::fs::set_permissions(&self.socket_path, perms).await?;
+
+info!("Control socket created with mode 0600: {}", self.socket_path);
+```
+
+**Benefits:**
+- Prevents unauthorized local access
+- Follows principle of least privilege
+- Defense in depth (filesystem permissions + application logic)
+
+**Files to Modify:**
+- `empath-control/src/server.rs` (add permission setting after bind)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #1)
+
+---
+
+### 🟡 0.16 Add Client-Side Response Size Validation (DoS Protection)
+**Priority:** High (Before Production)
+**Complexity:** Simple
+**Effort:** 30 minutes
+**Status:** 📝 **TODO**
+
+**Current Issue:** Control client reads response length without validation. A malicious or buggy server could send a huge length prefix (e.g., 4GB), causing memory exhaustion.
+
+**Security Impact:** Client-side DoS attack vector.
+
+**Implementation:**
+```rust
+// In empath-control/src/client.rs around line 82
+let response_len = u32::from_be_bytes(len_buf);
+
+// Add validation before allocation
+const MAX_RESPONSE_SIZE: u32 = 10_000_000;  // 10MB (generous for DNS cache)
+if response_len > MAX_RESPONSE_SIZE {
+    return Err(ControlError::Protocol(Box::new(bincode::ErrorKind::Custom(
+        format!("Response too large: {response_len} bytes (max {MAX_RESPONSE_SIZE})"),
+    ))));
+}
+
+let mut response_bytes = vec![0u8; response_len as usize];
+```
+
+**Current Protection:** Server validates request size (1MB limit at `server.rs:169`), but client lacks symmetric protection.
+
+**Files to Modify:**
+- `empath-control/src/client.rs` (add validation before allocation)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #2)
+
+---
+
+### 🟡 0.17 Add Audit Logging for Control Commands
+**Priority:** High (Before Production)
+**Complexity:** Simple
+**Effort:** 2 hours
+**Status:** 📝 **TODO**
+
+**Current Issue:** No audit trail for control commands. Can't determine who executed what command or when.
+
+**Security Impact:** No accountability for administrative actions. If MX overrides are changed or DNS cache cleared, there's no record of who did it.
+
+**Implementation:**
+```rust
+// In empath/src/control_handler.rs before command handling
+#[instrument(skip(self))]
+async fn handle_dns_command(&self, command: DnsCommand) -> Result<Response> {
+    // Log with structured data
+    tracing::info!(
+        user = ?std::env::var("USER").ok(),
+        uid = unsafe { libc::getuid() },
+        command = ?command,
+        "Control command executed"
+    );
+
+    // ... existing logic
+}
+```
+
+**Add to CLAUDE.md documentation:**
+- Control commands are logged to the main empath log
+- Include user, timestamp, command type, and result
+- Consider separate audit log file for compliance
+
+**Files to Modify:**
+- `empath/src/control_handler.rs` (add structured logging)
+- `CLAUDE.md` (document audit logging)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Security Assessment)
+
+---
+
+### 🟢 0.18 Fix Socket File Race Condition on Startup
+**Priority:** Medium
+**Complexity:** Simple
+**Effort:** 1 hour
+**Status:** 📝 **TODO**
+
+**Current Issue:** If two MTA instances start simultaneously with the same socket path, one could delete the other's socket file.
+
+**Current Code** (`empath-control/src/server.rs:66-71`):
+```rust
+if socket_path.exists() {
+    info!("Removing existing socket file: {}", self.socket_path);
+    tokio::fs::remove_file(socket_path).await?;
+}
+```
+
+**Implementation:**
+```rust
+if socket_path.exists() {
+    // Test if socket is active by attempting connection
+    match UnixStream::connect(socket_path).await {
+        Ok(_) => {
+            return Err(ControlError::Io(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                format!("Socket already in use by running instance: {}", self.socket_path)
+            )));
+        }
+        Err(_) => {
+            // Stale socket from crashed process, safe to remove
+            info!("Removing stale socket file: {}", self.socket_path);
+            tokio::fs::remove_file(socket_path).await?;
+        }
+    }
+}
+```
+
+**Benefits:**
+- Prevents accidental conflicts between instances
+- Clear error message if MTA already running
+- Safely handles stale socket files from crashes
+
+**Files to Modify:**
+- `empath-control/src/server.rs` (improve socket cleanup logic)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #3)
+
+---
+
+### 🟢 0.19 Implement Active DNS Cache Eviction
+**Priority:** Medium
+**Complexity:** Simple
+**Effort:** 2 hours
+**Status:** 📝 **TODO**
+
+**Current Issue:** Expired DNS entries are not actively evicted from cache. `DashMap` only evicts on access (lazy eviction). Long-running MTAs could accumulate expired entries, wasting memory.
+
+**Current Behavior:**
+- `cache_stats()` counts expired entries (lines 472-488 in `empath-delivery/src/dns.rs`)
+- Entries remain in memory until accessed again
+- Counts toward cache capacity limit
+
+**Implementation Option 1 - Evict in list_cache():**
+```rust
+pub fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
+    let now = Instant::now();
+    let mut result = HashMap::new();
+    let mut expired_keys = Vec::new();
+
+    for entry in self.cache.iter() {
+        if entry.value().expires_at <= now {
+            expired_keys.push(entry.key().clone());
+            continue;  // Skip expired
+        }
+        // ... collect active entries
+    }
+
+    // Clean up expired entries
+    for key in expired_keys {
+        self.cache.remove(&key);
+    }
+
+    result
+}
+```
+
+**Implementation Option 2 - Periodic cleanup task:**
+```rust
+// Spawn background task in DnsResolver::new()
+tokio::spawn({
+    let cache = Arc::clone(&cache);
+    async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(300)).await; // Every 5 minutes
+            let now = Instant::now();
+            cache.retain(|_, v| v.expires_at > now);
+        }
+    }
+});
+```
+
+**Recommendation:** Option 1 (evict in list_cache) is simpler and doesn't require background task coordination.
+
+**Files to Modify:**
+- `empath-delivery/src/dns.rs` (add eviction to `list_cache()`)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #4)
+
+---
+
+### 🔵 0.20 Add Protocol Versioning for Future Evolution
+**Priority:** Low
+**Complexity:** Simple
+**Effort:** 1 hour
+**Status:** 📝 **TODO**
+
+**Current Issue:** Control protocol has no version field. Future protocol changes could break compatibility.
+
+**Implementation:**
+```rust
+// In empath-control/src/protocol.rs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Request {
+    pub version: u32,  // Protocol version (start with 1)
+    pub command: Command,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Command {
+    Dns(DnsCommand),
+    System(SystemCommand),
+}
+
+// In server handler
+if request.version != PROTOCOL_VERSION {
+    return Err(ControlError::Protocol(
+        format!("Unsupported protocol version: {}", request.version)
+    ));
+}
+```
+
+**Benefits:**
+- Enables protocol evolution without breaking compatibility
+- Feature detection (client can check server version)
+- Graceful degradation for mixed versions
+
+**Files to Modify:**
+- `empath-control/src/protocol.rs` (add version field)
+- `empath-control/src/server.rs` (validate version)
+- `empath-control/src/client.rs` (send version)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Multi-agent code review 2025-11-13 (Rust Expert - Recommendations)
+
+---
+
+### 🔵 0.21 Add Connection Pooling for empathctl --watch Mode
+**Priority:** Low
+**Complexity:** Simple
+**Effort:** 1 hour
+**Status:** 📝 **TODO**
+
+**Current Issue:** `empathctl --watch` creates a new connection per interval, causing unnecessary socket overhead.
+
+**Current Code** (`empath/bin/empathctl.rs` around stats watch loop):
+```rust
+loop {
+    let client = check_control_socket(socket_path)?;
+    // Send request
+    tokio::time::sleep(interval).await;
+}
+```
+
+**Implementation:**
+```rust
+// Connect once before loop
+let client = check_control_socket(socket_path)?;
+
+loop {
+    // Reuse connection
+    match client.send_request(request.clone()).await {
+        Ok(response) => { /* handle */ }
+        Err(ControlError::ConnectionClosed) => {
+            // Reconnect on connection loss
+            client = check_control_socket(socket_path)?;
+            continue;
+        }
+        Err(e) => return Err(e.into()),
+    }
+    tokio::time::sleep(interval).await;
+}
+```
+
+**Benefits:**
+- Reduces connection overhead for watch mode
+- Fewer socket operations
+- Better responsiveness
+
+**Files to Modify:**
+- `empath/bin/empathctl.rs` (reuse client in watch loops)
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Multi-agent code review 2025-11-13 (Rust Expert - Performance Improvements)
 
 ---
 

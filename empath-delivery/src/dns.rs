@@ -391,6 +391,111 @@ impl DnsResolver {
             Err(err) => Err(DnsError::LookupFailed(err)),
         }
     }
+
+    // ============================================================================
+    // Cache Management Methods (for control interface)
+    // ============================================================================
+
+    /// Get a snapshot of all cached DNS entries with their remaining TTL
+    ///
+    /// Returns a `HashMap` mapping domain names to their cached mail servers.
+    /// Each entry includes the time remaining until the cache expires.
+    #[must_use]
+    pub fn list_cache(&self) -> std::collections::HashMap<String, Vec<(MailServer, Duration)>> {
+        let now = Instant::now();
+        let mut result = std::collections::HashMap::new();
+
+        for entry in self.cache.iter() {
+            let domain = entry.key().clone();
+            let cached = entry.value();
+
+            // Calculate remaining TTL
+            let ttl_remaining = cached
+                .expires_at
+                .checked_duration_since(now)
+                .unwrap_or(Duration::ZERO);
+
+            // Map servers with their TTL
+            let servers_with_ttl: Vec<_> = cached
+                .servers
+                .iter()
+                .map(|server| (server.clone(), ttl_remaining))
+                .collect();
+
+            result.insert(domain, servers_with_ttl);
+        }
+
+        result
+    }
+
+    /// Clear the entire DNS cache
+    ///
+    /// All cached entries will be removed, forcing fresh DNS lookups
+    /// for subsequent `resolve_mail_servers` calls.
+    pub fn clear_cache(&self) {
+        debug!("Clearing DNS cache ({} entries)", self.cache.len());
+        self.cache.clear();
+    }
+
+    /// Invalidate the cache entry for a specific domain
+    ///
+    /// The next call to `resolve_mail_servers` for this domain will
+    /// perform a fresh DNS lookup.
+    ///
+    /// Returns `true` if an entry was removed, `false` if no entry existed.
+    pub fn invalidate_domain(&self, domain: &str) -> bool {
+        debug!("Invalidating DNS cache for domain: {domain}");
+        self.cache.remove(domain).is_some()
+    }
+
+    /// Refresh the DNS cache for a specific domain
+    ///
+    /// Performs a fresh DNS lookup and updates the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if the DNS lookup fails.
+    pub async fn refresh_domain(&self, domain: &str) -> Result<Arc<Vec<MailServer>>, DnsError> {
+        debug!("Refreshing DNS cache for domain: {domain}");
+
+        // Remove existing entry
+        self.cache.remove(domain);
+
+        // Perform fresh lookup (which will re-populate the cache)
+        self.resolve_mail_servers(domain).await
+    }
+
+    /// Get cache statistics
+    ///
+    /// Returns information about cache size and efficiency.
+    #[must_use]
+    pub fn cache_stats(&self) -> CacheStats {
+        let now = Instant::now();
+        let mut expired_count = 0;
+
+        for entry in self.cache.iter() {
+            if entry.value().expires_at <= now {
+                expired_count += 1;
+            }
+        }
+
+        CacheStats {
+            total_entries: self.cache.len(),
+            expired_entries: expired_count,
+            capacity: self.config.cache_size,
+        }
+    }
+}
+
+/// Statistics about the DNS cache
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    /// Total number of cached entries
+    pub total_entries: usize,
+    /// Number of expired entries (stale but not yet evicted)
+    pub expired_entries: usize,
+    /// Configured cache capacity
+    pub capacity: usize,
 }
 
 impl Default for DnsResolver {

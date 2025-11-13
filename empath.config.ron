@@ -1,5 +1,5 @@
 Empath (
-    smtp_controller: (
+    smtp: (
         listeners: [
             {
                 "socket": "[::]:1025",
@@ -36,6 +36,8 @@ Empath (
         ],
     ),
     modules: [
+        // The order of these should really be in the order you want them
+        // to be loaded
         (
             type: "SharedLibrary",
             name: "./empath-ffi/examples/libexample.so",
