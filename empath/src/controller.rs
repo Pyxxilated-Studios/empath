@@ -25,6 +25,9 @@ pub struct Empath {
     /// Path to the control socket (optional, defaults to /tmp/empath.sock)
     #[serde(alias = "control_socket", default = "default_control_socket")]
     control_socket_path: String,
+    /// Metrics configuration
+    #[serde(alias = "metrics", default)]
+    metrics: empath_metrics::MetricsConfig,
 }
 
 fn default_control_socket() -> String {
@@ -86,6 +89,11 @@ impl Empath {
         logging::init();
 
         internal!("Controller running");
+
+        // Initialize metrics
+        if let Err(e) = empath_metrics::init_metrics(&self.metrics) {
+            tracing::warn!(error = %e, "Failed to initialize metrics");
+        }
 
         modules::init(self.modules)?;
 

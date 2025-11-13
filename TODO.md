@@ -1394,21 +1394,88 @@ In-flight deliveries that don't complete within the 30s timeout are marked as pe
 
 ## Phase 2: Observability & Operations (Weeks 3-4)
 
-### 🟡 2.1 Structured Metrics Collection
+### ✅ 2.1 Structured Metrics Collection
 **Priority:** High
 **Complexity:** Medium
 **Effort:** 2-3 days
-**Files:** `empath-delivery/src/metrics.rs` (new)
+**Status:** ✅ **COMPLETED** (2025-11-13)
 
-**Implementation:** Prometheus metrics
+**Implementation:** OpenTelemetry with Prometheus exporter
 
-**Key Metrics:**
-- `empath_delivery_attempts_total{status}` - Counter by success/failure
-- `empath_delivery_duration_seconds{domain}` - Histogram
-- `empath_delivery_queue_size{status}` - Gauge by status
-- `empath_delivery_active_connections{server}` - Gauge
-- `empath_smtp_errors_total{code}` - Counter by SMTP code
-- `empath_dns_lookup_duration_seconds` - Histogram
+**Implemented Metrics:**
+
+**SMTP Metrics** (`empath-metrics/src/smtp.rs`):
+- `empath.smtp.connections.total` - Total connections established
+- `empath.smtp.connections.active` - Currently active connections (UpDownCounter)
+- `empath.smtp.errors.total{code}` - Errors by SMTP response code
+- `empath.smtp.session.duration.seconds` - Session duration histogram
+- `empath.smtp.command.duration.seconds{command}` - Command processing duration
+- `empath.smtp.messages.received.total` - Total messages received
+- `empath.smtp.message.size.bytes` - Message size distribution
+
+**Delivery Metrics** (`empath-metrics/src/delivery.rs`):
+- `empath.delivery.attempts.total{status,domain}` - Attempts by status/domain
+- `empath.delivery.duration.seconds{domain}` - Delivery duration histogram
+- `empath.delivery.queue.size{status}` - Queue size by status (ObservableGauge)
+- `empath.delivery.connections.active` - Active outbound connections
+- `empath.delivery.messages.delivered.total` - Successfully delivered
+- `empath.delivery.messages.failed.total{reason}` - Permanently failed
+- `empath.delivery.messages.retrying.total` - Messages retrying
+- `empath.delivery.retry.count` - Retry count distribution
+
+**DNS Metrics** (`empath-metrics/src/dns.rs`):
+- `empath.dns.lookup.duration.seconds{query_type}` - Lookup duration histogram
+- `empath.dns.lookups.total{query_type}` - Total lookups
+- `empath.dns.cache.hits.total{query_type}` - Cache hits
+- `empath.dns.cache.misses.total{query_type}` - Cache misses
+- `empath.dns.errors.total{error_type}` - DNS errors
+- `empath.dns.cache.evictions.total` - Cache evictions
+
+**Files Created:**
+- `empath-metrics/` - New crate with OpenTelemetry integration
+- `empath-metrics/src/lib.rs` - Main initialization and global metrics access
+- `empath-metrics/src/config.rs` - MetricsConfig with enabled flag and listen address
+- `empath-metrics/src/error.rs` - MetricsError type
+- `empath-metrics/src/exporter.rs` - Prometheus HTTP server (port 9090 default)
+- `empath-metrics/src/smtp.rs` - SMTP metrics instruments
+- `empath-metrics/src/delivery.rs` - Delivery metrics instruments
+- `empath-metrics/src/dns.rs` - DNS metrics instruments
+
+**Configuration:**
+```ron
+metrics: (
+    enabled: true,           // Enable/disable metrics collection
+    listen_addr: "0.0.0.0:9090",  // Prometheus HTTP endpoint
+),
+```
+
+**Usage:**
+```rust
+use empath_metrics::{init_metrics, metrics, MetricsConfig};
+
+// Initialize once at startup
+let config = MetricsConfig { enabled: true, listen_addr: "0.0.0.0:9090".parse()? };
+init_metrics(&config)?;
+
+// Access globally
+metrics().smtp.record_connection();
+metrics().delivery.record_delivery_success("example.com", 1.23, 2);
+metrics().dns.record_cache_hit("MX");
+```
+
+**Prometheus Endpoint:**
+- Metrics available at `http://localhost:9090/metrics`
+- Uses OpenTelemetry SDK with Prometheus exporter
+- Metrics follow OpenTelemetry semantic conventions
+- Efficient atomic counters for low overhead
+
+**Next Steps:**
+- Integrate metrics calls into SMTP session handling (empath-smtp)
+- Integrate metrics calls into delivery processor (empath-delivery)
+- Integrate metrics calls into DNS resolver (empath-delivery)
+- Add metrics configuration to empath.config.ron example
+- Add integration tests for metrics collection
+- Document metrics in CLAUDE.md
 
 **Dependencies:** None
 

@@ -1,0 +1,63 @@
+# OpenTelemetry Collector Configuration for Empath MTA
+# This collector receives OTLP metrics from the MTA and exposes them for Prometheus
+
+receivers:
+  # Receive metrics via OTLP over HTTP
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # Batch metrics for efficient processing
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Add resource attributes
+  resource:
+    attributes:
+      - key: service.name
+        value: empath-mta
+        action: upsert
+      - key: deployment.environment
+        value: development
+        action: upsert
+
+  # Memory limiter to prevent OOM
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+exporters:
+  # Export metrics in Prometheus format for scraping
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: empath
+    const_labels:
+      environment: development
+
+  # Debug logging (useful for troubleshooting)
+  logging:
+    loglevel: info
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  pipelines:
+    # Metrics pipeline: OTLP receiver → processors → Prometheus exporter
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, resource]
+      exporters: [prometheus, logging]
+
+  # Enable telemetry for the collector itself
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888

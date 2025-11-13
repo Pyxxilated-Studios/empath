@@ -143,10 +143,20 @@ pub async fn prepare_message(
     );
 
     // Deliver the message via SMTP (including DATA command)
+    let delivery_start = std::time::Instant::now();
     let result = deliver_message(processor, &mx_address, &context, &info).await;
 
     match result {
         Ok(()) => {
+            // Record successful delivery metrics
+            if empath_metrics::is_enabled() {
+                let duration_secs = delivery_start.elapsed().as_secs_f64();
+                let retry_count = u64::from(info.attempt_count());
+                empath_metrics::metrics()
+                    .delivery
+                    .record_delivery_success(&info.recipient_domain, duration_secs, retry_count);
+            }
+
             processor
                 .queue
                 .update_status(message_id, DeliveryStatus::Completed)
@@ -285,6 +295,23 @@ pub async fn handle_delivery_error(
             last_error: error.to_string(),
         }
     };
+
+    // Record delivery metrics based on status
+    if empath_metrics::is_enabled() {
+        match &new_status {
+            DeliveryStatus::Failed(reason) => {
+                empath_metrics::metrics()
+                    .delivery
+                    .record_delivery_failure(&updated_info.recipient_domain, reason);
+            }
+            DeliveryStatus::Retry { .. } => {
+                empath_metrics::metrics()
+                    .delivery
+                    .record_delivery_retry(&updated_info.recipient_domain);
+            }
+            _ => {}
+        }
+    }
 
     processor
         .queue

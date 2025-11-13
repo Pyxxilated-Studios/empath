@@ -128,5 +128,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 |id| Cow::Owned(format!("Ok: queued as {id}")),
             ),
         ));
+
+        // Record message received metric
+        if empath_metrics::is_enabled()
+            && let Some(data) = &validate_context.data
+        {
+            let size_bytes = u64::try_from(data.len()).unwrap_or(u64::MAX);
+            empath_metrics::metrics()
+                .smtp
+                .record_message_received(size_bytes);
+        }
     }
 }

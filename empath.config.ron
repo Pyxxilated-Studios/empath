@@ -120,4 +120,21 @@ Empath (
             ),
         },
     ),
+    // OpenTelemetry metrics configuration
+    // Metrics are pushed to an OpenTelemetry Collector via OTLP/HTTP
+    // The Collector can then expose them in Prometheus format for scraping
+    // Architecture: Empath MTA → OTLP → OTel Collector → Prometheus → Grafana
+    metrics: (
+        // Enable/disable metrics collection
+        // When disabled, all metrics operations become no-ops with minimal overhead
+        enabled: true,
+
+        // OTLP endpoint URL for metrics export
+        // Metrics will be pushed to this OpenTelemetry Collector endpoint
+        // Common values:
+        //   - "http://localhost:4318" (local development, OTLP HTTP default)
+        //   - "http://otel-collector:4318" (Docker Compose, use service name)
+        // Default: http://localhost:4318
+        endpoint: "http://localhost:4318",
+    ),
 )

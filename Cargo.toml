@@ -1,5 +1,5 @@
 [workspace]
-members = ["empath", "empath-common", "empath-control", "empath-delivery", "empath-ffi", "empath-smtp", "empath-spool", "empath-tracing"]
+members = ["empath", "empath-common", "empath-control", "empath-delivery", "empath-ffi", "empath-metrics", "empath-smtp", "empath-spool", "empath-tracing"]
 resolver = "3"
 
 [workspace.lints.clippy]
@@ -7,6 +7,9 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 must_use_candidate = "allow"
+
+[workspace.lints.rust]
+dead_code = "deny"
 
 [profile.release]
 lto = "thin"

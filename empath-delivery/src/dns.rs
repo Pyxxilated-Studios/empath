@@ -239,13 +239,31 @@ impl DnsResolver {
         if let Some(cached) = self.cache.get(domain) {
             if cached.expires_at > Instant::now() {
                 debug!("Cache hit for {domain}, {} server(s)", cached.servers.len());
+                // Record cache hit metric
+                if empath_metrics::is_enabled() {
+                    empath_metrics::metrics().dns.record_cache_hit("mx");
+                }
                 return Ok(Arc::clone(&cached.servers));
             }
             debug!("Cache entry expired for {domain}");
         }
 
+        // Record cache miss metric
+        if empath_metrics::is_enabled() {
+            empath_metrics::metrics().dns.record_cache_miss("mx");
+        }
+
         // Cache miss or expired, perform DNS lookup
+        let lookup_start = Instant::now();
         let (servers, dns_ttl) = self.resolve_mail_servers_uncached(domain).await?;
+
+        // Record lookup duration metric
+        if empath_metrics::is_enabled() {
+            let duration_secs = lookup_start.elapsed().as_secs_f64();
+            empath_metrics::metrics()
+                .dns
+                .record_lookup("mx", duration_secs);
+        }
         let servers = Arc::new(servers);
 
         // Determine cache TTL: use override if set, otherwise use DNS TTL with bounds
@@ -265,6 +283,12 @@ impl DnsResolver {
         };
 
         self.cache.insert(domain.to_string(), cached_result);
+
+        // Update cache size metric
+        if empath_metrics::is_enabled() {
+            let cache_size = u64::try_from(self.cache.len()).unwrap_or(u64::MAX);
+            empath_metrics::metrics().dns.set_cache_size(cache_size);
+        }
 
         debug!(
             "Cached result for {domain}, DNS TTL: {dns_ttl}s, cache TTL: {cache_ttl}s, {} server(s)",
@@ -322,6 +346,10 @@ impl DnsResolver {
                     self.fallback_to_a_aaaa(domain).await
                 } else {
                     warn!("MX lookup failed for {domain}: {err}");
+                    // Record DNS error metric
+                    if empath_metrics::is_enabled() {
+                        empath_metrics::metrics().dns.record_error("mx_lookup_failed");
+                    }
                     Err(DnsError::LookupFailed(err))
                 }
             }
