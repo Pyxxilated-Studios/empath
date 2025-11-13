@@ -559,7 +559,7 @@ mod test {
             .expect("Spool operation should complete within timeout");
 
         // Verify message was spooled
-        assert_eq!(mock_spool.message_count().await, 1);
+        assert_eq!(mock_spool.message_count(), 1);
         let ids = mock_spool.list().await.unwrap();
         let spooled_msg_id = ids.first().unwrap();
         let spooled_msg = mock_spool.read(spooled_msg_id).await.unwrap();

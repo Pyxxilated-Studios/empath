@@ -1,5 +1,7 @@
 //! Retry logic with exponential backoff
 
+use rand::Rng;
+
 /// Calculate the next retry time using exponential backoff with jitter
 ///
 /// # Formula
@@ -19,8 +21,6 @@ pub fn calculate_next_retry_time(
     max_delay_secs: u64,
     jitter_factor: f64,
 ) -> u64 {
-    use rand::Rng;
-
     // Calculate exponential backoff: base * 2^(attempts - 1)
     // Use saturating operations to prevent overflow
     let exponent = attempt.saturating_sub(1);

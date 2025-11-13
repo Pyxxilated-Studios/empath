@@ -1,4 +1,4 @@
-use std::{fs::File, io::BufReader, sync::Arc};
+use std::{fmt::Write, fs::File, io::BufReader, sync::Arc};
 
 use empath_common::tracing;
 use empath_tracing::traced;
@@ -67,7 +67,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         response: &S,
     ) -> ConnectionResult<usize> {
         // Format response to stack-allocated buffer to avoid heap allocation
-        use std::fmt::Write;
         let mut buffer = arrayvec::ArrayString::<512>::new();
         write!(&mut buffer, "{response}\r\n")?;
 

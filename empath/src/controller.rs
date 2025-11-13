@@ -111,7 +111,10 @@ impl Empath {
         let control_server = ControlServer::new(&self.control_socket_path, control_handler)
             .map_err(|e| anyhow::anyhow!("Failed to create control server: {e}"))?;
 
-        internal!("Control server will listen on: {}", self.control_socket_path);
+        internal!(
+            "Control server will listen on: {}",
+            self.control_socket_path
+        );
 
         let ret = tokio::select! {
             r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {

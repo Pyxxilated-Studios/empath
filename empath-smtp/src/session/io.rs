@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use empath_common::{context, error::SessionError, internal, status::Status, tracing};
+use empath_common::{context, error::SessionError, incoming, internal, status::Status, tracing};
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -95,8 +95,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         received: &[u8],
         validate_context: &mut context::Context,
     ) {
-        use empath_common::incoming;
-
         let command = Command::try_from(received).unwrap_or_else(|e| e);
         let message = command.inner().as_bytes().to_vec();
 

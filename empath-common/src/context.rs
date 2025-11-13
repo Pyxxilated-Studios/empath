@@ -142,7 +142,6 @@ impl Context {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         self.data.as_deref().map_or_else(Default::default, |data| {
             charset::Charset::for_encoding(encoding_rs::UTF_8)

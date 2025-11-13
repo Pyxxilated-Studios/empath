@@ -3,15 +3,10 @@
 //! This module implements the `CommandHandler` trait to process control requests
 //! for managing the running MTA instance.
 
-use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Instant};
 
 use empath_control::{
-    ControlError, DnsCommand, Request, Response, SystemCommand,
-    protocol::ResponseData,
+    ControlError, DnsCommand, Request, Response, SystemCommand, protocol::ResponseData,
     server::CommandHandler,
 };
 use empath_delivery::DeliveryProcessor;
@@ -51,10 +46,7 @@ impl CommandHandler for EmpathControlHandler {
 
 impl EmpathControlHandler {
     /// Handle DNS cache management commands
-    async fn handle_dns_command(
-        &self,
-        command: DnsCommand,
-    ) -> empath_control::Result<Response> {
+    async fn handle_dns_command(&self, command: DnsCommand) -> empath_control::Result<Response> {
         let Some(resolver) = self.delivery.dns_resolver() else {
             return Err(ControlError::ServerError(
                 "DNS resolver not initialized".to_string(),
@@ -72,13 +64,11 @@ impl EmpathControlHandler {
                         .map(|(domain, servers)| {
                             let servers = servers
                                 .into_iter()
-                                .map(|(server, ttl)| {
-                                    empath_control::protocol::CachedMailServer {
-                                        host: server.host,
-                                        priority: server.priority,
-                                        port: server.port,
-                                        ttl_remaining_secs: ttl.as_secs(),
-                                    }
+                                .map(|(server, ttl)| empath_control::protocol::CachedMailServer {
+                                    host: server.host,
+                                    priority: server.priority,
+                                    port: server.port,
+                                    ttl_remaining_secs: ttl.as_secs(),
                                 })
                                 .collect();
                             (domain, servers)
@@ -93,20 +83,18 @@ impl EmpathControlHandler {
                 Ok(Response::ok())
             }
 
-            DnsCommand::RefreshDomain(domain) => {
-                match resolver.refresh_domain(&domain).await {
-                    Ok(servers) => {
-                        let message = format!(
-                            "Refreshed DNS for {domain}: {} mail server(s)",
-                            servers.len()
-                        );
-                        Ok(Response::data(ResponseData::Message(message)))
-                    }
-                    Err(e) => Err(ControlError::ServerError(format!(
-                        "Failed to refresh domain {domain}: {e}"
-                    ))),
+            DnsCommand::RefreshDomain(domain) => match resolver.refresh_domain(&domain).await {
+                Ok(servers) => {
+                    let message = format!(
+                        "Refreshed DNS for {domain}: {} mail server(s)",
+                        servers.len()
+                    );
+                    Ok(Response::data(ResponseData::Message(message)))
                 }
-            }
+                Err(e) => Err(ControlError::ServerError(format!(
+                    "Failed to refresh domain {domain}: {e}"
+                ))),
+            },
 
             DnsCommand::SetOverride { domain, mx_server } => {
                 // Update domain config registry
@@ -131,7 +119,10 @@ impl EmpathControlHandler {
     }
 
     /// Handle system management commands
-    async fn handle_system_command(&self, command: SystemCommand) -> empath_control::Result<Response> {
+    async fn handle_system_command(
+        &self,
+        command: SystemCommand,
+    ) -> empath_control::Result<Response> {
         match command {
             SystemCommand::Ping => Ok(Response::ok()),
 

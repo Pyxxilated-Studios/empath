@@ -39,7 +39,6 @@ fn normalize_key(key: &str) -> Cow<'static, str> {
     let len = key_bytes.len().min(16);
 
     // Convert to uppercase in-place
-    #[allow(clippy::needless_range_loop)]
     for i in 0..len {
         upper_buf[i] = key_bytes[i].to_ascii_uppercase();
     }

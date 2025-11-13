@@ -1,14 +1,12 @@
 //! Control server implementation
 
-use std::future::Future;
-use std::path::Path;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::broadcast;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{UnixListener, UnixStream},
+    sync::broadcast,
+};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{ControlError, Request, Response, Result};
@@ -40,10 +38,7 @@ impl ControlServer {
     /// # Errors
     ///
     /// Returns an error if the socket path is invalid
-    pub fn new(
-        socket_path: impl Into<String>,
-        handler: Arc<dyn CommandHandler>,
-    ) -> Result<Self> {
+    pub fn new(socket_path: impl Into<String>, handler: Arc<dyn CommandHandler>) -> Result<Self> {
         Ok(Self {
             socket_path: socket_path.into(),
             handler,
@@ -153,24 +148,21 @@ impl ControlServer {
     async fn read_request(stream: &mut UnixStream) -> Result<Request> {
         // Read length prefix (4 bytes)
         let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    ControlError::ConnectionClosed
-                } else {
-                    ControlError::Io(e)
-                }
-            })?;
+        stream.read_exact(&mut len_buf).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                ControlError::ConnectionClosed
+            } else {
+                ControlError::Io(e)
+            }
+        })?;
 
         let request_len = u32::from_be_bytes(len_buf);
 
         // Sanity check: reject unreasonably large requests (> 1MB)
         if request_len > 1_000_000 {
-            return Err(ControlError::Protocol(Box::new(bincode::ErrorKind::Custom(
-                format!("Request too large: {request_len} bytes"),
-            ))));
+            return Err(ControlError::Protocol(Box::new(
+                bincode::ErrorKind::Custom(format!("Request too large: {request_len} bytes")),
+            )));
         }
 
         // Read request bytes

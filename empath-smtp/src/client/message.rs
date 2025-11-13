@@ -1,6 +1,11 @@
 //! Email message builder with support for headers, body, and MIME attachments.
 
-use std::{collections::HashMap, io::Write, path::Path};
+use std::{
+    collections::HashMap,
+    io::Write,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use super::error::{ClientError, Result};
 
@@ -299,8 +304,6 @@ impl MessageBuilder {
 
 /// Generates a unique MIME boundary string.
 fn generate_boundary() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

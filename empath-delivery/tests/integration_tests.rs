@@ -12,6 +12,7 @@ use empath_delivery::{
     DeliveryInfo, DeliveryProcessor, DomainConfig, DomainConfigRegistry, SmtpTimeouts,
 };
 use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
+use tokio::sync::broadcast;
 
 fn create_test_context(from: &str, to: &str) -> Context {
     let mut envelope = Envelope::default();
@@ -165,8 +166,6 @@ async fn test_delivery_queue_domain_grouping() {
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_graceful_shutdown() {
-    use tokio::sync::broadcast;
-
     // Create a memory-backed spool
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
@@ -214,8 +213,6 @@ async fn test_graceful_shutdown() {
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_graceful_shutdown_respects_timeout() {
-    use tokio::sync::broadcast;
-
     // Create a memory-backed spool
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 

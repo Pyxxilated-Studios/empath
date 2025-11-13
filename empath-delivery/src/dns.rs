@@ -338,12 +338,11 @@ impl DnsResolver {
             Ok(ip_lookup) => {
                 // Extract minimum TTL from all A/AAAA records
                 // Note: clippy suggests using Record::ttl directly, but the path it suggests doesn't exist
-                #[allow(clippy::redundant_closure_for_method_calls)]
                 let min_ttl = ip_lookup
                     .as_lookup()
                     .records()
                     .iter()
-                    .map(|r| r.ttl())
+                    .map(hickory_resolver::proto::rr::Record::ttl)
                     .min()
                     .unwrap_or(300); // Default to 5 minutes if no TTL found
 

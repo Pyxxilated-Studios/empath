@@ -7,15 +7,15 @@
 //!
 //! The protocol uses bincode for efficient serialization.
 
-pub mod protocol;
-pub mod server;
 pub mod client;
 pub mod error;
+pub mod protocol;
+pub mod server;
 
-pub use error::{ControlError, Result};
-pub use protocol::{Request, Response, DnsCommand, SystemCommand};
-pub use server::ControlServer;
 pub use client::ControlClient;
+pub use error::{ControlError, Result};
+pub use protocol::{DnsCommand, Request, Response, SystemCommand};
+pub use server::ControlServer;
 
 /// Default path for the control socket
 pub const DEFAULT_CONTROL_SOCKET: &str = "/tmp/empath.sock";

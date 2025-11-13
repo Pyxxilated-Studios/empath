@@ -7,16 +7,21 @@
 //! - Freezing/unfreezing the queue
 //! - Viewing statistics
 
-#![allow(
-    clippy::items_after_statements,
-    clippy::single_match_else,
-    clippy::case_sensitive_file_extension_comparisons
-)]
+use std::{
+    collections::HashMap,
+    io::{Write, stdin, stdout},
+    path::PathBuf,
+    sync::Arc,
+};
 
-use std::path::PathBuf;
-
+use chrono::{TimeZone, Utc, offset::LocalResult};
 use clap::{Parser, Subcommand, ValueEnum};
-use empath_control::{DEFAULT_CONTROL_SOCKET, ControlClient, Request, DnsCommand, SystemCommand};
+use empath_control::{
+    ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, Response, SystemCommand,
+    protocol::ResponseData,
+};
+use empath_delivery::DeliveryInfo;
+use empath_spool::{BackingStore, FileBackingStore, SpooledMessageId};
 
 /// Command-line utility for managing the Empath MTA
 #[derive(Parser, Debug)]
@@ -129,10 +134,6 @@ enum QueueAction {
         #[arg(long)]
         yes: bool,
     },
-    /// Freeze the delivery queue (pause processing)
-    Freeze,
-    /// Unfreeze the delivery queue (resume processing)
-    Unfreeze,
     /// Show queue statistics
     Stats {
         /// Watch mode - continuously update statistics
@@ -174,34 +175,22 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    // Derive queue state path if not provided
-    // Place it in the same directory as the spool
-    let queue_state_path = cli
-        .queue_state
-        .unwrap_or_else(|| cli.spool_path.join("queue_state.bin"));
-
     match cli.command {
         Commands::Queue { action } => match action {
             QueueAction::List { status, format } => {
-                cmd_list(&cli.spool_path, &queue_state_path, status, &format).await?;
+                cmd_list(&cli.spool_path, status, &format).await?;
             }
             QueueAction::View { message_id } => {
-                cmd_view(&cli.spool_path, &queue_state_path, &message_id).await?;
+                cmd_view(&cli.spool_path, &message_id).await?;
             }
             QueueAction::Retry { message_id, force } => {
-                cmd_retry(&cli.spool_path, &queue_state_path, &message_id, force).await?;
+                cmd_retry(&cli.spool_path, &message_id, force).await?;
             }
             QueueAction::Delete { message_id, yes } => {
-                cmd_delete(&cli.spool_path, &queue_state_path, &message_id, yes).await?;
-            }
-            QueueAction::Freeze => {
-                cmd_freeze(&queue_state_path).await?;
-            }
-            QueueAction::Unfreeze => {
-                cmd_unfreeze(&queue_state_path).await?;
+                cmd_delete(&cli.spool_path, &message_id, yes).await?;
             }
             QueueAction::Stats { watch, interval } => {
-                cmd_stats(&cli.spool_path, &queue_state_path, watch, interval).await?;
+                cmd_stats(&cli.spool_path, watch, interval).await?;
             }
         },
         Commands::Dns { action } => {
@@ -218,14 +207,11 @@ async fn main() -> anyhow::Result<()> {
 /// List messages in the queue
 async fn cmd_list(
     spool_path: &std::path::Path,
-    _queue_state_path: &std::path::Path,
     status_filter: Option<StatusFilter>,
     format: &str,
 ) -> anyhow::Result<()> {
-    use empath_spool::BackingStore;
-
     // Load spool
-    let spool = empath_spool::FileBackingStore::builder()
+    let spool = FileBackingStore::builder()
         .path(spool_path.to_path_buf())
         .build()?;
     let message_ids = spool.list().await?;
@@ -254,68 +240,59 @@ async fn cmd_list(
     );
 
     // Output results
-    match format {
-        "json" => {
-            // For JSON output, we'll manually construct it to avoid pulling in serde_json
-            println!("[");
-            for (i, id) in filtered.iter().enumerate() {
-                let status = queue_state
-                    .as_ref()
-                    .and_then(|s| s.get(&id.to_string()))
-                    .map_or_else(
-                        || PENDING_STR.to_string(),
-                        |info| format_status(&info.status),
-                    );
-
-                let comma = if i < filtered.len() - 1 { "," } else { "" };
-                println!(
-                    r#"  {{"id": "{}", "status": "{}", "timestamp": {}}}{}"#,
-                    id,
-                    status,
-                    id.timestamp_ms(),
-                    comma
+    if format == "json" {
+        // For JSON output, we'll manually construct it to avoid pulling in serde_json
+        println!("[");
+        for (i, id) in filtered.iter().enumerate() {
+            let status = queue_state
+                .as_ref()
+                .and_then(|s| s.get(&id.to_string()))
+                .map_or_else(
+                    || PENDING_STR.to_string(),
+                    |info| format_status(&info.status),
                 );
-            }
-            println!("]");
+
+            let comma = if i < filtered.len() - 1 { "," } else { "" };
+            println!(
+                r#"  {{"id": "{}", "status": "{}", "timestamp": {}}}{}"#,
+                id,
+                status,
+                id.timestamp_ms(),
+                comma
+            );
         }
-        _ => {
-            // Text format
-            println!("{:<28} {:<15} {:<20}", "MESSAGE ID", "STATUS", "AGE");
-            println!("{}", "-".repeat(65));
+        println!("]");
+    } else {
+        // Text format
+        println!("{:<28} {:<15} {:<20}", "MESSAGE ID", "STATUS", "AGE");
+        println!("{}", "-".repeat(65));
 
-            for id in &filtered {
-                let status = queue_state
-                    .as_ref()
-                    .and_then(|s| s.get(&id.to_string()))
-                    .map_or_else(
-                        || PENDING_STR.to_string(),
-                        |info| format_status(&info.status),
-                    );
+        for id in &filtered {
+            let status = queue_state
+                .as_ref()
+                .and_then(|s| s.get(&id.to_string()))
+                .map_or_else(
+                    || PENDING_STR.to_string(),
+                    |info| format_status(&info.status),
+                );
 
-                let age = format_age(id.timestamp_ms());
+            let age = format_age(id.timestamp_ms());
 
-                println!("{id:<28} {status:<15} {age:<20}");
-            }
-
-            println!("\nTotal: {} message(s)", filtered.len());
+            println!("{id:<28} {status:<15} {age:<20}");
         }
+
+        println!("\nTotal: {} message(s)", filtered.len());
     }
 
     Ok(())
 }
 
 /// View detailed information about a message
-async fn cmd_view(
-    spool_path: &std::path::Path,
-    _queue_state_path: &std::path::Path,
-    message_id: &str,
-) -> anyhow::Result<()> {
-    use empath_spool::BackingStore;
-
+async fn cmd_view(spool_path: &std::path::Path, message_id: &str) -> anyhow::Result<()> {
     let id = parse_message_id(message_id)?;
 
     // Load spool
-    let spool = empath_spool::FileBackingStore::builder()
+    let spool = FileBackingStore::builder()
         .path(spool_path.to_path_buf())
         .build()?;
 
@@ -415,16 +392,13 @@ async fn cmd_view(
 /// Retry delivery of a message
 async fn cmd_retry(
     spool_path: &std::path::Path,
-    _queue_state_path: &std::path::Path,
     message_id: &str,
     force: bool,
 ) -> anyhow::Result<()> {
-    use empath_spool::BackingStore;
-
     let id = parse_message_id(message_id)?;
 
     // Load spool
-    let spool = empath_spool::FileBackingStore::builder()
+    let spool = FileBackingStore::builder()
         .path(spool_path.to_path_buf())
         .build()?;
 
@@ -472,22 +446,18 @@ async fn cmd_retry(
 /// Delete a message from queue and spool
 async fn cmd_delete(
     spool_path: &std::path::Path,
-    _queue_state_path: &std::path::Path,
     message_id: &str,
     skip_confirm: bool,
 ) -> anyhow::Result<()> {
-    use empath_spool::BackingStore;
-
     let id = parse_message_id(message_id)?;
 
     // Confirmation prompt
     if !skip_confirm {
         print!("Delete message {id}? [y/N] ");
-        use std::io::{self, Write};
-        io::stdout().flush()?;
+        stdout().flush()?;
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+        stdin().read_line(&mut input)?;
 
         if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
             println!("Cancelled.");
@@ -496,7 +466,7 @@ async fn cmd_delete(
     }
 
     // Delete from spool (this also removes the delivery context)
-    let spool = empath_spool::FileBackingStore::builder()
+    let spool = FileBackingStore::builder()
         .path(spool_path.to_path_buf())
         .build()?;
     spool.delete(&id).await?;
@@ -506,53 +476,15 @@ async fn cmd_delete(
     Ok(())
 }
 
-/// Freeze the delivery queue
-async fn cmd_freeze(queue_state_path: &std::path::Path) -> anyhow::Result<()> {
-    // Create or update freeze marker file
-    let freeze_path = queue_state_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("queue_frozen");
-
-    tokio::fs::write(&freeze_path, b"frozen").await?;
-
-    println!("Delivery queue frozen");
-    println!("Run 'empathctl queue unfreeze' to resume delivery");
-
-    Ok(())
-}
-
-/// Unfreeze the delivery queue
-async fn cmd_unfreeze(queue_state_path: &std::path::Path) -> anyhow::Result<()> {
-    let freeze_path = queue_state_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("queue_frozen");
-
-    if freeze_path.exists() {
-        tokio::fs::remove_file(&freeze_path).await?;
-        println!("Delivery queue unfrozen");
-    } else {
-        println!("Delivery queue is not frozen");
-    }
-
-    Ok(())
-}
-
 /// Show queue statistics
-async fn cmd_stats(
-    spool_path: &std::path::Path,
-    queue_state_path: &std::path::Path,
-    watch: bool,
-    interval: u64,
-) -> anyhow::Result<()> {
+async fn cmd_stats(spool_path: &std::path::Path, watch: bool, interval: u64) -> anyhow::Result<()> {
     if watch {
         // Watch mode - continuously update
         loop {
             // Clear screen
             print!("\x1B[2J\x1B[1;1H");
 
-            display_stats(spool_path, queue_state_path).await?;
+            display_stats(spool_path).await?;
 
             println!("\nPress Ctrl+C to exit");
 
@@ -560,41 +492,28 @@ async fn cmd_stats(
         }
     } else {
         // Single display
-        display_stats(spool_path, queue_state_path).await?;
+        display_stats(spool_path).await?;
     }
 
     Ok(())
 }
 
 /// Display queue statistics
-async fn display_stats(
-    spool_path: &std::path::Path,
-    queue_state_path: &std::path::Path,
-) -> anyhow::Result<()> {
+async fn display_stats(spool_path: &std::path::Path) -> anyhow::Result<()> {
     // Load spool
-    let spool = empath_spool::FileBackingStore::builder()
+    let spool = FileBackingStore::builder()
         .path(spool_path.to_path_buf())
         .build()?;
 
     let queue_state = load_queue_state(&spool).await.ok();
 
-    let freeze_path = queue_state_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("queue_frozen");
-    let is_frozen = freeze_path.exists();
-
     println!("=== Empath Queue Statistics ===");
     println!();
-    println!(
-        "Queue Status: {}",
-        if is_frozen { "FROZEN" } else { "Active" }
-    );
     println!();
 
     if let Some(state) = queue_state {
         // Count by status
-        let mut counts = std::collections::HashMap::new();
+        let mut counts = HashMap::new();
         for info in state.values() {
             let status_key = match &info.status {
                 empath_delivery::DeliveryStatus::Pending => PENDING_STR,
@@ -622,8 +541,7 @@ async fn display_stats(
         println!("Total: {}", state.len());
 
         // Domain statistics
-        let mut domain_counts: std::collections::HashMap<std::sync::Arc<str>, usize> =
-            std::collections::HashMap::new();
+        let mut domain_counts: HashMap<std::sync::Arc<str>, usize> = HashMap::new();
         for info in state.values() {
             *domain_counts
                 .entry(info.recipient_domain.clone())
@@ -652,10 +570,12 @@ async fn display_stats(
 // ============================================================================
 
 /// Parse a message ID from string
-fn parse_message_id(s: &str) -> anyhow::Result<empath_spool::SpooledMessageId> {
-    use empath_spool::SpooledMessageId;
-
-    let filename = if s.ends_with(".bin") || s.ends_with(".eml") {
+fn parse_message_id(s: &str) -> anyhow::Result<SpooledMessageId> {
+    let filename = if std::path::Path::new(s)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
+        || s.eq_ignore_ascii_case(".eml")
+    {
         s.to_string()
     } else {
         format!("{s}.bin")
@@ -667,14 +587,10 @@ fn parse_message_id(s: &str) -> anyhow::Result<empath_spool::SpooledMessageId> {
 
 /// Load queue state from bincode file
 async fn load_queue_state(
-    spool: &empath_spool::FileBackingStore,
-) -> anyhow::Result<std::collections::HashMap<String, empath_delivery::DeliveryInfo>> {
-    use std::sync::Arc;
-
-    use empath_spool::BackingStore;
-
+    spool: &FileBackingStore,
+) -> anyhow::Result<HashMap<String, DeliveryInfo>> {
     let message_ids = spool.list().await?;
-    let mut state = std::collections::HashMap::new();
+    let mut state = HashMap::new();
 
     for msg_id in message_ids {
         // Read context from spool
@@ -682,7 +598,7 @@ async fn load_queue_state(
 
         // Extract delivery info from context.delivery if it exists
         if let Some(delivery_ctx) = context.delivery {
-            let info = empath_delivery::DeliveryInfo {
+            let info = DeliveryInfo {
                 message_id: msg_id.clone(),
                 status: delivery_ctx.status,
                 attempts: delivery_ctx.attempt_history,
@@ -741,10 +657,8 @@ fn format_status(status: &empath_delivery::DeliveryStatus) -> String {
 
 /// Format timestamp (milliseconds since epoch) as human-readable
 fn format_timestamp(timestamp_ms: u64) -> String {
-    use chrono::{TimeZone, Utc};
-
     let datetime = Utc.timestamp_millis_opt(i64::try_from(timestamp_ms).unwrap_or(0));
-    if let chrono::offset::LocalResult::Single(dt) = datetime {
+    if let LocalResult::Single(dt) = datetime {
         dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
     } else {
         "unknown".to_string()
@@ -798,10 +712,7 @@ fn check_control_socket(socket_path: &str) -> anyhow::Result<ControlClient> {
 }
 
 /// Handle DNS commands directly
-async fn handle_dns_command_direct(
-    socket_path: &str,
-    action: DnsAction,
-) -> anyhow::Result<()> {
+async fn handle_dns_command_direct(socket_path: &str, action: DnsAction) -> anyhow::Result<()> {
     let client = check_control_socket(socket_path)?;
     handle_dns_command(&client, action).await
 }
@@ -816,26 +727,17 @@ async fn handle_system_command_direct(
 }
 
 /// Handle DNS cache management commands
-async fn handle_dns_command(
-    client: &ControlClient,
-    action: DnsAction,
-) -> anyhow::Result<()> {
-    use empath_control::{Response, protocol::ResponseData};
-
+async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow::Result<()> {
     let request = match action {
         DnsAction::ListCache => Request::Dns(DnsCommand::ListCache),
         DnsAction::ClearCache => Request::Dns(DnsCommand::ClearCache),
         DnsAction::Refresh { domain } => Request::Dns(DnsCommand::RefreshDomain(domain)),
         DnsAction::ListOverrides => Request::Dns(DnsCommand::ListOverrides),
-        DnsAction::SetOverride { domain, server } => {
-            Request::Dns(DnsCommand::SetOverride {
-                domain,
-                mx_server: server,
-            })
-        }
-        DnsAction::RemoveOverride { domain } => {
-            Request::Dns(DnsCommand::RemoveOverride(domain))
-        }
+        DnsAction::SetOverride { domain, server } => Request::Dns(DnsCommand::SetOverride {
+            domain,
+            mx_server: server,
+        }),
+        DnsAction::RemoveOverride { domain } => Request::Dns(DnsCommand::RemoveOverride(domain)),
     };
 
     let response = client.send_request(request).await?;
@@ -859,7 +761,10 @@ async fn handle_dns_command(
                         for server in servers {
                             println!(
                                 "  → {}:{} (priority: {}, TTL: {}s)",
-                                server.host, server.port, server.priority, server.ttl_remaining_secs
+                                server.host,
+                                server.port,
+                                server.priority,
+                                server.ttl_remaining_secs
                             );
                         }
                         println!();
@@ -895,12 +800,7 @@ async fn handle_dns_command(
 }
 
 /// Handle system management commands
-async fn handle_system_command(
-    client: &ControlClient,
-    action: SystemAction,
-) -> anyhow::Result<()> {
-    use empath_control::{Response, protocol::ResponseData};
-
+async fn handle_system_command(client: &ControlClient, action: SystemAction) -> anyhow::Result<()> {
     let request = match action {
         SystemAction::Ping => Request::System(SystemCommand::Ping),
         SystemAction::Status => Request::System(SystemCommand::Status),
@@ -916,7 +816,10 @@ async fn handle_system_command(
             ResponseData::SystemStatus(status) => {
                 println!("=== Empath MTA Status ===\n");
                 println!("Version:            {}", status.version);
-                println!("Uptime:             {}", format_duration(status.uptime_secs));
+                println!(
+                    "Uptime:             {}",
+                    format_duration(status.uptime_secs)
+                );
                 println!("Queue size:         {} message(s)", status.queue_size);
                 println!("DNS cache entries:  {}", status.dns_cache_entries);
             }
