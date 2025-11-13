@@ -3,8 +3,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::{
-    controller::FileBackingStore,
-    spool::{BackingStore, MemoryBackingStore, Spool},
+    backends::MemoryBackingStore, controller::FileBackingStore, spool::Spool, r#trait::BackingStore,
 };
 
 /// Configuration for the spool backing store
