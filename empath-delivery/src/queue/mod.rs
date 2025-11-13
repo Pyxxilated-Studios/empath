@@ -6,6 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use empath_common::DeliveryStatus;
 use empath_spool::SpooledMessageId;
+use empath_tracing::traced;
 use tokio::sync::RwLock;
 
 use crate::{dns::MailServer, types::DeliveryInfo};
@@ -135,6 +136,7 @@ impl DeliveryQueue {
     }
 
     /// Get all messages with their current status
+    #[traced(instrument(ret))]
     pub async fn all_messages(&self) -> Vec<DeliveryInfo> {
         let queue = self.queue.read().await;
         queue.values().cloned().collect()

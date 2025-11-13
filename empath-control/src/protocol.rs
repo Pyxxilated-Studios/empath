@@ -11,6 +11,8 @@ pub enum Request {
     Dns(DnsCommand),
     /// System management commands
     System(SystemCommand),
+    /// Queue management commands
+    Queue(QueueCommand),
 }
 
 /// DNS cache management commands
@@ -44,13 +46,42 @@ pub enum SystemCommand {
     Status,
 }
 
+/// Queue management commands
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum QueueCommand {
+    /// List messages in the queue
+    List {
+        /// Filter by status (optional)
+        status_filter: Option<String>,
+    },
+    /// View detailed information about a specific message
+    View {
+        /// Message ID to view
+        message_id: String,
+    },
+    /// Retry delivery of a message
+    Retry {
+        /// Message ID to retry
+        message_id: String,
+        /// Force retry even if not failed
+        force: bool,
+    },
+    /// Delete a message from the queue
+    Delete {
+        /// Message ID to delete
+        message_id: String,
+    },
+    /// Get queue statistics
+    Stats,
+}
+
 /// Response from the control server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Response {
     /// Command succeeded
     Ok,
     /// Command succeeded with data
-    Data(ResponseData),
+    Data(Box<ResponseData>),
     /// Command failed with error message
     Error(String),
 }
@@ -64,6 +95,12 @@ pub enum ResponseData {
     MxOverrides(HashMap<String, String>),
     /// System status information
     SystemStatus(SystemStatus),
+    /// Queue message list
+    QueueList(Vec<QueueMessage>),
+    /// Queue message details
+    QueueMessageDetails(QueueMessageDetails),
+    /// Queue statistics
+    QueueStats(QueueStats),
     /// Simple string message
     Message(String),
 }
@@ -94,6 +131,71 @@ pub struct SystemStatus {
     pub dns_cache_entries: usize,
 }
 
+/// Queue message summary (for list command)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueMessage {
+    /// Message ID
+    pub id: String,
+    /// Sender email address
+    pub from: String,
+    /// Recipient email addresses
+    pub to: Vec<String>,
+    /// Domain being delivered to
+    pub domain: String,
+    /// Delivery status
+    pub status: String,
+    /// Number of delivery attempts
+    pub attempts: u32,
+    /// Next retry time (Unix timestamp in seconds)
+    pub next_retry: Option<u64>,
+    /// Message size in bytes
+    pub size: usize,
+    /// Time message was spooled (Unix timestamp in seconds)
+    pub spooled_at: u64,
+}
+
+/// Queue message details (for view command)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueMessageDetails {
+    /// Message ID
+    pub id: String,
+    /// Sender email address
+    pub from: String,
+    /// Recipient email addresses
+    pub to: Vec<String>,
+    /// Domain being delivered to
+    pub domain: String,
+    /// Delivery status
+    pub status: String,
+    /// Number of delivery attempts
+    pub attempts: u32,
+    /// Next retry time (Unix timestamp in seconds)
+    pub next_retry: Option<u64>,
+    /// Last error message (if any)
+    pub last_error: Option<String>,
+    /// Message size in bytes
+    pub size: usize,
+    /// Time message was spooled (Unix timestamp in seconds)
+    pub spooled_at: u64,
+    /// Message headers
+    pub headers: HashMap<String, String>,
+    /// Message body preview (first 1KB)
+    pub body_preview: String,
+}
+
+/// Queue statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueStats {
+    /// Total messages in queue
+    pub total: usize,
+    /// Messages by status
+    pub by_status: HashMap<String, usize>,
+    /// Messages by domain
+    pub by_domain: HashMap<String, usize>,
+    /// Oldest message age in seconds
+    pub oldest_message_age_secs: Option<u64>,
+}
+
 impl Response {
     /// Create an error response
     #[must_use]
@@ -109,7 +211,7 @@ impl Response {
 
     /// Create a response with data
     #[must_use]
-    pub const fn data(data: ResponseData) -> Self {
-        Self::Data(data)
+    pub fn data(data: ResponseData) -> Self {
+        Self::Data(Box::new(data))
     }
 }

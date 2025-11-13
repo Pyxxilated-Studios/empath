@@ -195,6 +195,12 @@ impl DeliveryProcessor {
         &self.domains
     }
 
+    /// Get a reference to the spool backing store (for control interface)
+    #[must_use]
+    pub const fn spool(&self) -> &Option<Arc<dyn empath_spool::BackingStore>> {
+        &self.spool
+    }
+
     /// Run the delivery processor
     ///
     /// This method runs continuously until a shutdown signal is received.

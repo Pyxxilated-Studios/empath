@@ -828,6 +828,38 @@ loop {
 
 ---
 
+### 🔴 0.22 Fix Queue List Command via Control Socket
+**Priority:** Critical
+**Complexity:** Simple
+**Effort:** 2-3 hours
+**Status:** 📝 **TODO**
+
+**Current Issue:** The queue list command is not working correctly after migration to control socket IPC. Status filtering and message display may have issues.
+
+**Context:** Queue commands were recently migrated from direct file-based access to IPC communication via Unix domain socket (task 0.9). The migration successfully implemented the control protocol and removed 484 lines of old file-based code, but the list command needs debugging.
+
+**Files to Investigate:**
+- `empath/src/control_handler.rs:169-211` (handle_queue_command List implementation)
+- `empath/bin/empathctl.rs` (queue list display logic)
+- `empath-control/src/protocol.rs` (QueueCommand::List and QueueMessage types)
+
+**Potential Issues:**
+- Status filter string comparison (`format!("{:?}", info.status) == status`) may not match expected format
+- Message serialization over IPC may have data loss
+- Display formatting may need adjustment for new data structure
+
+**Implementation:**
+1. Add debug logging to control_handler.rs to verify data flow
+2. Test with `empathctl queue list` and verify output
+3. Test with `empathctl queue list --status=failed` to verify filtering
+4. Compare with expected output format from original file-based implementation
+5. Add integration test for queue list command
+
+**Dependencies:** 0.9 (Control Socket IPC)
+**Source:** Queue command migration 2025-11-13
+
+---
+
 ### 🟢 0.10 Add MX Record Randomization (RFC 5321)
 **Priority:** Medium
 **Complexity:** Simple

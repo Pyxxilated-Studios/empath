@@ -4,24 +4,18 @@
 //! - Queue management (list, view, retry, delete messages)
 //! - DNS cache management (list, clear, refresh)
 //! - System status and health checks
-//! - Freezing/unfreezing the queue
 //! - Viewing statistics
 
 use std::{
-    collections::HashMap,
     io::{Write, stdin, stdout},
     path::PathBuf,
-    sync::Arc,
 };
 
-use chrono::{TimeZone, Utc, offset::LocalResult};
 use clap::{Parser, Subcommand, ValueEnum};
 use empath_control::{
     ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, Response, SystemCommand,
     protocol::ResponseData,
 };
-use empath_delivery::DeliveryInfo;
-use empath_spool::{BackingStore, FileBackingStore, SpooledMessageId};
 
 /// Command-line utility for managing the Empath MTA
 #[derive(Parser, Debug)]
@@ -176,23 +170,9 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Queue { action } => match action {
-            QueueAction::List { status, format } => {
-                cmd_list(&cli.spool_path, status, &format).await?;
-            }
-            QueueAction::View { message_id } => {
-                cmd_view(&cli.spool_path, &message_id).await?;
-            }
-            QueueAction::Retry { message_id, force } => {
-                cmd_retry(&cli.spool_path, &message_id, force).await?;
-            }
-            QueueAction::Delete { message_id, yes } => {
-                cmd_delete(&cli.spool_path, &message_id, yes).await?;
-            }
-            QueueAction::Stats { watch, interval } => {
-                cmd_stats(&cli.spool_path, watch, interval).await?;
-            }
-        },
+        Commands::Queue { action } => {
+            handle_queue_command_direct(&cli.control_socket, action).await?;
+        }
         Commands::Dns { action } => {
             handle_dns_command_direct(&cli.control_socket, action).await?;
         }
@@ -202,491 +182,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// List messages in the queue
-async fn cmd_list(
-    spool_path: &std::path::Path,
-    status_filter: Option<StatusFilter>,
-    format: &str,
-) -> anyhow::Result<()> {
-    // Load spool
-    let spool = FileBackingStore::builder()
-        .path(spool_path.to_path_buf())
-        .build()?;
-    let message_ids = spool.list().await?;
-
-    // Load queue state from spool
-    let queue_state = load_queue_state(&spool).await.ok();
-
-    // Filter messages by status if requested
-    let filtered: Vec<_> = status_filter.map_or_else(
-        || message_ids.iter().collect(),
-        |filter_status| {
-            message_ids
-                .iter()
-                .filter(|id| {
-                    if let Some(ref state) = queue_state
-                        && let Some(info) = state.get(&id.to_string())
-                    {
-                        return status_matches(&info.status, filter_status);
-                    }
-
-                    // If no queue state, assume pending
-                    filter_status == StatusFilter::Pending
-                })
-                .collect()
-        },
-    );
-
-    // Output results
-    if format == "json" {
-        // For JSON output, we'll manually construct it to avoid pulling in serde_json
-        println!("[");
-        for (i, id) in filtered.iter().enumerate() {
-            let status = queue_state
-                .as_ref()
-                .and_then(|s| s.get(&id.to_string()))
-                .map_or_else(
-                    || PENDING_STR.to_string(),
-                    |info| format_status(&info.status),
-                );
-
-            let comma = if i < filtered.len() - 1 { "," } else { "" };
-            println!(
-                r#"  {{"id": "{}", "status": "{}", "timestamp": {}}}{}"#,
-                id,
-                status,
-                id.timestamp_ms(),
-                comma
-            );
-        }
-        println!("]");
-    } else {
-        // Text format
-        println!("{:<28} {:<15} {:<20}", "MESSAGE ID", "STATUS", "AGE");
-        println!("{}", "-".repeat(65));
-
-        for id in &filtered {
-            let status = queue_state
-                .as_ref()
-                .and_then(|s| s.get(&id.to_string()))
-                .map_or_else(
-                    || PENDING_STR.to_string(),
-                    |info| format_status(&info.status),
-                );
-
-            let age = format_age(id.timestamp_ms());
-
-            println!("{id:<28} {status:<15} {age:<20}");
-        }
-
-        println!("\nTotal: {} message(s)", filtered.len());
-    }
-
-    Ok(())
-}
-
-/// View detailed information about a message
-async fn cmd_view(spool_path: &std::path::Path, message_id: &str) -> anyhow::Result<()> {
-    let id = parse_message_id(message_id)?;
-
-    // Load spool
-    let spool = FileBackingStore::builder()
-        .path(spool_path.to_path_buf())
-        .build()?;
-
-    // Read message
-    let context = spool.read(&id).await?;
-
-    // Load queue state from spool
-    let queue_state = load_queue_state(&spool).await.ok();
-    let delivery_info = queue_state.as_ref().and_then(|s| s.get(&id.to_string()));
-
-    // Display message details
-    println!("Message ID: {id}");
-    println!("Timestamp: {}", format_timestamp(id.timestamp_ms()));
-    println!("Age: {}", format_age(id.timestamp_ms()));
-    println!();
-
-    // Envelope information
-    println!("Envelope:");
-    if let Some(sender) = context.envelope.sender() {
-        println!("  From: {sender}");
-    }
-    if let Some(recipients) = context.envelope.recipients() {
-        println!("  To: {}", recipients.len());
-        for recipient in recipients.iter() {
-            println!("    - {recipient}");
-        }
-    }
-    println!();
-
-    // Session information
-    println!("Session:");
-    println!("  ID: {}", context.id);
-    println!(
-        "  HELO/EHLO: {}",
-        if context.extended { "EHLO" } else { "HELO" }
-    );
-    println!();
-
-    // Delivery status
-    if let Some(info) = delivery_info {
-        println!("Delivery Status:");
-        println!("  Status: {}", format_status(&info.status));
-        println!("  Domain: {}", info.recipient_domain);
-        println!("  Attempts: {}", info.attempts.len());
-
-        if !info.attempts.is_empty() {
-            println!();
-            println!("  Attempt History:");
-            for (i, attempt) in info.attempts.iter().enumerate() {
-                println!(
-                    "    {}. {} - {}",
-                    i + 1,
-                    format_timestamp(attempt.timestamp * 1000),
-                    attempt.server
-                );
-                if let Some(ref error) = attempt.error {
-                    println!("       Error: {error}");
-                }
-            }
-        }
-
-        if !info.mail_servers.is_empty() {
-            println!();
-            println!("  Mail Servers:");
-            for server in info.mail_servers.iter() {
-                let marker = if info.current_server_index
-                    == info
-                        .mail_servers
-                        .iter()
-                        .position(|s| s.host == server.host && s.port == server.port)
-                        .unwrap_or(usize::MAX)
-                {
-                    "→"
-                } else {
-                    " "
-                };
-                println!(
-                    "    {} {}:{} (priority: {})",
-                    marker, server.host, server.port, server.priority
-                );
-            }
-        }
-    } else {
-        println!("Delivery Status: Not yet queued");
-    }
-
-    // Message data size
-    if let Some(data) = &context.data {
-        println!();
-        println!("Message Data:");
-        println!("  Size: {} bytes", data.len());
-    }
-
-    Ok(())
-}
-
-/// Retry delivery of a message
-async fn cmd_retry(
-    spool_path: &std::path::Path,
-    message_id: &str,
-    force: bool,
-) -> anyhow::Result<()> {
-    let id = parse_message_id(message_id)?;
-
-    // Load spool
-    let spool = FileBackingStore::builder()
-        .path(spool_path.to_path_buf())
-        .build()?;
-
-    // Read context from spool
-    let mut context = spool.read(&id).await?;
-
-    // Get delivery info from context
-    let Some(delivery_ctx) = &mut context.delivery else {
-        anyhow::bail!("Message {id} has no delivery information");
-    };
-
-    // Check if message can be retried
-    match &delivery_ctx.status {
-        empath_delivery::DeliveryStatus::Failed(_)
-        | empath_delivery::DeliveryStatus::Retry { .. }
-        | empath_delivery::DeliveryStatus::Expired => {
-            // OK to retry
-        }
-        empath_delivery::DeliveryStatus::Completed => {
-            if !force {
-                anyhow::bail!("Message already delivered. Use --force to retry anyway.");
-            }
-        }
-        empath_delivery::DeliveryStatus::InProgress => {
-            anyhow::bail!("Message is currently being delivered. Cannot retry.");
-        }
-        empath_delivery::DeliveryStatus::Pending => {
-            println!("Message is already pending delivery.");
-            return Ok(());
-        }
-    }
-
-    // Reset status to pending
-    delivery_ctx.status = empath_delivery::DeliveryStatus::Pending;
-    delivery_ctx.current_server_index = 0;
-
-    // Save updated context back to spool
-    spool.update(&id, &context).await?;
-
-    println!("Message {id} marked for retry");
-
-    Ok(())
-}
-
-/// Delete a message from queue and spool
-async fn cmd_delete(
-    spool_path: &std::path::Path,
-    message_id: &str,
-    skip_confirm: bool,
-) -> anyhow::Result<()> {
-    let id = parse_message_id(message_id)?;
-
-    // Confirmation prompt
-    if !skip_confirm {
-        print!("Delete message {id}? [y/N] ");
-        stdout().flush()?;
-
-        let mut input = String::new();
-        stdin().read_line(&mut input)?;
-
-        if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
-            println!("Cancelled.");
-            return Ok(());
-        }
-    }
-
-    // Delete from spool (this also removes the delivery context)
-    let spool = FileBackingStore::builder()
-        .path(spool_path.to_path_buf())
-        .build()?;
-    spool.delete(&id).await?;
-
-    println!("Message {id} deleted");
-
-    Ok(())
-}
-
-/// Show queue statistics
-async fn cmd_stats(spool_path: &std::path::Path, watch: bool, interval: u64) -> anyhow::Result<()> {
-    if watch {
-        // Watch mode - continuously update
-        loop {
-            // Clear screen
-            print!("\x1B[2J\x1B[1;1H");
-
-            display_stats(spool_path).await?;
-
-            println!("\nPress Ctrl+C to exit");
-
-            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-        }
-    } else {
-        // Single display
-        display_stats(spool_path).await?;
-    }
-
-    Ok(())
-}
-
-/// Display queue statistics
-async fn display_stats(spool_path: &std::path::Path) -> anyhow::Result<()> {
-    // Load spool
-    let spool = FileBackingStore::builder()
-        .path(spool_path.to_path_buf())
-        .build()?;
-
-    let queue_state = load_queue_state(&spool).await.ok();
-
-    println!("=== Empath Queue Statistics ===");
-    println!();
-    println!();
-
-    if let Some(state) = queue_state {
-        // Count by status
-        let mut counts = HashMap::new();
-        for info in state.values() {
-            let status_key = match &info.status {
-                empath_delivery::DeliveryStatus::Pending => PENDING_STR,
-                empath_delivery::DeliveryStatus::InProgress => IN_PROGRESS_STR,
-                empath_delivery::DeliveryStatus::Completed => COMPLETED_STR,
-                empath_delivery::DeliveryStatus::Failed(_) => FAILED_STR,
-                empath_delivery::DeliveryStatus::Retry { .. } => RETRY_STR,
-                empath_delivery::DeliveryStatus::Expired => EXPIRED_STR,
-            };
-            *counts.entry(status_key).or_insert(0) += 1;
-        }
-
-        println!("Messages by Status:");
-        for s in [
-            PENDING_STR,
-            IN_PROGRESS_STR,
-            RETRY_STR,
-            FAILED_STR,
-            EXPIRED_STR,
-            COMPLETED_STR,
-        ] {
-            println!("{s}: {}", counts.get(s).unwrap_or(&0));
-        }
-
-        println!("Total: {}", state.len());
-
-        // Domain statistics
-        let mut domain_counts: HashMap<std::sync::Arc<str>, usize> = HashMap::new();
-        for info in state.values() {
-            *domain_counts
-                .entry(info.recipient_domain.clone())
-                .or_insert(0) += 1;
-        }
-
-        if !domain_counts.is_empty() {
-            println!();
-            println!("Top Domains:");
-            let mut domains: Vec<_> = domain_counts.iter().collect();
-            domains.sort_by(|a, b| b.1.cmp(a.1));
-            for (domain, count) in domains.iter().take(10) {
-                println!("  {domain:<30} {count:>6}");
-            }
-        }
-    } else {
-        println!("No queue state file found");
-        println!("Queue state will be available once delivery processor starts");
-    }
-
-    Ok(())
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Parse a message ID from string
-fn parse_message_id(s: &str) -> anyhow::Result<SpooledMessageId> {
-    let filename = if std::path::Path::new(s)
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
-        || s.eq_ignore_ascii_case(".eml")
-    {
-        s.to_string()
-    } else {
-        format!("{s}.bin")
-    };
-
-    SpooledMessageId::from_filename(&filename)
-        .ok_or_else(|| anyhow::anyhow!("Invalid message ID: {s}"))
-}
-
-/// Load queue state from bincode file
-async fn load_queue_state(
-    spool: &FileBackingStore,
-) -> anyhow::Result<HashMap<String, DeliveryInfo>> {
-    let message_ids = spool.list().await?;
-    let mut state = HashMap::new();
-
-    for msg_id in message_ids {
-        // Read context from spool
-        let context = spool.read(&msg_id).await?;
-
-        // Extract delivery info from context.delivery if it exists
-        if let Some(delivery_ctx) = context.delivery {
-            let info = DeliveryInfo {
-                message_id: msg_id.clone(),
-                status: delivery_ctx.status,
-                attempts: delivery_ctx.attempt_history,
-                recipient_domain: delivery_ctx.domain,
-                mail_servers: Arc::new(Vec::new()), // Not stored, will be resolved if needed
-                current_server_index: delivery_ctx.current_server_index,
-                queued_at: delivery_ctx.queued_at,
-                next_retry_at: delivery_ctx.next_retry_at,
-            };
-            state.insert(msg_id.to_string(), info);
-        }
-    }
-
-    Ok(state)
-}
-
-/// Check if a status matches the filter
-const fn status_matches(status: &empath_delivery::DeliveryStatus, filter: StatusFilter) -> bool {
-    matches!(
-        (status, filter),
-        (
-            empath_delivery::DeliveryStatus::Pending,
-            StatusFilter::Pending
-        ) | (
-            empath_delivery::DeliveryStatus::InProgress,
-            StatusFilter::InProgress
-        ) | (
-            empath_delivery::DeliveryStatus::Completed,
-            StatusFilter::Completed
-        ) | (
-            empath_delivery::DeliveryStatus::Failed(_),
-            StatusFilter::Failed
-        ) | (
-            empath_delivery::DeliveryStatus::Retry { .. },
-            StatusFilter::Retry
-        ) | (
-            empath_delivery::DeliveryStatus::Expired,
-            StatusFilter::Expired
-        )
-    )
-}
-
-/// Format delivery status for display
-fn format_status(status: &empath_delivery::DeliveryStatus) -> String {
-    match status {
-        empath_delivery::DeliveryStatus::Pending => PENDING_STR.to_string(),
-        empath_delivery::DeliveryStatus::InProgress => IN_PROGRESS_STR.to_string(),
-        empath_delivery::DeliveryStatus::Completed => COMPLETED_STR.to_string(),
-        empath_delivery::DeliveryStatus::Failed(_) => FAILED_STR.to_string(),
-        empath_delivery::DeliveryStatus::Retry { attempts, .. } => {
-            format!("{RETRY_STR} ({attempts})")
-        }
-        empath_delivery::DeliveryStatus::Expired => EXPIRED_STR.to_string(),
-    }
-}
-
-/// Format timestamp (milliseconds since epoch) as human-readable
-fn format_timestamp(timestamp_ms: u64) -> String {
-    let datetime = Utc.timestamp_millis_opt(i64::try_from(timestamp_ms).unwrap_or(0));
-    if let LocalResult::Single(dt) = datetime {
-        dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-    } else {
-        "unknown".to_string()
-    }
-}
-
-/// Format age (time since timestamp) as human-readable
-fn format_age(timestamp_ms: u64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-
-    let age_ms = now.saturating_sub(u128::from(timestamp_ms));
-    let age_secs = age_ms / 1000;
-
-    if age_secs < 60 {
-        format!("{age_secs}s")
-    } else if age_secs < 3600 {
-        let mins = age_secs / 60;
-        format!("{mins}m")
-    } else if age_secs < 86400 {
-        let hours = age_secs / 3600;
-        format!("{hours}h")
-    } else {
-        let days = age_secs / 86400;
-        format!("{days}d")
-    }
 }
 
 // ============================================================================
@@ -726,6 +221,12 @@ async fn handle_system_command_direct(
     handle_system_command(&client, action).await
 }
 
+/// Handle queue commands directly
+async fn handle_queue_command_direct(socket_path: &str, action: QueueAction) -> anyhow::Result<()> {
+    let client = check_control_socket(socket_path)?;
+    handle_queue_command(&client, action).await
+}
+
 /// Handle DNS cache management commands
 async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow::Result<()> {
     let request = match action {
@@ -746,7 +247,7 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
         Response::Ok => {
             println!("✓ Command completed successfully");
         }
-        Response::Data(data) => match data {
+        Response::Data(data) => match *data {
             ResponseData::DnsCache(cache) => {
                 if cache.is_empty() {
                     println!("DNS cache is empty");
@@ -787,7 +288,10 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
             ResponseData::Message(msg) => {
                 println!("✓ {msg}");
             }
-            ResponseData::SystemStatus(_) => {
+            ResponseData::SystemStatus(_)
+            | ResponseData::QueueList(_)
+            | ResponseData::QueueMessageDetails(_)
+            | ResponseData::QueueStats(_) => {
                 println!("Unexpected response for DNS command: {data:?}");
             }
         },
@@ -812,7 +316,7 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
         Response::Ok => {
             println!("✓ Pong! MTA is responding");
         }
-        Response::Data(data) => match data {
+        Response::Data(data) => match *data {
             ResponseData::SystemStatus(status) => {
                 println!("=== Empath MTA Status ===\n");
                 println!("Version:            {}", status.version);
@@ -823,7 +327,12 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                 println!("Queue size:         {} message(s)", status.queue_size);
                 println!("DNS cache entries:  {}", status.dns_cache_entries);
             }
-            ResponseData::DnsCache(_) | ResponseData::MxOverrides(_) | ResponseData::Message(_) => {
+            ResponseData::DnsCache(_)
+            | ResponseData::MxOverrides(_)
+            | ResponseData::Message(_)
+            | ResponseData::QueueList(_)
+            | ResponseData::QueueMessageDetails(_)
+            | ResponseData::QueueStats(_) => {
                 println!("Unexpected response for system command: {data:?}");
             }
         },
@@ -833,6 +342,192 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
     }
 
     Ok(())
+}
+
+/// Handle queue management commands
+#[allow(clippy::too_many_lines)]
+async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> anyhow::Result<()> {
+    use empath_control::{QueueCommand, protocol::ResponseData};
+
+    let request = match action {
+        QueueAction::List { status, format: _ } => {
+            let status_filter = status.map(|s| {
+                match s {
+                    StatusFilter::Pending => PENDING_STR,
+                    StatusFilter::InProgress => IN_PROGRESS_STR,
+                    StatusFilter::Completed => COMPLETED_STR,
+                    StatusFilter::Failed => FAILED_STR,
+                    StatusFilter::Retry => RETRY_STR,
+                    StatusFilter::Expired => EXPIRED_STR,
+                }
+                .to_string()
+            });
+            Request::Queue(QueueCommand::List { status_filter })
+        }
+        QueueAction::View { message_id } => Request::Queue(QueueCommand::View { message_id }),
+        QueueAction::Retry { message_id, force } => {
+            Request::Queue(QueueCommand::Retry { message_id, force })
+        }
+        QueueAction::Delete { message_id, yes } => {
+            // Confirmation prompt if not --yes
+            if !yes {
+                print!("Are you sure you want to delete message {message_id}? (y/N): ");
+                stdout().flush()?;
+
+                let mut input = String::new();
+                stdin().read_line(&mut input)?;
+
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+            Request::Queue(QueueCommand::Delete { message_id })
+        }
+        QueueAction::Stats { watch, interval } => {
+            if watch {
+                // Watch mode - continuously update
+                loop {
+                    // Clear screen
+                    print!("\x1B[2J\x1B[1;1H");
+
+                    let response = client
+                        .send_request(Request::Queue(QueueCommand::Stats))
+                        .await?;
+
+                    match response {
+                        Response::Data(d) if matches!(*d, ResponseData::QueueStats(_)) => {
+                            match *d {
+                                ResponseData::QueueStats(stats) => {
+                                    display_queue_stats(&stats);
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        Response::Error(err) => {
+                            anyhow::bail!("Server error: {err}");
+                        }
+                        _ => {
+                            anyhow::bail!("Unexpected response for stats command");
+                        }
+                    }
+
+                    tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+                }
+            } else {
+                Request::Queue(QueueCommand::Stats)
+            }
+        }
+    };
+
+    let response = client.send_request(request).await?;
+
+    match response {
+        Response::Ok => {
+            println!("✓ Command completed successfully");
+        }
+        Response::Data(data) => match *data {
+            ResponseData::QueueList(messages) => {
+                if messages.is_empty() {
+                    println!("No messages in queue");
+                } else {
+                    println!("=== Queue Messages ({}) ===\n", messages.len());
+                    for msg in messages {
+                        println!("ID:        {}", msg.id);
+                        println!("From:      {}", msg.from);
+                        println!("To:        {}", msg.to.join(", "));
+                        println!("Domain:    {}", msg.domain);
+                        println!("Status:    {}", msg.status);
+                        println!("Attempts:  {}", msg.attempts);
+                        if let Some(next_retry) = msg.next_retry {
+                            println!("Next retry: {}", format_timestamp(next_retry * 1000));
+                        }
+                        println!("Size:      {} bytes", msg.size);
+                        println!("Spooled:   {}", format_timestamp(msg.spooled_at * 1000));
+                        println!();
+                    }
+                }
+            }
+            ResponseData::QueueMessageDetails(details) => {
+                println!("=== Message Details ===\n");
+                println!("ID:        {}", details.id);
+                println!("From:      {}", details.from);
+                println!("To:        {}", details.to.join(", "));
+                println!("Domain:    {}", details.domain);
+                println!("Status:    {}", details.status);
+                println!("Attempts:  {}", details.attempts);
+                if let Some(next_retry) = details.next_retry {
+                    println!("Next retry: {}", format_timestamp(next_retry * 1000));
+                }
+                if let Some(ref error) = details.last_error {
+                    println!("Last error: {error}");
+                }
+                println!("Size:      {} bytes", details.size);
+                println!("Spooled:   {}", format_timestamp(details.spooled_at * 1000));
+
+                if !details.headers.is_empty() {
+                    println!("\n--- Headers ---");
+                    for (key, value) in &details.headers {
+                        println!("{key}: {value}");
+                    }
+                }
+
+                println!("\n--- Body Preview ---");
+                println!("{}", details.body_preview);
+            }
+            ResponseData::QueueStats(stats) => {
+                display_queue_stats(&stats);
+            }
+            ResponseData::Message(msg) => {
+                println!("✓ {msg}");
+            }
+            ResponseData::DnsCache(_)
+            | ResponseData::MxOverrides(_)
+            | ResponseData::SystemStatus(_) => {
+                println!("Unexpected response for queue command: {data:?}");
+            }
+        },
+        Response::Error(err) => {
+            anyhow::bail!("Server error: {err}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Display queue statistics
+fn display_queue_stats(stats: &empath_control::protocol::QueueStats) {
+    println!("=== Queue Statistics ===\n");
+    println!("Total messages: {}", stats.total);
+
+    if !stats.by_status.is_empty() {
+        println!("\nBy Status:");
+        for (status, count) in &stats.by_status {
+            println!("  {status:12} {count}");
+        }
+    }
+
+    if !stats.by_domain.is_empty() {
+        println!("\nBy Domain:");
+        for (domain, count) in &stats.by_domain {
+            println!("  {domain:30} {count}");
+        }
+    }
+
+    if let Some(age) = stats.oldest_message_age_secs {
+        println!("\nOldest message age: {}", format_duration(age));
+    }
+}
+
+/// Format timestamp (milliseconds since epoch) as human-readable
+fn format_timestamp(timestamp_ms: u64) -> String {
+    use chrono::{TimeZone, Utc, offset::LocalResult};
+    let datetime = Utc.timestamp_millis_opt(i64::try_from(timestamp_ms).unwrap_or(0));
+    if let LocalResult::Single(dt) = datetime {
+        dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
 /// Format duration in human-readable form

@@ -14,7 +14,7 @@ pub mod server;
 
 pub use client::ControlClient;
 pub use error::{ControlError, Result};
-pub use protocol::{DnsCommand, Request, Response, SystemCommand};
+pub use protocol::{DnsCommand, QueueCommand, Request, Response, SystemCommand};
 pub use server::ControlServer;
 
 /// Default path for the control socket
