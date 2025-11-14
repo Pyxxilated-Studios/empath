@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-14:** ✅ **COMPLETED** task 0.16: Added client-side response size validation (DoS protection)
 - **2025-11-14:** ✅ **COMPLETED** task 0.23: Refactored metrics to use module/event system (architectural fix)
 - **2025-11-14:** 🎯 Decoupled all metrics from business logic - zero coupling achieved
 - **2025-11-14:** 🔍 Comprehensive multi-agent review of recent commits (architect-review + code-reviewer)
@@ -345,36 +346,46 @@ info!("Control socket created with mode 0600: {}", self.socket_path);
 
 ---
 
-### 🟡 0.16 Add Client-Side Response Size Validation (DoS Protection)
-**Priority:** High (Before Production)
+### ✅ 0.16 Add Client-Side Response Size Validation (DoS Protection)
+**Priority:** ~~High (Before Production)~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 30 minutes
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-14)
 
-**Current Issue:** Control client reads response length without validation. A malicious or buggy server could send a huge length prefix (e.g., 4GB), causing memory exhaustion.
+**Original Issue:** Control client reads response length without validation. A malicious or buggy server could send a huge length prefix (e.g., 4GB), causing memory exhaustion.
 
 **Security Impact:** Client-side DoS attack vector.
 
-**Implementation:**
-```rust
-// In empath-control/src/client.rs around line 82
-let response_len = u32::from_be_bytes(len_buf);
+**Solution Implemented:**
 
-// Add validation before allocation
-const MAX_RESPONSE_SIZE: u32 = 10_000_000;  // 10MB (generous for DNS cache)
-if response_len > MAX_RESPONSE_SIZE {
-    return Err(ControlError::Protocol(Box::new(bincode::ErrorKind::Custom(
-        format!("Response too large: {response_len} bytes (max {MAX_RESPONSE_SIZE})"),
-    ))));
-}
+Added response size validation in the control client to prevent memory exhaustion attacks from malicious or buggy servers.
 
-let mut response_bytes = vec![0u8; response_len as usize];
-```
+**Changes Made:**
 
-**Current Protection:** Server validates request size (1MB limit at `server.rs:169`), but client lacks symmetric protection.
+1. **Added MAX_RESPONSE_SIZE constant** (`empath-control/src/client.rs:13-15`):
+   - Set to 10MB (generous for large DNS cache responses)
+   - Documented purpose: prevent DoS attacks while allowing legitimate responses
 
-**Files to Modify:**
-- `empath-control/src/client.rs` (add validation before allocation)
+2. **Validation logic** (`empath-control/src/client.rs:87-92`):
+   - Validates response size before buffer allocation
+   - Returns `ControlError::Protocol` with descriptive error message
+   - Prevents memory exhaustion from oversized length prefixes
+
+3. **Unit test** (`empath-control/src/client.rs:145-151`):
+   - Verifies MAX_RESPONSE_SIZE is set to 10MB as documented
+   - Confirms it's larger than server's request limit (1MB)
+
+**Benefits Achieved:**
+- ✅ Prevents client-side DoS via memory exhaustion
+- ✅ Complements existing server-side request size validation (1MB limit)
+- ✅ Symmetric protection on both client and server sides
+- ✅ Clear error messages for debugging
+
+**Files Modified:** 1 file (+19 lines)
+- `empath-control/src/client.rs`
+
+**Commits:**
+- `50a7568`: feat(control): Add client-side response size validation (DoS protection)
 
 **Dependencies:** 0.9 (Control Socket IPC)
 **Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #2)
