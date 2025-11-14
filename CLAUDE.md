@@ -112,6 +112,36 @@ cargo build --bin empathctl            # Build empathctl CLI utility
 ./target/debug/empathctl --control-socket /var/run/empath.sock system status
 ```
 
+### Docker Development Environment
+
+The project includes a complete Docker-based development environment with observability stack (OpenTelemetry, Prometheus, Grafana) and pre-built FFI example modules.
+
+**Quick Start:**
+```bash
+just docker-up         # Start full stack (Empath + OTEL + Prometheus + Grafana)
+just docker-logs       # View logs
+just docker-grafana    # Open Grafana dashboard (admin/admin)
+just docker-down       # Stop stack
+```
+
+**Available Services:**
+- Empath SMTP: `localhost:1025`
+- Grafana: `http://localhost:3000` (admin/admin)
+- Prometheus: `http://localhost:9090`
+- OTEL Collector: `http://localhost:4318` (OTLP)
+
+**Additional Commands:**
+```bash
+just docker-rebuild       # Rebuild and restart containers
+just docker-logs-empath   # View Empath logs only
+just docker-test-email    # Send a test email
+just docker-clean         # Full teardown including volumes
+```
+
+The Docker image includes pre-built FFI example modules (`libexample.so`, `libevent.so`) that demonstrate the plugin system. These are automatically loaded when using the Docker environment.
+
+For detailed Docker documentation, see [`docker/README.md`](docker/README.md).
+
 ## Clippy Configuration
 
 This project uses STRICT clippy linting configured at the workspace level. All changes must pass:

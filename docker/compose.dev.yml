@@ -3,13 +3,13 @@ services:
   empath:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: docker/Dockerfile.dev
     container_name: empath-mta
     ports:
       - "1025:1025"  # SMTP port
     volumes:
       # Docker-specific config with FFI example modules enabled
-      - ./empath.docker.config.ron:/etc/empath/empath.config.ron
+      - ./docker/empath.config.ron:/etc/empath/empath.config.ron
       - ./spool:/tmp/spool/empath
     environment:
       - RUST_LOG=info
@@ -27,7 +27,7 @@ services:
     container_name: otel-collector
     command: ["--config=/etc/otel-collector-config.yml"]
     volumes:
-      - ./otel-collector-config.yml:/etc/otel-collector-config.yml
+      - ./docker/otel-collector.yml:/etc/otel-collector-config.yml
     ports:
       - "4318:4318"  # OTLP HTTP receiver
       - "8888:8888"  # Prometheus metrics (collector's own metrics)
@@ -45,7 +45,7 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -66,7 +66,7 @@ services:
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/grafana-dashboard.json
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
     networks:

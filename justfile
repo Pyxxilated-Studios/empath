@@ -268,3 +268,76 @@ dev: fmt lint test
 # Pre-commit checks (fast)
 pre-commit: fmt-check lint
     @echo "✅ Pre-commit checks passed"
+
+# ============================================================================
+# Docker Development Stack
+# ============================================================================
+# Full observability stack: Empath + OTEL + Prometheus + Grafana
+# See docker/README.md for detailed documentation
+
+# Start full development stack (Empath + OTEL + Prometheus + Grafana)
+docker-up:
+    docker-compose -f docker/compose.dev.yml up -d
+    @echo "✅ Docker stack started"
+    @echo ""
+    @echo "Services available at:"
+    @echo "  - Empath SMTP:  smtp://localhost:1025"
+    @echo "  - Grafana:      http://localhost:3000 (admin/admin)"
+    @echo "  - Prometheus:   http://localhost:9090"
+    @echo "  - OTEL:         http://localhost:4318 (OTLP)"
+    @echo ""
+    @echo "View logs: just docker-logs"
+
+# Stop development stack
+docker-down:
+    docker-compose -f docker/compose.dev.yml down
+    @echo "✅ Docker stack stopped"
+
+# View live logs from all services
+docker-logs:
+    docker-compose -f docker/compose.dev.yml logs -f
+
+# View live logs from Empath container only
+docker-logs-empath:
+    docker-compose -f docker/compose.dev.yml logs -f empath
+
+# Rebuild containers
+docker-build:
+    docker-compose -f docker/compose.dev.yml build
+    @echo "✅ Docker images rebuilt"
+
+# Rebuild and restart containers
+docker-rebuild: docker-build
+    docker-compose -f docker/compose.dev.yml up -d
+    @echo "✅ Docker stack rebuilt and restarted"
+
+# Restart Empath container only (after config changes)
+docker-restart:
+    docker-compose -f docker/compose.dev.yml restart empath
+    @echo "✅ Empath container restarted"
+
+# Open Grafana dashboard in browser
+docker-grafana:
+    @echo "Opening Grafana at http://localhost:3000 (admin/admin)"
+    @xdg-open http://localhost:3000 2>/dev/null || open http://localhost:3000 2>/dev/null || echo "Visit http://localhost:3000"
+
+# Open Prometheus UI in browser
+docker-prometheus:
+    @echo "Opening Prometheus at http://localhost:9090"
+    @xdg-open http://localhost:9090 2>/dev/null || open http://localhost:9090 2>/dev/null || echo "Visit http://localhost:9090"
+
+# Show status of all containers
+docker-ps:
+    docker-compose -f docker/compose.dev.yml ps
+
+# Full stack teardown including volumes (clean slate)
+docker-clean:
+    docker-compose -f docker/compose.dev.yml down -v
+    @echo "✅ Docker stack cleaned (including volumes)"
+
+# Send a test email through the Docker SMTP server
+docker-test-email:
+    @echo "Sending test email via localhost:1025..."
+    @echo -e "EHLO test.local\nMAIL FROM:<sender@test.com>\nRCPT TO:<recipient@example.com>\nDATA\nSubject: Test Email\n\nThis is a test email from justfile.\n.\nQUIT" | nc localhost 1025
+    @echo ""
+    @echo "✅ Test email sent. Check logs: just docker-logs-empath"
