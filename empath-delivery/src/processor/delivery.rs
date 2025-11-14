@@ -152,9 +152,11 @@ pub async fn prepare_message(
             if empath_metrics::is_enabled() {
                 let duration_secs = delivery_start.elapsed().as_secs_f64();
                 let retry_count = u64::from(info.attempt_count());
-                empath_metrics::metrics()
-                    .delivery
-                    .record_delivery_success(&info.recipient_domain, duration_secs, retry_count);
+                empath_metrics::metrics().delivery.record_delivery_success(
+                    &info.recipient_domain,
+                    duration_secs,
+                    retry_count,
+                );
             }
 
             processor

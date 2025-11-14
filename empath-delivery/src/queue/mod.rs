@@ -136,7 +136,7 @@ impl DeliveryQueue {
     }
 
     /// Get all messages with their current status
-    #[traced(instrument(ret))]
+    #[traced(instrument(ret, level = tracing::Level::TRACE))]
     pub async fn all_messages(&self) -> Vec<DeliveryInfo> {
         let queue = self.queue.read().await;
         queue.values().cloned().collect()

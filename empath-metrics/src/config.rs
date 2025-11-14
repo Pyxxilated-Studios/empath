@@ -29,7 +29,7 @@ const fn default_enabled() -> bool {
 }
 
 fn default_endpoint() -> String {
-    "http://localhost:4318".to_string()
+    "http://localhost:4318/v1/metrics".to_string()
 }
 
 impl Default for MetricsConfig {

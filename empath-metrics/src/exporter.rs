@@ -13,19 +13,22 @@ use crate::MetricsError;
 /// # Errors
 ///
 /// Returns an error if the OTLP exporter cannot be initialized.
-pub fn init_otlp_exporter(endpoint: String) -> Result<SdkMeterProvider, MetricsError> {
+pub fn init_otlp_exporter(endpoint: &str) -> Result<SdkMeterProvider, MetricsError> {
+    tracing::info!(endpoint = %endpoint, "Configuring OTLP metrics exporter");
+
     let exporter = opentelemetry_otlp::MetricExporter::builder()
         .with_http()
         .with_endpoint(endpoint)
         .build()
-        .map_err(|e| MetricsError::OpenTelemetry(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(endpoint = %endpoint, error = %e, "Failed to build OTLP exporter");
+            MetricsError::OpenTelemetry(e.to_string())
+        })?;
 
-    let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter)
-        .build();
+    let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter).build();
 
-    let provider = SdkMeterProvider::builder()
-        .with_reader(reader)
-        .build();
+    let provider = SdkMeterProvider::builder().with_reader(reader).build();
 
+    tracing::info!("OTLP metrics exporter initialized successfully");
     Ok(provider)
 }

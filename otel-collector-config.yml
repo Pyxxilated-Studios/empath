@@ -37,15 +37,9 @@ exporters:
   # Export metrics in Prometheus format for scraping
   prometheus:
     endpoint: "0.0.0.0:8889"
-    namespace: empath
+    # Note: No namespace needed - metrics already prefixed with "empath_" from meter names
     const_labels:
       environment: development
-
-  # Debug logging (useful for troubleshooting)
-  logging:
-    loglevel: info
-    sampling_initial: 5
-    sampling_thereafter: 200
 
 service:
   pipelines:
@@ -53,11 +47,9 @@ service:
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource]
-      exporters: [prometheus, logging]
+      exporters: [prometheus]
 
   # Enable telemetry for the collector itself
   telemetry:
     logs:
       level: info
-    metrics:
-      address: 0.0.0.0:8888

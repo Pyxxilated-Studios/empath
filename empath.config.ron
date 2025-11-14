@@ -18,12 +18,6 @@ Empath (
                 "extensions": [
                     {
                         "size": 10000,
-                    },
-                    {
-                        "starttls": {
-                            "key": "private.key",
-                            "certificate": "certificate.crt",
-                        }
                     }
                 ]
             },
@@ -35,25 +29,6 @@ Empath (
             },
         ],
     ),
-    modules: [
-        // The order of these should really be in the order you want them
-        // to be loaded
-        (
-            type: "SharedLibrary",
-            name: "./empath-ffi/examples/libexample.so",
-            arguments: [
-                "arg1",
-            ],
-        ),
-        (
-            type: "SharedLibrary",
-            name: "./empath-ffi/examples/libevent.so",
-            arguments: [
-                "arg1",
-                "arg2",
-            ],
-        ),
-    ],
     spool: (
         type: "File",
         path: "/tmp/spool/empath",
@@ -132,9 +107,10 @@ Empath (
         // OTLP endpoint URL for metrics export
         // Metrics will be pushed to this OpenTelemetry Collector endpoint
         // Common values:
-        //   - "http://localhost:4318" (local development, OTLP HTTP default)
-        //   - "http://otel-collector:4318" (Docker Compose, use service name)
-        // Default: http://localhost:4318
-        endpoint: "http://localhost:4318",
+        //   - "http://localhost:4318/v1/metrics" (local development, OTLP HTTP)
+        //   - "http://otel-collector:4318/v1/metrics" (Docker Compose, service name)
+        // Default: http://localhost:4318/v1/metrics
+        // NOTE: When running in Docker Compose, use the service name (otel-collector)
+        endpoint: "http://otel-collector:4318/v1/metrics",
     ),
 )

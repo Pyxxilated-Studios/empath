@@ -8,7 +8,7 @@ services:
     ports:
       - "1025:1025"  # SMTP port
     volumes:
-      - ./empath.config.ron:/etc/empath.config.ron
+      - ./empath.config.ron:/etc/empath/empath.config.ron
       - ./spool:/tmp/spool/empath
     environment:
       - RUST_LOG=info
@@ -60,8 +60,10 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/grafana-dashboard.json
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
     networks:

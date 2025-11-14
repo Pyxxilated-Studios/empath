@@ -48,9 +48,8 @@ pub use config::MetricsConfig;
 pub use delivery::DeliveryMetrics;
 pub use dns::DnsMetrics;
 pub use error::MetricsError;
-pub use smtp::SmtpMetrics;
-
 use once_cell::sync::OnceCell;
+pub use smtp::SmtpMetrics;
 
 /// Global metrics instance
 static METRICS_INSTANCE: OnceCell<Metrics> = OnceCell::new();
@@ -102,7 +101,7 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
     );
 
     // Initialize the OTLP exporter
-    let provider = exporter::init_otlp_exporter(config.endpoint.clone())?;
+    let provider = exporter::init_otlp_exporter(&config.endpoint)?;
 
     // Install the provider as the global meter provider
     opentelemetry::global::set_meter_provider(provider);

@@ -26,13 +26,11 @@ FROM debian:stable AS modules
 COPY empath-ffi/examples /tmp
 RUN cd /tmp
 
-
 FROM debian:stable-slim
 
 WORKDIR /empath
 
 COPY --from=empath /empath/target/release .
-COPY --from=modules /tmp/*.so .
 
 VOLUME /config
 

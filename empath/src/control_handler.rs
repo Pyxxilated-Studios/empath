@@ -179,7 +179,7 @@ impl EmpathControlHandler {
                 } else {
                     all_info
                 };
-                internal!("{filtered_info:?}");
+                internal!(level = TRACE, "{filtered_info:?}");
 
                 // Convert to protocol types
                 let mut messages = Vec::new();

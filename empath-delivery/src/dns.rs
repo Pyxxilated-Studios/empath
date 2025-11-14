@@ -348,7 +348,9 @@ impl DnsResolver {
                     warn!("MX lookup failed for {domain}: {err}");
                     // Record DNS error metric
                     if empath_metrics::is_enabled() {
-                        empath_metrics::metrics().dns.record_error("mx_lookup_failed");
+                        empath_metrics::metrics()
+                            .dns
+                            .record_error("mx_lookup_failed");
                     }
                     Err(DnsError::LookupFailed(err))
                 }
