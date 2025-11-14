@@ -9,88 +9,18 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
-- **2025-11-13:** ✅ Multi-agent code review completed (code-reviewer, architect-review, rust-expert)
-- **2025-11-13:** 📝 Added 7 new action items from review (tasks 0.15-0.21)
-- **2025-11-13:** ✅ Implemented control socket IPC system for runtime management
-- **2025-11-13:** ✅ Added DNS cache management (list, clear, refresh, overrides)
-- **2025-11-13:** ✅ Enhanced empathctl with control subcommands (dns, system)
-- **2025-11-13:** ✅ Added system status and health check commands
-- **2025-11-11:** ✅ Implemented exponential backoff with message expiration
-- **2025-11-11:** ✅ Implemented graceful shutdown handling with 30s timeout
-- **2025-11-10:** Comprehensive code review completed (see CODE_REVIEW_2025-11-10.md)
-- **2025-11-10:** ✅ Fixed TLS certificate validation (two-tier configuration system)
-- **2025-11-10:** ✅ Implemented comprehensive SMTP operation timeouts (server and client)
-- **2025-11-10:** ✅ Added empathctl queue management CLI utility
-- **2025-11-10:** ✅ Extracted SMTP transaction logic into separate module
-- **2025-11-09:** ✅ Implemented typed error handling with thiserror
-- **2025-11-09:** ✅ Added per-domain configuration with DNS MX resolution
-- **2025-11-08:** ✅ Comprehensive benchmarking infrastructure with Criterion.rs
-- **2025-11-08:** ✅ Reduced clone usage by ~80% in hot paths
+- **2025-11-14:** 🔍 Comprehensive multi-agent review of recent commits (architect-review + code-reviewer)
+- **2025-11-14:** 📝 Added 12 new tasks from commit review (tasks 0.23-0.34)
+- **2025-11-14:** ⚠️ **CRITICAL**: Identified architectural violation in metrics implementation (task 0.23)
+- **2025-11-14:** 🔐 **SECURITY**: Identified authentication gaps in metrics/control endpoints (tasks 0.27-0.28)
+- **2025-11-13:** ✅ Implemented OpenTelemetry metrics with Grafana dashboard
+- **2025-11-13:** ✅ Migrated queue commands from file-based to IPC
+- **2025-11-13:** ✅ Refactored spool.rs into modular structure (773 → 220 lines)
 
+**Archive:** For completed tasks and older updates, see git history.
 ---
 
 ## Phase 0: Code Review Follow-ups (Week 0)
-
-### ✅ 0.1 TLS Certificate Validation Security Fix
-**Priority:** Critical
-**Complexity:** Medium
-**Effort:** 1 day
-**Status:** ✅ **COMPLETED** (2025-11-10)
-
-**Implementation:**
-- ✅ Added global `accept_invalid_certs` flag to DeliveryProcessor (defaults to false)
-- ✅ Added per-domain `accept_invalid_certs` override to DomainConfig
-- ✅ Implemented priority resolution (per-domain > global)
-- ✅ Added security warning logging when validation disabled
-- ✅ Updated example configuration with commented examples
-- ✅ Comprehensive documentation in CLAUDE.md
-- ✅ Added test coverage for two-tier configuration
-
-**Files Modified:**
-- `empath-delivery/src/lib.rs`
-- `empath-delivery/src/domain_config.rs`
-- `empath.config.ron`
-- `CLAUDE.md`
-
----
-
-### ✅ 0.2 Add SMTP Operation Timeouts
-**Priority:** Critical
-**Complexity:** Simple
-**Effort:** 1 day
-**Status:** ✅ **COMPLETED** (2025-11-10)
-
-**Implementation:**
-- ✅ Server-side RFC 5321-compliant timeouts with state-aware selection
-- ✅ Client-side per-operation timeouts for all SMTP commands
-- ✅ Configurable timeouts via empath.config.ron
-- ✅ Connection lifetime tracking (max 30 minutes)
-- ✅ Comprehensive logging of timeout events
-- ✅ Security benefits: prevents slowloris attacks and DoS vulnerabilities
-
-**Server-side timeouts:**
-- command_secs: 300s (regular commands)
-- data_init_secs: 120s (DATA command)
-- data_block_secs: 180s (between data chunks)
-- data_termination_secs: 600s (processing after final dot)
-- connection_secs: 1800s (maximum session lifetime)
-
-**Client-side timeouts:**
-- connect_secs, ehlo_secs, starttls_secs, mail_from_secs, rcpt_to_secs
-- data_secs: 120s (longer for large messages)
-- quit_secs: 10s (logged but doesn't fail delivery)
-
-**Files Modified:**
-- `empath-delivery/src/lib.rs`
-- `empath-smtp/src/lib.rs`
-- `empath-smtp/src/session.rs`
-- `empath.config.ron`
-- `CLAUDE.md`
-
-**Dependencies:** None
-**Source:** CODE_REVIEW_2025-11-10.md Section 1.4
-
----
 
 ### ❌ 0.3 Fix Context/Message Layer Violation in Spool
 **Priority:** ~~Critical~~ **REJECTED**
@@ -131,35 +61,6 @@ After thorough analysis, this is **NOT** a layer violation but an **intentional 
 
 **Dependencies:** None
 **Source:** CODE_REVIEW_2025-11-10.md Section 2.1 (original), reconsidered during task 1.1 implementation
-
----
-
-### ✅ 0.4 Optimize String Cloning in Hot Path
-**Priority:** High
-**Complexity:** Simple
-**Effort:** 1 hour
-**Status:** ✅ **COMPLETED** (2025-11-08)
-
-**Implementation:**
-- ✅ Reduced clone usage by ~80% across hot paths
-- ✅ Message builder refactoring using `std::mem::take()` instead of cloning
-- ✅ BackingStore API changed to take ownership instead of reference
-- ✅ Session Arc wrappers for `banner` and `init_context`
-- ✅ Command::inner() optimization returning `Cow<'_, str>` instead of `String`
-
-**Performance Impact:**
-- Before: ~5,000-6,000 allocations/sec (1000 emails/sec workload)
-- After: ~1,000 allocations/sec
-- **Reduction: ~80% fewer allocations in hot paths**
-
-**Files Modified:**
-- `empath-smtp/src/session.rs`
-- `empath-smtp/src/command.rs`
-- `empath-spool/src/spool.rs`
-- `empath-common/src/context.rs`
-
-**Dependencies:** None
-**Source:** CODE_REVIEW_2025-11-10.md Section 3.1
 
 ---
 
@@ -217,35 +118,6 @@ pub struct NoVerifier;
 
 ---
 
-### ✅ 0.7 Extract SmtpTransaction from DeliveryProcessor
-**Priority:** High (Refactoring)
-**Complexity:** Medium
-**Effort:** 1 day
-**Status:** ✅ **COMPLETED** (2025-11-10)
-
-**Implementation:**
-- ✅ Created new `smtp_transaction.rs` module with `SmtpTransaction` struct
-- ✅ Extracted SMTP protocol logic from DeliveryProcessor
-- ✅ Methods: `negotiate_tls()`, `send_mail_from()`, `send_rcpt_to()`, `send_message_data()`
-- ✅ Updated DeliveryProcessor.deliver_message() to use SmtpTransaction
-- ✅ Removed duplicated extract_email_address() function
-
-**Benefits:**
-- **Reduced lib.rs from 1522 to 1219 lines (20% reduction)**
-- **Created focused 370-line smtp_transaction.rs module**
-- Improved separation of concerns
-- Makes code more testable and maintainable
-- Prepares for future DeliveryStrategy pattern (TODO 6.5)
-
-**Files Modified:**
-- `empath-delivery/src/lib.rs` (reduced from 1522 to 1219 lines)
-- `empath-delivery/src/smtp_transaction.rs` (new, 370 lines)
-
-**Dependencies:** None
-**Source:** CODE_REVIEW_2025-11-10.md Section 2.2
-
----
-
 ### 🟡 0.8 Add Spool Deletion Retry Mechanism
 **Priority:** High
 **Complexity:** Medium
@@ -281,79 +153,6 @@ pub enum DeliveryStatus {
 
 **Dependencies:** 2.1 (Metrics)
 **Source:** CODE_REVIEW_2025-11-10.md Section 1.5
-
----
-
-### ✅ 0.9 Control Socket IPC System for Runtime Management
-**Priority:** High
-**Complexity:** Medium
-**Effort:** 1 day
-**Status:** ✅ **COMPLETED** (2025-11-13)
-
-**Implementation:**
-- ✅ Created new `empath-control` crate with IPC framework
-  - Protocol types with bincode serialization (Request/Response)
-  - Control server using Unix domain socket
-  - Control client with timeout support
-- ✅ Added DNS cache management methods to `DnsResolver`
-  - `list_cache()` - Get all entries with remaining TTL
-  - `clear_cache()` - Clear entire cache
-  - `invalidate_domain()` - Remove specific domain entry
-  - `refresh_domain()` - Force fresh DNS lookup
-  - `cache_stats()` - Get cache size and expiration info
-- ✅ Implemented control handler in main empath binary
-  - DNS commands (list, clear, refresh cache, manage overrides)
-  - System commands (ping, status with uptime/queue/cache stats)
-- ✅ Integrated control server into main controller
-  - Runs alongside SMTP, spool, and delivery processors
-  - Default socket: `/tmp/empath.sock` (configurable)
-  - Graceful shutdown coordination
-- ✅ Enhanced `empathctl` CLI utility with control subcommands
-  - `empathctl dns list-cache` - List cached DNS entries
-  - `empathctl dns clear-cache` - Clear cache
-  - `empathctl dns refresh <domain>` - Refresh domain
-  - `empathctl dns list-overrides` - List MX overrides
-  - `empathctl system ping` - Health check
-  - `empathctl system status` - Show version, uptime, stats
-
-**Benefits:**
-- **No restart required** for DNS cache operations
-- **Real-time visibility** into system state
-- **Improved debuggability** with cache inspection
-- **Foundation for future control commands** (reload config, adjust log levels)
-
-**Files Created:**
-- `empath-control/src/lib.rs` (new crate)
-- `empath-control/src/protocol.rs` (IPC protocol types)
-- `empath-control/src/server.rs` (Unix socket server)
-- `empath-control/src/client.rs` (IPC client)
-- `empath-control/src/error.rs` (control errors)
-- `empath/src/control_handler.rs` (command handler implementation)
-
-**Files Modified:**
-- `empath-delivery/src/dns.rs` (added cache management methods)
-- `empath-delivery/src/queue/mod.rs` (added len/is_empty for control interface)
-- `empath-delivery/src/domain_config.rs` (added iter for control interface)
-- `empath-delivery/src/processor/mod.rs` (added accessor methods)
-- `empath/src/controller.rs` (integrated control server)
-- `empath/bin/empathctl.rs` (added control subcommands)
-
-**Configuration:**
-```ron
-Empath (
-    // Optional: customize control socket path
-    control_socket: "/tmp/empath.sock",
-)
-```
-
-**Known Limitations:**
-- Runtime MX override updates not yet supported (requires `Arc<DashMap>` for `DomainConfigRegistry`)
-- Returns helpful error message directing users to update config file
-
-**Future Enhancements:** See tasks 0.10, 0.11, 0.12 below
-
-**Dependencies:** None
-**Source:** User request for runtime control capabilities
 
 ---
 
@@ -860,6 +659,519 @@ loop {
 
 ---
 
+### 🔴 0.23 Refactor Metrics to Use Module/Event System
+**Priority:** Critical (Architectural Violation)
+**Complexity:** High
+**Effort:** 2-3 days
+**Status:** 📝 **TODO**
+
+**Current Issue:** The metrics implementation violates clean architecture principles by creating a dependency from business logic (empath-smtp, empath-delivery) to infrastructure (empath-metrics). This bypasses the existing module/event system that was specifically designed for cross-cutting concerns like observability.
+
+**Architectural Violations:**
+1. **Dependency Direction Reversal**: Business logic depends on infrastructure (should be opposite)
+2. **Scattered Observability Logic**: 12+ metrics calls scattered throughout business code
+3. **Ignoring Existing Event System**: Module system already provides events for this purpose
+4. **Global Mutable State**: Panic-based metrics access without initialization guarantees
+
+**Impact:**
+- Business logic coupled to metrics infrastructure
+- Cannot test SMTP/Delivery without metrics crate
+- Difficult to swap metrics implementations
+- Violates SOLID principles (Dependency Inversion, Single Responsibility)
+
+**Implementation:**
+1. Extend `empath-ffi/src/modules/mod.rs` with delivery lifecycle events
+2. Create `MetricsModule` implementing `EventListener` trait
+3. Remove all `empath_metrics::metrics()` calls from business logic files
+4. Remove metrics dependencies from `empath-smtp/Cargo.toml` and `empath-delivery/Cargo.toml`
+5. Update configuration to load metrics as a module
+6. Use event-driven Observer pattern instead of direct calls
+
+**Files to Modify:**
+- Remove metrics calls from: `empath-smtp/src/session/mod.rs:238-241, 357-365`
+- Remove metrics calls from: `empath-smtp/src/session/response.rs`
+- Remove metrics calls from: `empath-delivery/src/processor/delivery.rs:146-157`
+- Remove metrics calls from: `empath-delivery/src/dns.rs:242-245, 252-255`
+- Extend: `empath-ffi/src/modules/mod.rs` with delivery events
+- Create: `empath-metrics/src/module.rs` implementing EventListener
+
+**Benefits:**
+- ✅ Zero coupling - business logic never calls metrics
+- ✅ Follows existing architectural pattern
+- ✅ Easy to enable/disable via configuration
+- ✅ Multiple observability backends can subscribe
+- ✅ Testable in isolation
+
+**Dependencies:** None
+**Source:** Architect Review 2025-11-14, Code Review 2025-11-14
+
+---
+
+### 🟡 0.24 Extract Queue Command Handler Methods
+**Priority:** High (Code Complexity)
+**Complexity:** Medium
+**Effort:** 4-6 hours
+**Status:** 📝 **TODO**
+
+**Current Issue:** The `handle_queue_command()` function in control_handler.rs is 243 lines long with multiple nested match arms and complex logic, violating the Single Responsibility Principle.
+
+**Problems:**
+- Function handles protocol validation, business logic, data transformation, and error handling
+- Explicitly allows `clippy::too_many_lines` lint
+- Mixed responsibilities violate Clean Architecture layering
+- Difficult to test individual command handlers
+
+**Implementation:**
+1. Create `QueueCommandHandler` struct with processor reference
+2. Extract each `QueueCommand` variant to separate method:
+   - `handle_queue_list(&self, status_filter: Option<String>) -> Result<Response>`
+   - `handle_queue_view(&self, message_id: String) -> Result<Response>`
+   - `handle_queue_retry(&self, message_id: String, force: bool) -> Result<Response>`
+   - `handle_queue_delete(&self, message_id: String) -> Result<Response>`
+   - `handle_queue_stats(&self) -> Result<Response>`
+3. Move protocol conversion logic to separate helper functions
+4. Update `handle_queue_command()` to delegate to extracted methods
+5. Reduce main function from 243 lines to ~30 lines
+
+**Files to Modify:**
+- `empath/src/control_handler.rs:156-398` (reduce to ~80 lines)
+- Create helper methods within ControlHandler impl
+
+**Dependencies:** None
+**Source:** Architect Review 2025-11-14
+
+---
+
+### 🟡 0.25 Create DeliveryQueryService Abstraction
+**Priority:** Medium (Code Organization)
+**Complexity:** Medium
+**Effort:** 2-3 hours
+**Status:** 📝 **TODO**
+
+**Current Issue:** DeliveryProcessor is growing accessor methods specifically for the control interface, risking the "god object" anti-pattern. Three accessor methods have been added:
+- `dns_resolver()` (line 188)
+- `domains()` (line 194)
+- `spool()` (line 200)
+
+**Problem:**
+- DeliveryProcessor exposes internal dependencies for external queries
+- Violates encapsulation and separation of concerns
+- Growing into a facade for all delivery subsystems
+
+**Implementation:**
+Create a separate query service that provides read-only access to delivery state:
+
+```rust
+pub struct DeliveryQueryService {
+    processor: Arc<DeliveryProcessor>,
+}
+
+impl DeliveryQueryService {
+    pub fn dns_cache(&self) -> Option<DnsCache> { ... }
+    pub fn queue_snapshot(&self) -> QueueSnapshot { ... }
+    pub fn domain_configs(&self) -> DomainConfigs { ... }
+}
+```
+
+**Benefits:**
+- Prevents god object pattern
+- Cleaner separation between processing and querying
+- Explicit read-only interface for control commands
+
+**Files to Modify:**
+- Create: `empath-delivery/src/query_service.rs`
+- Update: `empath/src/control_handler.rs` to use query service
+- Update: `empath-delivery/src/processor/mod.rs` to remove public accessors
+
+**Dependencies:** None
+**Source:** Architect Review 2025-11-14
+
+---
+
+### 🟢 0.26 Add DeliveryStatus::matches_filter() Method
+**Priority:** Medium (Code Quality)
+**Complexity:** Simple
+**Effort:** 30 minutes
+**Status:** 📝 **TODO**
+
+**Current Issue:** Queue list filtering uses fragile `format!("{:?}", info.status) == status` comparison that relies on Debug formatting and can break between Rust versions.
+
+**Problem:**
+- Debug formatting is not a stable API contract
+- Doesn't match user expectations (e.g., "Retry { attempts: 2 }" != "Retry")
+- Related to task 0.22 queue list command bug
+
+**Implementation:**
+Add Display trait and matches_filter method to DeliveryStatus:
+
+```rust
+impl Display for DeliveryStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Failed(_) => write!(f, "failed"),
+            Self::Retry { .. } => write!(f, "retry"),
+            Self::Delivered => write!(f, "delivered"),
+        }
+    }
+}
+
+impl DeliveryStatus {
+    pub fn matches_filter(&self, filter: &str) -> bool {
+        self.to_string().eq_ignore_ascii_case(filter)
+    }
+}
+```
+
+**Files to Modify:**
+- `empath-common/src/context.rs` - Add Display impl and matches_filter method
+- `empath/src/control_handler.rs:177` - Replace format!("{:?}") with matches_filter
+
+**Dependencies:** None
+**Source:** Architect Review 2025-11-14, Code Review 2025-11-14
+
+---
+
+### 🔴 0.27 Add Authentication to Metrics Endpoint
+**Priority:** Critical (Security)
+**Complexity:** Medium
+**Effort:** 1-2 days
+**Status:** 📝 **TODO**
+
+**Current Issue:** The OTLP metrics endpoint accepts data from any source without authentication. In the Docker Compose setup, the OTel collector is exposed on port 4318 without access controls.
+
+**Security Impact:**
+- ⚠️ Attackers could poison metrics data
+- ⚠️ Resource exhaustion via metric flooding
+- ⚠️ Information disclosure (queue sizes, domains, error rates)
+
+**Implementation Options:**
+1. **API Key Authentication**: Add bearer token to OTLP requests
+2. **mTLS**: Mutual TLS for metrics collection (strongest option)
+3. **Network Isolation**: Firewall rules (minimum requirement)
+
+**Recommended Approach:**
+```rust
+// Add to MetricsConfig
+pub struct MetricsConfig {
+    pub enabled: bool,
+    pub listen_addr: SocketAddr,
+    pub auth_token: Option<String>,  // API key for basic auth
+    pub tls_cert: Option<PathBuf>,   // For mTLS
+    pub tls_key: Option<PathBuf>,
+}
+```
+
+**Files to Modify:**
+- `empath-metrics/src/config.rs` - Add auth configuration
+- `empath-metrics/src/exporter.rs` - Validate auth headers
+- `empath.config.ron` - Document auth options
+- `CLAUDE.md` - Add security section for metrics endpoints
+- `docker-compose.dev.yml` - Add auth token environment variable
+
+**Additional:**
+- Document firewall requirements in deployment guide
+- Add rate limiting to prevent DoS
+- Log failed authentication attempts
+
+**Dependencies:** None
+**Source:** Code Review 2025-11-14
+
+---
+
+### 🔴 0.28 Add Authentication to Control Socket
+**Priority:** Critical (Security)
+**Complexity:** Medium
+**Effort:** 1-2 days
+**Status:** 📝 **TODO**
+
+**Current Issue:** The Unix domain socket accepts commands without authentication. While file permissions provide some protection, any user with socket access can:
+- Delete messages from the queue
+- Clear DNS cache
+- View all message metadata
+- Modify runtime configuration
+
+**Note:** This was previously tracked as task 0.13 in the original TODO but was overlooked. Re-adding as high priority security issue.
+
+**Implementation:**
+1. Token-based authentication for all control commands
+2. Generate random token at startup, write to secure file
+3. empathctl reads token from file before sending commands
+4. Add authentication challenge/response protocol
+
+**Recommended Approach:**
+```rust
+// Control protocol changes
+pub enum Request {
+    Authenticate { token: String },
+    Command { session_token: String, cmd: Command },
+}
+
+pub enum Response {
+    AuthSuccess { session_token: String },
+    AuthFailure,
+    CommandResponse(ResponseData),
+}
+```
+
+**Files to Modify:**
+- `empath-control/src/protocol.rs` - Add authentication messages
+- `empath-control/src/server.rs` - Verify tokens before command execution
+- `empath-control/src/client.rs` - Read token and authenticate
+- `empath/bin/empathctl.rs` - Load token from secure location
+- `CLAUDE.md` - Document authentication setup and token management
+
+**Security Considerations:**
+- Token file permissions: 0600 (owner read/write only)
+- Token rotation on restart
+- Audit logging of all authenticated commands
+- Failed authentication logging and rate limiting
+
+**Dependencies:** None
+**Source:** Code Review 2025-11-14 (originally TODO 0.13)
+
+---
+
+### 🟡 0.29 Fix Platform-Specific Path Validation
+**Priority:** High (Security)
+**Complexity:** Simple
+**Effort:** 1 hour
+**Status:** 📝 **TODO**
+
+**Current Issue:** The sensitive path prefix check in file backend only works on Unix systems. On Windows, `C:\Windows\System32` would not be blocked, creating a security vulnerability.
+
+**Current Code** (`empath-spool/src/backends/file.rs:104-114`):
+```rust
+let sensitive_prefixes = [
+    "/etc", "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+    "/boot", "/sys", "/proc", "/dev",
+];
+```
+
+**Implementation:**
+```rust
+#[cfg(unix)]
+const SENSITIVE_PREFIXES: &[&str] = &[
+    "/etc", "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+    "/boot", "/sys", "/proc", "/dev",
+];
+
+#[cfg(windows)]
+const SENSITIVE_PREFIXES: &[&str] = &[
+    "C:\\Windows", "C:\\Program Files",
+    "C:\\Program Files (x86)", "C:\\ProgramData",
+];
+
+#[cfg(not(any(unix, windows)))]
+const SENSITIVE_PREFIXES: &[&str] = &[];
+```
+
+**Files to Modify:**
+- `empath-spool/src/backends/file.rs:104-126`
+
+**Testing:**
+- Add platform-specific tests for path validation
+- Test case-insensitive matching on Windows
+- Verify symbolic link resolution
+
+**Dependencies:** None
+**Source:** Code Review 2025-11-14
+
+---
+
+### 🟡 0.30 Reduce Metrics Runtime Overhead
+**Priority:** Medium (Performance)
+**Complexity:** Simple
+**Effort:** 2-3 hours
+**Status:** 📝 **TODO**
+
+**Current Issue:** Every metrics call includes a runtime check `if empath_metrics::is_enabled()` which adds branch prediction overhead even when metrics are disabled.
+
+**Current Pattern:**
+```rust
+if empath_metrics::is_enabled() {
+    empath_metrics::metrics().smtp.record_connection();
+}
+```
+
+**Performance Impact:**
+- ~2-5ns per check (measurable at high request rates)
+- Branch misprediction penalty in hot paths
+- Unnecessary overhead when metrics disabled
+
+**Implementation Options:**
+
+**Option 1: Compile-time feature flags** (recommended):
+```rust
+#[cfg(feature = "metrics")]
+empath_metrics::metrics().smtp.record_connection();
+```
+
+**Option 2: Zero-cost abstraction with const generics**:
+```rust
+pub trait MetricsRecorder {
+    fn record_connection(&self);
+}
+
+impl MetricsRecorder for EnabledMetrics { /* actual recording */ }
+impl MetricsRecorder for DisabledMetrics { /* no-op */ }
+```
+
+**Files to Modify:**
+- `empath-delivery/src/dns.rs:242-245, 252-255`
+- `empath-delivery/src/processor/delivery.rs:146-157`
+- `empath-smtp/src/session/mod.rs`
+- `empath-smtp/src/session/response.rs`
+- `empath-metrics/src/lib.rs`
+
+**Note:** This task will become obsolete once task 0.23 (metrics refactoring to module system) is completed, as metrics will be event-driven with zero overhead in business logic.
+
+**Dependencies:** None (but superseded by 0.23)
+**Source:** Code Review 2025-11-14
+
+---
+
+### 🟢 0.31 Fix ULID Collision Error Handling
+**Priority:** Medium (Reliability)
+**Complexity:** Simple
+**Effort:** 15 minutes
+**Status:** 📝 **TODO**
+
+**Current Issue:** ULID collision check silently ignores filesystem errors like permission issues, potentially allowing duplicate message IDs.
+
+**Current Code** (`empath-spool/src/backends/file.rs:249-252`):
+```rust
+if tokio::fs::try_exists(&data_path).await.unwrap_or(false)
+```
+
+**Problem:** Permission errors or filesystem issues are treated as "file doesn't exist", allowing writes that may fail later.
+
+**Implementation:**
+```rust
+if tokio::fs::try_exists(&data_path).await? {
+    return Err(SpoolError::AlreadyExists(tracking_id));
+}
+```
+
+**Files to Modify:**
+- `empath-spool/src/backends/file.rs:249-252`
+
+**Testing:**
+- Add test with permission-denied scenario
+- Verify error propagates correctly
+
+**Dependencies:** None
+**Source:** Code Review 2025-11-14
+
+---
+
+### 🟢 0.32 Add Metrics Integration Tests
+**Priority:** Medium (Quality Assurance)
+**Complexity:** Medium
+**Effort:** 1 day
+**Status:** 📝 **TODO**
+
+**Current Issue:** The metrics implementation lacks integration tests to verify:
+- Metrics are actually exported correctly
+- OTLP endpoint connectivity works
+- Prometheus scraping succeeds
+- Counter values increment correctly
+- Histogram buckets are configured properly
+
+**Implementation:**
+Create comprehensive integration test suite in `empath-metrics/tests/`:
+
+1. **OTLP Export Test**: Verify metrics push to collector
+2. **Prometheus Scrape Test**: Verify HTTP endpoint returns valid exposition format
+3. **Metric Recording Test**: Verify counters/histograms update correctly
+4. **DNS Metrics Test**: Verify cache hit/miss counters
+5. **Delivery Metrics Test**: Verify status tracking and duration histograms
+6. **SMTP Metrics Test**: Verify connection and command metrics
+
+**Test Infrastructure:**
+```rust
+// tests/integration_tests.rs
+#[tokio::test]
+async fn test_metrics_export() {
+    let config = MetricsConfig { ... };
+    init_metrics(&config).await.unwrap();
+
+    // Record some metrics
+    metrics().smtp.record_connection();
+
+    // Verify export
+    let response = reqwest::get("http://localhost:9090/metrics").await.unwrap();
+    assert!(response.text().await.unwrap().contains("empath_smtp_connections_total"));
+}
+```
+
+**Files to Create:**
+- `empath-metrics/tests/integration_tests.rs`
+- `empath-metrics/tests/common/mod.rs` (test helpers)
+
+**Dependencies:** None
+**Source:** Code Review 2025-11-14
+
+---
+
+### 🟢 0.33 Fix Import Organization
+**Priority:** Low (Code Quality)
+**Complexity:** Simple
+**Effort:** 15 minutes
+**Status:** 📝 **TODO**
+
+**Current Issue:** Some functions have imports inside the function body instead of at module level, making code harder to maintain and violating Rust conventions.
+
+**Example** (`empath-delivery/src/queue/retry.rs:23`):
+```rust
+pub fn calculate_next_retry_time(...) -> u64 {
+    use rand::Rng;  // ← Should be at module level
+    // ...
+}
+```
+
+**Implementation:**
+Move all function-scoped imports to module level for consistency.
+
+**Files to Modify:**
+- `empath-delivery/src/queue/retry.rs:23`
+- Search for other instances: `rg "^\s+use [a-z]" --type rust`
+
+**Dependencies:** None
+**Source:** Code Review 2025-11-14
+
+---
+
+### 🟢 0.34 Remove Unused Docker Build Stage
+**Priority:** Low (Code Cleanup)
+**Complexity:** Simple
+**Effort:** 5 minutes
+**Status:** 📝 **TODO**
+
+**Current Issue:** The Dockerfile has an empty `modules` build stage that copies files but doesn't build them or use them.
+
+**Current Code** (`Dockerfile.dev:24-26`):
+```dockerfile
+FROM debian:stable AS modules
+COPY empath-ffi/examples /tmp
+RUN cd /tmp
+```
+
+**Problem:** This stage is unused and adds confusion to the build process.
+
+**Implementation:**
+Either:
+1. Remove the unused stage entirely (if modules aren't needed in Docker)
+2. Complete the implementation to actually build modules
+
+**Files to Modify:**
+- `Dockerfile.dev:24-26`
+
+**Dependencies:** None
+**Source:** Code Review 2025-11-14
+
+---
+
 ### 🟢 0.10 Add MX Record Randomization (RFC 5321)
 **Priority:** Medium
 **Complexity:** Simple
@@ -1221,28 +1533,6 @@ Once spool-based persistence is working:
 
 ---
 
-### ✅ 1.2 Real DNS MX Lookups
-**Priority:** Critical
-**Complexity:** Medium
-**Effort:** 1-2 days
-**Status:** ✅ **COMPLETED** (2025-11-09)
-
-**Implementation:**
-- ✅ Added `hickory-resolver` dependency
-- ✅ Implemented MX record resolution with priority sorting
-- ✅ Handle missing MX (fallback to A/AAAA records per RFC 5321)
-- ✅ Custom error types with temporary/permanent failure detection
-- ✅ LRU cache with TTL respect (300 entries)
-- ✅ Comprehensive test coverage including integration tests
-
-**Files Modified:**
-- `empath-delivery/src/dns.rs` (new, 418 lines)
-- `empath-delivery/src/lib.rs`
-
-**Dependencies:** None
-
----
-
 ### 🟢 1.2.1 DNSSEC Validation
 **Priority:** Medium
 **Complexity:** Medium
@@ -1280,204 +1570,6 @@ Empath (
 - Compliance with modern security standards
 
 **Dependencies:** 1.2 (Real DNS MX Lookups)
-
----
-
-### ✅ 1.3 Typed Error Handling with thiserror
-**Priority:** High
-**Complexity:** Simple
-**Effort:** 1 day
-**Status:** ✅ **COMPLETED** (2025-11-09)
-
-**Implementation:**
-- ✅ Added new error.rs module with DeliveryError, PermanentError, TemporaryError, SystemError
-- ✅ Updated all function signatures to use `Result<T, DeliveryError>`
-- ✅ Convert DnsError to DeliveryError via From trait
-- ✅ Categorize SMTP response codes (5xx = permanent, 4xx = temporary)
-- ✅ Removed anyhow dependency from empath-delivery
-- ✅ Updated DNS resolver to return Result<T, String>
-- ✅ Fixed clippy warnings (manual range contains)
-
-**Benefits:**
-- Clear distinction between permanent, temporary, and system errors
-- Pattern matching on specific error types for better retry logic
-- Type-safe error propagation throughout the delivery pipeline
-- Better error messages and debugging information
-
-**Files Modified:**
-- `empath-delivery/src/error.rs` (new, 238 lines)
-- `empath-delivery/src/lib.rs`
-- `empath-delivery/src/dns.rs`
-- `empath-common/src/error.rs` (new, 216 lines)
-- `empath-smtp/src/error.rs`
-- `empath-smtp/src/client/error.rs`
-- `empath-spool/src/error.rs` (new, 182 lines)
-
-**Dependencies:** None
-
----
-
-### ✅ 1.4 Exponential Backoff for Retries
-**Priority:** High
-**Complexity:** Simple
-**Effort:** 1 day
-**Status:** ✅ **COMPLETED** (2025-11-11)
-
-**Implementation:**
-- ✅ Configurable exponential backoff with base delay, max delay, and jitter factor
-- ✅ Formula: `delay = min(base * 2^(attempts - 1), max_delay) * (1 ± jitter)`
-- ✅ Default: 60s base, 86400s (24h) max, 0.2 (±20%) jitter
-- ✅ Message expiration configuration (optional, default: never expire)
-- ✅ Added `DeliveryInfo.queued_at` and `DeliveryInfo.next_retry_at` timestamps
-- ✅ Added `DeliveryStatus::Expired` for expired messages
-- ✅ Process queue only retries messages when it's time (respects `next_retry_at`)
-- ✅ Comprehensive tests for backoff calculation, jitter, expiration, and retry scheduling
-- ✅ Updated `empathctl` CLI to handle `Expired` status
-
-**Configuration Fields:**
-```ron
-delivery: (
-    base_retry_delay_secs: 60,        // Default: 60 seconds (1 minute)
-    max_retry_delay_secs: 86400,      // Default: 86400 seconds (24 hours)
-    retry_jitter_factor: 0.2,         // Default: 0.2 (±20%)
-    message_expiration_secs: 604800,  // Optional: 7 days (default: None)
-)
-```
-
-**Retry Schedule (with defaults):**
-- Attempt 1: ~1 minute (48-72s with jitter)
-- Attempt 2: ~2 minutes (96-144s with jitter)
-- Attempt 3: ~4 minutes (192-288s with jitter)
-- Attempt 4: ~8 minutes
-- ...
-- Max: 24 hours between attempts
-
-**Files Modified:**
-- `empath-delivery/src/lib.rs` (exponential backoff implementation + tests)
-- `empath-delivery/Cargo.toml` (added `rand` dependency)
-- `empath/bin/empathctl.rs` (added `Expired` status support)
-- `empath.config.ron` (documented new configuration options)
-
-**Dependencies:** 1.3 (DeliveryError categorization) ✅
-
----
-
-### ✅ 1.5 Graceful Shutdown Handling
-**Priority:** High
-**Complexity:** Medium
-**Effort:** 1-2 days
-**Status:** ✅ **COMPLETED** (2025-11-11)
-
-**Implementation:**
-- ✅ Wait for any in-flight delivery to complete with 30s timeout
-- ✅ Persist queue state to disk before exit
-- ✅ Track processing state with atomic flag
-- ✅ Integrated with existing tokio shutdown signal system
-- ✅ Comprehensive logging of shutdown progress
-- ✅ Integration tests for graceful shutdown behavior
-
-**Shutdown Behavior:**
-When a shutdown signal (SIGTERM/SIGINT) is received:
-1. Stop accepting new work (scan/process ticks)
-2. Wait for current delivery to complete (max 30 seconds)
-3. Save queue state to disk for CLI access
-4. Exit cleanly
-
-In-flight deliveries that don't complete within the 30s timeout are marked as pending and will be retried on restart.
-
-**Files Modified:**
-- `empath-delivery/src/lib.rs` (graceful shutdown logic + tests)
-
-**Dependencies:** 1.1 (Persistent queue) - ⚠️ Partially implemented (queue state persistence exists, but not full persistent queue backend)
-
----
-
-## Phase 2: Observability & Operations (Weeks 3-4)
-
-### ✅ 2.1 Structured Metrics Collection
-**Priority:** High
-**Complexity:** Medium
-**Effort:** 2-3 days
-**Status:** ✅ **COMPLETED** (2025-11-13)
-
-**Implementation:** OpenTelemetry with Prometheus exporter
-
-**Implemented Metrics:**
-
-**SMTP Metrics** (`empath-metrics/src/smtp.rs`):
-- `empath.smtp.connections.total` - Total connections established
-- `empath.smtp.connections.active` - Currently active connections (UpDownCounter)
-- `empath.smtp.errors.total{code}` - Errors by SMTP response code
-- `empath.smtp.session.duration.seconds` - Session duration histogram
-- `empath.smtp.command.duration.seconds{command}` - Command processing duration
-- `empath.smtp.messages.received.total` - Total messages received
-- `empath.smtp.message.size.bytes` - Message size distribution
-
-**Delivery Metrics** (`empath-metrics/src/delivery.rs`):
-- `empath.delivery.attempts.total{status,domain}` - Attempts by status/domain
-- `empath.delivery.duration.seconds{domain}` - Delivery duration histogram
-- `empath.delivery.queue.size{status}` - Queue size by status (ObservableGauge)
-- `empath.delivery.connections.active` - Active outbound connections
-- `empath.delivery.messages.delivered.total` - Successfully delivered
-- `empath.delivery.messages.failed.total{reason}` - Permanently failed
-- `empath.delivery.messages.retrying.total` - Messages retrying
-- `empath.delivery.retry.count` - Retry count distribution
-
-**DNS Metrics** (`empath-metrics/src/dns.rs`):
-- `empath.dns.lookup.duration.seconds{query_type}` - Lookup duration histogram
-- `empath.dns.lookups.total{query_type}` - Total lookups
-- `empath.dns.cache.hits.total{query_type}` - Cache hits
-- `empath.dns.cache.misses.total{query_type}` - Cache misses
-- `empath.dns.errors.total{error_type}` - DNS errors
-- `empath.dns.cache.evictions.total` - Cache evictions
-
-**Files Created:**
-- `empath-metrics/` - New crate with OpenTelemetry integration
-- `empath-metrics/src/lib.rs` - Main initialization and global metrics access
-- `empath-metrics/src/config.rs` - MetricsConfig with enabled flag and listen address
-- `empath-metrics/src/error.rs` - MetricsError type
-- `empath-metrics/src/exporter.rs` - Prometheus HTTP server (port 9090 default)
-- `empath-metrics/src/smtp.rs` - SMTP metrics instruments
-- `empath-metrics/src/delivery.rs` - Delivery metrics instruments
-- `empath-metrics/src/dns.rs` - DNS metrics instruments
-
-**Configuration:**
-```ron
-metrics: (
-    enabled: true,           // Enable/disable metrics collection
-    listen_addr: "0.0.0.0:9090",  // Prometheus HTTP endpoint
-),
-```
-
-**Usage:**
-```rust
-use empath_metrics::{init_metrics, metrics, MetricsConfig};
-
-// Initialize once at startup
-let config = MetricsConfig { enabled: true, listen_addr: "0.0.0.0:9090".parse()? };
-init_metrics(&config)?;
-
-// Access globally
-metrics().smtp.record_connection();
-metrics().delivery.record_delivery_success("example.com", 1.23, 2);
-metrics().dns.record_cache_hit("MX");
-```
-
-**Prometheus Endpoint:**
-- Metrics available at `http://localhost:9090/metrics`
-- Uses OpenTelemetry SDK with Prometheus exporter
-- Metrics follow OpenTelemetry semantic conventions
-- Efficient atomic counters for low overhead
-
-**Next Steps:**
-- Integrate metrics calls into SMTP session handling (empath-smtp)
-- Integrate metrics calls into delivery processor (empath-delivery)
-- Integrate metrics calls into DNS resolver (empath-delivery)
-- Add metrics configuration to empath.config.ron example
-- Add integration tests for metrics collection
-- Document metrics in CLAUDE.md
-
-**Dependencies:** None
 
 ---
 
@@ -1608,46 +1700,6 @@ Empath (
 
 ---
 
-### ✅ 3.2 Per-Domain Configuration
-**Priority:** Medium
-**Complexity:** Medium
-**Effort:** 2 days
-**Status:** ✅ **COMPLETED** (2025-11-09)
-
-**Implementation:**
-- ✅ Created `empath-delivery/src/domain_config.rs` (189 lines)
-- ✅ Support for MX override (testing)
-- ✅ Per-domain TLS certificate validation control
-- ✅ Integration with delivery processor
-- ✅ Comprehensive test coverage
-
-**Configuration:**
-```ron
-// In empath.config.ron
-delivery: (
-    domains: {
-        "test.example.com": (
-            mx_override: "localhost:1025",
-            accept_invalid_certs: true,
-        ),
-    },
-)
-```
-
-**Use Cases:**
-- Testing (override MX to local SMTP server)
-- Compliance (enforce TLS for certain domains)
-- Development (accept invalid certificates for test domains)
-
-**Files Modified:**
-- `empath-delivery/src/domain_config.rs` (new, 189 lines)
-- `empath-delivery/src/lib.rs`
-- `empath.config.ron`
-
-**Dependencies:** None
-
----
-
 ### 🟢 3.3 Rate Limiting per Domain
 **Priority:** High
 **Complexity:** Medium
@@ -1694,50 +1746,6 @@ Empath (
 - Include original headers and diagnostic info
 
 **Dependencies:** 1.3 (Typed errors)
-
----
-
-### ✅ 3.5 Queue Management CLI/API
-**Priority:** Medium
-**Complexity:** Medium
-**Effort:** 2-3 days
-**Status:** ✅ **COMPLETED** (2025-11-10)
-
-**Implementation:**
-- ✅ Comprehensive CLI tool with clap framework
-- ✅ Queue state persisted to bincode file (/tmp/spool/queue_state.bin)
-- ✅ Atomic queue state updates every 30 seconds
-- ✅ Freeze marker file-based pause mechanism
-- ✅ Human-readable output with timestamps and age formatting
-- ✅ JSON output format support for programmatic access
-
-**Commands:**
-```bash
-empathctl queue list --status=failed     # List failed messages
-empathctl queue view <message-id>        # View message details
-empathctl queue retry <message-id>       # Retry failed delivery
-empathctl queue delete <message-id> --yes  # Delete message
-empathctl queue freeze                   # Pause delivery
-empathctl queue unfreeze                 # Resume delivery
-empathctl queue stats --watch --interval 2  # Live stats
-```
-
-**Features:**
-- List messages with optional status filtering
-- View detailed message info including envelope and attempt history
-- Retry failed/pending messages with force option
-- Delete messages from queue and spool with confirmation
-- Freeze/unfreeze queue processing
-- Real-time statistics with watch mode
-
-**Files Modified:**
-- `empath/src/bin/empathctl.rs` (new, 663 lines)
-- `empath-delivery/src/lib.rs`
-- `empath-spool/src/config.rs`
-- `empath-spool/src/controller.rs`
-- `CLAUDE.md`
-
-**Dependencies:** None (implemented with bincode serialization)
 
 ---
 
@@ -2538,422 +2546,6 @@ proptest! {
 - < 500MB memory for 10k queued messages
 
 **Dependencies:** 4.2 (Mock SMTP server)
-
----
-
-### ✅ 6.9 Benchmarks with criterion
-**Priority:** Low
-**Complexity:** Simple
-**Effort:** 1 day
-**Status:** ✅ **COMPLETED** (2025-11-08)
-
-**Implementation:**
-- ✅ Added Criterion.rs 0.5 as dev dependency
-- ✅ Configured benchmark profile with debug info for profiling
-- ✅ Comprehensive SMTP benchmarks (command parsing, FSM transitions, context operations)
-- ✅ Comprehensive spool benchmarks (message creation, bincode serialization, ULID operations)
-- ✅ HTML reports at target/criterion/report/index.html
-- ✅ All benchmarks pass strict clippy checks
-
-**SMTP Benchmarks:**
-- Command parsing (HELO, MAIL FROM, RCPT TO, etc.)
-- ESMTP parameter parsing with perfect hash map
-- FSM state transitions
-- Full SMTP transaction sequences
-- Context creation and initialization
-
-**Spool Benchmarks:**
-- Message creation and builder pattern
-- Bincode serialization/deserialization (1KB - 1MB)
-- ULID generation and parsing
-- In-memory spool operations (write, read, list, delete)
-- Full message lifecycle
-
-**Files Modified:**
-- `empath-smtp/benches/smtp_benchmarks.rs` (new, 374 lines)
-- `empath-spool/benches/spool_benchmarks.rs` (new, 386 lines)
-- `empath-smtp/Cargo.toml`
-- `empath-spool/Cargo.toml`
-- `Cargo.toml` (workspace config)
-- `CLAUDE.md` (benchmarking documentation)
-
-**Benefits:**
-- Quantify performance improvements (e.g., 80% clone reduction tracked)
-- Prevent regressions with baseline comparisons
-- Identify performance hotspots
-
-**Dependencies:** None
-
----
-
-## Documentation Improvements
-
-### 📚 API Documentation
-**Priority:** Medium
-**Effort:** 2-3 days
-
-- Add comprehensive rustdoc comments
-- Include usage examples
-- Document error conditions
-- Create architecture diagrams
-- Publish to docs.rs
-
----
-
-### 📚 Operational Runbook
-**Priority:** Medium
-**Effort:** 2 days
-
-Create `OPERATIONS.md` with:
-- Deployment procedures
-- Configuration guide
-- Monitoring setup
-- Troubleshooting scenarios
-- Performance tuning
-- Backup/recovery procedures
-
----
-
-### 📚 Integration Examples
-**Priority:** Low
-**Effort:** 2-3 days
-
-- Embedding empath in another app
-- Custom delivery pipeline
-- Prometheus metrics integration
-- Custom queue backend
-
----
-
-## Summary by Phase
-
-### Phase 0: Code Review Follow-ups ✅ **MOSTLY COMPLETED**
-**Code Quality & Security:**
-- ✅ TLS certificate validation (0.1) - **COMPLETED**
-- ✅ SMTP operation timeouts (0.2) - **COMPLETED**
-- ❌ Context/Message layer violation (0.3) - **REJECTED** (intentional design, see CLAUDE.md)
-- ✅ String cloning optimization (0.4) - **COMPLETED**
-- DNS cache mutex contention (0.5) - **TODO**
-- NoVerifier compile-time guard (0.6) - **TODO**
-- ✅ Extract SmtpTransaction (0.7) - **COMPLETED**
-- Spool deletion retry (0.8) - **TODO**
-- DNSSEC validation (0.9) - **TODO**
-- MX randomization (0.10) - **TODO**
-- Security documentation (0.11) - **TODO**
-- Deployment guide (0.12) - **TODO**
-- Integration test suite (0.13) - **TODO**
-- Delivery strategy pattern (0.14) - **TODO**
-
-**Progress: 4/13 completed (31%)** - 1 task rejected as not needed
-
-### Phase 1: Production Foundation (2-3 weeks)
-**Must-Have for Deployment:**
-1. 🟡 Persistent delivery queue (1.1) - **IN PROGRESS** (40% complete: data model + spool integration done)
-2. ✅ Real DNS MX lookups (1.2) - **COMPLETED**
-3. ✅ Typed error handling (1.3) - **COMPLETED**
-4. ✅ Exponential backoff (1.4) - **COMPLETED**
-5. ✅ Graceful shutdown (1.5) - **COMPLETED**
-
-**Progress: 4.4/5 completed (88%)**
-
-### Phase 2: Observability (2-3 weeks)
-**Operational Readiness:**
-1. Structured metrics (2.1)
-2. Connection pooling (2.2)
-3. Comprehensive tests (2.3)
-4. Health checks (2.4)
-
-### Phase 3: Advanced Features (4-6 weeks)
-**Production Excellence:**
-- Parallel processing (3.1) - **TODO**
-- ✅ Per-domain config (3.2) - **COMPLETED**
-- Rate limiting (3.3) - **TODO**
-- DSN/bounces (3.4) - **TODO**
-- ✅ Queue management (3.5) - **COMPLETED**
-- Audit logging (3.6) - **TODO**
-
-**Progress: 2/6 completed (33%)**
-
-### Phase 4: Rust Improvements (6-10 weeks)
-**Code Quality & Organization:**
-- 🟡 Code structure refactoring (4.0) - **IN PROGRESS (2/7 sub-tasks completed)**
-  - ✅ Split empath-delivery/src/lib.rs (4.0.1) - **COMPLETED** (2025-11-12)
-  - ✅ Split empath-smtp/src/session.rs (4.0.2) - **COMPLETED** (2025-11-12)
-  - 🟡 Split empath-spool/src/spool.rs (4.0.3) - High, 4-6 hours
-  - 🟢 Refactor empath/bin/empathctl.rs (4.0.4) - Medium, 6-8 hours
-  - 🟢 Consolidate timeout configuration (4.0.5) - Medium, 2-3 hours
-  - 🟢 Extract queue persistence module (4.0.6) - Medium, 4-6 hours
-  - 🟢 Move tests to separate files (4.0.7) - Medium, 2-3 hours
-- RPITIT refactoring (4.1)
-- Mock SMTP server (4.2)
-- DashMap migration (4.3)
-- Domain newtype (4.4)
-- Structured concurrency (4.5)
-
-**Progress: 2/12 completed (17%)** - Tasks 4.0.1 and 4.0.2 completed 2025-11-12
-
-### Phase 5: Operations (2-3 weeks)
-**Reliability:**
-- Circuit breakers (5.1)
-- Config hot reload (5.2)
-- TLS enforcement (5.3)
-- Enhanced tracing (5.4)
-
-### Phase 6: Optimizations (Backlog)
-**Future Enhancements:**
-- All items in section 6.x
-- ✅ Benchmarks with criterion (6.9) - **COMPLETED**
-
-**Progress: 1/9 completed (11%)**
-
----
-
-## Total Estimated Effort
-
-- **Critical (Production Ready):** 2-3 weeks (1-2 developers)
-- **High Priority:** 2-3 weeks
-- **Medium Priority:** 6-8 weeks
-- **Low Priority:** 8-12 weeks
-
-**Full implementation:** 4-6 months with 1-2 developers
-
----
-
-## Configuration Example (Future State)
-
-```ron
-// empath.config.ron - Full configuration with all future features
-Empath (
-    spool: (
-        path: "/var/spool/empath",
-    ),
-    delivery: (
-        // Queue backend
-        queue_backend: "file",  // or "sqlite", "postgres"
-        queue_path: "/var/lib/empath/queue",
-
-        // Retry configuration
-        max_attempts: 25,
-        retry_base_delay: "30s",
-        retry_max_delay: "24h",
-        retry_multiplier: 2.0,
-        retry_jitter_factor: 0.2,
-
-        // Concurrency
-        max_parallel_deliveries: 100,
-        max_connections_per_host: 5,
-
-        // DNS
-        dns: (
-            cache_ttl: "5m",
-            timeout: "10s",
-        ),
-
-        // TLS
-        tls: (
-            default_policy: "opportunistic",
-        ),
-
-        // Rate limiting
-        rate_limits: (
-            default: 100,  // per minute per domain
-        ),
-
-        // Per-domain configuration
-        domains: {
-            "gmail.com": (
-                max_connections: 10,
-                rate_limit: 200,
-                require_tls: true,
-            ),
-            "example.com": (
-                mx_override: "localhost:1025",  // For testing
-            ),
-        },
-    ),
-    metrics: (
-        enabled: true,
-        listen_addr: "127.0.0.1:9090",
-    ),
-    health: (
-        enabled: true,
-        listen_addr: "127.0.0.1:8080",
-    ),
-    audit: (
-        enabled: true,
-        log_path: "/var/log/empath/audit.jsonl",
-        rotate_daily: true,
-    ),
-)
-```
-
----
-
-## Getting Started
-
-**Recent Progress (Completed):**
-- ✅ empath-delivery code structure refactoring (4.0.1) - **2025-11-12**
-- ✅ Graceful shutdown handling (1.5)
-- ✅ Exponential backoff (1.4)
-- ✅ Real DNS MX lookups (1.2)
-- ✅ Typed error handling with thiserror (1.3)
-- ✅ Per-domain configuration (3.2)
-- ✅ Queue management CLI (3.5)
-- ✅ SMTP operation timeouts (0.2)
-- ✅ String cloning optimization (0.4)
-- ✅ SMTP transaction refactoring (0.7)
-- ✅ Comprehensive benchmarking (6.9)
-
-**Current Work In Progress:**
-- 🟡 Persistent delivery queue (1.1) - 40% complete
-  - ✅ Data model (DeliveryStatus, DeliveryAttempt in empath-common)
-  - ✅ Extended DeliveryContext with queue state fields
-  - ✅ Implemented BackingStore::update() for spool persistence
-  - 🚧 Remaining: Delivery processor integration, queue restoration, empathctl updates
-
-**Immediate Next Steps** (~1-2 days to finish Phase 1):
-1. Complete persistent queue implementation (1.1) - 1-2 days
-   - Add `persist_delivery_state()` helper method
-   - Update `scan_spool_internal()` to restore from Context.delivery
-   - Update empathctl to read from spool
-   - Remove queue_state.bin logic
-
-**After Phase 1** (remaining critical items from Phase 0):
-2. ~~Fix Context/Message layer violation (0.3)~~ - **REJECTED** (intentional design, see CLAUDE.md)
-3. Add spool deletion retry mechanism (0.8) - 2 hours
-4. Fix DNS cache mutex contention (0.5) - 1 hour (DashMap migration)
-
-**Code Structure Refactoring (Phase 4.0):**
-✅ **4.0.1 COMPLETED** - Split empath-delivery/src/lib.rs (98% reduction: 1,894 → 35 lines)
-
-Remaining critical refactoring tasks:
-- **4.0.2** Split empath-smtp/src/session.rs (HIGH, 10-15 hours) - 916 lines → ~200 lines
-- **4.0.3** Split empath-spool/src/spool.rs (HIGH, 4-6 hours) - 766 lines → ~100 lines
-- **4.0.4** Refactor empath/bin/empathctl.rs (MEDIUM, 6-8 hours) - 721 lines → ~100 lines
-
-These refactorings will dramatically improve code maintainability and navigation while preserving all existing functionality. Current file sizes still violating Rust ecosystem conventions:
-- empath-smtp/src/session.rs: 916 lines (should be ~200 lines)
-- empath-spool/src/spool.rs: 766 lines (should be ~100 lines)
-- empath/bin/empathctl.rs: 721 lines (should be ~100 lines)
-
-After completing Phase 1, the system will be production-ready for basic mail delivery with persistent queue state.
-
----
-
-## Phase 7: Developer Experience (DX) Improvements (2-4 weeks)
-
-**Status:** Added 2025-11-12 (DX Optimizer Review)
-**Overall Assessment:** Documentation: A+, Tooling: C+, Automation: B-, Setup Experience: C
-**Expected Impact:** 50-60% reduction in common task friction
-
-### ✅ 7.1 Add Task Runner (justfile)
-**Priority:** High (Highest Impact Single Item)
-**Complexity:** Low
-**Effort:** 2-3 hours
-**Status:** ✅ **COMPLETED** (2025-11-12)
-**Files:** `justfile` (new)
-
-**Problem:** Developers must remember and type long clippy commands, benchmark invocations, and FFI build steps.
-
-**Implementation:** Add `justfile` (modern, simpler syntax than Makefile) for common tasks:
-
-```just
-# List all available commands
-default:
-    @just --list
-
-# Run strict clippy checks (project standard - configured via workspace lints)
-lint:
-    cargo clippy --all-targets --all-features
-
-# Run tests with nextest (faster)
-test:
-    cargo nextest run
-
-# Run benchmarks
-bench:
-    cargo bench
-
-# Build FFI examples
-build-ffi:
-    cd empath-ffi/examples && \
-    gcc example.c -fpic -shared -o libexample.so -l empath -L ../../target/debug && \
-    gcc event.c -fpic -shared -o libevent.so -l empath -L ../../target/debug
-
-# Full CI check locally
-ci: lint test
-
-# Setup development environment (install tools)
-setup:
-    cargo install cargo-nextest cargo-watch cargo-outdated cargo-audit just
-    ./scripts/install-hooks.sh || true
-```
-
-**Benefits:**
-- **80% reduction** in command typing for common tasks
-- Self-documenting (`just` without args lists commands)
-- Easy onboarding (`just setup` to install all tools)
-- Consistent workflow across team members
-
-**Dependencies:** None (user installs `cargo install just`)
-
-**Implementation Details:**
-
-Created comprehensive `justfile` with 50+ commands organized into categories:
-
-**Core Development:**
-- `just lint` - Run strict clippy checks (all/pedantic/nursery)
-- `just lint-fix` - Auto-fix clippy issues
-- `just fmt` / `just fmt-check` - Format code
-- `just test` - Run all tests
-- `just test-nextest` - Run tests with nextest (faster)
-- `just test-watch` - Continuous testing with cargo-watch
-- `just test-miri` - Run miri for undefined behavior detection
-- `just ci` - Full CI check locally (lint + fmt-check + test)
-
-**Benchmarking:**
-- `just bench` - Run all benchmarks
-- `just bench-smtp` / `bench-spool` / `bench-delivery` - Per-crate benchmarks
-- `just bench-group GROUP` - Run specific benchmark group
-- `just bench-view` - Open benchmark report in browser
-
-**Building:**
-- `just build` / `just build-release` - Build workspace
-- `just build-ffi` - Build FFI examples (C modules)
-- `just build-empathctl` - Build queue management CLI
-- `just build-all` - Build all targets
-
-**Queue Management:**
-- `just queue-list` - List queue messages
-- `just queue-stats` - Show queue statistics
-- `just queue-watch` - Live queue stats (watch mode)
-
-**Running:**
-- `just run` - Run empath binary
-- `just run-default` - Run with empath.config.ron
-- `just run-with-config CONFIG` - Run with custom config
-
-**Dependencies:**
-- `just deps-outdated` - Check for outdated dependencies
-- `just deps-audit` - Security audit with cargo-audit
-- `just deps-deny` - Check with cargo-deny
-- `just deps-update` - Update dependencies
-
-**Development Environment:**
-- `just setup` - Install all development tools (nextest, watch, audit, deny, mold)
-- `just clean` / `just clean-spool` - Clean build artifacts
-
-**Documentation:**
-- `just docs` - Generate and open documentation
-- `just stats` - Show project statistics (lines of code, dependency tree)
-- `just timings` - View cargo build timings
-
-**Workflow Shortcuts:**
-- `just dev` - Format + lint + test
-- `just pre-commit` - Fast pre-commit checks
-- `just fix` - Auto-fix lint + format issues
-
-All commands include helpful descriptions and are self-documenting via `just --list`.
 
 ---
 
