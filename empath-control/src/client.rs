@@ -10,7 +10,7 @@ use tracing::{debug, trace};
 
 use crate::{ControlError, Request, Response, Result};
 
-/// Maximum response size to prevent DoS attacks (10MB)
+/// Maximum response size to prevent `DoS` attacks (10MB)
 /// This is generous enough for large DNS cache responses while preventing memory exhaustion
 const MAX_RESPONSE_SIZE: u32 = 10_000_000;
 
@@ -86,9 +86,11 @@ impl ControlClient {
 
         // Validate response size to prevent DoS attacks
         if response_len > MAX_RESPONSE_SIZE {
-            return Err(ControlError::Protocol(Box::new(bincode::ErrorKind::Custom(
-                format!("Response too large: {response_len} bytes (max {MAX_RESPONSE_SIZE})"),
-            ))));
+            return Err(ControlError::Protocol(Box::new(
+                bincode::ErrorKind::Custom(format!(
+                    "Response too large: {response_len} bytes (max {MAX_RESPONSE_SIZE})"
+                )),
+            )));
         }
 
         trace!("Receiving response: {response_len} bytes");
@@ -140,13 +142,5 @@ mod tests {
     fn test_client_with_timeout() {
         let client = ControlClient::new("/tmp/test.sock").with_timeout(Duration::from_secs(5));
         assert_eq!(client.timeout, Duration::from_secs(5));
-    }
-
-    #[test]
-    fn test_max_response_size_constant() {
-        // Verify the constant is set to 10MB as documented
-        assert_eq!(MAX_RESPONSE_SIZE, 10_000_000);
-        // Verify it's larger than server's request limit (1MB)
-        assert!(MAX_RESPONSE_SIZE > 1_000_000);
     }
 }

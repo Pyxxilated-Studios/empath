@@ -1,9 +1,8 @@
 //! Control server implementation
 
-use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
-
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

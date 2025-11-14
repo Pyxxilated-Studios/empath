@@ -54,7 +54,10 @@ pub(super) fn emit(event: Event, context: &Context) {
             // Extract delivery information from context.delivery
             if let Some(delivery) = &context.delivery {
                 // Calculate duration from queued_at to now
-                #[allow(clippy::cast_precision_loss, reason = "u64 seconds to f64 is acceptable for time duration metrics")]
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "u64 seconds to f64 is acceptable for time duration metrics"
+                )]
                 let duration_secs = if delivery.queued_at > 0 {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -66,16 +69,20 @@ pub(super) fn emit(event: Event, context: &Context) {
                 };
 
                 let retry_count = delivery.attempts.unwrap_or(0).into();
-                metrics
-                    .delivery
-                    .record_delivery_success(&delivery.domain, duration_secs, retry_count);
+                metrics.delivery.record_delivery_success(
+                    &delivery.domain,
+                    duration_secs,
+                    retry_count,
+                );
             }
         }
         Ev::DeliveryFailure => {
             // Extract delivery information from context.delivery
             if let Some(delivery) = &context.delivery {
                 let reason = delivery.error.as_deref().unwrap_or("unknown");
-                metrics.delivery.record_delivery_failure(&delivery.domain, reason);
+                metrics
+                    .delivery
+                    .record_delivery_failure(&delivery.domain, reason);
             }
         }
         Ev::DeliveryAttempt => {
@@ -105,7 +112,10 @@ pub(super) fn emit(event: Event, context: &Context) {
                         if let Some(duration_ms) = context.metadata.get("dns_lookup_duration_ms")
                             && let Ok(duration_ms) = duration_ms.parse::<u128>()
                         {
-                            #[allow(clippy::cast_precision_loss, reason = "u128 milliseconds to f64 seconds is acceptable for DNS duration metrics")]
+                            #[allow(
+                                clippy::cast_precision_loss,
+                                reason = "u128 milliseconds to f64 seconds is acceptable for DNS duration metrics"
+                            )]
                             let duration_secs = (duration_ms as f64) / 1000.0;
                             metrics.dns.record_lookup("mx", duration_secs);
                         }

@@ -1,4 +1,8 @@
-use std::{borrow::Cow, fmt::{self, Debug, Display}, sync::Arc};
+use std::{
+    borrow::Cow,
+    fmt::{self, Debug, Display},
+    sync::Arc,
+};
 
 use ahash::AHashMap;
 use mailparse::MailAddr;
