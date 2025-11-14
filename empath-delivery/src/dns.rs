@@ -11,11 +11,14 @@
 //! - **Lock-free**: `DashMap` provides concurrent access without mutex contention
 
 use std::{
+    borrow::Cow,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use dashmap::DashMap;
+use empath_common::context::Context;
+use empath_ffi::modules;
 use hickory_resolver::{
     TokioResolver,
     config::{ResolverConfig, ResolverOpts},
@@ -239,31 +242,28 @@ impl DnsResolver {
         if let Some(cached) = self.cache.get(domain) {
             if cached.expires_at > Instant::now() {
                 debug!("Cache hit for {domain}, {} server(s)", cached.servers.len());
-                // Record cache hit metric
-                if empath_metrics::is_enabled() {
-                    empath_metrics::metrics().dns.record_cache_hit("mx");
-                }
+
+                // Dispatch DNS cache hit event
+                let mut ctx = Context::default();
+                ctx.metadata
+                    .insert(Cow::Borrowed("dns_cache_status"), "hit".to_string());
+                ctx.metadata
+                    .insert(Cow::Borrowed("dns_domain"), domain.to_string());
+                ctx.metadata.insert(
+                    Cow::Borrowed("dns_cache_size"),
+                    self.cache.len().to_string(),
+                );
+                modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
+
                 return Ok(Arc::clone(&cached.servers));
             }
             debug!("Cache entry expired for {domain}");
         }
 
-        // Record cache miss metric
-        if empath_metrics::is_enabled() {
-            empath_metrics::metrics().dns.record_cache_miss("mx");
-        }
-
         // Cache miss or expired, perform DNS lookup
         let lookup_start = Instant::now();
         let (servers, dns_ttl) = self.resolve_mail_servers_uncached(domain).await?;
-
-        // Record lookup duration metric
-        if empath_metrics::is_enabled() {
-            let duration_secs = lookup_start.elapsed().as_secs_f64();
-            empath_metrics::metrics()
-                .dns
-                .record_lookup("mx", duration_secs);
-        }
+        let lookup_duration = lookup_start.elapsed();
         let servers = Arc::new(servers);
 
         // Determine cache TTL: use override if set, otherwise use DNS TTL with bounds
@@ -284,11 +284,21 @@ impl DnsResolver {
 
         self.cache.insert(domain.to_string(), cached_result);
 
-        // Update cache size metric
-        if empath_metrics::is_enabled() {
-            let cache_size = u64::try_from(self.cache.len()).unwrap_or(u64::MAX);
-            empath_metrics::metrics().dns.set_cache_size(cache_size);
-        }
+        // Dispatch DNS cache miss event
+        let mut ctx = Context::default();
+        ctx.metadata
+            .insert(Cow::Borrowed("dns_cache_status"), "miss".to_string());
+        ctx.metadata
+            .insert(Cow::Borrowed("dns_domain"), domain.to_string());
+        ctx.metadata.insert(
+            Cow::Borrowed("dns_lookup_duration_ms"),
+            lookup_duration.as_millis().to_string(),
+        );
+        ctx.metadata.insert(
+            Cow::Borrowed("dns_cache_size"),
+            self.cache.len().to_string(),
+        );
+        modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
 
         debug!(
             "Cached result for {domain}, DNS TTL: {dns_ttl}s, cache TTL: {cache_ttl}s, {} server(s)",
@@ -346,12 +356,6 @@ impl DnsResolver {
                     self.fallback_to_a_aaaa(domain).await
                 } else {
                     warn!("MX lookup failed for {domain}: {err}");
-                    // Record DNS error metric
-                    if empath_metrics::is_enabled() {
-                        empath_metrics::metrics()
-                            .dns
-                            .record_error("mx_lookup_failed");
-                    }
                     Err(DnsError::LookupFailed(err))
                 }
             }

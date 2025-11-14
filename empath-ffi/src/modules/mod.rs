@@ -12,6 +12,8 @@ use super::string::StringVector;
 
 pub mod core;
 pub mod library;
+#[cfg(feature = "metrics")]
+pub mod metrics;
 pub mod validate;
 
 type Init = unsafe extern "C" fn(StringVector) -> i32;
@@ -28,6 +30,15 @@ pub enum Ev {
     DeliverySuccess,
     /// Triggered when delivery fails (temporary or permanent)
     DeliveryFailure,
+    /// Triggered when an SMTP command returns an error response (4xx/5xx)
+    /// Error status available in `context.response`
+    SmtpError,
+    /// Triggered when a complete message is received from a client
+    /// Message size available in `context.data`
+    SmtpMessageReceived,
+    /// Triggered after a DNS lookup completes
+    /// Cache hit/miss status available in `context.metadata["dns_cache_status"]`
+    DnsLookup,
 }
 
 #[repr(C)]
@@ -114,6 +125,11 @@ pub enum Module {
     Core {
         validators: Arc<core::CoreValidators>,
     },
+    /// OpenTelemetry metrics module for observability.
+    /// Not deserialized - created programmatically when metrics are enabled.
+    #[cfg(feature = "metrics")]
+    #[serde(skip)]
+    Metrics,
 }
 
 /// Module store using Arc for lock-free concurrent reads after initialization
@@ -125,6 +141,8 @@ impl Display for Module {
             Self::SharedLibrary(lib) => f.write_fmt(format_args!("{lib}")),
             Self::TestModule { .. } => f.write_str("Test Module"),
             Self::Core { .. } => f.write_str("Core Module"),
+            #[cfg(feature = "metrics")]
+            Self::Metrics => f.write_str("Metrics Module"),
         }
     }
 }
@@ -136,6 +154,11 @@ impl Module {
             Self::SharedLibrary(lib) => lib.emit(event, validate_context),
             Self::TestModule { .. } => test::emit(self, event, validate_context),
             Self::Core { validators } => core::emit(validators, event, validate_context),
+            #[cfg(feature = "metrics")]
+            Self::Metrics => {
+                metrics::emit(event, validate_context);
+                0
+            }
         }
     }
 }
@@ -159,6 +182,13 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
         #[cfg(debug_assertions)]
         Module::TestModule(RwLock::default()),
     ];
+
+    // Add metrics module if enabled
+    #[cfg(feature = "metrics")]
+    if empath_metrics::is_enabled() {
+        all_modules.push(Module::Metrics);
+    }
+
     all_modules.extend(modules);
 
     all_modules
@@ -167,6 +197,8 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
         .try_for_each(|module| match module {
             Module::SharedLibrary(lib) => lib.init(),
             Module::TestModule { .. } | Module::Core { .. } => Ok(()),
+            #[cfg(feature = "metrics")]
+            Module::Metrics => Ok(()),
         })?;
 
     // Set module store (ignore if already initialized, which can happen in tests)

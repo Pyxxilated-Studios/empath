@@ -9,6 +9,8 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-14:** ✅ **COMPLETED** task 0.23: Refactored metrics to use module/event system (architectural fix)
+- **2025-11-14:** 🎯 Decoupled all metrics from business logic - zero coupling achieved
 - **2025-11-14:** 🔍 Comprehensive multi-agent review of recent commits (architect-review + code-reviewer)
 - **2025-11-14:** 📝 Added 12 new tasks from commit review (tasks 0.23-0.34)
 - **2025-11-14:** ⚠️ **CRITICAL**: Identified architectural violation in metrics implementation (task 0.23)
@@ -659,48 +661,59 @@ loop {
 
 ---
 
-### 🔴 0.23 Refactor Metrics to Use Module/Event System
-**Priority:** Critical (Architectural Violation)
+### ✅ 0.23 Refactor Metrics to Use Module/Event System
+**Priority:** ~~Critical (Architectural Violation)~~ **COMPLETED**
 **Complexity:** High
 **Effort:** 2-3 days
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-14)
 
-**Current Issue:** The metrics implementation violates clean architecture principles by creating a dependency from business logic (empath-smtp, empath-delivery) to infrastructure (empath-metrics). This bypasses the existing module/event system that was specifically designed for cross-cutting concerns like observability.
+**Original Issue:** The metrics implementation violated clean architecture principles by creating a dependency from business logic (empath-smtp, empath-delivery) to infrastructure (empath-metrics). This bypassed the existing module/event system that was specifically designed for cross-cutting concerns like observability.
 
-**Architectural Violations:**
-1. **Dependency Direction Reversal**: Business logic depends on infrastructure (should be opposite)
-2. **Scattered Observability Logic**: 12+ metrics calls scattered throughout business code
-3. **Ignoring Existing Event System**: Module system already provides events for this purpose
-4. **Global Mutable State**: Panic-based metrics access without initialization guarantees
+**Solution Implemented:**
 
-**Impact:**
-- Business logic coupled to metrics infrastructure
-- Cannot test SMTP/Delivery without metrics crate
-- Difficult to swap metrics implementations
-- Violates SOLID principles (Dependency Inversion, Single Responsibility)
+Extended the module/event system with new observability events and created a `MetricsModule` that subscribes to all metrics-related events. All direct metrics calls have been removed from business logic.
 
-**Implementation:**
-1. Extend `empath-ffi/src/modules/mod.rs` with delivery lifecycle events
-2. Create `MetricsModule` implementing `EventListener` trait
-3. Remove all `empath_metrics::metrics()` calls from business logic files
-4. Remove metrics dependencies from `empath-smtp/Cargo.toml` and `empath-delivery/Cargo.toml`
-5. Update configuration to load metrics as a module
-6. Use event-driven Observer pattern instead of direct calls
+**Changes Made:**
 
-**Files to Modify:**
-- Remove metrics calls from: `empath-smtp/src/session/mod.rs:238-241, 357-365`
-- Remove metrics calls from: `empath-smtp/src/session/response.rs`
-- Remove metrics calls from: `empath-delivery/src/processor/delivery.rs:146-157`
-- Remove metrics calls from: `empath-delivery/src/dns.rs:242-245, 252-255`
-- Extend: `empath-ffi/src/modules/mod.rs` with delivery events
-- Create: `empath-metrics/src/module.rs` implementing EventListener
+1. **Module/Event System Extensions** (`empath-ffi/src/modules/mod.rs`):
+   - Added `SmtpError`, `SmtpMessageReceived`, `DnsLookup` events
+   - Created `Module::Metrics` variant (feature-gated)
+   - Automatically loads when metrics are enabled
 
-**Benefits:**
+2. **MetricsModule Implementation** (`empath-ffi/src/modules/metrics.rs`):
+   - Implements Observer pattern for all metrics events
+   - Extracts metrics data from Context metadata
+   - Records to OpenTelemetry infrastructure
+   - Zero coupling to business logic
+
+3. **Business Logic Cleanup**:
+   - **SMTP**: Removed 4 direct metrics calls, dispatches `SmtpError` and `SmtpMessageReceived` events
+   - **Delivery**: Removed 5 direct metrics calls, dispatches `DeliveryAttempt` events
+   - **DNS**: Removed 4 direct metrics calls, dispatches `DnsLookup` events with metadata
+
+4. **Dependency Cleanup**:
+   - Removed `empath-metrics` from `empath-smtp/Cargo.toml`
+   - Removed `empath-metrics` from `empath-delivery/Cargo.toml`
+   - Added as optional dependency in `empath-ffi/Cargo.toml` with `metrics` feature
+
+**Architecture:**
+```
+Business Logic → Dispatch Event → Module System → MetricsModule → OpenTelemetry
+```
+
+**Benefits Achieved:**
 - ✅ Zero coupling - business logic never calls metrics
 - ✅ Follows existing architectural pattern
 - ✅ Easy to enable/disable via configuration
 - ✅ Multiple observability backends can subscribe
 - ✅ Testable in isolation
+- ✅ All clippy pedantic/nursery lints pass
+
+**Files Modified:** 13 files (+233/-93 lines)
+
+**Commits:**
+- `064dbc2`: Initial metrics refactoring (SMTP, Delivery)
+- `d322195`: DNS metrics event dispatching
 
 **Dependencies:** None
 **Source:** Architect Review 2025-11-14, Code Review 2025-11-14

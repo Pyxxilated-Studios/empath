@@ -235,13 +235,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     ) -> Result<(), SessionError> {
         internal!("Connected");
 
-        // Record connection opened
-        if empath_metrics::is_enabled() {
-            empath_metrics::metrics().smtp.record_connection();
-        }
-
-        let start_time = std::time::Instant::now();
-
         async fn run_inner<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
             mut session: Session<Stream>,
             validate_context: &mut context::Context,
@@ -353,14 +346,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
         self.emit(&mut validate_context).await;
 
         let result = run_inner(self, &mut validate_context, signal).await;
-
-        // Record connection closed with duration
-        if empath_metrics::is_enabled() {
-            let duration_secs = start_time.elapsed().as_secs_f64();
-            empath_metrics::metrics()
-                .smtp
-                .record_connection_closed(duration_secs);
-        }
 
         internal!("Connection closed");
         empath_ffi::modules::dispatch(

@@ -614,7 +614,6 @@ dependencies = [
  "dashmap",
  "empath-common",
  "empath-ffi",
- "empath-metrics",
  "empath-smtp",
  "empath-spool",
  "empath-tracing",
@@ -635,6 +634,7 @@ version = "0.0.2"
 dependencies = [
  "cbindgen",
  "empath-common",
+ "empath-metrics",
  "empath-tracing",
  "libc",
  "libloading 0.9.0",
@@ -667,7 +667,6 @@ dependencies = [
  "criterion",
  "empath-common",
  "empath-ffi",
- "empath-metrics",
  "empath-spool",
  "empath-tracing",
  "futures-util",

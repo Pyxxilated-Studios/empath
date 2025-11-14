@@ -22,6 +22,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 empath-common = { path = "../empath-common", version = "*" }
+empath-metrics = { path = "../empath-metrics", version = "*", optional = true }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 libc = "0.2"
 libloading = "0.9"
@@ -32,6 +33,10 @@ tracing = { version = "0.1", default-features = false, features = [
     "attributes",
     "std",
 ] }
+
+[features]
+default = ["metrics"]
+metrics = ["dep:empath-metrics"]
 
 [build-dependencies]
 cbindgen = { version = "0.29.0", default-features = false }

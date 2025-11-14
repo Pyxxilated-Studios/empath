@@ -26,12 +26,17 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
         // If emit() set a response in the context, use it
         // Only close connection for Reject state, not all permanent errors
-        if let Some((status, ref message)) = validate_context.response {
-            // Record error metrics for 4xx and 5xx responses
-            if empath_metrics::is_enabled() && (status.is_temporary() || status.is_permanent()) {
-                empath_metrics::metrics().smtp.record_error(status.into());
+        if let Some((status, _)) = &validate_context.response {
+            // Dispatch error event for 4xx and 5xx responses
+            if status.is_temporary() || status.is_permanent() {
+                empath_ffi::modules::dispatch(
+                    empath_ffi::modules::Event::Event(empath_ffi::modules::Ev::SmtpError),
+                    validate_context,
+                );
             }
+        }
 
+        if let Some((status, ref message)) = validate_context.response {
             let event = if matches!(self.context.state, State::Reject(_)) && status.is_permanent() {
                 Event::ConnectionClose
             } else {
