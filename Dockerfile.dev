@@ -21,15 +21,46 @@ RUN cargo +nightly chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo +nightly build --release
 
+FROM debian:stable AS modules
+
+# Install gcc for building FFI modules
+RUN apt update && apt install -y gcc && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy example module source files
+COPY empath-ffi/examples/*.c empath-ffi/examples/*.h ./
+
+# Copy empath library and headers from the build stage
+COPY --from=empath /empath/target/release/libempath.so /usr/local/lib/
+COPY --from=empath /empath/target/empath.h ./
+
+# Build the example FFI modules
+RUN gcc example.c log.c -fpic -shared -o libexample.so -lempath -L/usr/local/lib -I. && \
+    gcc event.c -fpic -shared -o libevent.so -lempath -L/usr/local/lib -I.
+
 FROM debian:stable-slim
 
 WORKDIR /empath
 
-COPY --from=empath /empath/target/release .
+# Copy empath binaries
+COPY --from=empath /empath/target/release/empath .
+COPY --from=empath /empath/target/release/empathctl .
+
+# Copy empath shared library (required by FFI modules)
+COPY --from=empath /empath/target/release/libempath.so /usr/local/lib/
+
+# Copy built FFI example modules
+COPY --from=modules /build/libexample.so /empath/modules/
+COPY --from=modules /build/libevent.so /empath/modules/
+
+# Update library cache so modules can find libempath.so
+RUN ldconfig
 
 VOLUME /config
 
 ENV LOG_LEVEL="info"
+ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 
 ENTRYPOINT [ "bash", "-l", "-c" ]
 

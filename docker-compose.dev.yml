@@ -8,7 +8,8 @@ services:
     ports:
       - "1025:1025"  # SMTP port
     volumes:
-      - ./empath.config.ron:/etc/empath/empath.config.ron
+      # Docker-specific config with FFI example modules enabled
+      - ./empath.docker.config.ron:/etc/empath/empath.config.ron
       - ./spool:/tmp/spool/empath
     environment:
       - RUST_LOG=info
@@ -17,6 +18,8 @@ services:
       - otel-collector
     networks:
       - empath-network
+    # Run with the Docker-specific config
+    command: ["/empath/empath", "/etc/empath/empath.config.ron"]
 
   # OpenTelemetry Collector
   otel-collector:
