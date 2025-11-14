@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Debug, sync::Arc};
+use std::{borrow::Cow, fmt::{self, Debug, Display}, sync::Arc};
 
 use ahash::AHashMap;
 use mailparse::MailAddr;
@@ -27,6 +27,31 @@ pub enum DeliveryStatus {
     Retry { attempts: u32, last_error: String },
     /// Message expired before successful delivery
     Expired,
+}
+
+impl Display for DeliveryStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::InProgress => write!(f, "inprogress"),
+            Self::Completed => write!(f, "completed"),
+            Self::Failed(_) => write!(f, "failed"),
+            Self::Retry { .. } => write!(f, "retry"),
+            Self::Expired => write!(f, "expired"),
+        }
+    }
+}
+
+impl DeliveryStatus {
+    /// Check if this status matches the given filter string.
+    ///
+    /// The comparison is case-insensitive and matches against the display
+    /// representation of the status (e.g., "pending", "failed", "retry").
+    /// This provides a stable API contract unlike Debug formatting.
+    #[must_use]
+    pub fn matches_filter(&self, filter: &str) -> bool {
+        self.to_string().eq_ignore_ascii_case(filter)
+    }
 }
 
 /// Represents a single delivery attempt

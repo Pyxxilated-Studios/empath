@@ -174,7 +174,7 @@ impl EmpathControlHandler {
                 let filtered_info: Vec<_> = if let Some(status) = status_filter {
                     all_info
                         .into_iter()
-                        .filter(|info| format!("{:?}", info.status) == status)
+                        .filter(|info| info.status.matches_filter(&status))
                         .collect()
                 } else {
                     all_info
@@ -199,7 +199,7 @@ impl EmpathControlHandler {
                             list.iter().map(std::string::ToString::to_string).collect()
                         }),
                         domain: info.recipient_domain.to_string(),
-                        status: format!("{:?}", info.status),
+                        status: info.status.to_string(),
                         attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
                         next_retry: info.next_retry_at,
                         size: context.data.as_ref().map_or(0, |d| d.len()),

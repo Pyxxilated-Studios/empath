@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-14:** ✅ **COMPLETED** task 0.26: Added DeliveryStatus::matches_filter() method for stable status filtering
 - **2025-11-14:** ✅ **COMPLETED** task 0.16: Added client-side response size validation (DoS protection)
 - **2025-11-14:** ✅ **COMPLETED** task 0.23: Refactored metrics to use module/event system (architectural fix)
 - **2025-11-14:** 🎯 Decoupled all metrics from business logic - zero coupling achieved
@@ -812,11 +813,11 @@ impl DeliveryQueryService {
 
 ---
 
-### 🟢 0.26 Add DeliveryStatus::matches_filter() Method
+### ✅ 0.26 Add DeliveryStatus::matches_filter() Method
 **Priority:** Medium (Code Quality)
 **Complexity:** Simple
 **Effort:** 30 minutes
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-14)
 
 **Current Issue:** Queue list filtering uses fragile `format!("{:?}", info.status) == status` comparison that relies on Debug formatting and can break between Rust versions.
 
