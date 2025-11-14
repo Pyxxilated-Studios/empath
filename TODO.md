@@ -9,6 +9,8 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-14:** ✅ **COMPLETED** task 0.33: Fixed import organization (moved function-scoped imports to module level)
+- **2025-11-14:** ✅ **COMPLETED** task 0.34: Removed unused Docker build stage (code cleanup)
 - **2025-11-14:** ✅ **COMPLETED** task 0.15: Set explicit Unix socket permissions (security hardening)
 - **2025-11-14:** ✅ **COMPLETED** task 0.26: Added DeliveryStatus::matches_filter() method for stable status filtering
 - **2025-11-14:** ✅ **COMPLETED** task 0.16: Added client-side response size validation (DoS protection)
@@ -1144,58 +1146,50 @@ async fn test_metrics_export() {
 
 ---
 
-### 🟢 0.33 Fix Import Organization
+### ✅ 0.33 Fix Import Organization
 **Priority:** Low (Code Quality)
 **Complexity:** Simple
 **Effort:** 15 minutes
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-14)
 
 **Current Issue:** Some functions have imports inside the function body instead of at module level, making code harder to maintain and violating Rust conventions.
 
-**Example** (`empath-delivery/src/queue/retry.rs:23`):
-```rust
-pub fn calculate_next_retry_time(...) -> u64 {
-    use rand::Rng;  // ← Should be at module level
-    // ...
-}
-```
+**Resolution:**
+Moved all function-scoped imports to module level:
+- `empath-delivery/src/processor/scan.rs`: Added `warn` to top-level imports, removed 2 function-scoped imports
+- `empath-delivery/src/processor/delivery.rs`: Added `error` to existing tracing imports, removed function-scoped import
+- `empath/bin/empathctl.rs`: Added chrono imports to top level, removed function-scoped import
 
-**Implementation:**
-Move all function-scoped imports to module level for consistency.
-
-**Files to Modify:**
-- `empath-delivery/src/queue/retry.rs:23`
-- Search for other instances: `rg "^\s+use [a-z]" --type rust`
+**Files Modified:**
+- `empath-delivery/src/processor/scan.rs`
+- `empath-delivery/src/processor/delivery.rs`
+- `empath/bin/empathctl.rs`
 
 **Dependencies:** None
 **Source:** Code Review 2025-11-14
 
 ---
 
-### 🟢 0.34 Remove Unused Docker Build Stage
+### ✅ 0.34 Remove Unused Docker Build Stage
 **Priority:** Low (Code Cleanup)
 **Complexity:** Simple
 **Effort:** 5 minutes
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-14)
 
 **Current Issue:** The Dockerfile has an empty `modules` build stage that copies files but doesn't build them or use them.
 
-**Current Code** (`Dockerfile.dev:24-26`):
+**Resolution:**
+Removed the unused `modules` build stage entirely from `Dockerfile.dev`. The stage was:
 ```dockerfile
 FROM debian:stable AS modules
 COPY empath-ffi/examples /tmp
 RUN cd /tmp
 ```
 
-**Problem:** This stage is unused and adds confusion to the build process.
+This stage didn't build anything and wasn't referenced by the final image, adding unnecessary confusion to the build process.
 
-**Implementation:**
-Either:
-1. Remove the unused stage entirely (if modules aren't needed in Docker)
-2. Complete the implementation to actually build modules
-
-**Files to Modify:**
-- `Dockerfile.dev:24-26`
+**Files Modified:**
+- `Dockerfile.dev`
 
 **Dependencies:** None
 **Source:** Code Review 2025-11-14

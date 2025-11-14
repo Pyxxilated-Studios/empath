@@ -11,6 +11,7 @@ use std::{
     path::PathBuf,
 };
 
+use chrono::{TimeZone, Utc, offset::LocalResult};
 use clap::{Parser, Subcommand, ValueEnum};
 use empath_control::{
     ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, Response, SystemCommand,
@@ -521,7 +522,6 @@ fn display_queue_stats(stats: &empath_control::protocol::QueueStats) {
 
 /// Format timestamp (milliseconds since epoch) as human-readable
 fn format_timestamp(timestamp_ms: u64) -> String {
-    use chrono::{TimeZone, Utc, offset::LocalResult};
     let datetime = Utc.timestamp_millis_opt(i64::try_from(timestamp_ms).unwrap_or(0));
     if let LocalResult::Single(dt) = datetime {
         dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()

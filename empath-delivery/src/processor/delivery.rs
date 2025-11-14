@@ -6,7 +6,7 @@ use empath_common::{
     DeliveryStatus,
     context::{Context, DeliveryContext},
     internal,
-    tracing::{info, warn},
+    tracing::{error, info, warn},
 };
 use empath_ffi::modules::{self, Ev, Event};
 use empath_spool::SpooledMessageId;
@@ -180,7 +180,6 @@ pub async fn prepare_message(
 
             // Delete the message from the spool after successful delivery
             if let Err(e) = spool.delete(message_id).await {
-                use empath_common::tracing::error;
                 error!(
                     message_id = ?message_id,
                     error = %e,

@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use empath_common::tracing::warn;
+
 use crate::{
     error::{DeliveryError, SystemError},
     processor::DeliveryProcessor,
@@ -84,7 +86,6 @@ pub async fn scan_spool_internal(
         // New message without delivery state - create fresh DeliveryInfo
         // Group recipients by domain (handle multi-recipient messages)
         let Some(recipients) = context.envelope.recipients() else {
-            use empath_common::tracing::warn;
             warn!("Message {:?} has no recipients, skipping", msg_id);
             continue;
         };
@@ -106,7 +107,6 @@ pub async fn scan_spool_internal(
                         .push(recipient_str.to_owned());
                 }
                 Err(e) => {
-                    use empath_common::tracing::warn;
                     warn!(
                         message_id = ?msg_id,
                         recipient = %recipient_str,

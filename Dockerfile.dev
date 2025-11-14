@@ -21,11 +21,6 @@ RUN cargo +nightly chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo +nightly build --release
 
-FROM debian:stable AS modules
-
-COPY empath-ffi/examples /tmp
-RUN cd /tmp
-
 FROM debian:stable-slim
 
 WORKDIR /empath
