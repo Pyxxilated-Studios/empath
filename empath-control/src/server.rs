@@ -2,6 +2,9 @@
 
 use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
@@ -67,7 +70,23 @@ impl ControlServer {
 
         // Bind the Unix socket
         let listener = UnixListener::bind(&self.socket_path)?;
-        info!("Control server listening on: {}", self.socket_path);
+
+        // Set restrictive permissions (owner only: rw-------)
+        #[cfg(unix)]
+        {
+            let metadata = tokio::fs::metadata(&self.socket_path).await?;
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o600); // Owner read/write only
+            tokio::fs::set_permissions(&self.socket_path, perms).await?;
+            info!(
+                "Control socket created with mode 0600 (owner only): {}",
+                self.socket_path
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            info!("Control server listening on: {}", self.socket_path);
+        }
 
         loop {
             tokio::select! {

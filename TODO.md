@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-14:** ✅ **COMPLETED** task 0.15: Set explicit Unix socket permissions (security hardening)
 - **2025-11-14:** ✅ **COMPLETED** task 0.26: Added DeliveryStatus::matches_filter() method for stable status filtering
 - **2025-11-14:** ✅ **COMPLETED** task 0.16: Added client-side response size validation (DoS protection)
 - **2025-11-14:** ✅ **COMPLETED** task 0.23: Refactored metrics to use module/event system (architectural fix)
@@ -308,39 +309,43 @@ delivery: (
 
 ---
 
-### 🟡 0.15 Set Explicit Unix Socket Permissions (Security)
-**Priority:** High (Before Production)
+### ✅ 0.15 Set Explicit Unix Socket Permissions (Security)
+**Priority:** ~~High (Before Production)~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 1 hour
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-14)
 
-**Current Issue:** Control socket inherits umask permissions, currently world-readable (`srwxr-xr-x`). On multi-user systems, any local user can connect and execute control commands.
+**Original Issue:** Control socket inherits umask permissions, currently world-readable (`srwxr-xr-x`). On multi-user systems, any local user can connect and execute control commands.
 
 **Security Impact:** Unauthorized users could clear DNS cache, view system status, or manage MX overrides.
 
-**Implementation:**
-```rust
-// In empath-control/src/server.rs after line 74 (after binding socket)
-use std::os::unix::fs::PermissionsExt;
+**Solution Implemented:**
 
-let listener = UnixListener::bind(&self.socket_path)?;
+Added explicit Unix socket permission setting to restrict access to owner only, preventing unauthorized local users from connecting to the control socket.
 
-// Set restrictive permissions (owner only: rw-------)
-let metadata = tokio::fs::metadata(&self.socket_path).await?;
-let mut perms = metadata.permissions();
-perms.set_mode(0o600);  // Owner read/write only
-tokio::fs::set_permissions(&self.socket_path, perms).await?;
+**Changes Made:**
 
-info!("Control socket created with mode 0600: {}", self.socket_path);
-```
+1. **Added import** (`empath-control/src/server.rs:5-6`):
+   - Imported `std::os::unix::fs::PermissionsExt` with `#[cfg(unix)]` guard
+   - Platform-specific trait for setting Unix file permissions
 
-**Benefits:**
-- Prevents unauthorized local access
-- Follows principle of least privilege
-- Defense in depth (filesystem permissions + application logic)
+2. **Set socket permissions after bind** (`empath-control/src/server.rs:74-89`):
+   - After binding the Unix listener, set permissions to 0o600 (owner read/write only)
+   - Used conditional compilation for Unix-specific code
+   - Added informative log message indicating secure socket creation
+   - Non-Unix platforms log standard message
 
-**Files to Modify:**
-- `empath-control/src/server.rs` (add permission setting after bind)
+**Benefits Achieved:**
+- ✅ Prevents unauthorized local access to control socket
+- ✅ Follows principle of least privilege
+- ✅ Defense in depth (filesystem permissions + application logic)
+- ✅ Platform-aware implementation with conditional compilation
+
+**Files Modified:** 1 file (+17 lines)
+- `empath-control/src/server.rs`
+
+**Commits:**
+- (to be committed)
 
 **Dependencies:** 0.9 (Control Socket IPC)
 **Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #1)
