@@ -2,6 +2,7 @@
 #
 # Quick Start (New Developers):
 #   just setup          - First-time setup (installs tools, git hooks)
+#   just doctor         - Check environment health (diagnose setup issues)
 #   just dev            - Development workflow (fmt + lint + test)
 #   just ci             - Full CI check (lint + fmt-check + test)
 #   just docker-up      - Start full stack (Empath + OTEL + Prometheus + Grafana)
@@ -33,6 +34,7 @@ help:
     @echo ""
     @echo "🚀 Quick Start:"
     @echo "  just setup          - First-time setup"
+    @echo "  just doctor         - Check environment health"
     @echo "  just dev            - Development workflow (fmt + lint + test)"
     @echo "  just ci             - Full CI check"
     @echo "  just docker-up      - Start full stack"
@@ -96,6 +98,10 @@ setup:
     @echo "  just test           # Run tests"
     @echo "  just lint           # Run clippy"
     @echo "  just ci             # Run all checks"
+
+# Check development environment health
+doctor:
+    @./scripts/doctor.sh
 
 # Development workflow: format, lint, test
 dev: fmt lint test
