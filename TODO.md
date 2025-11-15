@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates (2025-11-15):**
+- ✅ **COMPLETED** task 4.1: Replace manual Pin<Box<dyn Future>> with async_trait
 - ✅ **COMPLETED** task 4.3: DashMap for lock-free concurrency (c3efd33)
 - ✅ **COMPLETED** task 0.20: Protocol versioning for control socket (f9beb9c)
 
@@ -412,12 +413,21 @@ Major refactoring to improve codebase organization and maintainability.
 
 ---
 
-### 🟡 4.1 Replace Manual Future Boxing with RPITIT
-**Priority:** High (Code Quality)
-**Complexity:** Simple
-**Effort:** 2-3 hours
+### ✅ 4.1 Replace Manual Future Boxing with async_trait
+**Priority:** ~~High (Code Quality)~~ **COMPLETED**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-Use `async fn` in traits now that RPITIT is stable in Rust 1.75+.
+Replaced manual `Pin<Box<dyn Future>>` boxing in `CommandHandler` trait with `async_trait` macro for cleaner, more maintainable code.
+
+**Changes:**
+- Added `async_trait` dependency to `empath` and `empath-control` crates
+- Converted `CommandHandler::handle_request` from manual `Pin<Box<dyn Future>>` to `async fn` with `#[async_trait]`
+- Updated implementations in `empath/src/control_handler.rs` and `empath-control/tests/integration_test.rs`
+- Removed manual `Box::pin(async move { ... })` boilerplate
+
+**Note:** The `BackingStore` trait correctly uses `async_trait` and must remain so for dyn compatibility (`Arc<dyn BackingStore>`). Native `async fn` in traits (RPITIT) is not dyn-compatible, so `async_trait` is the proper solution for trait objects.
+
+**Results:** All 91 workspace tests passing
 
 ---
 
@@ -721,9 +731,9 @@ Complete Docker setup for local development with all dependencies.
 ## Summary
 
 **Current Status:**
-- ✅ 18 tasks completed (including 4 today)
+- ✅ 19 tasks completed (including 5 today)
 - ❌ 1 task rejected (architectural decision)
-- 📝 57 tasks pending
+- 📝 56 tasks pending
 
 **Phase 0 Progress:** Most critical security and code quality issues addressed
 

@@ -3,8 +3,9 @@
 //! These tests verify the full request/response cycle between the control
 //! client and server, including error handling, timeouts, and protocol correctness.
 
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use empath_control::{
     ControlClient, ControlError, ControlServer, Result,
     protocol::{
@@ -55,54 +56,50 @@ impl MockHandler {
     }
 }
 
+#[async_trait]
 impl CommandHandler for MockHandler {
-    fn handle_request(
-        &self,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send + '_>> {
-        Box::pin(async move {
-            match request.command {
-                RequestCommand::Dns(cmd) => match cmd {
-                    DnsCommand::ListCache => Ok(Response::data(ResponseData::DnsCache(
-                        self.dns_cache.clone(),
-                    ))),
-                    DnsCommand::ClearCache => Ok(Response::data(ResponseData::Message(
-                        "Cache cleared".to_string(),
-                    ))),
-                    DnsCommand::RefreshDomain(domain) => Ok(Response::data(ResponseData::Message(
-                        format!("Refreshed {domain}"),
-                    ))),
-                    DnsCommand::SetOverride { domain, mx_server } => Ok(Response::data(
-                        ResponseData::Message(format!("Set override {domain} -> {mx_server}")),
-                    )),
-                    DnsCommand::RemoveOverride(domain) => Ok(Response::data(
-                        ResponseData::Message(format!("Removed override for {domain}")),
-                    )),
-                    DnsCommand::ListOverrides => Ok(Response::data(ResponseData::MxOverrides(
-                        self.mx_overrides.clone(),
-                    ))),
-                },
-                RequestCommand::System(cmd) => match cmd {
-                    SystemCommand::Ping => Ok(Response::ok()),
-                    SystemCommand::Status => {
-                        Ok(Response::data(ResponseData::SystemStatus(SystemStatus {
-                            version: "0.0.2".to_string(),
-                            uptime_secs: 12345,
-                            queue_size: 42,
-                            dns_cache_entries: 10,
-                        })))
-                    }
-                },
-                RequestCommand::Queue(cmd) => match cmd {
-                    QueueCommand::Stats => Ok(Response::data(ResponseData::Message(
-                        "Queue stats".to_string(),
-                    ))),
-                    _ => Ok(Response::error(
-                        "Queue command not implemented in mock".to_string(),
-                    )),
-                },
-            }
-        })
+    async fn handle_request(&self, request: Request) -> Result<Response> {
+        match request.command {
+            RequestCommand::Dns(cmd) => match cmd {
+                DnsCommand::ListCache => Ok(Response::data(ResponseData::DnsCache(
+                    self.dns_cache.clone(),
+                ))),
+                DnsCommand::ClearCache => Ok(Response::data(ResponseData::Message(
+                    "Cache cleared".to_string(),
+                ))),
+                DnsCommand::RefreshDomain(domain) => Ok(Response::data(ResponseData::Message(
+                    format!("Refreshed {domain}"),
+                ))),
+                DnsCommand::SetOverride { domain, mx_server } => Ok(Response::data(
+                    ResponseData::Message(format!("Set override {domain} -> {mx_server}")),
+                )),
+                DnsCommand::RemoveOverride(domain) => Ok(Response::data(
+                    ResponseData::Message(format!("Removed override for {domain}")),
+                )),
+                DnsCommand::ListOverrides => Ok(Response::data(ResponseData::MxOverrides(
+                    self.mx_overrides.clone(),
+                ))),
+            },
+            RequestCommand::System(cmd) => match cmd {
+                SystemCommand::Ping => Ok(Response::ok()),
+                SystemCommand::Status => {
+                    Ok(Response::data(ResponseData::SystemStatus(SystemStatus {
+                        version: "0.0.2".to_string(),
+                        uptime_secs: 12345,
+                        queue_size: 42,
+                        dns_cache_entries: 10,
+                    })))
+                }
+            },
+            RequestCommand::Queue(cmd) => match cmd {
+                QueueCommand::Stats => Ok(Response::data(ResponseData::Message(
+                    "Queue stats".to_string(),
+                ))),
+                _ => Ok(Response::error(
+                    "Queue command not implemented in mock".to_string(),
+                )),
+            },
+        }
     }
 }
 

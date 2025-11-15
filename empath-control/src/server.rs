@@ -2,8 +2,9 @@
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
+use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
@@ -16,16 +17,14 @@ use crate::{ControlError, Request, Response, Result};
 /// Handler trait for processing control requests
 ///
 /// Implement this trait to handle specific command types
+#[async_trait]
 pub trait CommandHandler: Send + Sync {
     /// Handle a request and return a response
     ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be processed
-    fn handle_request(
-        &self,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send + '_>>;
+    async fn handle_request(&self, request: Request) -> Result<Response>;
 }
 
 /// Control server for managing the Empath MTA via Unix domain socket
