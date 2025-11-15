@@ -1,0 +1,82 @@
+// Development Empath Configuration
+//
+// Full-featured setup for local development with modules and extensions.
+//
+// Usage:
+//   cp examples/config/development.ron empath.config.ron
+//   RUST_LOG=debug just run
+
+Empath(
+    // SMTP controller with SIZE and STARTTLS extensions
+    smtp_controller: (
+        listeners: [
+            {
+                socket: "[::]:1025",
+                context: {
+                    "environment": "development",
+                    "service": "smtp",
+                },
+                timeouts: (
+                    command_secs: 300,
+                    data_init_secs: 120,
+                    data_block_secs: 180,
+                    data_termination_secs: 600,
+                    connection_secs: 1800,
+                ),
+                extensions: [
+                    // SIZE extension - limit message size to 10MB
+                    {
+                        "size": 10000000,
+                    },
+                    // STARTTLS extension (requires cert files)
+                    // Uncomment when you have certificates:
+                    // {
+                    //     "starttls": {
+                    //         "key": "certs/private.key",
+                    //         "certificate": "certs/certificate.crt",
+                    //     }
+                    // }
+                ],
+            },
+        ],
+    ),
+
+    // Example modules (uncomment when built)
+    modules: [
+        // (
+        //     type: "SharedLibrary",
+        //     name: "./examples/modules/libspam_filter.so",
+        //     arguments: [],
+        // ),
+        // (
+        //     type: "SharedLibrary",
+        //     name: "./empath-ffi/examples/libexample.so",
+        //     arguments: [],
+        // ),
+    ],
+
+    // Spool configuration
+    spool: (
+        path: "./spool",
+    ),
+
+    // Delivery configuration with test domain override
+    delivery: (
+        scan_interval_secs: 30,
+        process_interval_secs: 10,
+        max_attempts: 25,
+        accept_invalid_certs: false,
+
+        // Per-domain configuration for testing
+        domains: {
+            // Route test.example.com to localhost
+            "test.example.com": (
+                mx_override: "localhost:1025",
+                accept_invalid_certs: true,
+            ),
+        },
+    ),
+
+    // Control socket for empathctl
+    control_socket: "/tmp/empath-dev.sock",
+)
