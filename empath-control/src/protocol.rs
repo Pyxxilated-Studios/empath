@@ -214,4 +214,10 @@ impl Response {
     pub fn data(data: ResponseData) -> Self {
         Self::Data(Box::new(data))
     }
+
+    /// Check if the response indicates success (not an error)
+    #[must_use]
+    pub const fn is_success(&self) -> bool {
+        !matches!(self, Self::Error(_))
+    }
 }

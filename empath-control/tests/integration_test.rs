@@ -491,3 +491,65 @@ async fn test_multiple_sequential_requests() {
     let response = client.send_request(request).await.unwrap();
     assert!(matches!(response, Response::Data(_)));
 }
+
+#[tokio::test]
+async fn test_persistent_connection_mode() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test.sock");
+    let socket_str = socket_path.to_str().unwrap();
+
+    let handler = Arc::new(MockHandler::new());
+    let (_server_handle, _shutdown_tx) = start_test_server(socket_str, handler).await;
+
+    // Create client with persistent connection enabled
+    let client = ControlClient::new(socket_str).with_persistent_connection();
+
+    // Send multiple requests - should reuse same connection
+    for i in 0..10 {
+        let request = if i % 2 == 0 {
+            Request::System(SystemCommand::Ping)
+        } else {
+            Request::Dns(DnsCommand::ListCache)
+        };
+        let response = client.send_request(request).await.unwrap();
+        assert!(response.is_success());
+    }
+}
+
+#[tokio::test]
+async fn test_persistent_connection_reconnect() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test.sock");
+    let socket_str = socket_path.to_str().unwrap().to_string();
+
+    let handler = Arc::new(MockHandler::new());
+    let (server_handle, shutdown_tx) = start_test_server(&socket_str, handler.clone()).await;
+
+    // Create client with persistent connection
+    let client = ControlClient::new(&socket_str).with_persistent_connection();
+
+    // First request establishes connection
+    let request = Request::System(SystemCommand::Ping);
+    let response = client.send_request(request).await.unwrap();
+    assert!(matches!(response, Response::Ok));
+
+    // Shutdown server to simulate connection loss
+    shutdown_tx
+        .send(empath_common::Signal::Shutdown)
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), server_handle)
+        .await
+        .expect("Server did not shut down within timeout")
+        .expect("Server task panicked");
+
+    // Wait for socket to be removed
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Restart server
+    let (_server_handle2, _shutdown_tx2) = start_test_server(&socket_str, handler).await;
+
+    // Next request should automatically reconnect
+    let request = Request::System(SystemCommand::Status);
+    let response = client.send_request(request).await.unwrap();
+    assert!(matches!(response, Response::Data(_)));
+}

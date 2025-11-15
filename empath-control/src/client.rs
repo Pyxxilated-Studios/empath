@@ -1,12 +1,13 @@
 //! Client for connecting to the control socket
 
-use std::{path::Path, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
+    sync::Mutex,
 };
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::{ControlError, Request, Response, Result};
 
@@ -18,6 +19,8 @@ const MAX_RESPONSE_SIZE: u32 = 10_000_000;
 pub struct ControlClient {
     socket_path: String,
     timeout: Duration,
+    /// Optional persistent connection for watch mode to avoid reconnection overhead
+    persistent_connection: Option<Arc<Mutex<Option<UnixStream>>>>,
 }
 
 impl ControlClient {
@@ -27,13 +30,27 @@ impl ControlClient {
         Self {
             socket_path: socket_path.into(),
             timeout: Duration::from_secs(10),
+            persistent_connection: None,
         }
     }
 
     /// Set the request timeout
     #[must_use]
-    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Enable persistent connection mode for reduced overhead in watch mode
+    ///
+    /// When enabled, the client will maintain a single connection across multiple
+    /// requests instead of creating a new connection for each request. This is
+    /// particularly useful for `--watch` mode to avoid socket connection overhead.
+    ///
+    /// The connection will automatically reconnect if lost.
+    #[must_use]
+    pub fn with_persistent_connection(mut self) -> Self {
+        self.persistent_connection = Some(Arc::new(Mutex::new(None)));
         self
     }
 
@@ -65,8 +82,76 @@ impl ControlClient {
     }
 
     async fn send_request_internal(&self, request: Request) -> Result<Response> {
-        let mut stream = self.connect().await?;
+        // Check if we're in persistent connection mode
+        if let Some(persistent) = &self.persistent_connection {
+            self.send_request_persistent(request, persistent).await
+        } else {
+            self.send_request_oneshot(request).await
+        }
+    }
 
+    /// Send a request using a one-shot connection (traditional mode)
+    async fn send_request_oneshot(&self, request: Request) -> Result<Response> {
+        let mut stream = self.connect().await?;
+        self.send_and_receive(&mut stream, request).await
+    }
+
+    /// Send a request using persistent connection with automatic reconnection
+    async fn send_request_persistent(
+        &self,
+        request: Request,
+        persistent: &Arc<Mutex<Option<UnixStream>>>,
+    ) -> Result<Response> {
+        let mut guard = persistent.lock().await;
+
+        // Try to use existing connection, or create new one
+        let result = if let Some(stream) = guard.as_mut() {
+            self.send_and_receive(stream, request.clone()).await
+        } else {
+            // No connection exists, create new one
+            let mut stream = self.connect().await?;
+            let result = self.send_and_receive(&mut stream, request.clone()).await;
+            if result.is_ok() {
+                *guard = Some(stream);
+            }
+            result
+        };
+
+        // If connection failed, try to reconnect once
+        if result.is_err() {
+            warn!(
+                "Persistent connection failed, reconnecting to {}",
+                self.socket_path
+            );
+            *guard = None;
+            drop(guard); // Release lock before reconnecting
+
+            // Reconnect and retry
+            let mut stream = self.connect().await?;
+            let result = self.send_and_receive(&mut stream, request).await;
+
+            // Store new connection if successful
+            if result.is_ok() {
+                let mut guard = persistent.lock().await;
+                *guard = Some(stream);
+            }
+
+            result
+        } else {
+            result
+        }
+    }
+
+    /// Send request and receive response on an existing stream
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if I/O fails or protocol error occurs
+    async fn send_and_receive(
+        &self,
+        stream: &mut UnixStream,
+        request: Request,
+    ) -> Result<Response> {
         // Serialize request
         let request_bytes = bincode::serialize(&request)?;
         let request_len = u32::try_from(request_bytes.len())
@@ -136,11 +221,28 @@ mod tests {
         let client = ControlClient::new("/tmp/test.sock");
         assert_eq!(client.socket_path, "/tmp/test.sock");
         assert_eq!(client.timeout, Duration::from_secs(10));
+        assert!(client.persistent_connection.is_none());
     }
 
     #[test]
     fn test_client_with_timeout() {
         let client = ControlClient::new("/tmp/test.sock").with_timeout(Duration::from_secs(5));
         assert_eq!(client.timeout, Duration::from_secs(5));
+        assert!(client.persistent_connection.is_none());
+    }
+
+    #[test]
+    fn test_client_with_persistent_connection() {
+        let client = ControlClient::new("/tmp/test.sock").with_persistent_connection();
+        assert!(client.persistent_connection.is_some());
+    }
+
+    #[test]
+    fn test_client_builder_chain() {
+        let client = ControlClient::new("/tmp/test.sock")
+            .with_timeout(Duration::from_secs(5))
+            .with_persistent_connection();
+        assert_eq!(client.timeout, Duration::from_secs(5));
+        assert!(client.persistent_connection.is_some());
     }
 }

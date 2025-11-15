@@ -224,7 +224,12 @@ async fn handle_system_command_direct(
 
 /// Handle queue commands directly
 async fn handle_queue_command_direct(socket_path: &str, action: QueueAction) -> anyhow::Result<()> {
-    let client = check_control_socket(socket_path)?;
+    // Enable persistent connections for watch mode to reduce socket overhead
+    let client = if matches!(action, QueueAction::Stats { watch: true, .. }) {
+        check_control_socket(socket_path)?.with_persistent_connection()
+    } else {
+        check_control_socket(socket_path)?
+    };
     handle_queue_command(&client, action).await
 }
 

@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **COMPLETED** task 0.21: Added connection pooling for empathctl watch mode (performance optimization)
 - **2025-11-15:** ✅ **COMPLETED** task 0.10: Added comprehensive integration tests for control socket (14 tests - quality assurance)
 - **2025-11-15:** ✅ **COMPLETED** task 0.11: Enabled runtime MX override updates via control socket (operational flexibility)
 - **2025-11-15:** ✅ **COMPLETED** task 0.22: Fixed queue list command via control socket with integration tests (critical bug fix)
@@ -741,50 +742,51 @@ if request.version != PROTOCOL_VERSION {
 
 ---
 
-### 🔵 0.21 Add Connection Pooling for empathctl --watch Mode
-**Priority:** Low
+### ✅ 0.21 Add Connection Pooling for empathctl --watch Mode
+**Priority:** ~~Low~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 1 hour
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issue:** `empathctl --watch` creates a new connection per interval, causing unnecessary socket overhead.
+**Original Issue:** `empathctl --watch` created a new socket connection per request, causing unnecessary socket overhead.
 
-**Current Code** (`empath/bin/empathctl.rs` around stats watch loop):
-```rust
-loop {
-    let client = check_control_socket(socket_path)?;
-    // Send request
-    tokio::time::sleep(interval).await;
-}
-```
+**Solution Implemented:**
 
-**Implementation:**
-```rust
-// Connect once before loop
-let client = check_control_socket(socket_path)?;
+Added persistent connection mode to `ControlClient` with automatic reconnection on connection loss.
 
-loop {
-    // Reuse connection
-    match client.send_request(request.clone()).await {
-        Ok(response) => { /* handle */ }
-        Err(ControlError::ConnectionClosed) => {
-            // Reconnect on connection loss
-            client = check_control_socket(socket_path)?;
-            continue;
-        }
-        Err(e) => return Err(e.into()),
-    }
-    tokio::time::sleep(interval).await;
-}
-```
+**Changes Made:**
+
+1. **Added persistent connection support** (`empath-control/src/client.rs:19-24, 52-55`):
+   - Added `persistent_connection: Option<Arc<Mutex<Option<UnixStream>>>>` field to `ControlClient`
+   - New `with_persistent_connection()` method to enable connection reuse
+   - Backwards compatible - existing code works without changes
+
+2. **Implemented connection reuse logic** (`empath-control/src/client.rs:84-143`):
+   - Split `send_request_internal()` into persistent and one-shot modes
+   - Persistent mode reuses connection across multiple requests
+   - Automatic reconnection on connection loss (single retry)
+   - Lock-free for one-shot mode (zero overhead when not using persistent connections)
+
+3. **Updated empathctl for watch mode** (`empath/bin/empathctl.rs:227-233`):
+   ```rust
+   let client = if matches!(action, QueueAction::Stats { watch: true, .. }) {
+       check_control_socket(socket_path)?.with_persistent_connection()
+   } else {
+       check_control_socket(socket_path)?
+   };
+   ```
+
+4. **Added comprehensive tests** (`empath-control/tests/integration_test.rs:495-555`):
+   - Test persistent connection mode with 10 sequential requests
+   - Test automatic reconnection after server restart
+   - All 16 integration tests passing
 
 **Benefits:**
-- Reduces connection overhead for watch mode
-- Fewer socket operations
-- Better responsiveness
-
-**Files to Modify:**
-- `empath/bin/empathctl.rs` (reuse client in watch loops)
+- ✅ Eliminates connection overhead for watch mode (one connection instead of N)
+- ✅ Automatic reconnection on connection loss
+- ✅ Backwards compatible - existing code unchanged
+- ✅ Zero overhead for non-watch mode operations
+- ✅ Better responsiveness in watch mode
 
 **Dependencies:** 0.9 (Control Socket IPC)
 **Source:** Multi-agent code review 2025-11-13 (Rust Expert - Performance Improvements)
