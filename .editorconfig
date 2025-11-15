@@ -1,0 +1,55 @@
+# EditorConfig for Empath MTA
+# https://editorconfig.org
+
+root = true
+
+# All files
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Rust files
+[*.rs]
+indent_size = 4
+max_line_length = 100
+
+# TOML files (Cargo.toml, config files)
+[*.toml]
+indent_size = 2
+
+# RON files (Empath config)
+[*.ron]
+indent_size = 4
+
+# YAML files (CI, Docker Compose)
+[*.{yml,yaml}]
+indent_size = 2
+
+# JSON files
+[*.json]
+indent_size = 2
+
+# Markdown files
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
+
+# Shell scripts
+[*.sh]
+indent_size = 2
+
+# Makefiles and Justfiles
+[{Makefile,justfile}]
+indent_style = tab
+
+# Dockerfile
+[Dockerfile*]
+indent_size = 2
+
+# C files (FFI examples)
+[*.{c,h}]
+indent_size = 4
