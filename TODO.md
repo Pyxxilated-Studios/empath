@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **COMPLETED** task 0.18: Fixed socket file race condition on startup (robustness improvement)
 - **2025-11-14:** ✅ **COMPLETED** Code quality improvements:
   - Improved `NoVerifier` documentation with comprehensive security warnings
   - Added `#[must_use]` attributes to query methods (`is_permanent`, `is_temporary`, `try_next_server`, `current_mail_server`)
@@ -455,28 +456,33 @@ async fn handle_dns_command(&self, command: DnsCommand) -> Result<Response> {
 
 ---
 
-### 🟢 0.18 Fix Socket File Race Condition on Startup
-**Priority:** Medium
+### ✅ 0.18 Fix Socket File Race Condition on Startup
+**Priority:** ~~Medium~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 1 hour
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issue:** If two MTA instances start simultaneously with the same socket path, one could delete the other's socket file.
+**Original Issue:** If two MTA instances start simultaneously with the same socket path, one could delete the other's socket file.
 
-**Current Code** (`empath-control/src/server.rs:66-71`):
-```rust
-if socket_path.exists() {
-    info!("Removing existing socket file: {}", self.socket_path);
-    tokio::fs::remove_file(socket_path).await?;
-}
-```
+**Solution Implemented:**
 
-**Implementation:**
+Added socket liveness check before removal to prevent race conditions and detect running instances.
+
+**Changes Made:**
+
+1. **Socket liveness check** (`empath-control/src/server.rs:65-84`):
+   - Before removing existing socket file, attempts to connect to it
+   - If connection succeeds: another instance is running, return `AddrInUse` error
+   - If connection fails: stale socket from crashed process, safe to remove
+   - Clear error message indicating socket is already in use
+
+**Implementation Details:**
 ```rust
 if socket_path.exists() {
     // Test if socket is active by attempting connection
     match UnixStream::connect(socket_path).await {
         Ok(_) => {
+            // Active socket - another instance is running
             return Err(ControlError::Io(std::io::Error::new(
                 std::io::ErrorKind::AddrInUse,
                 format!("Socket already in use by running instance: {}", self.socket_path)
@@ -491,13 +497,14 @@ if socket_path.exists() {
 }
 ```
 
-**Benefits:**
-- Prevents accidental conflicts between instances
-- Clear error message if MTA already running
-- Safely handles stale socket files from crashes
+**Benefits Achieved:**
+- ✅ Prevents accidental conflicts when multiple instances start simultaneously
+- ✅ Clear error message if MTA is already running
+- ✅ Safely handles stale socket files from crashed processes
+- ✅ No longer blindly deletes socket files that may be in use
 
-**Files to Modify:**
-- `empath-control/src/server.rs` (improve socket cleanup logic)
+**Files Modified:** 1 file (+19 lines, -4 lines)
+- `empath-control/src/server.rs`
 
 **Dependencies:** 0.9 (Control Socket IPC)
 **Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #3)
