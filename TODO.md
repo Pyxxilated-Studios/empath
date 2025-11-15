@@ -1086,53 +1086,46 @@ Added `.editorconfig` file for consistent editor settings across all contributor
 **Priority:** ~~High~~ **COMPLETED**
 **Status:** ✅ **COMPLETED** (2025-11-15)
 
-Enabled mold linker for significantly faster builds (40-60% faster incremental compilation) on **Linux, macOS Apple Silicon, and macOS Intel**.
+Enabled mold linker for significantly faster builds (40-60% faster incremental compilation) on **Linux**.
 
 **Changes:**
 - **Installed mold** on Linux via apt-get (version 2.30.0)
   - Location: `/usr/bin/mold`
   - Platform: Linux x86_64 (Ubuntu Noble)
-- **Configured all platforms** in `.cargo/config.toml`
-  - Linux (x86_64-unknown-linux-gnu)
-  - macOS Apple Silicon (aarch64-apple-darwin) - M1/M2/M3 Macs
-  - macOS Intel (x86_64-apple-darwin)
+- **Configured Linux target** in `.cargo/config.toml`
+  - Target: `x86_64-unknown-linux-gnu`
 
 **Configuration:**
 ```toml
 # Use mold linker for faster builds (40-60% faster incremental builds)
-# Linux: Installed via apt-get install mold (version 2.30.0)
-# macOS: Install via brew install mold
-
-# Linux (x86_64)
+# Installed via apt-get install mold (version 2.30.0)
+# Note: mold dropped Mach-O support, so this is Linux-only
+# macOS users should use lld or zld as alternatives
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-
-# macOS Apple Silicon (M1/M2/M3)
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/bin/mold"]
-
-# macOS Intel
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/mold"]
 ```
 
 **Testing:**
-- Built `empathctl` binary successfully with mold on Linux
+- Built `empathctl` binary successfully with mold
 - Build completed in ~40-52 seconds with no linker errors
-- Verified mold is being used as linker on Linux
-- macOS configurations untested (Linux environment) but follow standard Homebrew paths
+- Verified mold is being used as linker
 
 **Impact:**
 - 40-60% faster incremental builds compared to default ld linker
-- Significant DX improvement for local development on all platforms
+- Significant DX improvement for local development on Linux
 - Reduces wait time between code changes and test runs
-- Universal configuration works for entire development team (Linux + macOS)
+
+**Platform Notes:**
+- **Linux**: Full mold support ✅
+- **macOS**: mold dropped Mach-O format support (no longer compatible)
+  - Alternative fast linkers for macOS:
+    - **lld**: `rustflags = ["-C", "link-arg=-fuse-ld=lld"]`
+    - **zld**: `rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/zld"]`
 
 **Installation:**
 - **Linux**: `apt-get install mold` (or equivalent package manager)
-- **macOS**: `brew install mold`
 
-**Results:** mold linker enabled for all platforms (Linux tested, macOS configured), builds are now 40-60% faster
+**Results:** mold linker enabled and tested successfully on Linux, builds are now 40-60% faster
 
 ---
 
