@@ -35,6 +35,19 @@ pub async fn process_queue_internal(
     // Get all messages to check for expiration and retry timing
     let all_messages = processor.queue.all_messages();
 
+    // Calculate and update the oldest pending message age
+    if let Some(metrics) = &processor.metrics {
+        let oldest_age_secs = all_messages
+            .iter()
+            .filter(|msg| matches!(msg.status, DeliveryStatus::Pending | DeliveryStatus::Retry))
+            .filter_map(|msg| now.duration_since(msg.queued_at).ok())
+            .map(|duration| duration.as_secs())
+            .max()
+            .unwrap_or(0);
+
+        metrics.update_oldest_message_age(oldest_age_secs);
+    }
+
     for info in all_messages {
         // Skip messages that are already completed, failed, expired, or in progress
         if matches!(
@@ -124,28 +137,33 @@ pub async fn process_queue_internal(
         }
 
         // Process the message (Pending status)
-        if matches!(info.status, DeliveryStatus::Pending)
-            && let Err(e) = prepare_message(processor, &info.message_id, spool).await
-        {
-            error!(
-                message_id = ?info.message_id,
-                error = %e,
-                "Failed to prepare message for delivery"
-            );
+        if matches!(info.status, DeliveryStatus::Pending) {
+            // Record queue age metric before attempting delivery
+            if let Some(metrics) = &processor.metrics {
+                metrics.record_queue_age(info.queued_at);
+            }
 
-            if let Ok(mut context) = spool.read(&info.message_id).await {
-                let server = info
-                    .mail_servers
-                    .get(info.current_server_index)
-                    .map_or_else(|| info.recipient_domain.to_string(), MailServer::address);
-                let _error = super::delivery::handle_delivery_error(
-                    processor,
-                    &info.message_id,
-                    &mut context,
-                    e,
-                    server,
-                )
-                .await;
+            if let Err(e) = prepare_message(processor, &info.message_id, spool).await {
+                error!(
+                    message_id = ?info.message_id,
+                    error = %e,
+                    "Failed to prepare message for delivery"
+                );
+
+                if let Ok(mut context) = spool.read(&info.message_id).await {
+                    let server = info
+                        .mail_servers
+                        .get(info.current_server_index)
+                        .map_or_else(|| info.recipient_domain.to_string(), MailServer::address);
+                    let _error = super::delivery::handle_delivery_error(
+                        processor,
+                        &info.message_id,
+                        &mut context,
+                        e,
+                        server,
+                    )
+                    .await;
+                }
             }
         }
     }

@@ -601,32 +601,32 @@ Created comprehensive integration test suite with 15 tests covering counter accu
 
 ---
 
-### 🟡 0.37 Add Queue Age Metrics
-**Priority:** High **NEW** (2025-11-15)
+### ✅ 0.37 Add Queue Age Metrics
+**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
 **Complexity:** Simple
 **Effort:** 2 hours
 
-**Expert Review (OTel Expert):** Queue size alone doesn't reveal problems - 100 messages queued for 5 min is OK, for 5 hours is BAD. Need time-in-queue metrics for SLO tracking.
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**What's Missing:**
-```rust
-// In empath-metrics/src/delivery.rs
-pub struct DeliveryMetrics {
-    queue_age_seconds: Histogram<f64>,      // Time between spool & delivery
-    oldest_message_seconds: Gauge<f64>,     // Age of oldest pending message
-}
-```
+Implemented queue age metrics with histogram and oldest message gauge for SLO tracking and capacity planning.
 
-**Implementation:**
-1. Record queue entry timestamp in `Context.delivery.queued_at`
-2. Calculate age on each delivery attempt
-3. Export as histogram for percentile analysis (p50, p95, p99)
-4. Alert on p95 queue age > SLO threshold
+**Implementation:** Added `queue_age_seconds` histogram and `oldest_message_seconds` gauge to DeliveryMetrics. Queue age is recorded before each delivery attempt, and the oldest message age is calculated and updated during queue processing. The `queued_at` timestamp was already present in `DeliveryContext` from the initial design.
 
-**Use Cases:**
-- SLO tracking: "95% of messages delivered within 1 hour"
+**Files Modified:**
+- `empath-metrics/src/delivery.rs` - Added queue_age_seconds histogram and oldest_message_seconds gauge with observable callbacks
+- `empath-delivery/src/processor/mod.rs` - Added metrics field to DeliveryProcessor and initialization in init()
+- `empath-delivery/src/processor/process.rs` - Record queue age on delivery attempt, calculate and update oldest message age
+- `empath-metrics/tests/metrics_integration.rs` - Added 3 tests for queue age metrics
+
+**Metrics Added:**
+- `empath.delivery.queue.age.seconds` (histogram) - Distribution of time between spool and delivery attempt
+- `empath.delivery.queue.oldest.seconds` (gauge) - Age of the oldest pending/retry message in seconds
+
+**Use Cases Enabled:**
+- SLO tracking: "95% of messages delivered within 1 hour" via percentile analysis (p50, p95, p99)
 - Capacity planning: Detect queue backlog before it's critical
-- Performance regression: Queue age increasing over time
+- Performance regression: Monitor queue age trends over time
+- Alerting: Trigger alerts when p95 queue age exceeds threshold
 
 ---
 

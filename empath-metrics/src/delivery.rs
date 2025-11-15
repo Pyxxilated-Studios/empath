@@ -33,6 +33,12 @@ pub struct DeliveryMetrics {
     /// Distribution of retry counts before success
     retry_count: Histogram<u64>,
 
+    /// Distribution of queue age (time between spool and delivery attempt)
+    queue_age_seconds: Histogram<f64>,
+
+    /// Age of the oldest pending message in the queue
+    oldest_message_seconds: Arc<AtomicU64>,
+
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     messages_delivered_count: Arc<AtomicU64>,
     messages_failed_count: Arc<AtomicU64>,
@@ -111,6 +117,24 @@ impl DeliveryMetrics {
             .with_description("Distribution of retry counts before success")
             .build();
 
+        let queue_age_seconds = meter
+            .f64_histogram("empath.delivery.queue.age.seconds")
+            .with_description("Distribution of queue age (time between spool and delivery attempt)")
+            .build();
+
+        // Create atomic counter for oldest message tracking
+        let oldest_message_ref = Arc::new(AtomicU64::new(0));
+
+        // Observable gauge for oldest message age (reads from atomic)
+        let oldest_clone = oldest_message_ref.clone();
+        meter
+            .u64_observable_gauge("empath.delivery.queue.oldest.seconds")
+            .with_description("Age of the oldest pending message in the queue")
+            .with_callback(move |observer| {
+                observer.observe(oldest_clone.load(Ordering::Relaxed), &[]);
+            })
+            .build();
+
         let active_connections = meter
             .i64_up_down_counter("empath.delivery.connections.active")
             .with_description("Number of currently active outbound SMTP connections")
@@ -170,6 +194,8 @@ impl DeliveryMetrics {
             duration_seconds,
             active_connections,
             retry_count,
+            queue_age_seconds,
+            oldest_message_seconds: oldest_message_ref,
             messages_delivered_count: messages_delivered_ref,
             messages_failed_count: messages_failed_ref,
             messages_retrying_count: messages_retrying_ref,
@@ -289,6 +315,33 @@ impl DeliveryMetrics {
     #[must_use]
     pub fn active_connections_count(&self) -> u64 {
         self.active_conn_count.load(Ordering::Relaxed)
+    }
+
+    /// Record the queue age for a delivery attempt
+    ///
+    /// Calculates the time between when the message was spooled and when
+    /// the delivery attempt is being made.
+    ///
+    /// # Arguments
+    ///
+    /// * `queued_at` - When the message was first queued for delivery
+    pub fn record_queue_age(&self, queued_at: std::time::SystemTime) {
+        let now = std::time::SystemTime::now();
+        if let Ok(age) = now.duration_since(queued_at) {
+            self.queue_age_seconds.record(age.as_secs_f64(), &[]);
+        }
+    }
+
+    /// Update the age of the oldest pending message in the queue
+    ///
+    /// This should be called periodically to track the maximum queue age.
+    ///
+    /// # Arguments
+    ///
+    /// * `oldest_age_secs` - Age of the oldest pending message in seconds
+    pub fn update_oldest_message_age(&self, oldest_age_secs: u64) {
+        self.oldest_message_seconds
+            .store(oldest_age_secs, Ordering::Relaxed);
     }
 }
 

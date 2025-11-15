@@ -306,3 +306,53 @@ fn test_dns_metrics_creation() {
         result.err()
     );
 }
+
+#[test]
+fn test_queue_age_recording() {
+    use std::time::{Duration, SystemTime};
+
+    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+
+    // Simulate messages queued at different times
+    let now = SystemTime::now();
+    let one_minute_ago = now - Duration::from_secs(60);
+    let five_minutes_ago = now - Duration::from_secs(300);
+    let one_hour_ago = now - Duration::from_secs(3600);
+
+    // Record queue ages
+    metrics.record_queue_age(one_minute_ago);
+    metrics.record_queue_age(five_minutes_ago);
+    metrics.record_queue_age(one_hour_ago);
+
+    // Histogram records are aggregated internally by OpenTelemetry
+    // This test verifies the API doesn't panic and operations complete
+}
+
+#[test]
+fn test_oldest_message_age_update() {
+    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+
+    // Simulate queue with varying message ages
+    metrics.update_oldest_message_age(0); // Empty queue
+    metrics.update_oldest_message_age(60); // 1 minute
+    metrics.update_oldest_message_age(300); // 5 minutes
+    metrics.update_oldest_message_age(3600); // 1 hour
+    metrics.update_oldest_message_age(7200); // 2 hours
+
+    // Observable gauge reads from atomic value
+    // This test verifies the API doesn't panic and operations complete
+}
+
+#[test]
+fn test_queue_age_with_system_time_edge_cases() {
+    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+
+    // Test with current time (age = 0)
+    let now = SystemTime::now();
+    metrics.record_queue_age(now);
+
+    // Test with UNIX_EPOCH
+    metrics.record_queue_age(SystemTime::UNIX_EPOCH);
+
+    // All operations should complete without panic
+}
