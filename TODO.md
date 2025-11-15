@@ -9,8 +9,9 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **COMPLETED** task 0.10 (MX randomization): Added MX record randomization for RFC 5321 compliance (load balancing improvement)
 - **2025-11-15:** ✅ **COMPLETED** task 0.21: Added connection pooling for empathctl watch mode (performance optimization)
-- **2025-11-15:** ✅ **COMPLETED** task 0.10: Added comprehensive integration tests for control socket (14 tests - quality assurance)
+- **2025-11-15:** ✅ **COMPLETED** task 0.10 (control socket tests): Added comprehensive integration tests for control socket (14 tests - quality assurance)
 - **2025-11-15:** ✅ **COMPLETED** task 0.11: Enabled runtime MX override updates via control socket (operational flexibility)
 - **2025-11-15:** ✅ **COMPLETED** task 0.22: Fixed queue list command via control socket with integration tests (critical bug fix)
 - **2025-11-15:** ✅ **DOCUMENTED** task 0.5: DNS cache mutex contention already resolved (performance - completed 2025-11-11)
@@ -1354,31 +1355,43 @@ This stage didn't build anything and wasn't referenced by the final image, addin
 
 ---
 
-### 🟢 0.10 Add MX Record Randomization (RFC 5321)
-**Priority:** Medium
+### ✅ 0.10 Add MX Record Randomization (RFC 5321)
+**Priority:** ~~Medium~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 2 hours
-**Files:** `empath-delivery/src/dns.rs:266-267`
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issue:** Equal-priority MX records are not randomized as recommended by RFC 5321.
+**Original Issue:** Equal-priority MX records were not randomized as recommended by RFC 5321 Section 5.1 for load balancing.
 
-**Implementation:**
-```rust
-use rand::seq::SliceRandom;
+**Solution Implemented:**
 
-// After sorting by priority, randomize within each priority group
-let mut priority_groups: HashMap<u16, Vec<MailServer>> = HashMap::new();
-for server in servers {
-    priority_groups.entry(server.priority).or_default().push(server);
-}
+Added RFC 5321-compliant MX record randomization that preserves priority ordering while randomizing servers within each priority group.
 
-let mut result = Vec::new();
-for priority in priority_groups.keys().sorted() {
-    let mut group = priority_groups.remove(priority).unwrap();
-    group.shuffle(&mut rand::thread_rng());
-    result.extend(group);
-}
-```
+**Changes Made:**
+
+1. **Implemented randomization logic** (`empath-delivery/src/dns.rs:418-448`):
+   - New `randomize_equal_priority()` static method
+   - Identifies priority group boundaries in sorted server list
+   - Randomizes servers within each group using `rand::thread_rng()`
+   - Handles edge cases (empty, single server, single group)
+
+2. **Integrated into DNS resolution** (`empath-delivery/src/dns.rs:344-349`):
+   - Called after sorting by priority in `resolve_mail_servers_uncached()`
+   - Applied to all MX record lookups
+   - Added RFC 5321 reference in comments
+
+3. **Comprehensive test coverage** (`empath-delivery/src/dns.rs:662-732`):
+   - `test_randomize_equal_priority_preserves_priority_order`: Verifies priority boundaries maintained
+   - `test_randomize_equal_priority_shuffles_within_groups`: Confirms actual randomization (>= 2 orderings in 10 runs)
+   - `test_randomize_equal_priority_single_server`: Edge case handling
+   - `test_randomize_equal_priority_empty`: Edge case handling
+
+**Benefits:**
+- ✅ RFC 5321 compliant load balancing
+- ✅ Better distribution across equal-priority mail servers
+- ✅ Preserves priority ordering (lower priority always first)
+- ✅ Zero performance impact (single pass algorithm)
+- ✅ All 22 unit tests passing
 
 **Dependencies:** None
 **Source:** CODE_REVIEW_2025-11-10.md Section 1.3

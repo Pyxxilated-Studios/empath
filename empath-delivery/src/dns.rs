@@ -342,7 +342,12 @@ impl DnsResolver {
                 }
 
                 // Sort by priority (lower number = higher priority)
+                // RFC 5321 Section 5.1: Equal-priority servers should be randomized for load balancing
                 servers.sort_by_key(|s| s.priority);
+
+                // Randomize within each priority group
+                Self::randomize_equal_priority(&mut servers);
+
                 debug!(
                     "Resolved {} MX record(s) for {domain} with TTL {min_ttl}s",
                     servers.len()
@@ -407,6 +412,38 @@ impl DnsResolver {
                     Err(DnsError::LookupFailed(err))
                 }
             }
+        }
+    }
+
+    /// Randomize servers within each priority group (RFC 5321 Section 5.1)
+    ///
+    /// After sorting by priority, servers with equal priority should be randomized
+    /// to distribute load across them. This implements the RFC 5321 recommendation
+    /// for MX record selection.
+    fn randomize_equal_priority(servers: &mut [MailServer]) {
+        use rand::seq::SliceRandom;
+
+        if servers.len() <= 1 {
+            return;
+        }
+
+        // Find priority group boundaries
+        let mut start = 0;
+        while start < servers.len() {
+            let current_priority = servers[start].priority;
+            let mut end = start + 1;
+
+            // Find the end of this priority group
+            while end < servers.len() && servers[end].priority == current_priority {
+                end += 1;
+            }
+
+            // Randomize servers within this priority group
+            if end - start > 1 {
+                servers[start..end].shuffle(&mut rand::thread_rng());
+            }
+
+            start = end;
         }
     }
 
@@ -620,5 +657,77 @@ mod tests {
         assert!(DnsError::Timeout("example.com".to_string()).is_temporary());
         assert!(!DnsError::NoMailServers("example.com".to_string()).is_temporary());
         assert!(!DnsError::DomainNotFound("example.com".to_string()).is_temporary());
+    }
+
+    #[test]
+    fn test_randomize_equal_priority_preserves_priority_order() {
+        // Create servers with mixed priorities
+        let mut servers = vec![
+            MailServer::new("mx1a.example.com".to_string(), 10, 25),
+            MailServer::new("mx1b.example.com".to_string(), 10, 25),
+            MailServer::new("mx2a.example.com".to_string(), 20, 25),
+            MailServer::new("mx2b.example.com".to_string(), 20, 25),
+            MailServer::new("mx3.example.com".to_string(), 30, 25),
+        ];
+
+        // Randomize
+        DnsResolver::randomize_equal_priority(&mut servers);
+
+        // Verify priority boundaries are maintained
+        assert_eq!(servers[0].priority, 10);
+        assert_eq!(servers[1].priority, 10);
+        assert_eq!(servers[2].priority, 20);
+        assert_eq!(servers[3].priority, 20);
+        assert_eq!(servers[4].priority, 30);
+    }
+
+    #[test]
+    fn test_randomize_equal_priority_shuffles_within_groups() {
+        // Create servers with equal priority
+        let original = vec![
+            MailServer::new("mx1.example.com".to_string(), 10, 25),
+            MailServer::new("mx2.example.com".to_string(), 10, 25),
+            MailServer::new("mx3.example.com".to_string(), 10, 25),
+            MailServer::new("mx4.example.com".to_string(), 10, 25),
+        ];
+
+        // Run randomization multiple times and check if we get different orderings
+        // With 4 servers, there are 24 possible orderings. Getting the same order
+        // multiple times in a row would be very unlikely if randomization works.
+        let mut orderings = std::collections::HashSet::new();
+
+        for _ in 0..10 {
+            let mut servers = original.clone();
+            DnsResolver::randomize_equal_priority(&mut servers);
+
+            // Create a signature for this ordering
+            let signature: Vec<_> = servers.iter().map(|s| s.host.clone()).collect();
+            orderings.insert(signature);
+        }
+
+        // We should see at least 2 different orderings (very likely more)
+        assert!(
+            orderings.len() >= 2,
+            "Expected randomization to produce different orderings, got only {:?}",
+            orderings.len()
+        );
+    }
+
+    #[test]
+    fn test_randomize_equal_priority_single_server() {
+        let mut servers = vec![MailServer::new("mx1.example.com".to_string(), 10, 25)];
+
+        // Should not panic with single server
+        DnsResolver::randomize_equal_priority(&mut servers);
+        assert_eq!(servers.len(), 1);
+    }
+
+    #[test]
+    fn test_randomize_equal_priority_empty() {
+        let mut servers: Vec<MailServer> = vec![];
+
+        // Should not panic with empty slice
+        DnsResolver::randomize_equal_priority(&mut servers);
+        assert_eq!(servers.len(), 0);
     }
 }
