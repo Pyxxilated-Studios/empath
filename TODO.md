@@ -1010,52 +1010,46 @@ Created Domain newtype wrapper for type safety, preventing email addresses from 
 
 ---
 
-### 🟡 4.5 Structured Concurrency with tokio::task::JoinSet
-**Priority:** ~~Medium~~ **High** (Reliability) (2025-11-15)
+### ✅ 4.5 Structured Concurrency with tokio::task::JoinSet
+**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
 **Complexity:** Simple
 **Effort:** 2-3 hours
 
-**Expert Review (Rust Expert):** Foundation for task 3.1 (Parallel Delivery). Current `Vec<JoinHandle>` doesn't implement proper structured concurrency.
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issues:**
-- `Listener::serve()` uses `Vec<JoinHandle>` with manual `join_all(sessions)`
-- No mechanism to detect/handle panicked tasks
-- No cancellation on error
-- Tasks continue running even if listener fails
-- Task leakage on early return/error
+Replaced Vec<JoinHandle> with tokio::task::JoinSet for proper structured concurrency in Listener, enabling automatic panic detection and graceful task cleanup.
 
-**Implementation:**
-```rust
-let mut sessions = JoinSet::new();
+**Implementation:** Replaced `Vec<JoinHandle>` with `JoinSet` in `Listener::serve()` and added `join_next()` to the tokio::select! loop. This enables continuous monitoring of completed sessions, automatic panic detection, and proper task cleanup on shutdown via `abort_all()`.
 
-loop {
-    tokio::select! {
-        sig = shutdown_signal.recv() => {
-            sessions.shutdown().await;  // Abort all remaining
-            return Ok(());
-        }
+**Files Modified:**
+- `empath-common/src/listener.rs` - Replaced Vec<JoinHandle> with JoinSet, added join_next() handling
 
-        Some(result) = sessions.join_next() => {
-            if let Err(e) = result {
-                tracing::error!("Session panicked: {e}");
-            }
-        }
+**Changes:**
+- Replaced `let mut sessions = Vec::default()` with `let mut sessions = JoinSet::new()`
+- Removed `join_all(sessions).await` in favor of `sessions.abort_all()` for instant shutdown
+- Added `Some(result) = sessions.join_next()` branch in tokio::select! to handle completed sessions
+- Implemented panic detection: `if e.is_panic()` logs ERROR and continues serving
+- Implemented cancellation detection: `if e.is_cancelled()` for graceful shutdown tracking
+- Changed `sessions.push(tokio::spawn(...))` to `sessions.spawn(...)`
 
-        connection = listener.accept() => {
-            let (stream, addr) = connection?;
-            sessions.spawn(handler.run(signal.resubscribe()));
-        }
-    }
-}
-```
+**Benefits Achieved:**
+- ✅ **Automatic cleanup**: Tasks are automatically cleaned up when JoinSet is dropped
+- ✅ **Panic detection**: Panicked tasks are detected and logged without crashing the listener
+- ✅ **Graceful shutdown**: `abort_all()` provides instant shutdown vs waiting for all tasks with join_all()
+- ✅ **No task leakage**: Early returns no longer leak running tasks
+- ✅ **Continuous monitoring**: Completed sessions are immediately detected and logged
+- ✅ **Foundation for parallel delivery**: Enables task 3.1 (Parallel Delivery) implementation
 
-**Benefits:**
-- Automatic cleanup
-- Panic detection and propagation
-- Better resource management
-- Foundation for parallel delivery (3.1)
+**Error Handling:**
+- Panicked sessions: Logged at ERROR level with panic details, listener continues serving
+- Cancelled sessions: Logged at DEBUG level (expected during shutdown)
+- Normal completion: Logged at DEBUG level
+- Other join errors: Logged at ERROR level
 
-Use `JoinSet` for structured concurrency and proper task cleanup.
+**Shutdown Behavior:**
+- Old: `join_all(sessions).await` - waits for all sessions to complete gracefully
+- New: `sessions.abort_all()` - immediately aborts all sessions and returns
+- Sessions counter logged: "aborting N active sessions"
 
 ---
 
