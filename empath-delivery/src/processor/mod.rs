@@ -270,6 +270,7 @@ impl DeliveryProcessor {
     /// # Errors
     ///
     /// Returns an error if the delivery processor encounters a fatal error
+    #[allow(clippy::too_many_lines)]
     #[traced(instrument(level = empath_common::tracing::Level::TRACE, skip_all))]
     pub async fn serve(
         &self,
@@ -288,11 +289,25 @@ impl DeliveryProcessor {
         let process_interval = Duration::from_secs(self.process_interval_secs);
         let cleanup_interval = Duration::from_secs(self.cleanup_interval_secs);
 
+        // Perform initial spool scan at startup to load existing messages
+        // This ensures `empathctl queue list` works immediately
+        match scan::scan_spool_internal(self, spool).await {
+            Ok(count) if count > 0 => {
+                internal!("Initial spool scan found {count} messages");
+            }
+            Ok(_) => {
+                internal!("Initial spool scan found no messages");
+            }
+            Err(e) => {
+                empath_common::tracing::error!("Error during initial spool scan: {e}");
+            }
+        }
+
         let mut scan_timer = tokio::time::interval(scan_interval);
         let mut process_timer = tokio::time::interval(process_interval);
         let mut cleanup_timer = tokio::time::interval(cleanup_interval);
 
-        // Skip the first tick to avoid immediate execution
+        // Skip the first tick to avoid immediate execution (after initial scan)
         scan_timer.tick().await;
         process_timer.tick().await;
         cleanup_timer.tick().await;
