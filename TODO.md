@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **COMPLETED** task 0.22: Fixed queue list command via control socket with integration tests (critical bug fix)
 - **2025-11-15:** ✅ **DOCUMENTED** task 0.5: DNS cache mutex contention already resolved (performance - completed 2025-11-11)
 - **2025-11-15:** ✅ **COMPLETED** task 0.17: Added audit logging for control commands (security enhancement)
 - **2025-11-15:** ✅ **COMPLETED** task 0.19: Implemented active DNS cache eviction (memory optimization)
@@ -721,34 +722,47 @@ loop {
 
 ---
 
-### 🔴 0.22 Fix Queue List Command via Control Socket
-**Priority:** Critical
+### ✅ 0.22 Fix Queue List Command via Control Socket
+**Priority:** ~~Critical~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 2-3 hours
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issue:** The queue list command is not working correctly after migration to control socket IPC. Status filtering and message display may have issues.
+**Original Issue:** The queue list command was not working correctly after migration to control socket IPC. Status filtering and message display had issues with fragile Debug formatting.
 
-**Context:** Queue commands were recently migrated from direct file-based access to IPC communication via Unix domain socket (task 0.9). The migration successfully implemented the control protocol and removed 484 lines of old file-based code, but the list command needs debugging.
+**Solution Implemented:**
 
-**Files to Investigate:**
-- `empath/src/control_handler.rs:169-211` (handle_queue_command List implementation)
-- `empath/bin/empathctl.rs` (queue list display logic)
-- `empath-control/src/protocol.rs` (QueueCommand::List and QueueMessage types)
+The main issue (status filtering) was resolved by task 0.26, which replaced fragile Debug formatting with a stable Display implementation and `matches_filter()` method. Additionally, comprehensive integration tests were added to verify protocol correctness.
 
-**Potential Issues:**
-- Status filter string comparison (`format!("{:?}", info.status) == status`) may not match expected format
-- Message serialization over IPC may have data loss
-- Display formatting may need adjustment for new data structure
+**Changes Made:**
 
-**Implementation:**
-1. Add debug logging to control_handler.rs to verify data flow
-2. Test with `empathctl queue list` and verify output
-3. Test with `empathctl queue list --status=failed` to verify filtering
-4. Compare with expected output format from original file-based implementation
-5. Add integration test for queue list command
+1. **Status Filtering Fixed** (task 0.26):
+   - Replaced `format!("{:?}", info.status) == status` with `info.status.matches_filter(&status)`
+   - Added Display trait implementation for DeliveryStatus
+   - Case-insensitive filter matching for better UX
 
-**Dependencies:** 0.9 (Control Socket IPC)
+2. **Integration Tests Added** (`empath-control/tests/queue_commands_test.rs`):
+   - Test queue list command serialization/deserialization
+   - Test status filter preservation across IPC
+   - Test all QueueCommand variants (List, View, Stats, Delete, Retry)
+   - Test QueueMessage response serialization with all fields
+   - All 7 tests passing
+
+**Verification:**
+
+- ✅ Message serialization properly preserves all fields (id, from, to, domain, status, attempts, next_retry, size, spooled_at)
+- ✅ Status filtering uses stable Display format instead of Debug
+- ✅ Display formatting in empathctl properly shows all message fields
+- ✅ Protocol types correctly serialize/deserialize via bincode
+
+**Files Modified:** 1 file (+198 lines)
+- `empath-control/tests/queue_commands_test.rs` (new integration tests)
+
+**Related Tasks:**
+- Task 0.26: Added DeliveryStatus::matches_filter() method (fixed core issue)
+- Task 0.10: Additional control socket integration tests (recommended)
+
+**Dependencies:** 0.9 (Control Socket IPC), 0.26 (Status filtering fix)
 **Source:** Queue command migration 2025-11-13
 
 ---
