@@ -128,6 +128,8 @@ Work through these steps in order. Each should take 1-3 minutes.
 
 ### Architecture Overview (10 minutes)
 
+**📊 Visual Guide:** See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for comprehensive diagrams including component architecture, data flow, and state machines.
+
 **7-Crate Workspace:**
 
 1. **empath** - Main binary, orchestrates all components
