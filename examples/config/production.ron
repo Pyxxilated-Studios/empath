@@ -1,0 +1,118 @@
+// Production Empath Configuration
+//
+// Production-ready setup with security hardening and monitoring.
+//
+// Usage:
+//   cp examples/config/production.ron /etc/empath/empath.config.ron
+//   # Review and customize for your environment
+//   systemctl start empath
+
+Empath(
+    // SMTP controller with TLS and size limits
+    smtp_controller: (
+        listeners: [
+            {
+                socket: "[::]:25",  // Standard SMTP port
+                context: {
+                    "environment": "production",
+                    "service": "smtp",
+                    "datacenter": "us-east-1",
+                },
+                timeouts: (
+                    // RFC 5321 compliant timeouts
+                    command_secs: 300,          // 5 min
+                    data_init_secs: 120,        // 2 min
+                    data_block_secs: 180,       // 3 min
+                    data_termination_secs: 600, // 10 min
+                    connection_secs: 1800,      // 30 min max session
+                ),
+                extensions: [
+                    // Limit message size to 25MB
+                    {
+                        "size": 25000000,
+                    },
+                    // STARTTLS with production certificates
+                    {
+                        "starttls": {
+                            "key": "/etc/empath/tls/private.key",
+                            "certificate": "/etc/empath/tls/certificate.crt",
+                        }
+                    }
+                ],
+            },
+        ],
+    ),
+
+    // Production modules for spam filtering, rate limiting, etc.
+    modules: [
+        (
+            type: "SharedLibrary",
+            name: "/usr/lib/empath/modules/libspamfilter.so",
+            arguments: ["--aggressive"],
+        ),
+        (
+            type: "SharedLibrary",
+            name: "/usr/lib/empath/modules/libratelimit.so",
+            arguments: ["--max-per-ip=100"],
+        ),
+        (
+            type: "SharedLibrary",
+            name: "/usr/lib/empath/modules/libdkim.so",
+            arguments: [],
+        ),
+    ],
+
+    // Persistent spool on dedicated partition
+    spool: (
+        path: "/var/spool/empath",
+    ),
+
+    // Delivery configuration with retry schedule
+    delivery: (
+        scan_interval_secs: 30,
+        process_interval_secs: 10,
+        max_attempts: 25,
+
+        // SECURITY: Validate TLS certificates in production!
+        accept_invalid_certs: false,
+
+        // Per-domain delivery configuration
+        domains: {
+            // Example: internal relay server
+            "internal.company.com": (
+                mx_override: "relay.company.com:25",
+                accept_invalid_certs: false,  // Always validate internal certs
+            ),
+        },
+
+        // SMTP timeout configuration for outbound connections
+        smtp_timeouts: (
+            connect_secs: 30,
+            ehlo_secs: 30,
+            starttls_secs: 30,
+            mail_from_secs: 30,
+            rcpt_to_secs: 30,
+            data_secs: 120,
+            quit_secs: 10,
+        ),
+    ),
+
+    // Control socket with restricted permissions
+    // Set ownership: chown empath:empath /var/run/empath.sock
+    // Set permissions: chmod 660 /var/run/empath.sock
+    control_socket: "/var/run/empath.sock",
+)
+
+// Production Deployment Checklist:
+//
+// [ ] TLS certificates installed in /etc/empath/tls/
+// [ ] Spool directory created: mkdir -p /var/spool/empath
+// [ ] Set proper ownership: chown -R empath:empath /var/spool/empath
+// [ ] Control socket directory: mkdir -p /var/run/empath
+// [ ] Firewall: allow port 25 inbound
+// [ ] Logging: configure RUST_LOG=empath=info
+// [ ] Monitoring: Prometheus scraping :9090/metrics
+// [ ] Alerting: configure alerts for queue backlog
+// [ ] Backup: /var/spool/empath
+// [ ] Security: run as dedicated 'empath' user (not root)
+// [ ] Systemd: create /etc/systemd/system/empath.service
