@@ -57,8 +57,14 @@ async fn test_domain_config_mx_override() {
 
     // Verify the domain config was stored
     assert!(processor.domains.has_config("test.example.com"));
-    let domain_config = processor.domains.get("test.example.com").unwrap();
-    assert_eq!(domain_config.mx_override_address(), Some("localhost:1025"));
+    assert_eq!(
+        processor
+            .domains
+            .get("test.example.com")
+            .unwrap()
+            .mx_override_address(),
+        Some("localhost:1025")
+    );
 }
 
 #[tokio::test]
@@ -123,12 +129,14 @@ fn test_domain_config_multiple_domains() {
     let test_config = domains.get("test.local").unwrap();
     assert!(test_config.has_mx_override());
     assert!(!test_config.require_tls);
+    drop(test_config);
 
     let gmail_config = domains.get("gmail.com").unwrap();
     assert!(!gmail_config.has_mx_override());
     assert!(gmail_config.require_tls);
     assert_eq!(gmail_config.max_connections, Some(10));
     assert_eq!(gmail_config.rate_limit, Some(100));
+    drop(gmail_config);
 }
 
 #[tokio::test]
@@ -306,18 +314,14 @@ async fn test_retry_scheduling_with_backoff() {
         .as_secs()
         .saturating_add(10); // 10 seconds in the future
 
-    processor
-        .queue()
-        .update_status(
-            &msg_id,
-            DeliveryStatus::Retry {
-                attempts: 1,
-                last_error: "test error".to_string(),
-            },
-        );
-    processor
-        .queue()
-        .set_next_retry_at(&msg_id, future_time);
+    processor.queue().update_status(
+        &msg_id,
+        DeliveryStatus::Retry {
+            attempts: 1,
+            last_error: "test error".to_string(),
+        },
+    );
+    processor.queue().set_next_retry_at(&msg_id, future_time);
 
     // Verify message is in Retry status
     let info = processor.queue().get(&msg_id).unwrap();

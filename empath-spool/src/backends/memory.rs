@@ -113,7 +113,11 @@ impl BackingStore for MemoryBackingStore {
     }
 
     async fn list(&self) -> crate::Result<Vec<SpooledMessageId>> {
-        let mut ids: Vec<_> = self.messages.iter().map(|entry| entry.key().clone()).collect();
+        let mut ids: Vec<_> = self
+            .messages
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
 
         // ULIDs are lexicographically sortable by creation time
         ids.sort();

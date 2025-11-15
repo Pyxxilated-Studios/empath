@@ -54,6 +54,7 @@ impl DeliveryMetrics {
     /// # Errors
     ///
     /// Returns an error if metric instruments cannot be created.
+    #[allow(clippy::too_many_lines)]
     pub fn new() -> Result<Self, MetricsError> {
         let meter = meter();
 
@@ -196,7 +197,8 @@ impl DeliveryMetrics {
         let attributes = [KeyValue::new("domain", domain.to_string())];
         self.duration_seconds.record(duration_secs, &attributes);
         // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
-        self.messages_delivered_count.fetch_add(1, Ordering::Relaxed);
+        self.messages_delivered_count
+            .fetch_add(1, Ordering::Relaxed);
         self.retry_count.record(retry_count, &[]);
         self.record_attempt("success", domain);
     }

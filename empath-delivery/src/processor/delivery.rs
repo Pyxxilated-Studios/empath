@@ -309,9 +309,7 @@ pub async fn handle_delivery_error(
             processor.retry_jitter_factor,
         );
 
-        processor
-            .queue
-            .set_next_retry_at(message_id, next_retry_at);
+        processor.queue.set_next_retry_at(message_id, next_retry_at);
 
         // Calculate delay for logging
         let current_time = std::time::SystemTime::now()

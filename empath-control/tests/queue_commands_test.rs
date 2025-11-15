@@ -65,7 +65,7 @@ async fn test_queue_message_response_serialization() {
             attempts: 0,
             next_retry: None,
             size: 1024,
-            spooled_at: 1700000000,
+            spooled_at: 1_700_000_000,
         },
         QueueMessage {
             id: "01JCXYZ456DEF".to_string(),
@@ -74,13 +74,13 @@ async fn test_queue_message_response_serialization() {
             domain: "test.com".to_string(),
             status: "failed".to_string(),
             attempts: 3,
-            next_retry: Some(1700001000),
+            next_retry: Some(1_700_001_000),
             size: 2048,
-            spooled_at: 1700000500,
+            spooled_at: 1_700_000_500,
         },
     ];
 
-    let response = Response::data(ResponseData::QueueList(messages.clone()));
+    let response = Response::data(ResponseData::QueueList(messages));
 
     // Verify serialization/deserialization
     let serialized = bincode::serialize(&response).expect("Failed to serialize response");
@@ -109,7 +109,7 @@ async fn test_queue_message_response_serialization() {
                 assert_eq!(deserialized_messages[1].status, "failed");
                 assert_eq!(deserialized_messages[1].attempts, 3);
                 assert_eq!(deserialized_messages[1].to.len(), 2);
-                assert_eq!(deserialized_messages[1].next_retry, Some(1700001000));
+                assert_eq!(deserialized_messages[1].next_retry, Some(1_700_001_000));
             }
             _ => panic!("Expected QueueList response"),
         },

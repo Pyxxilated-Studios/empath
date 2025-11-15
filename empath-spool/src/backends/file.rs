@@ -276,9 +276,7 @@ impl BackingStore for FileBackingStore {
 
         // Check for ULID collision (should never happen, but defensive programming)
         // Propagate filesystem errors instead of silently treating them as "file doesn't exist"
-        if tokio::fs::try_exists(&data_path).await?
-            || tokio::fs::try_exists(&meta_path).await?
-        {
+        if tokio::fs::try_exists(&data_path).await? || tokio::fs::try_exists(&meta_path).await? {
             return Err(SpoolError::AlreadyExists(tracking_id));
         }
 

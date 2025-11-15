@@ -48,7 +48,9 @@ impl DeliveryQueue {
 
     /// Get delivery info for a message
     pub fn get(&self, message_id: &SpooledMessageId) -> Option<DeliveryInfo> {
-        self.queue.get(message_id).map(|entry| entry.value().clone())
+        self.queue
+            .get(message_id)
+            .map(|entry| entry.value().clone())
     }
 
     /// Update the status of a message
@@ -70,11 +72,7 @@ impl DeliveryQueue {
     }
 
     /// Set the resolved mail servers for a message
-    pub fn set_mail_servers(
-        &self,
-        message_id: &SpooledMessageId,
-        servers: Arc<Vec<MailServer>>,
-    ) {
+    pub fn set_mail_servers(&self, message_id: &SpooledMessageId, servers: Arc<Vec<MailServer>>) {
         if let Some(mut entry) = self.queue.get_mut(message_id) {
             let info = entry.value_mut();
             info.mail_servers = servers;
@@ -132,6 +130,9 @@ impl DeliveryQueue {
     /// Get all messages with their current status
     #[traced(instrument(ret, level = tracing::Level::TRACE))]
     pub fn all_messages(&self) -> Vec<DeliveryInfo> {
-        self.queue.iter().map(|entry| entry.value().clone()).collect()
+        self.queue
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 }

@@ -6,12 +6,12 @@
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use empath_control::{
+    ControlClient, ControlError, ControlServer, Result,
     protocol::{
         CachedMailServer, DnsCommand, QueueCommand, Request, RequestCommand, Response,
         ResponseData, ResponsePayload, SystemCommand, SystemStatus,
     },
     server::CommandHandler,
-    ControlClient, ControlError, ControlServer, Result,
 };
 use tempfile::TempDir;
 use tokio::sync::broadcast;
@@ -69,9 +69,9 @@ impl CommandHandler for MockHandler {
                     DnsCommand::ClearCache => Ok(Response::data(ResponseData::Message(
                         "Cache cleared".to_string(),
                     ))),
-                    DnsCommand::RefreshDomain(domain) => Ok(Response::data(
-                        ResponseData::Message(format!("Refreshed {domain}")),
-                    )),
+                    DnsCommand::RefreshDomain(domain) => Ok(Response::data(ResponseData::Message(
+                        format!("Refreshed {domain}"),
+                    ))),
                     DnsCommand::SetOverride { domain, mx_server } => Ok(Response::data(
                         ResponseData::Message(format!("Set override {domain} -> {mx_server}")),
                     )),
@@ -84,20 +84,22 @@ impl CommandHandler for MockHandler {
                 },
                 RequestCommand::System(cmd) => match cmd {
                     SystemCommand::Ping => Ok(Response::ok()),
-                    SystemCommand::Status => Ok(Response::data(ResponseData::SystemStatus(
-                        SystemStatus {
+                    SystemCommand::Status => {
+                        Ok(Response::data(ResponseData::SystemStatus(SystemStatus {
                             version: "0.0.2".to_string(),
                             uptime_secs: 12345,
                             queue_size: 42,
                             dns_cache_entries: 10,
-                        },
-                    ))),
+                        })))
+                    }
                 },
                 RequestCommand::Queue(cmd) => match cmd {
                     QueueCommand::Stats => Ok(Response::data(ResponseData::Message(
                         "Queue stats".to_string(),
                     ))),
-                    _ => Ok(Response::error("Queue command not implemented in mock".to_string())),
+                    _ => Ok(Response::error(
+                        "Queue command not implemented in mock".to_string(),
+                    )),
                 },
             }
         })
@@ -367,7 +369,10 @@ async fn test_check_socket_exists() {
     let client = ControlClient::new(socket_str);
     let result = client.check_socket_exists();
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), ControlError::InvalidSocketPath(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        ControlError::InvalidSocketPath(_)
+    ));
 
     // Start server
     let handler = Arc::new(MockHandler::new());
@@ -395,10 +400,7 @@ async fn test_client_timeout() {
     // This might succeed or timeout depending on system load
     // We're just testing that the timeout mechanism works
     match result {
-        Ok(_) => {
-            // Fast enough
-        }
-        Err(ControlError::Timeout) => {
+        Ok(_) | Err(ControlError::Timeout) => {
             // Timed out as expected
         }
         Err(e) => panic!("Unexpected error: {e}"),
@@ -421,9 +423,7 @@ async fn test_graceful_shutdown() {
     assert!(matches!(response.payload, ResponsePayload::Ok));
 
     // Send shutdown signal
-    shutdown_tx
-        .send(empath_common::Signal::Shutdown)
-        .unwrap();
+    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
 
     // Wait for server to shut down
     tokio::time::timeout(Duration::from_secs(5), server_handle)
@@ -445,7 +445,7 @@ async fn test_concurrent_requests() {
     let (_server_handle, _shutdown_tx) = start_test_server(&socket_str, handler).await;
 
     // Send multiple concurrent requests
-    let mut handles = vec![];
+    let mut join_handles = vec![];
 
     for i in 0..10 {
         let socket_str = socket_str.clone();
@@ -458,11 +458,11 @@ async fn test_concurrent_requests() {
             };
             client.send_request(request).await
         });
-        handles.push(handle);
+        join_handles.push(handle);
     }
 
     // Wait for all requests to complete
-    for handle in handles {
+    for handle in join_handles {
         let result = handle.await.unwrap();
         assert!(result.is_ok());
     }
@@ -538,9 +538,7 @@ async fn test_persistent_connection_reconnect() {
     assert!(matches!(response.payload, ResponsePayload::Ok));
 
     // Shutdown server to simulate connection loss
-    shutdown_tx
-        .send(empath_common::Signal::Shutdown)
-        .unwrap();
+    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
     tokio::time::timeout(Duration::from_secs(5), server_handle)
         .await
         .expect("Server did not shut down within timeout")

@@ -49,7 +49,7 @@ impl CommandHandler for EmpathControlHandler {
 
             match request.command {
                 RequestCommand::Dns(dns_cmd) => self.handle_dns_command(dns_cmd).await,
-                RequestCommand::System(sys_cmd) => self.handle_system_command(sys_cmd).await,
+                RequestCommand::System(sys_cmd) => self.handle_system_command(&sys_cmd),
                 RequestCommand::Queue(queue_cmd) => self.handle_queue_command(queue_cmd).await,
             }
         })
@@ -76,7 +76,7 @@ impl EmpathControlHandler {
         );
 
         let Some(resolver) = self.delivery.dns_resolver() else {
-            tracing::event!(tracing::Level::WARN, 
+            tracing::event!(tracing::Level::WARN,
                 user = %user,
                 uid = %uid,
                 command = ?command,
@@ -132,14 +132,14 @@ impl EmpathControlHandler {
 
             DnsCommand::SetOverride { domain, mx_server } => {
                 // Update domain config registry
-                self.update_mx_override(&domain, Some(mx_server.clone()))?;
+                self.update_mx_override(&domain, Some(&mx_server));
 
                 let message = format!("Set MX override for {domain} -> {mx_server}");
                 Ok(Response::data(ResponseData::Message(message)))
             }
 
             DnsCommand::RemoveOverride(domain) => {
-                self.update_mx_override(&domain, None)?;
+                self.update_mx_override(&domain, None);
 
                 let message = format!("Removed MX override for {domain}");
                 Ok(Response::data(ResponseData::Message(message)))
@@ -154,14 +154,14 @@ impl EmpathControlHandler {
         // Audit log: Record command result
         match &result {
             Ok(_) => {
-                tracing::event!(tracing::Level::INFO, 
+                tracing::event!(tracing::Level::INFO,
                     user = %user,
                     uid = %uid,
                     "DNS command completed successfully"
                 );
             }
             Err(e) => {
-                tracing::event!(tracing::Level::WARN, 
+                tracing::event!(tracing::Level::WARN,
                     user = %user,
                     uid = %uid,
                     error = %e,
@@ -174,10 +174,7 @@ impl EmpathControlHandler {
     }
 
     /// Handle system management commands
-    async fn handle_system_command(
-        &self,
-        command: SystemCommand,
-    ) -> empath_control::Result<Response> {
+    fn handle_system_command(&self, command: &SystemCommand) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
         #[cfg(unix)]
         let uid = unsafe { libc::getuid() };
@@ -186,7 +183,7 @@ impl EmpathControlHandler {
 
         let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
-        tracing::event!(tracing::Level::INFO, 
+        tracing::event!(tracing::Level::INFO,
             user = %user,
             uid = %uid,
             command = ?command,
@@ -221,14 +218,14 @@ impl EmpathControlHandler {
         // Audit log: Record command result
         match &result {
             Ok(_) => {
-                tracing::event!(tracing::Level::INFO, 
+                tracing::event!(tracing::Level::INFO,
                     user = %user,
                     uid = %uid,
                     "System command completed successfully"
                 );
             }
             Err(e) => {
-                tracing::event!(tracing::Level::WARN, 
+                tracing::event!(tracing::Level::WARN,
                     user = %user,
                     uid = %uid,
                     error = %e,
@@ -282,12 +279,12 @@ impl EmpathControlHandler {
                 self.handle_view_command(spool, queue, message_id).await
             }
             QueueCommand::Retry { message_id, force } => {
-                self.handle_retry_command(queue, message_id, force).await
+                Self::handle_retry_command(queue, &message_id, force)
             }
             QueueCommand::Delete { message_id } => {
                 self.handle_delete_command(spool, queue, message_id).await
             }
-            QueueCommand::Stats => self.handle_stats_command(queue).await,
+            QueueCommand::Stats => Ok(Self::handle_stats_command(queue)),
         };
 
         // Audit log: Record command result
@@ -371,11 +368,10 @@ impl EmpathControlHandler {
         message_id: String,
     ) -> empath_control::Result<Response> {
         // Parse message ID
-        let msg_id =
-            empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-                .ok_or_else(|| {
-                    ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-                })?;
+        let msg_id = empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
+            .ok_or_else(|| {
+                ControlError::ServerError(format!("Invalid message ID: {message_id}"))
+            })?;
 
         // Get delivery info from queue
         let info = queue.get(&msg_id).ok_or_else(|| {
@@ -383,15 +379,16 @@ impl EmpathControlHandler {
         })?;
 
         // Read message from spool
-        let context = spool.read(&msg_id).await.map_err(|e| {
-            ControlError::ServerError(format!("Failed to read message: {e}"))
-        })?;
+        let context = spool
+            .read(&msg_id)
+            .await
+            .map_err(|e| ControlError::ServerError(format!("Failed to read message: {e}")))?;
 
         // Extract headers
-        let headers = self.extract_headers(&context);
+        let headers = Self::extract_headers(&context);
 
         // Extract body preview
-        let body_preview = self.extract_body_preview(&context);
+        let body_preview = Self::extract_body_preview(&context);
 
         let details = empath_control::protocol::QueueMessageDetails {
             id: message_id,
@@ -417,18 +414,16 @@ impl EmpathControlHandler {
     }
 
     /// Handle queue retry command
-    async fn handle_retry_command(
-        &self,
+    fn handle_retry_command(
         queue: &empath_delivery::DeliveryQueue,
-        message_id: String,
+        message_id: &String,
         force: bool,
     ) -> empath_control::Result<Response> {
         // Parse message ID
-        let msg_id =
-            empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-                .ok_or_else(|| {
-                    ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-                })?;
+        let msg_id = empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
+            .ok_or_else(|| {
+                ControlError::ServerError(format!("Invalid message ID: {message_id}"))
+            })?;
 
         // Get delivery info from queue
         let info = queue.get(&msg_id).ok_or_else(|| {
@@ -444,8 +439,7 @@ impl EmpathControlHandler {
         }
 
         // Reset status to pending
-        queue
-            .update_status(&msg_id, empath_common::DeliveryStatus::Pending);
+        queue.update_status(&msg_id, empath_common::DeliveryStatus::Pending);
         queue.reset_server_index(&msg_id);
         queue.set_next_retry_at(&msg_id, 0);
 
@@ -462,11 +456,10 @@ impl EmpathControlHandler {
         message_id: String,
     ) -> empath_control::Result<Response> {
         // Parse message ID
-        let msg_id =
-            empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-                .ok_or_else(|| {
-                    ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-                })?;
+        let msg_id = empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
+            .ok_or_else(|| {
+                ControlError::ServerError(format!("Invalid message ID: {message_id}"))
+            })?;
 
         // Remove from queue
         queue.remove(&msg_id).ok_or_else(|| {
@@ -484,10 +477,7 @@ impl EmpathControlHandler {
     }
 
     /// Handle queue stats command
-    async fn handle_stats_command(
-        &self,
-        queue: &empath_delivery::DeliveryQueue,
-    ) -> empath_control::Result<Response> {
+    fn handle_stats_command(queue: &empath_delivery::DeliveryQueue) -> Response {
         // Get all messages
         let all_info = queue.all_messages();
 
@@ -528,11 +518,11 @@ impl EmpathControlHandler {
             oldest_message_age_secs: oldest_age,
         };
 
-        Ok(Response::data(ResponseData::QueueStats(stats)))
+        Response::data(ResponseData::QueueStats(stats))
     }
 
     /// Extract email headers from message data
-    fn extract_headers(&self, context: &Context) -> HashMap<String, String> {
+    fn extract_headers(context: &Context) -> HashMap<String, String> {
         let mut headers = HashMap::new();
         if let Some(data) = &context.data
             && let Ok(data_str) = std::str::from_utf8(data.as_ref())
@@ -551,7 +541,7 @@ impl EmpathControlHandler {
     }
 
     /// Extract body preview from message data
-    fn extract_body_preview(&self, context: &Context) -> String {
+    fn extract_body_preview(context: &Context) -> String {
         context.data.as_ref().map_or_else(
             || "[No data]".to_string(),
             |data| {
@@ -564,12 +554,11 @@ impl EmpathControlHandler {
                             .map_or_else(
                                 || data_str.chars().take(1024).collect(),
                                 |body_start| {
-                                    let offset =
-                                        if data_str[body_start..].starts_with("\r\n\r\n") {
-                                            4
-                                        } else {
-                                            2
-                                        };
+                                    let offset = if data_str[body_start..].starts_with("\r\n\r\n") {
+                                        4
+                                    } else {
+                                        2
+                                    };
                                     let body = &data_str[body_start + offset..];
                                     body.chars().take(1024).collect()
                                 },
@@ -584,11 +573,7 @@ impl EmpathControlHandler {
     ///
     /// Note: This is a runtime-only change and does not persist across restarts.
     /// To make overrides permanent, update the configuration file.
-    fn update_mx_override(
-        &self,
-        domain: &str,
-        mx_override: Option<String>,
-    ) -> empath_control::Result<()> {
+    fn update_mx_override(&self, domain: &str, mx_override: Option<&String>) {
         // Access the domain registry
         let registry = self.delivery.domains();
 
@@ -600,7 +585,7 @@ impl EmpathControlHandler {
 
         // Update MX override
         let mut updated_config = config;
-        updated_config.mx_override = mx_override.clone();
+        updated_config.mx_override = mx_override.cloned();
 
         // Insert updated configuration (DomainConfigRegistry now has interior mutability)
         registry.insert(domain.to_string(), updated_config);
@@ -611,8 +596,6 @@ impl EmpathControlHandler {
             mx_override = ?mx_override,
             "Updated MX override for domain at runtime"
         );
-
-        Ok(())
     }
 
     /// List all configured MX overrides

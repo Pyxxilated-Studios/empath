@@ -14,8 +14,8 @@ use std::{
 use chrono::{TimeZone, Utc, offset::LocalResult};
 use clap::{Parser, Subcommand, ValueEnum};
 use empath_control::{
-    ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, RequestCommand, Response,
-    ResponsePayload, SystemCommand, protocol::ResponseData,
+    ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, RequestCommand, ResponsePayload,
+    SystemCommand, protocol::ResponseData,
 };
 
 /// Command-line utility for managing the Empath MTA
@@ -380,7 +380,10 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
             Request::new(RequestCommand::Queue(QueueCommand::View { message_id }))
         }
         QueueAction::Retry { message_id, force } => {
-            Request::new(RequestCommand::Queue(QueueCommand::Retry { message_id, force }))
+            Request::new(RequestCommand::Queue(QueueCommand::Retry {
+                message_id,
+                force,
+            }))
         }
         QueueAction::Delete { message_id, yes } => {
             // Confirmation prompt if not --yes
@@ -410,9 +413,7 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                         .await?;
 
                     match response.payload {
-                        ResponsePayload::Data(d)
-                            if matches!(*d, ResponseData::QueueStats(_)) =>
-                        {
+                        ResponsePayload::Data(d) if matches!(*d, ResponseData::QueueStats(_)) => {
                             match *d {
                                 ResponseData::QueueStats(stats) => {
                                     display_queue_stats(&stats);

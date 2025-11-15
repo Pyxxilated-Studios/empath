@@ -440,7 +440,7 @@ impl DnsResolver {
 
             // Randomize servers within this priority group
             if end - start > 1 {
-                servers[start..end].shuffle(&mut rand::thread_rng());
+                servers[start..end].shuffle(&mut rand::rng());
             }
 
             start = end;
