@@ -82,8 +82,8 @@ pub struct DeliveryAttempt {
 pub struct DeliveryContext {
     /// The message ID being delivered
     pub message_id: String,
-    /// The recipient domain being delivered to (Arc for cheap cloning)
-    pub domain: Arc<str>,
+    /// The recipient domain being delivered to
+    pub domain: crate::domain::Domain,
     /// The mail server (MX host:port) being used for delivery
     pub server: Option<String>,
     /// Error message if delivery failed
@@ -117,7 +117,7 @@ impl Default for DeliveryContext {
     fn default() -> Self {
         Self {
             message_id: String::new(),
-            domain: Arc::from(""),
+            domain: crate::domain::Domain::new(""),
             server: None,
             error: None,
             attempts: None,

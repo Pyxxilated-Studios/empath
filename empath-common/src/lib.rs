@@ -10,6 +10,7 @@
 pub mod address;
 pub mod context;
 pub mod controller;
+pub mod domain;
 pub mod envelope;
 pub mod error;
 pub mod listener;
@@ -20,6 +21,7 @@ pub mod status;
 pub mod traits;
 
 pub use context::{DeliveryAttempt, DeliveryContext, DeliveryStatus};
+pub use domain::Domain;
 pub use tracing;
 
 #[derive(Debug, Clone, Copy)]

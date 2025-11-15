@@ -109,8 +109,8 @@ pub struct DeliveryInfo {
     pub status: DeliveryStatus,
     /// List of delivery attempts
     pub attempts: Vec<empath_common::DeliveryAttempt>,
-    /// Recipient domain for this delivery (Arc for cheap cloning)
-    pub recipient_domain: Arc<str>,
+    /// Recipient domain for this delivery
+    pub recipient_domain: empath_common::Domain,
     /// Resolved mail servers (sorted by priority, Arc for cheap cloning)
     pub mail_servers: Arc<Vec<MailServer>>,
     /// Index of the current mail server being tried
@@ -129,7 +129,7 @@ impl DeliveryInfo {
             message_id,
             status: DeliveryStatus::Pending,
             attempts: Vec::new(),
-            recipient_domain: Arc::from(recipient_domain),
+            recipient_domain: empath_common::Domain::new(recipient_domain),
             mail_servers: Arc::new(Vec::new()),
             current_server_index: 0,
             queued_at: SystemTime::now(),
