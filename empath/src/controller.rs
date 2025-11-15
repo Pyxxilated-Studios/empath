@@ -113,8 +113,9 @@ impl Empath {
 
         // Create control server
         let delivery_arc = Arc::new(self.delivery);
+        let delivery_service: Arc<dyn empath_delivery::DeliveryQueryService> = delivery_arc.clone();
         let control_handler = Arc::new(crate::control_handler::EmpathControlHandler::new(
-            Arc::clone(&delivery_arc),
+            delivery_service,
         ));
         let control_server = ControlServer::new(&self.control_socket_path, control_handler)
             .map_err(|e| anyhow::anyhow!("Failed to create control server: {e}"))?;
