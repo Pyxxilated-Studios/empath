@@ -1,5 +1,6 @@
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+# Disabled until mold is installed (see task 7.5)
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [registries.crates-io]
 protocol = "sparse"
@@ -15,7 +16,7 @@ t = "test"
 tq = "test --quiet"
 tw = "watch -x test"
 tl = "test --lib"
-nextest = "nextest run"
+# nextest command is provided by cargo-nextest plugin, no alias needed
 nt = "nextest run"
 
 # Building
