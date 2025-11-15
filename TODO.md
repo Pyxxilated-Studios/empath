@@ -103,6 +103,165 @@ Added RFC 5321-compliant MX record randomization that preserves priority orderin
 
 **Dependencies:** Ideally 2.1 (Metrics) for alerting, but can use logging initially
 
+**Analysis (2025-11-15):**
+
+*Current Problem Location:*
+- `empath-delivery/src/processor/delivery.rs:179-187`
+- After successful delivery, `spool.delete(message_id)` is called
+- Deletion errors are logged but swallowed: `error!("Failed to delete...")` with no retry
+- Result: Files remain on disk indefinitely → disk exhaustion
+
+*Current Deletion Flow:*
+1. Delivery succeeds → persist Completed status → call `spool.delete()`
+2. File-based spool (`empath-spool/src/backends/file.rs:450-474`):
+   - Phase 1: Rename `.bin` and `.eml` to `.bin.deleted` and `.eml.deleted` (atomic)
+   - Phase 2: `fs::remove_file()` on both `.deleted` files
+   - If Phase 2 fails → error propagates but is caught and logged
+3. `.deleted` files accumulate on disk with no cleanup mechanism
+
+*Proposed Architecture:*
+
+1. **CleanupQueue** (new module: `empath-delivery/src/queue/cleanup.rs`):
+   ```rust
+   // Track failed deletions with retry metadata
+   use dashmap::DashMap;
+
+   struct CleanupEntry {
+       message_id: SpooledMessageId,
+       attempt_count: u32,
+       next_retry_at: SystemTime,
+       first_failure: SystemTime,
+   }
+
+   pub struct CleanupQueue {
+       entries: DashMap<SpooledMessageId, CleanupEntry>,
+   }
+   ```
+
+2. **Modified delivery.rs** (`prepare_message` function):
+   ```rust
+   // Replace lines 179-187:
+   if let Err(e) = spool.delete(message_id).await {
+       error!(..., "Failed to delete message from spool");
+       // NEW: Add to cleanup queue instead of swallowing error
+       processor.cleanup_queue.add_failed_deletion(message_id.clone());
+   }
+   ```
+
+3. **Modified DeliveryProcessor** (`empath-delivery/src/processor/mod.rs:54`):
+   ```rust
+   // Add fields:
+   #[serde(default = "default_cleanup_interval")]
+   pub cleanup_interval_secs: u64,  // default: 60
+
+   #[serde(default = "default_max_cleanup_attempts")]
+   pub max_cleanup_attempts: u32,   // default: 3
+
+   #[serde(skip)]
+   pub(crate) cleanup_queue: CleanupQueue,
+   ```
+
+4. **Modified serve() loop** (`empath-delivery/src/processor/mod.rs:224`):
+   ```rust
+   // Add cleanup timer alongside scan_timer and process_timer:
+   let cleanup_interval = Duration::from_secs(self.cleanup_interval_secs);
+   let mut cleanup_timer = tokio::time::interval(cleanup_interval);
+   cleanup_timer.tick().await;  // Skip first tick
+
+   // In select! block:
+   _ = cleanup_timer.tick() => {
+       // Process cleanup queue with exponential backoff
+       match cleanup::process_cleanup_queue(self, spool).await {
+           Ok(cleaned) if cleaned > 0 => {
+               info!("Cleaned {cleaned} failed deletions from queue");
+           }
+           Err(e) => error!("Error processing cleanup queue: {e}"),
+           _ => {}
+       }
+   }
+   ```
+
+5. **New cleanup module** (`empath-delivery/src/processor/cleanup.rs`):
+   ```rust
+   // Retry logic with exponential backoff:
+   // - Attempt 1: immediate (already failed once)
+   // - Attempt 2: 2 seconds later (2^1)
+   // - Attempt 3: 4 seconds later (2^2)
+   // After 3 failures: Log CRITICAL alert, remove from queue
+
+   pub async fn process_cleanup_queue(
+       processor: &DeliveryProcessor,
+       spool: &Arc<dyn BackingStore>,
+   ) -> Result<usize, DeliveryError> {
+       let now = SystemTime::now();
+       let mut cleaned = 0;
+
+       for entry in processor.cleanup_queue.ready_for_retry(now) {
+           match spool.delete(&entry.message_id).await {
+               Ok(()) => {
+                   // Success! Remove from cleanup queue
+                   processor.cleanup_queue.remove(&entry.message_id);
+                   cleaned += 1;
+               }
+               Err(e) if entry.attempt_count >= processor.max_cleanup_attempts => {
+                   // Max retries exceeded - CRITICAL alert
+                   error!(
+                       message_id = ?entry.message_id,
+                       attempts = entry.attempt_count,
+                       first_failure = ?entry.first_failure,
+                       error = %e,
+                       "CRITICAL: Failed to delete message after {} attempts - manual intervention required",
+                       entry.attempt_count
+                   );
+                   processor.cleanup_queue.remove(&entry.message_id);
+               }
+               Err(e) => {
+                   // Retry later with exponential backoff
+                   let delay = Duration::from_secs(2u64.pow(entry.attempt_count));
+                   processor.cleanup_queue.schedule_retry(
+                       &entry.message_id,
+                       now + delay,
+                   );
+                   warn!(
+                       message_id = ?entry.message_id,
+                       attempt = entry.attempt_count + 1,
+                       next_retry_secs = delay.as_secs(),
+                       error = %e,
+                       "Failed to delete message, will retry"
+                   );
+               }
+           }
+       }
+
+       Ok(cleaned)
+   }
+   ```
+
+*Implementation Checklist:*
+- [ ] Create `empath-delivery/src/queue/cleanup.rs` with `CleanupQueue` struct
+- [ ] Add `cleanup_queue` field to `DeliveryProcessor`
+- [ ] Add `cleanup_interval_secs` and `max_cleanup_attempts` config fields
+- [ ] Modify `delivery.rs:179-187` to add failed deletions to queue
+- [ ] Create `empath-delivery/src/processor/cleanup.rs` with retry logic
+- [ ] Add cleanup timer to `serve()` loop in `processor/mod.rs`
+- [ ] Add tests for cleanup queue behavior
+- [ ] Add integration test for failed deletion recovery
+- [ ] Update default config example in `CLAUDE.md`
+
+*Files to Modify:*
+1. `empath-delivery/src/queue/mod.rs` - Export `CleanupQueue`
+2. `empath-delivery/src/queue/cleanup.rs` - NEW (CleanupQueue implementation)
+3. `empath-delivery/src/processor/mod.rs` - Add fields, cleanup timer
+4. `empath-delivery/src/processor/cleanup.rs` - NEW (retry logic)
+5. `empath-delivery/src/processor/delivery.rs` - Line 179-187 modification
+6. `empath-delivery/src/lib.rs` - Re-export CleanupQueue if needed
+
+*Testing Strategy:*
+1. Unit tests for `CleanupQueue` (add, remove, ready_for_retry)
+2. Unit tests for exponential backoff calculation
+3. Integration test: Simulate deletion failure → verify retry → verify success
+4. Integration test: Max retries exceeded → verify critical log → verify removal
+
 ---
 
 ### 🟢 0.12 Add More Control Commands
@@ -1814,7 +1973,7 @@ changelog:
 **Consensus from 5-agent expert review:**
 
 ### **Week 1: Security + DX Emergency (Critical Path)**
-1. 🔴 **7.2** - README improvement → 2-3 hours **#1 DX PRIORITY**
+1. ✅ **7.2** - README improvement (COMPLETED)
 2. 🔴 **0.27 + 0.28** - Authentication (metrics + control socket) → 3-4 days BLOCKER
 3. 🔴 **0.8** - Spool deletion retry mechanism → 2 hours
 4. ✅ **7.5** - Enable mold linker (COMPLETED - 40-60% faster builds!)
