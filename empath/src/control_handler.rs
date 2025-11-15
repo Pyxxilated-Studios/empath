@@ -11,13 +11,13 @@ use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SystemCommand,
     protocol::ResponseData, server::CommandHandler,
 };
-use empath_delivery::DeliveryProcessor;
+use empath_delivery::DeliveryQueryService;
 use empath_spool::BackingStore;
 
 /// Handler for control commands
 pub struct EmpathControlHandler {
-    /// Reference to the delivery processor for DNS operations
-    delivery: Arc<DeliveryProcessor>,
+    /// Reference to the delivery query service for operations
+    delivery: Arc<dyn DeliveryQueryService>,
     /// Server start time for uptime calculation
     start_time: Instant,
 }
@@ -25,7 +25,7 @@ pub struct EmpathControlHandler {
 impl EmpathControlHandler {
     /// Create a new control handler
     #[must_use]
-    pub fn new(delivery: Arc<DeliveryProcessor>) -> Self {
+    pub fn new(delivery: Arc<dyn DeliveryQueryService>) -> Self {
         Self {
             delivery,
             start_time: Instant::now(),
@@ -199,7 +199,7 @@ impl EmpathControlHandler {
                     .as_ref()
                     .map_or(0, |r| r.cache_stats().total_entries);
 
-                let queue_size = self.delivery.queue().len();
+                let queue_size = self.delivery.queue_len();
 
                 let status = empath_control::protocol::SystemStatus {
                     version: env!("CARGO_PKG_VERSION").to_string(),
@@ -266,22 +266,20 @@ impl EmpathControlHandler {
             ));
         };
 
-        let queue = self.delivery.queue();
-
         let result = match command {
             QueueCommand::List { status_filter } => {
-                self.handle_list_command(spool, queue, status_filter).await
+                self.handle_list_command(spool, status_filter).await
             }
             QueueCommand::View { message_id } => {
-                self.handle_view_command(spool, queue, message_id).await
+                self.handle_view_command(spool, message_id).await
             }
             QueueCommand::Retry { message_id, force } => {
-                Self::handle_retry_command(queue, &message_id, force)
+                self.handle_retry_command(&message_id, force)
             }
             QueueCommand::Delete { message_id } => {
-                self.handle_delete_command(spool, queue, message_id).await
+                self.handle_delete_command(spool, message_id).await
             }
-            QueueCommand::Stats => Ok(Self::handle_stats_command(queue)),
+            QueueCommand::Stats => Ok(self.handle_stats_command()),
         };
 
         // Audit log: Record command result
@@ -310,11 +308,10 @@ impl EmpathControlHandler {
     async fn handle_list_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-        queue: &empath_delivery::DeliveryQueue,
         status_filter: Option<String>,
     ) -> empath_control::Result<Response> {
         // Get all messages from queue
-        let all_info = queue.all_messages();
+        let all_info = self.delivery.list_messages(None);
 
         // Filter by status if requested
         let filtered_info: Vec<_> = if let Some(status) = status_filter {
@@ -365,7 +362,6 @@ impl EmpathControlHandler {
     async fn handle_view_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-        queue: &empath_delivery::DeliveryQueue,
         message_id: String,
     ) -> empath_control::Result<Response> {
         // Parse message ID
@@ -375,7 +371,7 @@ impl EmpathControlHandler {
             })?;
 
         // Get delivery info from queue
-        let info = queue.get(&msg_id).ok_or_else(|| {
+        let info = self.delivery.get_message(&msg_id).ok_or_else(|| {
             ControlError::ServerError(format!("Message not found in queue: {message_id}"))
         })?;
 
@@ -420,7 +416,7 @@ impl EmpathControlHandler {
 
     /// Handle queue retry command
     fn handle_retry_command(
-        queue: &empath_delivery::DeliveryQueue,
+        &self,
         message_id: &String,
         force: bool,
     ) -> empath_control::Result<Response> {
@@ -431,7 +427,7 @@ impl EmpathControlHandler {
             })?;
 
         // Get delivery info from queue
-        let info = queue.get(&msg_id).ok_or_else(|| {
+        let info = self.delivery.get_message(&msg_id).ok_or_else(|| {
             ControlError::ServerError(format!("Message not found in queue: {message_id}"))
         })?;
 
@@ -444,10 +440,10 @@ impl EmpathControlHandler {
         }
 
         // Reset status to pending
-        queue.update_status(&msg_id, empath_common::DeliveryStatus::Pending);
-        queue.reset_server_index(&msg_id);
+        self.delivery.update_status(&msg_id, empath_common::DeliveryStatus::Pending);
+        self.delivery.reset_server_index(&msg_id);
         // Set next_retry to now for immediate retry
-        queue.set_next_retry_at(&msg_id, std::time::SystemTime::UNIX_EPOCH);
+        self.delivery.set_next_retry_at(&msg_id, std::time::SystemTime::UNIX_EPOCH);
 
         Ok(Response::data(ResponseData::Message(format!(
             "Message {message_id} scheduled for retry"
@@ -458,7 +454,6 @@ impl EmpathControlHandler {
     async fn handle_delete_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-        queue: &empath_delivery::DeliveryQueue,
         message_id: String,
     ) -> empath_control::Result<Response> {
         // Parse message ID
@@ -468,7 +463,7 @@ impl EmpathControlHandler {
             })?;
 
         // Remove from queue
-        queue.remove(&msg_id).ok_or_else(|| {
+        self.delivery.remove(&msg_id).ok_or_else(|| {
             ControlError::ServerError(format!("Message not found in queue: {message_id}"))
         })?;
 
@@ -483,9 +478,9 @@ impl EmpathControlHandler {
     }
 
     /// Handle queue stats command
-    fn handle_stats_command(queue: &empath_delivery::DeliveryQueue) -> Response {
+    fn handle_stats_command(&self) -> Response {
         // Get all messages
-        let all_info = queue.all_messages();
+        let all_info = self.delivery.list_messages(None);
 
         // Count by status
         let mut by_status: HashMap<String, usize> = HashMap::new();

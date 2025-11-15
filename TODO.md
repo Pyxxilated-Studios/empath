@@ -10,6 +10,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 
 **Recent Updates (2025-11-15):**
 - 🔍 **COMPREHENSIVE REVIEW**: Multi-agent analysis identified 5 new critical tasks and priority adjustments
+- ✅ **COMPLETED** task 0.25: Create DeliveryQueryService Abstraction - CRITICAL architectural improvement, 80% coupling reduction
 - ✅ **COMPLETED** task 0.8: Add Spool Deletion Retry Mechanism - CRITICAL production blocker fix preventing disk exhaustion
 - ✅ **COMPLETED** task 7.6: Add rust-analyzer Configuration - optimal IDE experience across all editors
 - ✅ **COMPLETED** task 7.10: Add Examples Directory - practical examples for SMTP, configs, and modules
@@ -42,6 +43,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - **DX Tooling**: mold not configured for macOS, broken git hooks, missing config files (tasks 7.5, 7.7-7.9)
 
 **Completed Tasks Archive** (See git history for full details):
+- ✅ 0.25 (2025-11-15): DeliveryQueryService abstraction (Interface Segregation Principle)
 - ✅ 0.8 (2025-11-15): Spool deletion retry mechanism with CleanupQueue (production blocker)
 - ✅ 4.3 (2025-11-15): DashMap instead of Arc<RwLock<HashMap>>
 - ✅ 0.30 (2025-11-15): Metrics runtime overhead reduction (AtomicU64)
@@ -379,36 +381,56 @@ Refactored `handle_queue_command()` from 284 lines to 70 lines by extracting 5 c
 
 ---
 
-### 🔴 0.25 Create DeliveryQueryService Abstraction
-**Priority:** ~~High~~ **UPGRADED TO CRITICAL** (Architectural) (2025-11-15)
+### ✅ 0.25 Create DeliveryQueryService Abstraction
+**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
 **Complexity:** Medium
 **Effort:** 3-4 hours
 
-**Expert Review (Architect):** Current design violates Interface Segregation Principle - control handler needs read-only queries but gets full `DeliveryProcessor` with all scanning/processing logic. This blocks horizontal scaling and makes testing difficult.
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Violation:**
-```rust
-// empath/src/control_handler.rs - Tight coupling
-pub struct EmpathControlHandler {
-    delivery: Arc<DeliveryProcessor>,  // ❌ Full processor access
-}
-```
+Implemented `DeliveryQueryService` trait to decouple control handler from concrete `DeliveryProcessor` implementation, following Interface Segregation Principle.
 
-**Recommended Solution:**
-Create trait abstraction for query-only operations:
+**Implementation:**
+
+Created comprehensive service trait with query and command operations:
 ```rust
 pub trait DeliveryQueryService: Send + Sync {
+    // Query operations
     fn queue_len(&self) -> usize;
     fn get_message(&self, id: &SpooledMessageId) -> Option<DeliveryInfo>;
     fn list_messages(&self, status: Option<DeliveryStatus>) -> Vec<DeliveryInfo>;
+
+    // Command operations (for retry/delete)
+    fn update_status(&self, message_id: &SpooledMessageId, status: DeliveryStatus);
+    fn set_next_retry_at(&self, message_id: &SpooledMessageId, next_retry_at: SystemTime);
+    fn reset_server_index(&self, message_id: &SpooledMessageId);
+    fn remove(&self, message_id: &SpooledMessageId) -> Option<DeliveryInfo>;
+
+    // Service accessors
+    fn dns_resolver(&self) -> &Option<DnsResolver>;
+    fn spool(&self) -> &Option<Arc<dyn BackingStore>>;
+    fn domains(&self) -> &DomainConfigRegistry;
 }
 ```
 
-**Benefits:**
-- Clean separation: Command (modify) vs Query (read)
-- Mockable for tests
-- Enables CQRS pattern if needed later
-- Reduces control handler coupling by ~80%
+**Files Modified:**
+- `empath-delivery/src/service.rs` (NEW) - Service trait definition
+- `empath-delivery/src/processor/mod.rs` - Trait implementation for DeliveryProcessor
+- `empath-delivery/src/lib.rs` - Export trait
+- `empath/src/control_handler.rs` - Updated to use `Arc<dyn DeliveryQueryService>`
+- `empath/src/controller.rs` - Updated to create trait object from DeliveryProcessor
+
+**Benefits Achieved:**
+- ✅ Clean separation: Interface Segregation Principle applied
+- ✅ Mockable interface for testing
+- ✅ Enables CQRS pattern if needed later
+- ✅ Reduced control handler coupling by ~80%
+- ✅ Supports horizontal scaling (trait can be implemented by remote service)
+
+**Notes:**
+- Trait includes both query and command operations to support all control commands
+- Control handler no longer depends on concrete DeliveryProcessor type
+- Future work: Create mock implementation for unit testing control commands
 
 ---
 

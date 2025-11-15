@@ -380,3 +380,66 @@ impl DeliveryProcessor {
         &self.queue
     }
 }
+
+// Implement DeliveryQueryService trait for DeliveryProcessor
+impl crate::service::DeliveryQueryService for DeliveryProcessor {
+    fn queue_len(&self) -> usize {
+        self.queue.len()
+    }
+
+    fn get_message(&self, id: &empath_spool::SpooledMessageId) -> Option<crate::DeliveryInfo> {
+        self.queue.get(id)
+    }
+
+    fn list_messages(
+        &self,
+        status: Option<empath_common::DeliveryStatus>,
+    ) -> Vec<crate::DeliveryInfo> {
+        let all_messages = self.queue.all_messages();
+
+        if let Some(filter_status) = status {
+            all_messages
+                .into_iter()
+                .filter(|info| info.status == filter_status)
+                .collect()
+        } else {
+            all_messages
+        }
+    }
+
+    fn update_status(
+        &self,
+        message_id: &empath_spool::SpooledMessageId,
+        status: empath_common::DeliveryStatus,
+    ) {
+        self.queue.update_status(message_id, status);
+    }
+
+    fn set_next_retry_at(
+        &self,
+        message_id: &empath_spool::SpooledMessageId,
+        next_retry_at: std::time::SystemTime,
+    ) {
+        self.queue.set_next_retry_at(message_id, next_retry_at);
+    }
+
+    fn reset_server_index(&self, message_id: &empath_spool::SpooledMessageId) {
+        self.queue.reset_server_index(message_id);
+    }
+
+    fn remove(&self, message_id: &empath_spool::SpooledMessageId) -> Option<crate::DeliveryInfo> {
+        self.queue.remove(message_id)
+    }
+
+    fn dns_resolver(&self) -> &Option<DnsResolver> {
+        &self.dns_resolver
+    }
+
+    fn spool(&self) -> &Option<std::sync::Arc<dyn empath_spool::BackingStore>> {
+        &self.spool
+    }
+
+    fn domains(&self) -> &DomainConfigRegistry {
+        &self.domains
+    }
+}

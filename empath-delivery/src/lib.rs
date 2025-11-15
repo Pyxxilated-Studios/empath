@@ -11,6 +11,7 @@ mod domain_config;
 mod error;
 mod processor;
 mod queue;
+mod service;
 mod smtp_transaction;
 mod types;
 
@@ -25,4 +26,5 @@ pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 // Re-export core types
 pub use processor::DeliveryProcessor;
 pub use queue::DeliveryQueue;
+pub use service::DeliveryQueryService;
 pub use types::{DeliveryInfo, SmtpTimeouts};
