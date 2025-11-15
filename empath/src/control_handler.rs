@@ -530,22 +530,27 @@ impl EmpathControlHandler {
         // Access the domain registry
         let registry = self.delivery.domains();
 
-        // Get or create domain config
-        let mut config = registry
+        // Get existing configuration or create a default
+        let config = registry
             .get(domain)
-            .map(|c| (*c).clone())
+            .map(|entry| entry.value().clone())
             .unwrap_or_default();
 
         // Update MX override
-        config.mx_override = mx_override;
+        let mut updated_config = config;
+        updated_config.mx_override = mx_override.clone();
 
-        // Note: DomainConfigRegistry uses interior mutability via HashMap,
-        // but it's not behind a Mutex/RwLock. Since we have an Arc<DeliveryProcessor>,
-        // we can't mutate it. For now, return an error indicating this is not yet supported.
-        // TODO: Make DomainConfigRegistry use Arc<DashMap> for runtime updates
-        Err(ControlError::ServerError(
-            "Runtime MX override updates not yet supported. Please update the configuration file and restart.".to_string()
-        ))
+        // Insert updated configuration (DomainConfigRegistry now has interior mutability)
+        registry.insert(domain.to_string(), updated_config);
+
+        tracing::event!(
+            tracing::Level::INFO,
+            domain = %domain,
+            mx_override = ?mx_override,
+            "Updated MX override for domain at runtime"
+        );
+
+        Ok(())
     }
 
     /// List all configured MX overrides
