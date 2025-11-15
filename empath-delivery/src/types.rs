@@ -155,6 +155,7 @@ impl DeliveryInfo {
     /// Try the next MX server in the priority list.
     ///
     /// Returns `true` if there is another server to try, `false` if all servers exhausted.
+    #[must_use]
     pub fn try_next_server(&mut self) -> bool {
         if self.current_server_index + 1 < self.mail_servers.len() {
             self.current_server_index += 1;
@@ -170,6 +171,7 @@ impl DeliveryInfo {
     }
 
     /// Get the current mail server being tried.
+    #[must_use]
     pub fn current_mail_server(&self) -> Option<&MailServer> {
         self.mail_servers.get(self.current_server_index)
     }

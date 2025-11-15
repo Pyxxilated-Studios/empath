@@ -76,8 +76,14 @@ impl ClientConnection {
                     .with_root_certificates(root_store)
                     .with_no_client_auth();
 
-                // For testing purposes, allow invalid certificates if requested
+                // SECURITY WARNING: Allow invalid certificates if explicitly configured
+                // This should only be used for testing or development with self-signed certificates
                 if accept_invalid_certs {
+                    tracing::warn!(
+                        domain = %domain,
+                        "SECURITY WARNING: TLS certificate validation is disabled for this connection. \
+                         This should only be used for testing or development environments."
+                    );
                     config
                         .dangerous()
                         .set_certificate_verifier(Arc::new(NoVerifier));
@@ -101,7 +107,34 @@ impl ClientConnection {
     }
 }
 
-/// A certificate verifier that accepts all certificates (for testing only).
+/// A certificate verifier that accepts all certificates without validation.
+///
+/// # Security Warning
+///
+/// This verifier **completely disables TLS certificate validation**, accepting any certificate
+/// including expired, self-signed, or certificates with mismatched hostnames. This creates a
+/// significant security risk as it allows Man-in-the-Middle (MitM) attacks.
+///
+/// # When to Use
+///
+/// Only use this in scenarios where you explicitly accept the security risk:
+/// - **Development/Testing**: Local testing with self-signed certificates
+/// - **Internal Networks**: Isolated environments with custom Certificate Authorities
+/// - **Staging**: Non-production staging environments
+///
+/// # Never Use For
+///
+/// - ❌ Production email delivery
+/// - ❌ Connections to public email providers (Gmail, Outlook, etc.)
+/// - ❌ Any environment where security matters
+///
+/// # Configuration
+///
+/// This verifier is controlled via the two-tier `accept_invalid_certs` configuration:
+/// - Global setting in `delivery.accept_invalid_certs` (default: `false`)
+/// - Per-domain override in `delivery.domains.<domain>.accept_invalid_certs`
+///
+/// When enabled, a security warning is logged for each connection.
 #[derive(Debug)]
 struct NoVerifier;
 

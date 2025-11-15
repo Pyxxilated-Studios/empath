@@ -23,11 +23,13 @@ pub enum Status {
 
 impl Status {
     /// Checks if the status is a permanent rejection
+    #[must_use]
     pub fn is_permanent(self) -> bool {
         u32::from(self) >= 500
     }
 
     /// Checks if the status is a temporary rejection
+    #[must_use]
     pub fn is_temporary(self) -> bool {
         u32::from(self) >= 400 && u32::from(self) < 500
     }

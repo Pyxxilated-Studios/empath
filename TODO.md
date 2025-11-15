@@ -9,6 +9,10 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-14:** ✅ **COMPLETED** Code quality improvements:
+  - Improved `NoVerifier` documentation with comprehensive security warnings
+  - Added `#[must_use]` attributes to query methods (`is_permanent`, `is_temporary`, `try_next_server`, `current_mail_server`)
+  - Enhanced TLS security warnings at connection time
 - **2025-11-14:** ✅ **COMPLETED** task 0.33: Fixed import organization (moved function-scoped imports to module level)
 - **2025-11-14:** ✅ **COMPLETED** task 0.34: Removed unused Docker build stage (code cleanup)
 - **2025-11-14:** ✅ **COMPLETED** task 0.15: Set explicit Unix socket permissions (security hardening)
@@ -100,25 +104,35 @@ pub struct DnsResolver {
 
 ---
 
-### 🟡 0.6 Add Compile-Time Guard to NoVerifier
-**Priority:** High
+### ✅ 0.6 Improve NoVerifier Security Documentation
+**Priority:** ~~High~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 30 minutes
+**Status:** ✅ **COMPLETED** (2025-11-14)
 **Files:** `empath-smtp/src/client/smtp_client.rs`
 
-**Current Issue:** `NoVerifier` accepts all certificates without compile-time protection.
+**Original Issue:** `NoVerifier` accepts all certificates without adequate documentation of security implications.
 
-**Implementation:**
-```rust
-#[cfg(any(test, feature = "insecure-tls"))]
-pub struct NoVerifier;
+**Decision: Enhanced Documentation Instead of Compile-Time Guard**
 
-// Add to Cargo.toml:
-// [features]
-// insecure-tls = []  # DANGEROUS: See SECURITY.md
-```
+After discussion, decided against compile-time guard (`#[cfg(feature = "insecure-tls")]`) because:
+- The two-tier configuration system already requires explicit user opt-in via config file
+- Users need this for legitimate use cases (self-signed certs, internal CAs, testing)
+- Compile-time guard would prevent valid use cases without providing additional security
 
-**Alternative:** Remove `NoVerifier` entirely and rely on the two-tier configuration system.
+**Implementation Completed:**
+1. Added comprehensive documentation to `NoVerifier` struct explaining:
+   - Security risks (MitM attacks, certificate validation bypass)
+   - When to use (development, testing, staging)
+   - When never to use (production, public email providers)
+   - Configuration requirements
+2. Enhanced runtime warning logged on every connection with disabled cert validation
+3. Documentation now clearly states this is controlled by configuration opt-in
+
+**Benefits:**
+- Users are well-informed about security implications
+- Maintains flexibility for legitimate use cases
+- Runtime warnings provide audit trail
 
 **Dependencies:** None
 **Source:** CODE_REVIEW_2025-11-10.md Section 1.2
