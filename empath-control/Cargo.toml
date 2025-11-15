@@ -10,7 +10,7 @@ workspace = true
 [dependencies]
 # Serialization
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
+bincode = { version = "2", features = ["serde"] }
 
 # Async runtime
 tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "rt"] }

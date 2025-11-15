@@ -29,7 +29,8 @@ RUN apt update && apt install -y gcc && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 
 # Copy example module source files
-COPY empath-ffi/examples/*.c empath-ffi/examples/*.h ./
+COPY empath-ffi/examples/*.c ./
+COPY empath-ffi/examples/*.h ./
 
 # Copy empath library and headers from the build stage
 COPY --from=empath /empath/target/release/libempath.so /usr/local/lib/
@@ -60,7 +61,7 @@ RUN ldconfig
 VOLUME /config
 
 ENV LOG_LEVEL="info"
-ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/empath/modules:${LD_LIBRARY_PATH}"
 
 ENTRYPOINT [ "bash", "-l", "-c" ]
 

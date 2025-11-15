@@ -9,9 +9,13 @@ pub enum ControlError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Protocol serialization/deserialization error
+    /// Protocol deserialization error
     #[error("Protocol error: {0}")]
-    Protocol(#[from] bincode::Error),
+    ProtocolDeserialization(#[from] bincode::error::DecodeError),
+
+    /// Protocol serialization error
+    #[error("Protocol error: {0}")]
+    ProtocolSerialization(#[from] bincode::error::EncodeError),
 
     /// Server returned an error
     #[error("Server error: {0}")]

@@ -156,15 +156,6 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "bincode"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
@@ -548,7 +539,7 @@ version = "0.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode 2.0.1",
+ "bincode",
  "cbindgen",
  "chrono",
  "clap",
@@ -599,7 +590,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode 1.3.3",
+ "bincode",
  "empath-common",
  "empath-delivery",
  "serde",
@@ -613,7 +604,7 @@ dependencies = [
 name = "empath-delivery"
 version = "0.0.1"
 dependencies = [
- "bincode 2.0.1",
+ "bincode",
  "dashmap",
  "empath-common",
  "empath-ffi",
@@ -691,7 +682,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "async-trait",
- "bincode 2.0.1",
+ "bincode",
  "criterion",
  "dashmap",
  "empath-common",

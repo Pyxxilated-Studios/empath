@@ -2,8 +2,6 @@
   "rust-analyzer.cargo.features": "all",
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.check.extraArgs": [
-    "--all-targets",
-    "--all-features",
     "--",
     "-D",
     "warnings"
@@ -17,7 +15,6 @@
     "+nightly"
   ],
   "rust-analyzer.cargo.allTargets": true,
-
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.formatOnSave": true,
@@ -27,19 +24,16 @@
     "editor.tabSize": 4,
     "editor.insertSpaces": true
   },
-
   "[toml]": {
     "editor.defaultFormatter": "tamasfe.even-better-toml",
     "editor.formatOnSave": true,
     "editor.tabSize": 2,
     "editor.insertSpaces": true
   },
-
   "[ron]": {
     "editor.tabSize": 4,
     "editor.insertSpaces": true
   },
-
   "[markdown]": {
     "editor.defaultFormatter": "yzhang.markdown-all-in-one",
     "editor.formatOnSave": true,
@@ -50,13 +44,11 @@
       "other": "off"
     }
   },
-
   "[shellscript]": {
     "editor.defaultFormatter": "foxundermoon.shell-format",
     "editor.tabSize": 2,
     "editor.insertSpaces": true
   },
-
   "files.watcherExclude": {
     "**/target/**": true,
     "**/spool/**": true,
@@ -65,31 +57,25 @@
     "**/node_modules/**": true,
     "**/.cargo/**": true
   },
-
   "search.exclude": {
     "**/target": true,
     "**/spool": true,
     "**/.git": true,
     "**/Cargo.lock": true
   },
-
   "files.associations": {
     "*.ron": "ron",
     "justfile": "makefile",
     "Justfile": "makefile"
   },
-
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
-
   "git.ignoreLimitWarning": true,
-
   "terminal.integrated.env.linux": {
     "RUST_BACKTRACE": "1"
   },
   "terminal.integrated.env.osx": {
     "RUST_BACKTRACE": "1"
   },
-
   "telemetry.telemetryLevel": "off"
 }

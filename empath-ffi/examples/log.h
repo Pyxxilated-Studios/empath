@@ -1,4 +1,4 @@
-#include "../target/empath.h"
+#include "empath.h"
 
 typedef struct Line {
   const char *id;

@@ -430,6 +430,6 @@ docker-clean:
 # Send a test email through the Docker SMTP server
 docker-test-email:
     @echo "Sending test email via localhost:1025..."
-    @echo -e "EHLO test.local\nMAIL FROM:<sender@test.com>\nRCPT TO:<recipient@example.com>\nDATA\nSubject: Test Email\n\nThis is a test email from justfile.\n.\nQUIT" | nc localhost 1025
+    swaks -4 --server localhost:1025 --to "receiver@test.example.com" --from "sender@gmail.com"
     @echo ""
     @echo "✅ Test email sent. Check logs: just docker-logs-empath"

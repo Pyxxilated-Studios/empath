@@ -189,9 +189,11 @@ impl ControlServer {
 
         // Sanity check: reject unreasonably large requests (> 1MB)
         if request_len > 1_000_000 {
-            return Err(ControlError::Protocol(Box::new(
-                bincode::ErrorKind::Custom(format!("Request too large: {request_len} bytes")),
-            )));
+            return Err(ControlError::ProtocolDeserialization(
+                bincode::error::DecodeError::OtherString(format!(
+                    "Request too large: {request_len} bytes"
+                )),
+            ));
         }
 
         // Read request bytes
@@ -199,14 +201,15 @@ impl ControlServer {
         stream.read_exact(&mut request_bytes).await?;
 
         // Deserialize request
-        let request: Request = bincode::deserialize(&request_bytes)?;
+        let (request, _): (Request, _) =
+            bincode::serde::decode_from_slice(request_bytes.as_slice(), bincode::config::legacy())?;
         Ok(request)
     }
 
     /// Write a response to the stream
     async fn write_response(stream: &mut UnixStream, response: &Response) -> Result<()> {
         // Serialize response
-        let response_bytes = bincode::serialize(response)?;
+        let response_bytes = bincode::serde::encode_to_vec(response, bincode::config::legacy())?;
         let response_len = u32::try_from(response_bytes.len())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 

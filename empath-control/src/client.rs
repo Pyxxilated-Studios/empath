@@ -153,7 +153,7 @@ impl ControlClient {
         request: Request,
     ) -> Result<Response> {
         // Serialize request
-        let request_bytes = bincode::serialize(&request)?;
+        let request_bytes = bincode::serde::encode_to_vec(&request, bincode::config::legacy())?;
         let request_len = u32::try_from(request_bytes.len())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
@@ -171,11 +171,11 @@ impl ControlClient {
 
         // Validate response size to prevent DoS attacks
         if response_len > MAX_RESPONSE_SIZE {
-            return Err(ControlError::Protocol(Box::new(
-                bincode::ErrorKind::Custom(format!(
+            return Err(ControlError::ProtocolDeserialization(
+                bincode::error::DecodeError::OtherString(format!(
                     "Response too large: {response_len} bytes (max {MAX_RESPONSE_SIZE})"
                 )),
-            )));
+            ));
         }
 
         trace!("Receiving response: {response_len} bytes");
@@ -185,17 +185,20 @@ impl ControlClient {
         stream.read_exact(&mut response_bytes).await?;
 
         // Deserialize response
-        let response: Response = bincode::deserialize(&response_bytes)?;
+        let (response, _): (Response, _) = bincode::serde::decode_from_slice(
+            response_bytes.as_slice(),
+            bincode::config::legacy(),
+        )?;
 
         // Validate protocol version
         if !response.is_version_compatible() {
-            return Err(ControlError::Protocol(Box::new(
-                bincode::ErrorKind::Custom(format!(
+            return Err(ControlError::ProtocolDeserialization(
+                bincode::error::DecodeError::OtherString(format!(
                     "Incompatible protocol version: server={}, client={}",
                     response.version,
                     crate::PROTOCOL_VERSION
                 )),
-            )));
+            ));
         }
 
         // Check for server error

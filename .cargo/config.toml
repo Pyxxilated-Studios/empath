@@ -10,10 +10,6 @@ protocol = "sparse"
 
 # Cargo aliases for common workflows
 [alias]
-# Development workflow
-dev = "hack check --feature-powerset && cargo fmt && cargo clippy --all-targets --all-features"
-ci = "hack check --feature-powerset && cargo fmt --check && cargo clippy --all-targets --all-features && cargo test --lib"
-
 # Testing
 t = "test"
 tq = "test --quiet"
