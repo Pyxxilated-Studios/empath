@@ -1,7 +1,18 @@
 # Use mold linker for faster builds (40-60% faster incremental builds)
-# Installed via apt-get install mold (version 2.30.0)
+# Linux: Installed via apt-get install mold (version 2.30.0)
+# macOS: Install via brew install mold
+
+# Linux (x86_64)
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# macOS Apple Silicon (M1/M2/M3)
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/bin/mold"]
+
+# macOS Intel
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/mold"]
 
 [registries.crates-io]
 protocol = "sparse"
