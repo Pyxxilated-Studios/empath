@@ -1814,7 +1814,7 @@ changelog:
 **Consensus from 5-agent expert review:**
 
 ### **Week 1: Security + DX Emergency (Critical Path)**
-1. 🔴 **7.2** - README improvement → 2-3 hours **#1 DX PRIORITY**
+1. ✅ **7.2** - README improvement (COMPLETED)
 2. 🔴 **0.27 + 0.28** - Authentication (metrics + control socket) → 3-4 days BLOCKER
 3. 🔴 **0.8** - Spool deletion retry mechanism → 2 hours
 4. ✅ **7.5** - Enable mold linker (COMPLETED - 40-60% faster builds!)
