@@ -187,8 +187,19 @@ impl ControlClient {
         // Deserialize response
         let response: Response = bincode::deserialize(&response_bytes)?;
 
+        // Validate protocol version
+        if !response.is_version_compatible() {
+            return Err(ControlError::Protocol(Box::new(
+                bincode::ErrorKind::Custom(format!(
+                    "Incompatible protocol version: server={}, client={}",
+                    response.version,
+                    crate::PROTOCOL_VERSION
+                )),
+            )));
+        }
+
         // Check for server error
-        if let Response::Error(ref err) = response {
+        if let crate::ResponsePayload::Error(ref err) = response.payload {
             return Err(ControlError::ServerError(err.clone()));
         }
 

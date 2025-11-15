@@ -1,5 +1,5 @@
 use empath_control::protocol::{
-    QueueCommand, Request, Response, ResponseData,
+    QueueCommand, Request, RequestCommand, Response, ResponseData, ResponsePayload,
 };
 
 /// Integration test for queue list command via control socket
@@ -9,17 +9,17 @@ async fn test_queue_list_command() {
     // For now, we verify the protocol serialization works correctly
 
     // Test QueueCommand::List serialization
-    let request = Request::Queue(QueueCommand::List {
+    let request = Request::new(RequestCommand::Queue(QueueCommand::List {
         status_filter: None,
-    });
+    }));
 
     // Verify serialization/deserialization
     let serialized = bincode::serialize(&request).expect("Failed to serialize request");
     let deserialized: Request =
         bincode::deserialize(&serialized).expect("Failed to deserialize request");
 
-    match deserialized {
-        Request::Queue(QueueCommand::List { status_filter }) => {
+    match deserialized.command {
+        RequestCommand::Queue(QueueCommand::List { status_filter }) => {
             assert!(status_filter.is_none(), "Expected no status filter");
         }
         _ => panic!("Expected QueueCommand::List"),
@@ -29,17 +29,17 @@ async fn test_queue_list_command() {
 #[tokio::test]
 async fn test_queue_list_with_status_filter() {
     // Test QueueCommand::List with status filter
-    let request = Request::Queue(QueueCommand::List {
+    let request = Request::new(RequestCommand::Queue(QueueCommand::List {
         status_filter: Some("failed".to_string()),
-    });
+    }));
 
     // Verify serialization/deserialization
     let serialized = bincode::serialize(&request).expect("Failed to serialize request");
     let deserialized: Request =
         bincode::deserialize(&serialized).expect("Failed to deserialize request");
 
-    match deserialized {
-        Request::Queue(QueueCommand::List { status_filter }) => {
+    match deserialized.command {
+        RequestCommand::Queue(QueueCommand::List { status_filter }) => {
             assert_eq!(
                 status_filter,
                 Some("failed".to_string()),
@@ -87,8 +87,8 @@ async fn test_queue_message_response_serialization() {
     let deserialized: Response =
         bincode::deserialize(&serialized).expect("Failed to deserialize response");
 
-    match deserialized {
-        Response::Data(data) => match *data {
+    match deserialized.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::QueueList(deserialized_messages) => {
                 assert_eq!(
                     deserialized_messages.len(),
@@ -120,15 +120,15 @@ async fn test_queue_message_response_serialization() {
 #[tokio::test]
 async fn test_queue_stats_command() {
     // Test QueueCommand::Stats serialization
-    let request = Request::Queue(QueueCommand::Stats);
+    let request = Request::new(RequestCommand::Queue(QueueCommand::Stats));
 
     // Verify serialization/deserialization
     let serialized = bincode::serialize(&request).expect("Failed to serialize request");
     let deserialized: Request =
         bincode::deserialize(&serialized).expect("Failed to deserialize request");
 
-    match deserialized {
-        Request::Queue(QueueCommand::Stats) => {
+    match deserialized.command {
+        RequestCommand::Queue(QueueCommand::Stats) => {
             // Success
         }
         _ => panic!("Expected QueueCommand::Stats"),
@@ -138,17 +138,17 @@ async fn test_queue_stats_command() {
 #[tokio::test]
 async fn test_queue_view_command() {
     // Test QueueCommand::View serialization
-    let request = Request::Queue(QueueCommand::View {
+    let request = Request::new(RequestCommand::Queue(QueueCommand::View {
         message_id: "01JCXYZ123ABC".to_string(),
-    });
+    }));
 
     // Verify serialization/deserialization
     let serialized = bincode::serialize(&request).expect("Failed to serialize request");
     let deserialized: Request =
         bincode::deserialize(&serialized).expect("Failed to deserialize request");
 
-    match deserialized {
-        Request::Queue(QueueCommand::View { message_id }) => {
+    match deserialized.command {
+        RequestCommand::Queue(QueueCommand::View { message_id }) => {
             assert_eq!(message_id, "01JCXYZ123ABC", "Expected correct message ID");
         }
         _ => panic!("Expected QueueCommand::View"),
@@ -158,17 +158,17 @@ async fn test_queue_view_command() {
 #[tokio::test]
 async fn test_queue_delete_command() {
     // Test QueueCommand::Delete serialization
-    let request = Request::Queue(QueueCommand::Delete {
+    let request = Request::new(RequestCommand::Queue(QueueCommand::Delete {
         message_id: "01JCXYZ123ABC".to_string(),
-    });
+    }));
 
     // Verify serialization/deserialization
     let serialized = bincode::serialize(&request).expect("Failed to serialize request");
     let deserialized: Request =
         bincode::deserialize(&serialized).expect("Failed to deserialize request");
 
-    match deserialized {
-        Request::Queue(QueueCommand::Delete { message_id }) => {
+    match deserialized.command {
+        RequestCommand::Queue(QueueCommand::Delete { message_id }) => {
             assert_eq!(message_id, "01JCXYZ123ABC", "Expected correct message ID");
         }
         _ => panic!("Expected QueueCommand::Delete"),
@@ -178,18 +178,18 @@ async fn test_queue_delete_command() {
 #[tokio::test]
 async fn test_queue_retry_command() {
     // Test QueueCommand::Retry serialization
-    let request = Request::Queue(QueueCommand::Retry {
+    let request = Request::new(RequestCommand::Queue(QueueCommand::Retry {
         message_id: "01JCXYZ123ABC".to_string(),
         force: false,
-    });
+    }));
 
     // Verify serialization/deserialization
     let serialized = bincode::serialize(&request).expect("Failed to serialize request");
     let deserialized: Request =
         bincode::deserialize(&serialized).expect("Failed to deserialize request");
 
-    match deserialized {
-        Request::Queue(QueueCommand::Retry { message_id, force }) => {
+    match deserialized.command {
+        RequestCommand::Queue(QueueCommand::Retry { message_id, force }) => {
             assert_eq!(message_id, "01JCXYZ123ABC", "Expected correct message ID");
             assert!(!force, "Expected force to be false");
         }

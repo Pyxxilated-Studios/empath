@@ -135,12 +135,27 @@ Implemented persistent connection mode to eliminate socket reconnection overhead
 
 ---
 
-### 🔵 0.20 Add Protocol Versioning for Future Evolution
-**Priority:** Low
-**Complexity:** Simple
-**Effort:** 1 hour
+### ✅ 0.20 Add Protocol Versioning for Future Evolution
+**Priority:** ~~Low~~ **COMPLETED**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-Add version field to Request/Response to support backward compatibility as protocol evolves.
+Added protocol versioning to control socket IPC for forward compatibility as the protocol evolves.
+
+**Changes:**
+- Added `PROTOCOL_VERSION` constant (currently version 1)
+- Converted `Request` from enum to struct with `version` + `command` fields
+- Converted `Response` from enum to struct with `version` + `payload` fields
+- Created `RequestCommand` enum (Dns, System, Queue) for command payload
+- Created `ResponsePayload` enum (Ok, Data, Error) for response payload
+- Added `Request::new(command)` and `Response::ok/data/error()` helpers
+- Implemented `is_version_compatible()` validation on both client and server
+- Updated all Request/Response usage in empathctl CLI, tests, and handlers
+- Server returns error for incompatible protocol versions
+
+**Results:**
+- All 91 workspace tests passing
+- Forward compatibility: Future versions can implement backward compatibility logic
+- Clean migration path: Version field enables protocol evolution without breaking changes
 
 ---
 

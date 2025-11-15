@@ -4,9 +4,21 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Request sent to the control server
+/// Current protocol version
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Request sent to the control server (versioned wrapper)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Request {
+pub struct Request {
+    /// Protocol version
+    pub version: u32,
+    /// The actual command to execute
+    pub command: RequestCommand,
+}
+
+/// Request command types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RequestCommand {
     /// DNS cache management commands
     Dns(DnsCommand),
     /// System management commands
@@ -75,9 +87,18 @@ pub enum QueueCommand {
     Stats,
 }
 
-/// Response from the control server
+/// Response from the control server (versioned wrapper)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Response {
+pub struct Response {
+    /// Protocol version
+    pub version: u32,
+    /// The actual response payload
+    pub payload: ResponsePayload,
+}
+
+/// Response payload types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ResponsePayload {
     /// Command succeeded
     Ok,
     /// Command succeeded with data
@@ -196,28 +217,64 @@ pub struct QueueStats {
     pub oldest_message_age_secs: Option<u64>,
 }
 
+impl Request {
+    /// Create a new request with the current protocol version
+    #[must_use]
+    pub const fn new(command: RequestCommand) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            command,
+        }
+    }
+
+    /// Check if the request version is compatible with the current version
+    #[must_use]
+    pub const fn is_version_compatible(&self) -> bool {
+        // For now, only exact version match is supported
+        // Future: implement backward compatibility logic
+        self.version == PROTOCOL_VERSION
+    }
+}
+
 impl Response {
     /// Create an error response
     #[must_use]
     pub fn error(message: impl Into<String>) -> Self {
-        Self::Error(message.into())
+        Self {
+            version: PROTOCOL_VERSION,
+            payload: ResponsePayload::Error(message.into()),
+        }
     }
 
     /// Create a success response with no data
     #[must_use]
     pub const fn ok() -> Self {
-        Self::Ok
+        Self {
+            version: PROTOCOL_VERSION,
+            payload: ResponsePayload::Ok,
+        }
     }
 
     /// Create a response with data
     #[must_use]
     pub fn data(data: ResponseData) -> Self {
-        Self::Data(Box::new(data))
+        Self {
+            version: PROTOCOL_VERSION,
+            payload: ResponsePayload::Data(Box::new(data)),
+        }
     }
 
     /// Check if the response indicates success (not an error)
     #[must_use]
     pub const fn is_success(&self) -> bool {
-        !matches!(self, Self::Error(_))
+        !matches!(self.payload, ResponsePayload::Error(_))
+    }
+
+    /// Check if the response version is compatible with the current version
+    #[must_use]
+    pub const fn is_version_compatible(&self) -> bool {
+        // For now, only exact version match is supported
+        // Future: implement backward compatibility logic
+        self.version == PROTOCOL_VERSION
     }
 }

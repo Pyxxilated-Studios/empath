@@ -7,7 +7,7 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Insta
 
 use empath_common::{context::Context, internal};
 use empath_control::{
-    ControlError, DnsCommand, QueueCommand, Request, Response, SystemCommand,
+    ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SystemCommand,
     protocol::ResponseData, server::CommandHandler,
 };
 use empath_delivery::DeliveryProcessor;
@@ -38,10 +38,19 @@ impl CommandHandler for EmpathControlHandler {
         request: Request,
     ) -> Pin<Box<dyn Future<Output = empath_control::Result<Response>> + Send + '_>> {
         Box::pin(async move {
-            match request {
-                Request::Dns(dns_cmd) => self.handle_dns_command(dns_cmd).await,
-                Request::System(sys_cmd) => self.handle_system_command(sys_cmd).await,
-                Request::Queue(queue_cmd) => self.handle_queue_command(queue_cmd).await,
+            // Validate protocol version
+            if !request.is_version_compatible() {
+                return Err(ControlError::ServerError(format!(
+                    "Incompatible protocol version: client={}, server={}",
+                    request.version,
+                    empath_control::PROTOCOL_VERSION
+                )));
+            }
+
+            match request.command {
+                RequestCommand::Dns(dns_cmd) => self.handle_dns_command(dns_cmd).await,
+                RequestCommand::System(sys_cmd) => self.handle_system_command(sys_cmd).await,
+                RequestCommand::Queue(queue_cmd) => self.handle_queue_command(queue_cmd).await,
             }
         })
     }
