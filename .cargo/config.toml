@@ -1,6 +1,9 @@
-# Disabled until mold is installed (see task 7.5)
-# [target.x86_64-unknown-linux-gnu]
-# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+# Use mold linker for faster builds (40-60% faster incremental builds)
+# Installed via apt-get install mold (version 2.30.0)
+# Note: mold dropped Mach-O support, so this is Linux-only
+# macOS users should use lld or zld as alternatives
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [registries.crates-io]
 protocol = "sparse"
