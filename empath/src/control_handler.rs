@@ -5,12 +5,13 @@
 
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Instant};
 
-use empath_common::internal;
+use empath_common::{context::Context, internal};
 use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, Response, SystemCommand,
     protocol::ResponseData, server::CommandHandler,
 };
 use empath_delivery::DeliveryProcessor;
+use empath_spool::BackingStore;
 
 /// Handler for control commands
 pub struct EmpathControlHandler {
@@ -231,7 +232,6 @@ impl EmpathControlHandler {
     }
 
     /// Handle queue management commands
-    #[allow(clippy::too_many_lines)]
     async fn handle_queue_command(
         &self,
         command: QueueCommand,
@@ -244,7 +244,7 @@ impl EmpathControlHandler {
 
         let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
-        tracing::event!(tracing::Level::INFO, 
+        tracing::event!(tracing::Level::INFO,
             user = %user,
             uid = %uid,
             command = ?command,
@@ -252,7 +252,7 @@ impl EmpathControlHandler {
         );
 
         let Some(spool) = self.delivery.spool() else {
-            tracing::event!(tracing::Level::WARN, 
+            tracing::event!(tracing::Level::WARN,
                 user = %user,
                 uid = %uid,
                 command = ?command,
@@ -267,246 +267,31 @@ impl EmpathControlHandler {
 
         let result = match command {
             QueueCommand::List { status_filter } => {
-                // Get all messages from queue
-                let all_info = queue.all_messages().await;
-
-                // Filter by status if requested
-                let filtered_info: Vec<_> = if let Some(status) = status_filter {
-                    all_info
-                        .into_iter()
-                        .filter(|info| info.status.matches_filter(&status))
-                        .collect()
-                } else {
-                    all_info
-                };
-                internal!(level = TRACE, "{filtered_info:?}");
-
-                // Convert to protocol types
-                let mut messages = Vec::new();
-                for info in filtered_info {
-                    // Read message from spool to get details
-                    let Ok(context) = spool.read(&info.message_id).await else {
-                        continue; // Skip messages that can't be read
-                    };
-
-                    let message = empath_control::protocol::QueueMessage {
-                        id: info.message_id.to_string(),
-                        from: context
-                            .envelope
-                            .sender()
-                            .map_or_else(|| "<>".to_string(), ToString::to_string),
-                        to: context.envelope.recipients().map_or_else(Vec::new, |list| {
-                            list.iter().map(std::string::ToString::to_string).collect()
-                        }),
-                        domain: info.recipient_domain.to_string(),
-                        status: info.status.to_string(),
-                        attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
-                        next_retry: info.next_retry_at,
-                        size: context.data.as_ref().map_or(0, |d| d.len()),
-                        spooled_at: info.message_id.timestamp_ms() / 1000,
-                    };
-                    messages.push(message);
-                }
-
-                Ok(Response::data(ResponseData::QueueList(messages)))
+                self.handle_list_command(spool, queue, status_filter).await
             }
-
             QueueCommand::View { message_id } => {
-                // Parse message ID
-                let msg_id =
-                    empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-                        .ok_or_else(|| {
-                            ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-                        })?;
-
-                // Get delivery info from queue
-                let info = queue.get(&msg_id).await.ok_or_else(|| {
-                    ControlError::ServerError(format!("Message not found in queue: {message_id}"))
-                })?;
-
-                // Read message from spool
-                let context = spool.read(&msg_id).await.map_err(|e| {
-                    ControlError::ServerError(format!("Failed to read message: {e}"))
-                })?;
-
-                // Extract headers
-                let mut headers = HashMap::new();
-                if let Some(data) = &context.data
-                    && let Ok(data_str) = std::str::from_utf8(data.as_ref())
-                {
-                    // Parse headers (very basic)
-                    for line in data_str.lines() {
-                        if line.is_empty() {
-                            break;
-                        }
-                        if let Some((key, value)) = line.split_once(':') {
-                            headers.insert(key.trim().to_string(), value.trim().to_string());
-                        }
-                    }
-                }
-
-                let body_preview = context.data.as_ref().map_or_else(
-                    || "[No data]".to_string(),
-                    |data| {
-                        std::str::from_utf8(data.as_ref()).map_or_else(
-                            |_| "[Binary data]".to_string(),
-                            |data_str| {
-                                data_str
-                                    .find("\r\n\r\n")
-                                    .or_else(|| data_str.find("\n\n"))
-                                    .map_or_else(
-                                        || data_str.chars().take(1024).collect(),
-                                        |body_start| {
-                                            let offset =
-                                                if data_str[body_start..].starts_with("\r\n\r\n") {
-                                                    4
-                                                } else {
-                                                    2
-                                                };
-                                            let body = &data_str[body_start + offset..];
-                                            body.chars().take(1024).collect()
-                                        },
-                                    )
-                            },
-                        )
-                    },
-                );
-
-                let details = empath_control::protocol::QueueMessageDetails {
-                    id: message_id,
-                    from: context
-                        .envelope
-                        .sender()
-                        .map_or_else(|| "<>".to_string(), ToString::to_string),
-                    to: context.envelope.recipients().map_or_else(Vec::new, |list| {
-                        list.iter().map(std::string::ToString::to_string).collect()
-                    }),
-                    domain: info.recipient_domain.to_string(),
-                    status: format!("{:?}", info.status),
-                    attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
-                    next_retry: info.next_retry_at,
-                    last_error: info.attempts.last().and_then(|a| a.error.clone()),
-                    size: context.data.as_ref().map_or(0, |d| d.len()),
-                    spooled_at: msg_id.timestamp_ms() / 1000,
-                    headers,
-                    body_preview,
-                };
-
-                Ok(Response::data(ResponseData::QueueMessageDetails(details)))
+                self.handle_view_command(spool, queue, message_id).await
             }
-
             QueueCommand::Retry { message_id, force } => {
-                // Parse message ID
-                let msg_id =
-                    empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-                        .ok_or_else(|| {
-                            ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-                        })?;
-
-                // Get delivery info from queue
-                let info = queue.get(&msg_id).await.ok_or_else(|| {
-                    ControlError::ServerError(format!("Message not found in queue: {message_id}"))
-                })?;
-
-                // Check if message can be retried
-                if !force && !matches!(info.status, empath_common::DeliveryStatus::Failed(_)) {
-                    return Err(ControlError::ServerError(format!(
-                        "Message is not in failed status (current: {:?}). Use --force to retry anyway.",
-                        info.status
-                    )));
-                }
-
-                // Reset status to pending
-                queue
-                    .update_status(&msg_id, empath_common::DeliveryStatus::Pending)
-                    .await;
-                queue.reset_server_index(&msg_id).await;
-                queue.set_next_retry_at(&msg_id, 0).await;
-
-                Ok(Response::data(ResponseData::Message(format!(
-                    "Message {message_id} scheduled for retry"
-                ))))
+                self.handle_retry_command(queue, message_id, force).await
             }
-
             QueueCommand::Delete { message_id } => {
-                // Parse message ID
-                let msg_id =
-                    empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-                        .ok_or_else(|| {
-                            ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-                        })?;
-
-                // Remove from queue
-                queue.remove(&msg_id).await.ok_or_else(|| {
-                    ControlError::ServerError(format!("Message not found in queue: {message_id}"))
-                })?;
-
-                // Delete from spool
-                spool.delete(&msg_id).await.map_err(|e| {
-                    ControlError::ServerError(format!("Failed to delete message from spool: {e}"))
-                })?;
-
-                Ok(Response::data(ResponseData::Message(format!(
-                    "Message {message_id} deleted"
-                ))))
+                self.handle_delete_command(spool, queue, message_id).await
             }
-
-            QueueCommand::Stats => {
-                // Get all messages
-                let all_info = queue.all_messages().await;
-
-                // Count by status
-                let mut by_status: HashMap<String, usize> = HashMap::new();
-                for info in &all_info {
-                    *by_status.entry(format!("{:?}", info.status)).or_insert(0) += 1;
-                }
-
-                // Count by domain
-                let mut by_domain: HashMap<String, usize> = HashMap::new();
-                for info in &all_info {
-                    *by_domain
-                        .entry(info.recipient_domain.to_string())
-                        .or_insert(0) += 1;
-                }
-
-                // Find oldest message
-                let oldest_age = all_info
-                    .iter()
-                    .map(|info| {
-                        let now_ms = u64::try_from(
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis(),
-                        )
-                        .unwrap_or_default();
-                        let spooled_ms = info.message_id.timestamp_ms();
-                        (now_ms - spooled_ms) / 1000
-                    })
-                    .max();
-
-                let stats = empath_control::protocol::QueueStats {
-                    total: all_info.len(),
-                    by_status,
-                    by_domain,
-                    oldest_message_age_secs: oldest_age,
-                };
-
-                Ok(Response::data(ResponseData::QueueStats(stats)))
-            }
+            QueueCommand::Stats => self.handle_stats_command(queue).await,
         };
 
         // Audit log: Record command result
         match &result {
             Ok(_) => {
-                tracing::event!(tracing::Level::INFO, 
+                tracing::event!(tracing::Level::INFO,
                     user = %user,
                     uid = %uid,
                     "Queue command completed successfully"
                 );
             }
             Err(e) => {
-                tracing::event!(tracing::Level::WARN, 
+                tracing::event!(tracing::Level::WARN,
                     user = %user,
                     uid = %uid,
                     error = %e,
@@ -516,6 +301,275 @@ impl EmpathControlHandler {
         }
 
         result
+    }
+
+    /// Handle queue list command
+    async fn handle_list_command(
+        &self,
+        spool: &Arc<dyn BackingStore>,
+        queue: &empath_delivery::DeliveryQueue,
+        status_filter: Option<String>,
+    ) -> empath_control::Result<Response> {
+        // Get all messages from queue
+        let all_info = queue.all_messages().await;
+
+        // Filter by status if requested
+        let filtered_info: Vec<_> = if let Some(status) = status_filter {
+            all_info
+                .into_iter()
+                .filter(|info| info.status.matches_filter(&status))
+                .collect()
+        } else {
+            all_info
+        };
+        internal!(level = TRACE, "{filtered_info:?}");
+
+        // Convert to protocol types
+        let mut messages = Vec::new();
+        for info in filtered_info {
+            // Read message from spool to get details
+            let Ok(context) = spool.read(&info.message_id).await else {
+                continue; // Skip messages that can't be read
+            };
+
+            let message = empath_control::protocol::QueueMessage {
+                id: info.message_id.to_string(),
+                from: context
+                    .envelope
+                    .sender()
+                    .map_or_else(|| "<>".to_string(), ToString::to_string),
+                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
+                    list.iter().map(std::string::ToString::to_string).collect()
+                }),
+                domain: info.recipient_domain.to_string(),
+                status: info.status.to_string(),
+                attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
+                next_retry: info.next_retry_at,
+                size: context.data.as_ref().map_or(0, |d| d.len()),
+                spooled_at: info.message_id.timestamp_ms() / 1000,
+            };
+            messages.push(message);
+        }
+
+        Ok(Response::data(ResponseData::QueueList(messages)))
+    }
+
+    /// Handle queue view command
+    async fn handle_view_command(
+        &self,
+        spool: &Arc<dyn BackingStore>,
+        queue: &empath_delivery::DeliveryQueue,
+        message_id: String,
+    ) -> empath_control::Result<Response> {
+        // Parse message ID
+        let msg_id =
+            empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
+                .ok_or_else(|| {
+                    ControlError::ServerError(format!("Invalid message ID: {message_id}"))
+                })?;
+
+        // Get delivery info from queue
+        let info = queue.get(&msg_id).await.ok_or_else(|| {
+            ControlError::ServerError(format!("Message not found in queue: {message_id}"))
+        })?;
+
+        // Read message from spool
+        let context = spool.read(&msg_id).await.map_err(|e| {
+            ControlError::ServerError(format!("Failed to read message: {e}"))
+        })?;
+
+        // Extract headers
+        let headers = self.extract_headers(&context);
+
+        // Extract body preview
+        let body_preview = self.extract_body_preview(&context);
+
+        let details = empath_control::protocol::QueueMessageDetails {
+            id: message_id,
+            from: context
+                .envelope
+                .sender()
+                .map_or_else(|| "<>".to_string(), ToString::to_string),
+            to: context.envelope.recipients().map_or_else(Vec::new, |list| {
+                list.iter().map(std::string::ToString::to_string).collect()
+            }),
+            domain: info.recipient_domain.to_string(),
+            status: format!("{:?}", info.status),
+            attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
+            next_retry: info.next_retry_at,
+            last_error: info.attempts.last().and_then(|a| a.error.clone()),
+            size: context.data.as_ref().map_or(0, |d| d.len()),
+            spooled_at: msg_id.timestamp_ms() / 1000,
+            headers,
+            body_preview,
+        };
+
+        Ok(Response::data(ResponseData::QueueMessageDetails(details)))
+    }
+
+    /// Handle queue retry command
+    async fn handle_retry_command(
+        &self,
+        queue: &empath_delivery::DeliveryQueue,
+        message_id: String,
+        force: bool,
+    ) -> empath_control::Result<Response> {
+        // Parse message ID
+        let msg_id =
+            empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
+                .ok_or_else(|| {
+                    ControlError::ServerError(format!("Invalid message ID: {message_id}"))
+                })?;
+
+        // Get delivery info from queue
+        let info = queue.get(&msg_id).await.ok_or_else(|| {
+            ControlError::ServerError(format!("Message not found in queue: {message_id}"))
+        })?;
+
+        // Check if message can be retried
+        if !force && !matches!(info.status, empath_common::DeliveryStatus::Failed(_)) {
+            return Err(ControlError::ServerError(format!(
+                "Message is not in failed status (current: {:?}). Use --force to retry anyway.",
+                info.status
+            )));
+        }
+
+        // Reset status to pending
+        queue
+            .update_status(&msg_id, empath_common::DeliveryStatus::Pending)
+            .await;
+        queue.reset_server_index(&msg_id).await;
+        queue.set_next_retry_at(&msg_id, 0).await;
+
+        Ok(Response::data(ResponseData::Message(format!(
+            "Message {message_id} scheduled for retry"
+        ))))
+    }
+
+    /// Handle queue delete command
+    async fn handle_delete_command(
+        &self,
+        spool: &Arc<dyn BackingStore>,
+        queue: &empath_delivery::DeliveryQueue,
+        message_id: String,
+    ) -> empath_control::Result<Response> {
+        // Parse message ID
+        let msg_id =
+            empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
+                .ok_or_else(|| {
+                    ControlError::ServerError(format!("Invalid message ID: {message_id}"))
+                })?;
+
+        // Remove from queue
+        queue.remove(&msg_id).await.ok_or_else(|| {
+            ControlError::ServerError(format!("Message not found in queue: {message_id}"))
+        })?;
+
+        // Delete from spool
+        spool.delete(&msg_id).await.map_err(|e| {
+            ControlError::ServerError(format!("Failed to delete message from spool: {e}"))
+        })?;
+
+        Ok(Response::data(ResponseData::Message(format!(
+            "Message {message_id} deleted"
+        ))))
+    }
+
+    /// Handle queue stats command
+    async fn handle_stats_command(
+        &self,
+        queue: &empath_delivery::DeliveryQueue,
+    ) -> empath_control::Result<Response> {
+        // Get all messages
+        let all_info = queue.all_messages().await;
+
+        // Count by status
+        let mut by_status: HashMap<String, usize> = HashMap::new();
+        for info in &all_info {
+            *by_status.entry(format!("{:?}", info.status)).or_insert(0) += 1;
+        }
+
+        // Count by domain
+        let mut by_domain: HashMap<String, usize> = HashMap::new();
+        for info in &all_info {
+            *by_domain
+                .entry(info.recipient_domain.to_string())
+                .or_insert(0) += 1;
+        }
+
+        // Find oldest message
+        let oldest_age = all_info
+            .iter()
+            .map(|info| {
+                let now_ms = u64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis(),
+                )
+                .unwrap_or_default();
+                let spooled_ms = info.message_id.timestamp_ms();
+                (now_ms - spooled_ms) / 1000
+            })
+            .max();
+
+        let stats = empath_control::protocol::QueueStats {
+            total: all_info.len(),
+            by_status,
+            by_domain,
+            oldest_message_age_secs: oldest_age,
+        };
+
+        Ok(Response::data(ResponseData::QueueStats(stats)))
+    }
+
+    /// Extract email headers from message data
+    fn extract_headers(&self, context: &Context) -> HashMap<String, String> {
+        let mut headers = HashMap::new();
+        if let Some(data) = &context.data
+            && let Ok(data_str) = std::str::from_utf8(data.as_ref())
+        {
+            // Parse headers (very basic)
+            for line in data_str.lines() {
+                if line.is_empty() {
+                    break;
+                }
+                if let Some((key, value)) = line.split_once(':') {
+                    headers.insert(key.trim().to_string(), value.trim().to_string());
+                }
+            }
+        }
+        headers
+    }
+
+    /// Extract body preview from message data
+    fn extract_body_preview(&self, context: &Context) -> String {
+        context.data.as_ref().map_or_else(
+            || "[No data]".to_string(),
+            |data| {
+                std::str::from_utf8(data.as_ref()).map_or_else(
+                    |_| "[Binary data]".to_string(),
+                    |data_str| {
+                        data_str
+                            .find("\r\n\r\n")
+                            .or_else(|| data_str.find("\n\n"))
+                            .map_or_else(
+                                || data_str.chars().take(1024).collect(),
+                                |body_start| {
+                                    let offset =
+                                        if data_str[body_start..].starts_with("\r\n\r\n") {
+                                            4
+                                        } else {
+                                            2
+                                        };
+                                    let body = &data_str[body_start + offset..];
+                                    body.chars().take(1024).collect()
+                                },
+                            )
+                    },
+                )
+            },
+        )
     }
 
     /// Update MX override in domain configuration
