@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **DOCUMENTED** task 0.5: DNS cache mutex contention already resolved (performance - completed 2025-11-11)
 - **2025-11-15:** ✅ **COMPLETED** task 0.17: Added audit logging for control commands (security enhancement)
 - **2025-11-15:** ✅ **COMPLETED** task 0.19: Implemented active DNS cache eviction (memory optimization)
 - **2025-11-15:** ✅ **COMPLETED** task 0.18: Fixed socket file race condition on startup (robustness improvement)
@@ -78,31 +79,53 @@ After thorough analysis, this is **NOT** a layer violation but an **intentional 
 
 ---
 
-### 🟡 0.5 Fix DNS Cache Mutex Contention
-**Priority:** High
+### ✅ 0.5 Fix DNS Cache Mutex Contention
+**Priority:** ~~High~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 1 hour
-**Files:** `empath-delivery/src/dns.rs:133`
+**Status:** ✅ **COMPLETED** (2025-11-11)
 
-**Current Issue:** `Mutex<LruCache>` serializes all DNS lookups under load.
+**Original Issue:** `Mutex<LruCache>` serialized all DNS lookups under load, creating a performance bottleneck.
 
-**Implementation:**
-```rust
-use dashmap::DashMap;
+**Solution Implemented:**
 
-pub struct DnsResolver {
-    resolver: TokioAsyncResolver,
-    cache: Arc<DashMap<String, CachedResult>>,  // Lock-free reads
-    config: DnsConfig,
-}
-```
+Replaced mutex-based LRU cache with DashMap for concurrent DNS resolution caching, eliminating the critical performance bottleneck.
 
-**Benefits:**
-- Lock-free concurrent reads
-- Better throughput under load
-- Lower latency
+**Changes Made:**
 
-**Dependencies:** Add `dashmap` crate
+1. **Replaced cache implementation** (`empath-delivery/src/dns.rs:160-164`):
+   - Changed from `Arc<Mutex<LruCache>>` to `Arc<DashMap<String, CachedResult>>`
+   - Lock-free concurrent read and write operations
+   - Documented `cache_size` as a hint (not strictly enforced)
+
+2. **Updated dependencies** (`empath-delivery/Cargo.toml`):
+   - Removed `lru` dependency
+   - Added `dashmap` dependency
+
+3. **Updated cache operations**:
+   - Lock-free read operations in `resolve_mail_servers()`
+   - Lock-free write operations for cache insertions
+   - Lock-free operations in cache management methods
+
+**Performance Impact:**
+- ✅ Lock-free concurrent reads eliminate mutex serialization
+- ✅ Better throughput under high load with parallel deliveries
+- ✅ Lower latency for DNS lookups on critical delivery path
+- ✅ Scalable concurrent access without contention
+
+**Trade-offs:**
+- No strict LRU eviction (DashMap doesn't have built-in LRU)
+- Cache may grow beyond configured size hint
+- Simpler implementation prioritizes concurrency over strict limits
+- Task 0.19 addresses expired entry cleanup
+
+**Files Modified:**
+- `empath-delivery/Cargo.toml` (dependency change)
+- `empath-delivery/src/dns.rs` (cache implementation)
+
+**Commit:** `5c32cc0` - "perf(delivery): Replace Mutex<LruCache> with DashMap for lock-free DNS caching"
+
+**Dependencies:** None
 **Source:** CODE_REVIEW_2025-11-10.md Section 3.2
 
 ---
