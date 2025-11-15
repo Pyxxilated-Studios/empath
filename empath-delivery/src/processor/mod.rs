@@ -163,6 +163,10 @@ pub struct DeliveryProcessor {
     /// Cleanup queue for failed spool deletions (initialized in `init()`)
     #[serde(skip)]
     pub(crate) cleanup_queue: crate::queue::cleanup::CleanupQueue,
+
+    /// Delivery metrics collector (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) metrics: Option<empath_metrics::DeliveryMetrics>,
 }
 
 impl Default for DeliveryProcessor {
@@ -185,6 +189,7 @@ impl Default for DeliveryProcessor {
             queue: DeliveryQueue::new(),
             dns_resolver: None,
             cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
+            metrics: None,
         }
     }
 }
@@ -213,6 +218,17 @@ impl DeliveryProcessor {
             self.dns.max_cache_ttl_secs,
             self.dns.cache_size
         );
+
+        // Initialize delivery metrics
+        match empath_metrics::DeliveryMetrics::new() {
+            Ok(metrics) => {
+                self.metrics = Some(metrics);
+                internal!("Delivery metrics initialized");
+            }
+            Err(e) => {
+                empath_common::tracing::warn!(error = %e, "Failed to initialize delivery metrics");
+            }
+        }
 
         Ok(())
     }
