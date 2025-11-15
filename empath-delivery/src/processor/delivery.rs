@@ -42,8 +42,7 @@ pub async fn prepare_message(
 ) -> Result<(), DeliveryError> {
     processor
         .queue
-        .update_status(message_id, DeliveryStatus::InProgress)
-        .await;
+        .update_status(message_id, DeliveryStatus::InProgress);
 
     // Persist the InProgress status to spool
     if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
@@ -59,7 +58,7 @@ pub async fn prepare_message(
         .read(message_id)
         .await
         .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
-    let info = processor.queue.get(message_id).await.ok_or_else(|| {
+    let info = processor.queue.get(message_id).ok_or_else(|| {
         SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
     })?;
 
@@ -128,8 +127,7 @@ pub async fn prepare_message(
     // Store the resolved mail servers
     processor
         .queue
-        .set_mail_servers(message_id, mail_servers.clone())
-        .await;
+        .set_mail_servers(message_id, mail_servers.clone());
 
     // Use the first (highest priority) mail server
     let primary_server = &mail_servers[0];
@@ -164,8 +162,7 @@ pub async fn prepare_message(
         Ok(()) => {
             processor
                 .queue
-                .update_status(message_id, DeliveryStatus::Completed)
-                .await;
+                .update_status(message_id, DeliveryStatus::Completed);
 
             // Persist the Completed status to spool before deletion
             // Note: This will be immediately deleted, but it's important for consistency
@@ -243,11 +240,11 @@ pub async fn handle_delivery_error(
         server: server.clone(),
     };
 
-    processor.queue.record_attempt(message_id, attempt).await;
+    processor.queue.record_attempt(message_id, attempt);
 
     // Get updated info to check attempt count
     // Use proper error handling instead of unwrap
-    let Some(updated_info) = processor.queue.get(message_id).await else {
+    let Some(updated_info) = processor.queue.get(message_id) else {
         warn!(
             "Message {:?} disappeared from queue during error handling",
             message_id
@@ -261,8 +258,8 @@ pub async fn handle_delivery_error(
 
     // Try next MX server if this was a temporary failure
     if is_temporary_failure
-        && processor.queue.try_next_server(message_id).await
-        && let Some(info) = processor.queue.get(message_id).await
+        && processor.queue.try_next_server(message_id)
+        && let Some(info) = processor.queue.get(message_id)
         && let Some(next_server) = info.current_mail_server()
     {
         info!(
@@ -272,8 +269,7 @@ pub async fn handle_delivery_error(
         // Set status back to Pending to retry immediately with next server
         processor
             .queue
-            .update_status(message_id, DeliveryStatus::Pending)
-            .await;
+            .update_status(message_id, DeliveryStatus::Pending);
 
         // Persist the Pending status for next MX server attempt
         if let Some(spool) = &processor.spool
@@ -302,8 +298,7 @@ pub async fn handle_delivery_error(
 
     processor
         .queue
-        .update_status(message_id, new_status.clone())
-        .await;
+        .update_status(message_id, new_status.clone());
 
     // Calculate and set next retry time using exponential backoff
     if matches!(new_status, DeliveryStatus::Retry { .. }) {
@@ -316,8 +311,7 @@ pub async fn handle_delivery_error(
 
         processor
             .queue
-            .set_next_retry_at(message_id, next_retry_at)
-            .await;
+            .set_next_retry_at(message_id, next_retry_at);
 
         // Calculate delay for logging
         let current_time = std::time::SystemTime::now()
@@ -377,7 +371,7 @@ pub async fn persist_delivery_state(
     spool: &Arc<dyn empath_spool::BackingStore>,
 ) -> Result<(), DeliveryError> {
     // Get current queue info
-    let info = processor.queue.get(message_id).await.ok_or_else(|| {
+    let info = processor.queue.get(message_id).ok_or_else(|| {
         SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
     })?;
 

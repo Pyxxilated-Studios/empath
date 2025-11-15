@@ -93,7 +93,7 @@ async fn test_delivery_with_mx_override_integration() {
 
     // Verify the processor was initialized correctly
     // The queue starts empty
-    assert!(processor.queue().all_messages().await.is_empty());
+    assert!(processor.queue().all_messages().is_empty());
 }
 
 #[test]
@@ -160,7 +160,7 @@ async fn test_delivery_queue_domain_grouping() {
 
     // Note: Since scan_spool_internal is now private, we can't test it directly here
     // The message won't be in the queue until a scan happens
-    assert!(processor.queue().get(&msg_id).await.is_none());
+    assert!(processor.queue().get(&msg_id).is_none());
 }
 
 #[tokio::test]
@@ -275,7 +275,7 @@ async fn test_message_expiration() {
     // this test would need to be restructured to use the public serve() API
     // or test expiration through the complete flow.
     // For now, we'll just verify the processor initialization.
-    assert!(processor.queue().get(&msg_id).await.is_none());
+    assert!(processor.queue().get(&msg_id).is_none());
 }
 
 #[tokio::test]
@@ -297,8 +297,7 @@ async fn test_retry_scheduling_with_backoff() {
     let msg_id = spool.write(&mut context).await.unwrap();
     processor
         .queue()
-        .enqueue(msg_id.clone(), "test.com".to_string())
-        .await;
+        .enqueue(msg_id.clone(), "test.com".to_string());
 
     // Set message to Retry status with next_retry_at in the future
     let future_time = std::time::SystemTime::now()
@@ -315,15 +314,13 @@ async fn test_retry_scheduling_with_backoff() {
                 attempts: 1,
                 last_error: "test error".to_string(),
             },
-        )
-        .await;
+        );
     processor
         .queue()
-        .set_next_retry_at(&msg_id, future_time)
-        .await;
+        .set_next_retry_at(&msg_id, future_time);
 
     // Verify message is in Retry status
-    let info = processor.queue().get(&msg_id).await.unwrap();
+    let info = processor.queue().get(&msg_id).unwrap();
     assert!(matches!(info.status, DeliveryStatus::Retry { .. }));
     assert_eq!(info.next_retry_at, Some(future_time));
 }
