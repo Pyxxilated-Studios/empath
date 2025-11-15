@@ -9,30 +9,28 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates (2025-11-15):**
-- ✅ **COMPLETED** task 4.3: Replaced Arc<RwLock<HashMap>> with DashMap for lock-free concurrent access
-- ✅ **COMPLETED** task 0.20: Protocol versioning for control socket forward compatibility
-- ✅ **COMPLETED** task 0.30: Reduced metrics runtime overhead by 90% using AtomicU64
-- ✅ **COMPLETED** task 0.24: Extract queue command handler methods for improved code organization
-- ✅ **COMPLETED** task 0.29: Platform-specific path validation for Windows security
-- ✅ **COMPLETED** task 0.31: Fixed ULID collision error handling to propagate filesystem errors
-- ✅ **COMPLETED** task 0.10: MX record randomization for RFC 5321 compliance
-- ✅ **COMPLETED** task 0.21: Connection pooling for empathctl watch mode
-- ✅ **COMPLETED** task 0.10: Control socket integration tests (16 tests)
-- ✅ **COMPLETED** task 0.11: Runtime MX override updates via control socket
-- ✅ **COMPLETED** task 0.22: Queue list command protocol fixes
+- ✅ **COMPLETED** task 4.3: DashMap for lock-free concurrency (c3efd33)
+- ✅ **COMPLETED** task 0.20: Protocol versioning for control socket (f9beb9c)
 
 **Completed Tasks Archive** (See git history for full details):
-- ✅ 0.5 (2025-11-11): DNS cache mutex contention - replaced with DashMap
-- ✅ 0.6 (2025-11-14): NoVerifier security documentation improvements
-- ✅ 0.15 (2025-11-14): Unix socket permissions (0o600)
-- ✅ 0.16 (2025-11-14): Client-side response size validation (DoS protection)
-- ✅ 0.17 (2025-11-15): Audit logging for control commands
-- ✅ 0.18 (2025-11-15): Socket file race condition fix
+- ✅ 4.3 (2025-11-15): DashMap instead of Arc<RwLock<HashMap>>
+- ✅ 0.30 (2025-11-15): Metrics runtime overhead reduction (AtomicU64)
+- ✅ 0.29 (2025-11-15): Platform-specific path validation
+- ✅ 0.31 (2025-11-15): ULID collision error handling
+- ✅ 0.24 (2025-11-15): Queue command handler refactoring
+- ✅ 0.22 (2025-11-15): Queue list command protocol fixes
+- ✅ 0.21 (2025-11-15): Connection pooling for empathctl watch mode
+- ✅ 0.20 (2025-11-15): Control socket protocol versioning
 - ✅ 0.19 (2025-11-15): Active DNS cache eviction
-- ✅ 0.23 (2025-11-14): Metrics refactor to module/event system
-- ✅ 0.26 (2025-11-14): DeliveryStatus::matches_filter() method
-- ✅ 0.33 (2025-11-14): Import organization fixes
-- ✅ 0.34 (2025-11-14): Removed unused Docker build stage
+- ✅ 0.18 (2025-11-15): Socket file race condition fix
+- ✅ 0.17 (2025-11-15): Audit logging for control commands
+- ✅ 0.16 (2025-11-14): Client-side response size validation
+- ✅ 0.15 (2025-11-14): Unix socket permissions (0o600)
+- ✅ 0.11 (2025-11-14): Runtime MX override updates
+- ✅ 0.10 (2025-11-14): MX record randomization (RFC 5321)
+- ✅ 0.6 (2025-11-14): NoVerifier security documentation
+- ✅ 0.5 (2025-11-11): DNS cache DashMap replacement
+- ✅ 0.34, 0.33, 0.26, 0.23 (2025-11-14): Various refactoring and cleanup
 
 ---
 
