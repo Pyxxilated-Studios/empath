@@ -640,25 +640,80 @@ The project includes comprehensive benchmarks using Criterion.rs for performance
 ```bash
 # Run all benchmarks
 cargo bench
+# Or use justfile:
+just bench
 
 # Run specific crate benchmarks
 cargo bench -p empath-smtp
 cargo bench -p empath-spool
+# Or use justfile:
+just bench-smtp
+just bench-spool
+just bench-delivery
 
 # Run specific benchmark group
 cargo bench command_parsing
 cargo bench fsm_transitions
 cargo bench spool_write
+# Or use justfile:
+just bench-group command_parsing
 
 # Verbose output
 cargo bench -- --verbose
-
-# Save baseline for comparison
-cargo bench -- --save-baseline main
-
-# Compare against baseline
-cargo bench -- --baseline main
 ```
+
+**Benchmark Baseline Tracking (Performance Regression Detection):**
+
+The project uses Criterion's baseline feature to detect performance regressions. This is critical for validating optimizations and preventing silent degradation.
+
+```bash
+# Save current benchmarks as baseline (default: "main")
+just bench-baseline-save
+just bench-baseline-save my-optimization  # Custom baseline name
+
+# Compare current performance against saved baseline
+just bench-baseline-compare
+just bench-baseline-compare my-optimization
+
+# List all saved baselines
+just bench-baseline-list
+
+# Delete a baseline
+just bench-baseline-delete my-optimization
+
+# CI workflow: Compare against main baseline (for automated testing)
+just bench-ci
+```
+
+**Baseline Workflow:**
+
+1. **Save baseline on main branch:**
+   ```bash
+   git checkout main
+   just bench-baseline-save main
+   ```
+
+2. **Make performance changes on feature branch:**
+   ```bash
+   git checkout -b optimize-parsing
+   # ... make changes ...
+   ```
+
+3. **Compare against baseline:**
+   ```bash
+   just bench-baseline-compare main
+   ```
+
+4. **Review results:**
+   - Green text: Performance improved
+   - Red text: Performance regressed
+   - Check HTML report for detailed analysis
+
+**Recent Performance Optimizations:**
+
+- Task 0.30: 90% metrics overhead reduction (AtomicU64 vs OpenTelemetry Counter)
+- Task 4.3: Lock-free concurrency with DashMap (removed RwLock contention)
+- Clone reduction: ~80% fewer clones in hot paths
 
 **Benchmark Results:**
 

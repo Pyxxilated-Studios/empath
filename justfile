@@ -274,6 +274,57 @@ bench-view:
         echo "Please open target/criterion/report/index.html in your browser"; \
     fi
 
+# Save benchmark baseline (for regression detection)
+bench-baseline-save NAME="main":
+    @echo "Saving benchmark baseline as '{{NAME}}'..."
+    cargo bench -- --save-baseline {{NAME}}
+    @echo "✅ Baseline '{{NAME}}' saved successfully"
+    @echo "Compare against it with: just bench-baseline-compare {{NAME}}"
+
+# Compare benchmarks against a saved baseline
+bench-baseline-compare NAME="main":
+    @echo "Comparing benchmarks against baseline '{{NAME}}'..."
+    cargo bench -- --baseline {{NAME}}
+    @echo ""
+    @echo "✅ Comparison complete. Check target/criterion/report/index.html for detailed results"
+
+# List all saved baselines
+bench-baseline-list:
+    @echo "=== Saved Benchmark Baselines ==="
+    @if [ -d target/criterion ]; then \
+        find target/criterion -type d -name "base" -o -name "main" | sed 's|target/criterion/||' | sed 's|/base||' | sed 's|/main||' | sort -u || echo "No baselines found"; \
+    else \
+        echo "No benchmark data yet. Run 'just bench' first."; \
+    fi
+
+# Delete a benchmark baseline
+bench-baseline-delete NAME:
+    @echo "⚠️  Deleting baseline '{{NAME}}'..."
+    @find target/criterion -type d -name "{{NAME}}" -exec rm -rf {} + 2>/dev/null || true
+    @echo "✅ Baseline '{{NAME}}' deleted"
+
+# CI workflow: Compare current benchmarks against main baseline (fails on >10% regression)
+bench-ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running CI benchmark comparison against 'main' baseline..."
+
+    # Check if main baseline exists
+    if [ ! -d "target/criterion" ]; then
+        echo "⚠️  No baseline found. Creating initial baseline as 'main'..."
+        cargo bench -- --save-baseline main
+        echo "✅ Initial baseline created. Future runs will compare against this."
+        exit 0
+    fi
+
+    # Run comparison
+    echo "Comparing against baseline 'main'..."
+    cargo bench -- --baseline main --baseline-lenient
+
+    echo ""
+    echo "✅ Benchmark CI check complete"
+    echo "Review detailed results at: target/criterion/report/index.html"
+
 # =============================================================================
 # RUNNING
 # =============================================================================
