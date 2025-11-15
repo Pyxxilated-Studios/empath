@@ -112,6 +112,60 @@ impl DeliveryMetrics {
             })
             .build();
 
+        // Observable gauge for delivery error rate (failed / total attempts)
+        // Pre-calculated for easier alerting
+        let delivered_for_error_rate = messages_delivered_ref.clone();
+        let failed_for_error_rate = messages_failed_ref.clone();
+        let retrying_for_error_rate = messages_retrying_ref.clone();
+        meter
+            .f64_observable_gauge("empath.delivery.error_rate")
+            .with_description("Delivery error rate (failed / total attempts, 0-1)")
+            .with_callback(move |observer| {
+                let delivered = delivered_for_error_rate.load(Ordering::Relaxed);
+                let failed = failed_for_error_rate.load(Ordering::Relaxed);
+                let retrying = retrying_for_error_rate.load(Ordering::Relaxed);
+                let total = delivered + failed + retrying;
+
+                let error_rate = if total > 0 {
+                    #[allow(clippy::cast_precision_loss)]
+                    {
+                        failed as f64 / total as f64
+                    }
+                } else {
+                    0.0
+                };
+
+                observer.observe(error_rate, &[]);
+            })
+            .build();
+
+        // Observable gauge for delivery success rate (1 - error_rate)
+        // Pre-calculated for easier alerting
+        let delivered_for_success_rate = messages_delivered_ref.clone();
+        let failed_for_success_rate = messages_failed_ref.clone();
+        let retrying_for_success_rate = messages_retrying_ref.clone();
+        meter
+            .f64_observable_gauge("empath.delivery.success_rate")
+            .with_description("Delivery success rate (delivered / total attempts, 0-1)")
+            .with_callback(move |observer| {
+                let delivered = delivered_for_success_rate.load(Ordering::Relaxed);
+                let failed = failed_for_success_rate.load(Ordering::Relaxed);
+                let retrying = retrying_for_success_rate.load(Ordering::Relaxed);
+                let total = delivered + failed + retrying;
+
+                let success_rate = if total > 0 {
+                    #[allow(clippy::cast_precision_loss)]
+                    {
+                        delivered as f64 / total as f64
+                    }
+                } else {
+                    0.0
+                };
+
+                observer.observe(success_rate, &[]);
+            })
+            .build();
+
         let retry_count = meter
             .u64_histogram("empath.delivery.retry.count")
             .with_description("Distribution of retry counts before success")

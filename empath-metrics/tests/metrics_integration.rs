@@ -356,3 +356,58 @@ fn test_queue_age_with_system_time_edge_cases() {
 
     // All operations should complete without panic
 }
+
+#[test]
+fn test_delivery_error_rate_calculation() {
+    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+
+    // Record various delivery outcomes
+    metrics.record_delivery_success("example.com", 1.0, 0);
+    metrics.record_delivery_success("example.com", 1.5, 0);
+    metrics.record_delivery_success("example.com", 2.0, 0);
+
+    metrics.record_delivery_failure("test.com", "Connection timeout");
+    metrics.record_delivery_failure("test.com", "Connection refused");
+
+    metrics.record_delivery_retry("retry.com");
+
+    // Error rate metrics are observable gauges that calculate on-demand
+    // They will be computed when Prometheus/OTLP scrapes them
+    // This test verifies the API doesn't panic and operations complete
+}
+
+#[test]
+fn test_delivery_success_rate_with_zero_attempts() {
+    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+
+    // With zero attempts, success rate should be 0.0 (not NaN or panic)
+    // Observable gauge will calculate this when scraped
+    // This test verifies initialization doesn't panic
+}
+
+#[test]
+fn test_smtp_connection_error_rate() {
+    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+
+    // Record successful connections
+    metrics.record_connection();
+    metrics.record_connection();
+    metrics.record_connection();
+
+    // Record failed connections
+    metrics.record_connection_failed();
+    metrics.record_connection_failed();
+
+    // Error rate metrics are observable gauges that calculate on-demand
+    // Error rate should be 2/5 = 0.4 when scraped
+    // This test verifies the API doesn't panic and operations complete
+}
+
+#[test]
+fn test_smtp_error_rate_with_zero_connections() {
+    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+
+    // With zero connections, error rate should be 0.0 (not NaN or panic)
+    // Observable gauge will calculate this when scraped
+    // This test verifies initialization doesn't panic
+}
