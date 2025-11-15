@@ -258,8 +258,9 @@ impl BackingStore for FileBackingStore {
         let meta_path = self.path.join(&meta_filename);
 
         // Check for ULID collision (should never happen, but defensive programming)
-        if tokio::fs::try_exists(&data_path).await.unwrap_or(false)
-            || tokio::fs::try_exists(&meta_path).await.unwrap_or(false)
+        // Propagate filesystem errors instead of silently treating them as "file doesn't exist"
+        if tokio::fs::try_exists(&data_path).await?
+            || tokio::fs::try_exists(&meta_path).await?
         {
             return Err(SpoolError::AlreadyExists(tracking_id));
         }
