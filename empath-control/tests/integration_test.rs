@@ -7,8 +7,8 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Durat
 
 use empath_control::{
     protocol::{
-        CachedMailServer, DnsCommand, QueueCommand, Request, Response, ResponseData,
-        SystemCommand, SystemStatus,
+        CachedMailServer, DnsCommand, QueueCommand, Request, RequestCommand, Response,
+        ResponseData, ResponsePayload, SystemCommand, SystemStatus,
     },
     server::CommandHandler,
     ControlClient, ControlError, ControlServer, Result,
@@ -61,8 +61,8 @@ impl CommandHandler for MockHandler {
         request: Request,
     ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send + '_>> {
         Box::pin(async move {
-            match request {
-                Request::Dns(cmd) => match cmd {
+            match request.command {
+                RequestCommand::Dns(cmd) => match cmd {
                     DnsCommand::ListCache => Ok(Response::data(ResponseData::DnsCache(
                         self.dns_cache.clone(),
                     ))),
@@ -82,7 +82,7 @@ impl CommandHandler for MockHandler {
                         self.mx_overrides.clone(),
                     ))),
                 },
-                Request::System(cmd) => match cmd {
+                RequestCommand::System(cmd) => match cmd {
                     SystemCommand::Ping => Ok(Response::ok()),
                     SystemCommand::Status => Ok(Response::data(ResponseData::SystemStatus(
                         SystemStatus {
@@ -93,7 +93,7 @@ impl CommandHandler for MockHandler {
                         },
                     ))),
                 },
-                Request::Queue(cmd) => match cmd {
+                RequestCommand::Queue(cmd) => match cmd {
                     QueueCommand::Stats => Ok(Response::data(ResponseData::Message(
                         "Queue stats".to_string(),
                     ))),
@@ -138,11 +138,11 @@ async fn test_dns_list_cache() {
 
     // Test DNS list cache command
     let client = ControlClient::new(socket_str);
-    let request = Request::Dns(DnsCommand::ListCache);
+    let request = Request::new(RequestCommand::Dns(DnsCommand::ListCache));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Data(data) => match *data {
+    match response.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::DnsCache(cache) => {
                 assert!(cache.contains_key("example.com"));
                 let servers = cache.get("example.com").unwrap();
@@ -167,11 +167,11 @@ async fn test_dns_clear_cache() {
 
     // Test DNS clear cache command
     let client = ControlClient::new(socket_str);
-    let request = Request::Dns(DnsCommand::ClearCache);
+    let request = Request::new(RequestCommand::Dns(DnsCommand::ClearCache));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Data(data) => match *data {
+    match response.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::Message(msg) => {
                 assert_eq!(msg, "Cache cleared");
             }
@@ -192,11 +192,13 @@ async fn test_dns_refresh_domain() {
 
     // Test DNS refresh domain command
     let client = ControlClient::new(socket_str);
-    let request = Request::Dns(DnsCommand::RefreshDomain("example.com".to_string()));
+    let request = Request::new(RequestCommand::Dns(DnsCommand::RefreshDomain(
+        "example.com".to_string(),
+    )));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Data(data) => match *data {
+    match response.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::Message(msg) => {
                 assert_eq!(msg, "Refreshed example.com");
             }
@@ -217,14 +219,14 @@ async fn test_dns_set_override() {
 
     // Test DNS set override command
     let client = ControlClient::new(socket_str);
-    let request = Request::Dns(DnsCommand::SetOverride {
+    let request = Request::new(RequestCommand::Dns(DnsCommand::SetOverride {
         domain: "test.example.com".to_string(),
         mx_server: "localhost:1025".to_string(),
-    });
+    }));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Data(data) => match *data {
+    match response.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::Message(msg) => {
                 assert!(msg.contains("Set override"));
                 assert!(msg.contains("test.example.com"));
@@ -247,11 +249,13 @@ async fn test_dns_remove_override() {
 
     // Test DNS remove override command
     let client = ControlClient::new(socket_str);
-    let request = Request::Dns(DnsCommand::RemoveOverride("test.local".to_string()));
+    let request = Request::new(RequestCommand::Dns(DnsCommand::RemoveOverride(
+        "test.local".to_string(),
+    )));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Data(data) => match *data {
+    match response.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::Message(msg) => {
                 assert!(msg.contains("Removed override"));
                 assert!(msg.contains("test.local"));
@@ -273,11 +277,11 @@ async fn test_dns_list_overrides() {
 
     // Test DNS list overrides command
     let client = ControlClient::new(socket_str);
-    let request = Request::Dns(DnsCommand::ListOverrides);
+    let request = Request::new(RequestCommand::Dns(DnsCommand::ListOverrides));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Data(data) => match *data {
+    match response.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::MxOverrides(overrides) => {
                 assert!(overrides.contains_key("test.local"));
                 assert_eq!(overrides.get("test.local").unwrap(), "localhost:1025");
@@ -299,11 +303,11 @@ async fn test_system_ping() {
 
     // Test system ping command
     let client = ControlClient::new(socket_str);
-    let request = Request::System(SystemCommand::Ping);
+    let request = Request::new(RequestCommand::System(SystemCommand::Ping));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Ok => {
+    match response.payload {
+        ResponsePayload::Ok => {
             // Success
         }
         _ => panic!("Expected Ok response"),
@@ -321,11 +325,11 @@ async fn test_system_status() {
 
     // Test system status command
     let client = ControlClient::new(socket_str);
-    let request = Request::System(SystemCommand::Status);
+    let request = Request::new(RequestCommand::System(SystemCommand::Status));
     let response = client.send_request(request).await.unwrap();
 
-    match response {
-        Response::Data(data) => match *data {
+    match response.payload {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::SystemStatus(status) => {
                 assert_eq!(status.version, "0.0.2");
                 assert_eq!(status.uptime_secs, 12345);
@@ -346,7 +350,7 @@ async fn test_socket_not_exist_error() {
 
     // Test connecting to non-existent socket
     let client = ControlClient::new(socket_str);
-    let request = Request::System(SystemCommand::Ping);
+    let request = Request::new(RequestCommand::System(SystemCommand::Ping));
     let result = client.send_request(request).await;
 
     assert!(result.is_err());
@@ -385,7 +389,7 @@ async fn test_client_timeout() {
 
     // Test with very short timeout (should succeed for fast operations)
     let client = ControlClient::new(socket_str).with_timeout(Duration::from_millis(50));
-    let request = Request::System(SystemCommand::Ping);
+    let request = Request::new(RequestCommand::System(SystemCommand::Ping));
     let result = client.send_request(request).await;
 
     // This might succeed or timeout depending on system load
@@ -412,9 +416,9 @@ async fn test_graceful_shutdown() {
 
     // Verify server is running
     let client = ControlClient::new(socket_str);
-    let request = Request::System(SystemCommand::Ping);
+    let request = Request::new(RequestCommand::System(SystemCommand::Ping));
     let response = client.send_request(request).await.unwrap();
-    assert!(matches!(response, Response::Ok));
+    assert!(matches!(response.payload, ResponsePayload::Ok));
 
     // Send shutdown signal
     shutdown_tx
@@ -448,9 +452,9 @@ async fn test_concurrent_requests() {
         let handle = tokio::spawn(async move {
             let client = ControlClient::new(&socket_str);
             let request = if i % 2 == 0 {
-                Request::System(SystemCommand::Ping)
+                Request::new(RequestCommand::System(SystemCommand::Ping))
             } else {
-                Request::Dns(DnsCommand::ListOverrides)
+                Request::new(RequestCommand::Dns(DnsCommand::ListOverrides))
             };
             client.send_request(request).await
         });
@@ -477,19 +481,19 @@ async fn test_multiple_sequential_requests() {
 
     // Send multiple sequential requests
     for _ in 0..5 {
-        let request = Request::System(SystemCommand::Ping);
+        let request = Request::new(RequestCommand::System(SystemCommand::Ping));
         let response = client.send_request(request).await.unwrap();
-        assert!(matches!(response, Response::Ok));
+        assert!(matches!(response.payload, ResponsePayload::Ok));
     }
 
     // Mix different command types
-    let request = Request::Dns(DnsCommand::ListCache);
+    let request = Request::new(RequestCommand::Dns(DnsCommand::ListCache));
     let response = client.send_request(request).await.unwrap();
-    assert!(matches!(response, Response::Data(_)));
+    assert!(matches!(response.payload, ResponsePayload::Data(_)));
 
-    let request = Request::System(SystemCommand::Status);
+    let request = Request::new(RequestCommand::System(SystemCommand::Status));
     let response = client.send_request(request).await.unwrap();
-    assert!(matches!(response, Response::Data(_)));
+    assert!(matches!(response.payload, ResponsePayload::Data(_)));
 }
 
 #[tokio::test]
@@ -507,9 +511,9 @@ async fn test_persistent_connection_mode() {
     // Send multiple requests - should reuse same connection
     for i in 0..10 {
         let request = if i % 2 == 0 {
-            Request::System(SystemCommand::Ping)
+            Request::new(RequestCommand::System(SystemCommand::Ping))
         } else {
-            Request::Dns(DnsCommand::ListCache)
+            Request::new(RequestCommand::Dns(DnsCommand::ListCache))
         };
         let response = client.send_request(request).await.unwrap();
         assert!(response.is_success());
@@ -529,9 +533,9 @@ async fn test_persistent_connection_reconnect() {
     let client = ControlClient::new(&socket_str).with_persistent_connection();
 
     // First request establishes connection
-    let request = Request::System(SystemCommand::Ping);
+    let request = Request::new(RequestCommand::System(SystemCommand::Ping));
     let response = client.send_request(request).await.unwrap();
-    assert!(matches!(response, Response::Ok));
+    assert!(matches!(response.payload, ResponsePayload::Ok));
 
     // Shutdown server to simulate connection loss
     shutdown_tx
@@ -549,7 +553,7 @@ async fn test_persistent_connection_reconnect() {
     let (_server_handle2, _shutdown_tx2) = start_test_server(&socket_str, handler).await;
 
     // Next request should automatically reconnect
-    let request = Request::System(SystemCommand::Status);
+    let request = Request::new(RequestCommand::System(SystemCommand::Status));
     let response = client.send_request(request).await.unwrap();
-    assert!(matches!(response, Response::Data(_)));
+    assert!(matches!(response.payload, ResponsePayload::Data(_)));
 }

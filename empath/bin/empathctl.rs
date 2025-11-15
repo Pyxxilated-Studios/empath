@@ -14,8 +14,8 @@ use std::{
 use chrono::{TimeZone, Utc, offset::LocalResult};
 use clap::{Parser, Subcommand, ValueEnum};
 use empath_control::{
-    ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, Response, SystemCommand,
-    protocol::ResponseData,
+    ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, RequestCommand, Response,
+    ResponsePayload, SystemCommand, protocol::ResponseData,
 };
 
 /// Command-line utility for managing the Empath MTA
@@ -236,24 +236,30 @@ async fn handle_queue_command_direct(socket_path: &str, action: QueueAction) -> 
 /// Handle DNS cache management commands
 async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow::Result<()> {
     let request = match action {
-        DnsAction::ListCache => Request::Dns(DnsCommand::ListCache),
-        DnsAction::ClearCache => Request::Dns(DnsCommand::ClearCache),
-        DnsAction::Refresh { domain } => Request::Dns(DnsCommand::RefreshDomain(domain)),
-        DnsAction::ListOverrides => Request::Dns(DnsCommand::ListOverrides),
-        DnsAction::SetOverride { domain, server } => Request::Dns(DnsCommand::SetOverride {
-            domain,
-            mx_server: server,
-        }),
-        DnsAction::RemoveOverride { domain } => Request::Dns(DnsCommand::RemoveOverride(domain)),
+        DnsAction::ListCache => Request::new(RequestCommand::Dns(DnsCommand::ListCache)),
+        DnsAction::ClearCache => Request::new(RequestCommand::Dns(DnsCommand::ClearCache)),
+        DnsAction::Refresh { domain } => {
+            Request::new(RequestCommand::Dns(DnsCommand::RefreshDomain(domain)))
+        }
+        DnsAction::ListOverrides => Request::new(RequestCommand::Dns(DnsCommand::ListOverrides)),
+        DnsAction::SetOverride { domain, server } => {
+            Request::new(RequestCommand::Dns(DnsCommand::SetOverride {
+                domain,
+                mx_server: server,
+            }))
+        }
+        DnsAction::RemoveOverride { domain } => {
+            Request::new(RequestCommand::Dns(DnsCommand::RemoveOverride(domain)))
+        }
     };
 
     let response = client.send_request(request).await?;
 
-    match response {
-        Response::Ok => {
+    match response.payload {
+        ResponsePayload::Ok => {
             println!("✓ Command completed successfully");
         }
-        Response::Data(data) => match *data {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::DnsCache(cache) => {
                 if cache.is_empty() {
                     println!("DNS cache is empty");
@@ -301,7 +307,7 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
                 println!("Unexpected response for DNS command: {data:?}");
             }
         },
-        Response::Error(err) => {
+        ResponsePayload::Error(err) => {
             anyhow::bail!("Server error: {err}");
         }
     }
@@ -312,17 +318,17 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
 /// Handle system management commands
 async fn handle_system_command(client: &ControlClient, action: SystemAction) -> anyhow::Result<()> {
     let request = match action {
-        SystemAction::Ping => Request::System(SystemCommand::Ping),
-        SystemAction::Status => Request::System(SystemCommand::Status),
+        SystemAction::Ping => Request::new(RequestCommand::System(SystemCommand::Ping)),
+        SystemAction::Status => Request::new(RequestCommand::System(SystemCommand::Status)),
     };
 
     let response = client.send_request(request).await?;
 
-    match response {
-        Response::Ok => {
+    match response.payload {
+        ResponsePayload::Ok => {
             println!("✓ Pong! MTA is responding");
         }
-        Response::Data(data) => match *data {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::SystemStatus(status) => {
                 println!("=== Empath MTA Status ===\n");
                 println!("Version:            {}", status.version);
@@ -342,7 +348,7 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                 println!("Unexpected response for system command: {data:?}");
             }
         },
-        Response::Error(err) => {
+        ResponsePayload::Error(err) => {
             anyhow::bail!("Server error: {err}");
         }
     }
@@ -368,11 +374,13 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                 }
                 .to_string()
             });
-            Request::Queue(QueueCommand::List { status_filter })
+            Request::new(RequestCommand::Queue(QueueCommand::List { status_filter }))
         }
-        QueueAction::View { message_id } => Request::Queue(QueueCommand::View { message_id }),
+        QueueAction::View { message_id } => {
+            Request::new(RequestCommand::Queue(QueueCommand::View { message_id }))
+        }
         QueueAction::Retry { message_id, force } => {
-            Request::Queue(QueueCommand::Retry { message_id, force })
+            Request::new(RequestCommand::Queue(QueueCommand::Retry { message_id, force }))
         }
         QueueAction::Delete { message_id, yes } => {
             // Confirmation prompt if not --yes
@@ -388,7 +396,7 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                     return Ok(());
                 }
             }
-            Request::Queue(QueueCommand::Delete { message_id })
+            Request::new(RequestCommand::Queue(QueueCommand::Delete { message_id }))
         }
         QueueAction::Stats { watch, interval } => {
             if watch {
@@ -398,11 +406,13 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                     print!("\x1B[2J\x1B[1;1H");
 
                     let response = client
-                        .send_request(Request::Queue(QueueCommand::Stats))
+                        .send_request(Request::new(RequestCommand::Queue(QueueCommand::Stats)))
                         .await?;
 
-                    match response {
-                        Response::Data(d) if matches!(*d, ResponseData::QueueStats(_)) => {
+                    match response.payload {
+                        ResponsePayload::Data(d)
+                            if matches!(*d, ResponseData::QueueStats(_)) =>
+                        {
                             match *d {
                                 ResponseData::QueueStats(stats) => {
                                     display_queue_stats(&stats);
@@ -410,7 +420,7 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                                 _ => unreachable!(),
                             }
                         }
-                        Response::Error(err) => {
+                        ResponsePayload::Error(err) => {
                             anyhow::bail!("Server error: {err}");
                         }
                         _ => {
@@ -421,18 +431,18 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                     tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
                 }
             } else {
-                Request::Queue(QueueCommand::Stats)
+                Request::new(RequestCommand::Queue(QueueCommand::Stats))
             }
         }
     };
 
     let response = client.send_request(request).await?;
 
-    match response {
-        Response::Ok => {
+    match response.payload {
+        ResponsePayload::Ok => {
             println!("✓ Command completed successfully");
         }
-        Response::Data(data) => match *data {
+        ResponsePayload::Data(data) => match *data {
             ResponseData::QueueList(messages) => {
                 if messages.is_empty() {
                     println!("No messages in queue");
@@ -493,7 +503,7 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                 println!("Unexpected response for queue command: {data:?}");
             }
         },
-        Response::Error(err) => {
+        ResponsePayload::Error(err) => {
             anyhow::bail!("Server error: {err}");
         }
     }
