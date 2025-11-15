@@ -308,11 +308,7 @@ async fn test_retry_scheduling_with_backoff() {
         .enqueue(msg_id.clone(), "test.com".to_string());
 
     // Set message to Retry status with next_retry_at in the future
-    let future_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .saturating_add(10); // 10 seconds in the future
+    let future_time = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
 
     processor.queue().update_status(
         &msg_id,

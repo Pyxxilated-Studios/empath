@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates (2025-11-15):**
+- ✅ **COMPLETED** task 4.6: Replace u64 timestamps with SystemTime
 - ✅ **COMPLETED** task 7.2: Improve README.md with comprehensive documentation
 - ✅ **COMPLETED** task 4.1: Replace manual Pin<Box<dyn Future>> with async_trait
 - ✅ **COMPLETED** task 4.3: DashMap for lock-free concurrency (c3efd33)
@@ -480,12 +481,35 @@ Use `JoinSet` for structured concurrency and proper task cleanup.
 
 ---
 
-### 🟡 4.6 Replace u64 Timestamps with SystemTime
-**Priority:** Medium (Correctness)
-**Complexity:** Simple
-**Effort:** 1-2 hours
+### ✅ 4.6 Replace u64 Timestamps with SystemTime
+**Priority:** ~~Medium (Correctness)~~ **COMPLETED**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-Use `SystemTime` instead of raw `u64` for type safety and clarity.
+Replaced raw `u64` Unix epoch timestamps with `SystemTime` for better type safety and clarity.
+
+**Changes:**
+- Updated `DeliveryAttempt.timestamp` from `u64` to `SystemTime` in `empath-common/src/context.rs`
+- Updated `DeliveryContext.queued_at` and `next_retry_at` to use `SystemTime`
+- Updated `DeliveryInfo` in `empath-delivery/src/types.rs` to use `SystemTime`
+- Changed `calculate_next_retry_time()` to return `SystemTime` instead of `u64`
+- Updated all time comparisons to use `duration_since()` instead of epoch arithmetic
+- Added `default_system_time()` helper for serde defaults
+- Updated control handler to convert `SystemTime` to `u64` for protocol compatibility
+
+**Files Modified:**
+- `empath-common/src/context.rs` (DeliveryAttempt, DeliveryContext)
+- `empath-delivery/src/types.rs` (DeliveryInfo)
+- `empath-delivery/src/queue/mod.rs` (set_next_retry_at signature)
+- `empath-delivery/src/queue/retry.rs` (calculate_next_retry_time)
+- `empath-delivery/src/processor/process.rs` (time comparisons)
+- `empath-delivery/src/processor/delivery.rs` (timestamp recording)
+- `empath-ffi/src/modules/metrics.rs` (duration calculations)
+- `empath/src/control_handler.rs` (SystemTime to u64 conversions)
+- `empath-delivery/tests/integration_tests.rs` (test updates)
+
+**Note:** This is a **breaking change** - serialization format changed. Existing spooled messages with `u64` timestamps will not deserialize.
+
+**Results:** All 91 workspace tests passing
 
 ---
 
@@ -745,9 +769,9 @@ Complete Docker setup for local development with all dependencies.
 ## Summary
 
 **Current Status:**
-- ✅ 20 tasks completed (including 6 today)
+- ✅ 21 tasks completed (including 7 today)
 - ❌ 1 task rejected (architectural decision)
-- 📝 55 tasks pending
+- 📝 54 tasks pending
 
 **Phase 0 Progress:** Most critical security and code quality issues addressed
 

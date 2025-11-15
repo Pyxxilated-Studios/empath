@@ -232,10 +232,7 @@ pub async fn handle_delivery_error(
 ) -> DeliveryError {
     // Record the attempt
     let attempt = empath_common::DeliveryAttempt {
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
+        timestamp: std::time::SystemTime::now(),
         error: Some(error.to_string()),
         server: server.clone(),
     };
@@ -312,17 +309,16 @@ pub async fn handle_delivery_error(
         processor.queue.set_next_retry_at(message_id, next_retry_at);
 
         // Calculate delay for logging
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let delay_secs = next_retry_at
+            .duration_since(std::time::SystemTime::now())
             .unwrap_or_default()
             .as_secs();
-        let delay_secs = next_retry_at.saturating_sub(current_time);
 
         info!(
             message_id = ?message_id,
             attempt = updated_info.attempt_count(),
             retry_delay_secs = delay_secs,
-            next_retry_at = next_retry_at,
+            next_retry_at = ?next_retry_at,
             "Scheduled retry with exponential backoff"
         );
     }

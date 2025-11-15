@@ -2,7 +2,7 @@
 
 pub mod retry;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use dashmap::DashMap;
 use empath_common::DeliveryStatus;
@@ -105,7 +105,7 @@ impl DeliveryQueue {
     }
 
     /// Set the next retry timestamp for a message
-    pub fn set_next_retry_at(&self, message_id: &SpooledMessageId, next_retry_at: u64) {
+    pub fn set_next_retry_at(&self, message_id: &SpooledMessageId, next_retry_at: SystemTime) {
         if let Some(mut entry) = self.queue.get_mut(message_id) {
             entry.value_mut().next_retry_at = Some(next_retry_at);
         }

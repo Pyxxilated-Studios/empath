@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     fmt::{self, Debug, Display},
     sync::Arc,
+    time::SystemTime,
 };
 
 use ahash::AHashMap;
@@ -62,7 +63,7 @@ impl DeliveryStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryAttempt {
     /// Timestamp of the attempt
-    pub timestamp: u64,
+    pub timestamp: SystemTime,
     /// Error message if the attempt failed
     pub error: Option<String>,
     /// SMTP server that was contacted
@@ -97,15 +98,19 @@ pub struct DeliveryContext {
     /// List of delivery attempts with timestamps and errors
     #[serde(default)]
     pub attempt_history: Vec<DeliveryAttempt>,
-    /// Unix timestamp when this message was first queued
+    /// When this message was first queued for delivery
+    #[serde(default = "default_system_time")]
+    pub queued_at: SystemTime,
+    /// When the next retry should be attempted (None for immediate retry)
     #[serde(default)]
-    pub queued_at: u64,
-    /// Unix timestamp when the next retry should be attempted (None for immediate retry)
-    #[serde(default)]
-    pub next_retry_at: Option<u64>,
+    pub next_retry_at: Option<SystemTime>,
     /// Index of the current mail server being tried (for MX fallback)
     #[serde(default)]
     pub current_server_index: usize,
+}
+
+fn default_system_time() -> SystemTime {
+    SystemTime::UNIX_EPOCH
 }
 
 impl Default for DeliveryContext {
@@ -118,7 +123,7 @@ impl Default for DeliveryContext {
             attempts: None,
             status: DeliveryStatus::default(),
             attempt_history: Vec::new(),
-            queued_at: 0,
+            queued_at: SystemTime::UNIX_EPOCH,
             next_retry_at: None,
             current_server_index: 0,
         }

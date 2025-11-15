@@ -347,7 +347,11 @@ impl EmpathControlHandler {
                 domain: info.recipient_domain.to_string(),
                 status: info.status.to_string(),
                 attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
-                next_retry: info.next_retry_at,
+                next_retry: info.next_retry_at.and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
+                }),
                 size: context.data.as_ref().map_or(0, |d| d.len()),
                 spooled_at: info.message_id.timestamp_ms() / 1000,
             };
@@ -399,7 +403,11 @@ impl EmpathControlHandler {
             domain: info.recipient_domain.to_string(),
             status: format!("{:?}", info.status),
             attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
-            next_retry: info.next_retry_at,
+            next_retry: info.next_retry_at.and_then(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_secs())
+            }),
             last_error: info.attempts.last().and_then(|a| a.error.clone()),
             size: context.data.as_ref().map_or(0, |d| d.len()),
             spooled_at: msg_id.timestamp_ms() / 1000,
@@ -438,7 +446,8 @@ impl EmpathControlHandler {
         // Reset status to pending
         queue.update_status(&msg_id, empath_common::DeliveryStatus::Pending);
         queue.reset_server_index(&msg_id);
-        queue.set_next_retry_at(&msg_id, 0);
+        // Set next_retry to now for immediate retry
+        queue.set_next_retry_at(&msg_id, std::time::SystemTime::UNIX_EPOCH);
 
         Ok(Response::data(ResponseData::Message(format!(
             "Message {message_id} scheduled for retry"

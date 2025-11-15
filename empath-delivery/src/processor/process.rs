@@ -1,6 +1,6 @@
 //! Queue processing logic for delivery attempts
 
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use empath_common::{
     DeliveryStatus,
@@ -30,10 +30,7 @@ pub async fn process_queue_internal(
     processor: &DeliveryProcessor,
     spool: &Arc<dyn empath_spool::BackingStore>,
 ) -> Result<(), DeliveryError> {
-    let current_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let now = SystemTime::now();
 
     // Get all messages to check for expiration and retry timing
     let all_messages = processor.queue.all_messages();
@@ -52,7 +49,10 @@ pub async fn process_queue_internal(
 
         // Check if message has expired
         if let Some(expiration_secs) = processor.message_expiration_secs {
-            let age_secs = current_time.saturating_sub(info.queued_at);
+            let age_secs = now
+                .duration_since(info.queued_at)
+                .unwrap_or_default()
+                .as_secs();
             if age_secs > expiration_secs {
                 warn!(
                     message_id = ?info.message_id,
@@ -83,10 +83,13 @@ pub async fn process_queue_internal(
         // For Retry status, check if it's time to retry
         if matches!(info.status, DeliveryStatus::Retry { .. }) {
             if let Some(next_retry_at) = info.next_retry_at
-                && current_time < next_retry_at
+                && now < next_retry_at
             {
                 // Not yet time to retry, skip this message
-                let wait_secs = next_retry_at.saturating_sub(current_time);
+                let wait_secs = next_retry_at
+                    .duration_since(now)
+                    .unwrap_or_default()
+                    .as_secs();
                 debug!(
                     message_id = ?info.message_id,
                     wait_secs = wait_secs,

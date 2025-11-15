@@ -1,6 +1,6 @@
 //! Type definitions for delivery queue and processor
 
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use empath_common::DeliveryStatus;
 use empath_spool::SpooledMessageId;
@@ -115,21 +115,16 @@ pub struct DeliveryInfo {
     pub mail_servers: Arc<Vec<MailServer>>,
     /// Index of the current mail server being tried
     pub current_server_index: usize,
-    /// Unix timestamp when this message was first queued
-    pub queued_at: u64,
-    /// Unix timestamp when the next retry should be attempted (None for immediate retry)
-    pub next_retry_at: Option<u64>,
+    /// When this message was first queued for delivery
+    pub queued_at: SystemTime,
+    /// When the next retry should be attempted (None for immediate retry)
+    pub next_retry_at: Option<SystemTime>,
 }
 
 impl DeliveryInfo {
     /// Create a new pending delivery info
     #[must_use]
     pub fn new(message_id: SpooledMessageId, recipient_domain: String) -> Self {
-        let queued_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
         Self {
             message_id,
             status: DeliveryStatus::Pending,
@@ -137,7 +132,7 @@ impl DeliveryInfo {
             recipient_domain: Arc::from(recipient_domain),
             mail_servers: Arc::new(Vec::new()),
             current_server_index: 0,
-            queued_at,
+            queued_at: SystemTime::now(),
             next_retry_at: None,
         }
     }

@@ -1,5 +1,7 @@
 //! Retry logic with exponential backoff
 
+use std::time::{Duration, SystemTime};
+
 use rand::Rng;
 
 /// Calculate the next retry time using exponential backoff with jitter
@@ -14,13 +16,13 @@ use rand::Rng;
 /// * `jitter_factor` - Jitter factor (e.g., 0.2 for ±20%)
 ///
 /// # Returns
-/// Unix timestamp when the next retry should occur
+/// `SystemTime` when the next retry should occur
 pub fn calculate_next_retry_time(
     attempt: u32,
     base_delay_secs: u64,
     max_delay_secs: u64,
     jitter_factor: f64,
-) -> u64 {
+) -> SystemTime {
     // Calculate exponential backoff: base * 2^(attempts - 1)
     // Use saturating operations to prevent overflow
     let exponent = attempt.saturating_sub(1);
@@ -49,12 +51,7 @@ pub fn calculate_next_retry_time(
     };
 
     // Calculate next retry timestamp
-    let current_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    current_time.saturating_add(jittered_delay)
+    SystemTime::now() + Duration::from_secs(jittered_delay)
 }
 
 #[cfg(test)]
@@ -71,39 +68,27 @@ mod tests {
         let jitter_factor = 0.0; // No jitter for testing
 
         // Attempt 1: 60 * 2^0 = 60 seconds
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now();
         let next_retry = calculate_next_retry_time(1, base_delay, max_delay, jitter_factor);
-        let delay = next_retry.saturating_sub(current_time);
+        let delay = next_retry.duration_since(now).unwrap_or_default().as_secs();
         assert_eq!(delay, 60, "First retry should be 60 seconds");
 
         // Attempt 2: 60 * 2^1 = 120 seconds
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now();
         let next_retry = calculate_next_retry_time(2, base_delay, max_delay, jitter_factor);
-        let delay = next_retry.saturating_sub(current_time);
+        let delay = next_retry.duration_since(now).unwrap_or_default().as_secs();
         assert_eq!(delay, 120, "Second retry should be 120 seconds");
 
         // Attempt 3: 60 * 2^2 = 240 seconds
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now();
         let next_retry = calculate_next_retry_time(3, base_delay, max_delay, jitter_factor);
-        let delay = next_retry.saturating_sub(current_time);
+        let delay = next_retry.duration_since(now).unwrap_or_default().as_secs();
         assert_eq!(delay, 240, "Third retry should be 240 seconds");
 
         // Attempt 20: Should be capped at max_delay (86400 seconds = 24 hours)
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now();
         let next_retry = calculate_next_retry_time(20, base_delay, max_delay, jitter_factor);
-        let delay = next_retry.saturating_sub(current_time);
+        let delay = next_retry.duration_since(now).unwrap_or_default().as_secs();
         assert_eq!(
             delay, max_delay,
             "High attempt number should be capped at max_delay"
@@ -123,12 +108,9 @@ mod tests {
         let jitter_factor = 0.2; // ±20%
 
         // Attempt 2: Expected = 120 seconds, with ±20% jitter = 96-144 seconds
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now();
         let next_retry = calculate_next_retry_time(2, base_delay, max_delay, jitter_factor);
-        let delay = next_retry.saturating_sub(current_time);
+        let delay = next_retry.duration_since(now).unwrap_or_default().as_secs();
 
         // Check that delay is within jitter range
         let expected = 120;
