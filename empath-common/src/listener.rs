@@ -1,9 +1,8 @@
 use std::net::SocketAddr;
 
 use empath_tracing::traced;
-use futures_util::future::join_all;
 use serde::Deserialize;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, task::JoinSet};
 
 use crate::{
     Signal,
@@ -65,7 +64,7 @@ impl<Proto: Protocol> Listener<Proto> {
             self.args
         );
 
-        let mut sessions = Vec::default();
+        let mut sessions = JoinSet::new();
         let (address, port) = (self.socket.ip(), self.socket.port());
         let listener =
             TcpListener::bind(self.socket)
@@ -81,9 +80,31 @@ impl<Proto: Protocol> Listener<Proto> {
             tokio::select! {
                 sig = shutdown_signal.recv() => {
                     if matches!(sig, Ok(Signal::Shutdown)) {
-                        internal!(level = INFO, "{} Listener {}:{} Received Shutdown signal, finishing sessions ...", Proto::ty(), address, port);
-                        join_all(sessions).await;
+                        internal!(level = INFO, "{} Listener {}:{} Received Shutdown signal, aborting {} active sessions ...", Proto::ty(), address, port, sessions.len());
+                        sessions.abort_all();
                         return Ok(());
+                    }
+                }
+
+                // Handle completed sessions (including panics)
+                Some(result) = sessions.join_next() => {
+                    match result {
+                        Ok(()) => {
+                            // Session completed normally
+                            tracing::debug!("Session completed on {}", self.socket);
+                        }
+                        Err(e) if e.is_cancelled() => {
+                            // Session was cancelled (shutdown)
+                            tracing::debug!("Session cancelled on {}", self.socket);
+                        }
+                        Err(e) if e.is_panic() => {
+                            // Session panicked - log error but continue serving
+                            internal!(level = ERROR, "Session panicked on {}: {:?}", self.socket, e);
+                        }
+                        Err(e) => {
+                            // Other join errors
+                            internal!(level = ERROR, "Session join error on {}: {e}", self.socket);
+                        }
                     }
                 }
 
@@ -94,11 +115,11 @@ impl<Proto: Protocol> Listener<Proto> {
                     let handler = self.handler.handle(stream, address, self.context.clone(), self.args.clone());
 
                     let signal = shutdown.resubscribe();
-                    sessions.push(tokio::spawn(async move {
+                    sessions.spawn(async move {
                         if let Err(err) = handler.run(signal.resubscribe()).await {
                             internal!(level = ERROR, "Error: {err}");
                         }
-                    }));
+                    });
                 }
             }
         }
