@@ -1,5 +1,6 @@
 //! Delivery queue management
 
+pub mod cleanup;
 pub mod retry;
 
 use std::{sync::Arc, time::SystemTime};

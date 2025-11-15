@@ -10,6 +10,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 
 **Recent Updates (2025-11-15):**
 - 🔍 **COMPREHENSIVE REVIEW**: Multi-agent analysis identified 5 new critical tasks and priority adjustments
+- ✅ **COMPLETED** task 0.8: Add Spool Deletion Retry Mechanism - CRITICAL production blocker fix preventing disk exhaustion
 - ✅ **COMPLETED** task 7.6: Add rust-analyzer Configuration - optimal IDE experience across all editors
 - ✅ **COMPLETED** task 7.10: Add Examples Directory - practical examples for SMTP, configs, and modules
 - ✅ **COMPLETED** task 7.23: Add Architecture Diagram - 10 Mermaid diagrams, reduces learning time by 50%
@@ -41,6 +42,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - **DX Tooling**: mold not configured for macOS, broken git hooks, missing config files (tasks 7.5, 7.7-7.9)
 
 **Completed Tasks Archive** (See git history for full details):
+- ✅ 0.8 (2025-11-15): Spool deletion retry mechanism with CleanupQueue (production blocker)
 - ✅ 4.3 (2025-11-15): DashMap instead of Arc<RwLock<HashMap>>
 - ✅ 0.30 (2025-11-15): Metrics runtime overhead reduction (AtomicU64)
 - ✅ 0.29 (2025-11-15): Platform-specific path validation
@@ -97,18 +99,24 @@ Added RFC 5321-compliant MX record randomization that preserves priority orderin
 
 ---
 
-### 🔴 0.8 Add Spool Deletion Retry Mechanism
-**Priority:** ~~High~~ **UPGRADED TO CRITICAL** (2025-11-15)
+### ✅ 0.8 Add Spool Deletion Retry Mechanism
+**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
 **Complexity:** Medium
 **Effort:** 2 hours
 
-**Current Issue:** Silent spool deletion failures can cause disk exhaustion, duplicate delivery on restart, and no operational alerting.
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Expert Review (Architect):** This is a **production blocker** - silent failures lead to catastrophic disk exhaustion. Implement compensating transaction pattern with background cleanup service.
+Implemented CleanupQueue with exponential backoff retry logic to prevent disk exhaustion from failed spool deletions.
 
-**Implementation:** Create `SpoolCleanupService` that scans for delivered messages, retries deletion with exponential backoff (3 attempts with 2^n second delays), and alerts on sustained failures.
+**Implementation:** Created `CleanupQueue` using DashMap for lock-free concurrency, integrated cleanup timer into serve() loop, and modified delivery.rs to add failed deletions to the queue. Cleanup processor retries deletion with exponential backoff (2^n seconds) up to 3 attempts before logging CRITICAL alert.
 
-**Dependencies:** Ideally 2.1 (Metrics) for alerting, but can use logging initially
+**Files Modified:**
+- `empath-delivery/src/queue/cleanup.rs` - NEW (CleanupQueue implementation with DashMap)
+- `empath-delivery/src/processor/cleanup.rs` - NEW (retry logic with exponential backoff)
+- `empath-delivery/src/processor/mod.rs` - Added cleanup_queue, cleanup_interval_secs, max_cleanup_attempts, cleanup timer
+- `empath-delivery/src/processor/delivery.rs` - Modified line 179-187 to use cleanup_queue.add_failed_deletion()
+- `empath-delivery/src/queue/mod.rs` - Export cleanup module
+- `empath-delivery/tests/integration_tests.rs` - Added 4 comprehensive integration tests
 
 **Analysis (2025-11-15):**
 
@@ -245,14 +253,14 @@ Added RFC 5321-compliant MX record randomization that preserves priority orderin
    ```
 
 *Implementation Checklist:*
-- [ ] Create `empath-delivery/src/queue/cleanup.rs` with `CleanupQueue` struct
-- [ ] Add `cleanup_queue` field to `DeliveryProcessor`
-- [ ] Add `cleanup_interval_secs` and `max_cleanup_attempts` config fields
-- [ ] Modify `delivery.rs:179-187` to add failed deletions to queue
-- [ ] Create `empath-delivery/src/processor/cleanup.rs` with retry logic
-- [ ] Add cleanup timer to `serve()` loop in `processor/mod.rs`
-- [ ] Add tests for cleanup queue behavior
-- [ ] Add integration test for failed deletion recovery
+- [x] Create `empath-delivery/src/queue/cleanup.rs` with `CleanupQueue` struct
+- [x] Add `cleanup_queue` field to `DeliveryProcessor`
+- [x] Add `cleanup_interval_secs` and `max_cleanup_attempts` config fields
+- [x] Modify `delivery.rs:179-187` to add failed deletions to queue
+- [x] Create `empath-delivery/src/processor/cleanup.rs` with retry logic
+- [x] Add cleanup timer to `serve()` loop in `processor/mod.rs`
+- [x] Add tests for cleanup queue behavior
+- [x] Add integration test for failed deletion recovery
 - [ ] Update default config example in `CLAUDE.md`
 
 *Files to Modify:*

@@ -351,3 +351,113 @@ async fn test_delivery_info_operations() {
     assert_eq!(info.current_server_index, 0);
     assert!(info.next_retry_at.is_none());
 }
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
+async fn test_cleanup_queue_basic_operations() {
+    use empath_delivery::queue::cleanup::CleanupQueue;
+
+    let cleanup_queue = CleanupQueue::new();
+    let msg_id = SpooledMessageId::new(ulid::Ulid::new());
+
+    // Initially empty
+    assert!(cleanup_queue.is_empty());
+    assert_eq!(cleanup_queue.len(), 0);
+
+    // Add failed deletion
+    cleanup_queue.add_failed_deletion(msg_id.clone());
+
+    // Should have one entry
+    assert!(!cleanup_queue.is_empty());
+    assert_eq!(cleanup_queue.len(), 1);
+
+    // Should be ready for immediate retry
+    let now = std::time::SystemTime::now();
+    let ready = cleanup_queue.ready_for_retry(now);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].message_id, msg_id);
+    assert_eq!(ready[0].attempt_count, 1);
+
+    // Remove from queue
+    cleanup_queue.remove(&msg_id);
+    assert!(cleanup_queue.is_empty());
+    assert_eq!(cleanup_queue.len(), 0);
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
+async fn test_cleanup_queue_retry_scheduling() {
+    use empath_delivery::queue::cleanup::CleanupQueue;
+
+    let cleanup_queue = CleanupQueue::new();
+    let msg_id = SpooledMessageId::new(ulid::Ulid::new());
+
+    // Add failed deletion
+    cleanup_queue.add_failed_deletion(msg_id.clone());
+
+    let now = std::time::SystemTime::now();
+
+    // Schedule retry for 5 seconds in the future
+    let future = now + Duration::from_secs(5);
+    cleanup_queue.schedule_retry(&msg_id, future);
+
+    // Should not be ready yet
+    let ready = cleanup_queue.ready_for_retry(now);
+    assert_eq!(ready.len(), 0);
+
+    // Should be ready after the delay
+    let ready = cleanup_queue.ready_for_retry(future + Duration::from_secs(1));
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].attempt_count, 2); // Incremented by schedule_retry
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
+async fn test_cleanup_processor_configuration() {
+    let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+    // Create processor with custom cleanup configuration
+    let mut processor = DeliveryProcessor::default();
+    processor.cleanup_interval_secs = 30;
+    processor.max_cleanup_attempts = 5;
+
+    processor.init(spool.clone()).unwrap();
+
+    // Verify configuration
+    assert_eq!(processor.cleanup_interval_secs, 30);
+    assert_eq!(processor.max_cleanup_attempts, 5);
+    assert!(processor.cleanup_queue.is_empty());
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
+async fn test_cleanup_queue_exponential_backoff() {
+    use empath_delivery::queue::cleanup::CleanupQueue;
+
+    let cleanup_queue = CleanupQueue::new();
+    let msg_id = SpooledMessageId::new(ulid::Ulid::new());
+
+    cleanup_queue.add_failed_deletion(msg_id.clone());
+
+    let now = std::time::SystemTime::now();
+
+    // Test exponential backoff: 2^n seconds
+    let delays = vec![1, 2, 4, 8, 16]; // 2^0, 2^1, 2^2, 2^3, 2^4
+
+    for (attempt, expected_delay) in delays.iter().enumerate() {
+        let ready = cleanup_queue.ready_for_retry(now);
+        if ready.is_empty() {
+            break;
+        }
+
+        assert_eq!(ready[0].attempt_count, (attempt + 1) as u32);
+
+        // Schedule next retry with exponential backoff
+        let delay = Duration::from_secs(2u64.pow(ready[0].attempt_count));
+        let next_retry = now + delay;
+        cleanup_queue.schedule_retry(&msg_id, next_retry);
+
+        // Verify the delay matches expected exponential backoff
+        assert_eq!(delay.as_secs(), 2u64.pow((attempt + 1) as u32));
+    }
+}

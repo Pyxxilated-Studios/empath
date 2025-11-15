@@ -1,5 +1,6 @@
 //! Delivery processor orchestration
 
+pub mod cleanup;
 pub mod delivery;
 pub mod process;
 pub mod scan;
@@ -40,6 +41,14 @@ const fn default_max_retry_delay() -> u64 {
 
 const fn default_retry_jitter_factor() -> f64 {
     0.2 // ±20%
+}
+
+const fn default_cleanup_interval() -> u64 {
+    60 // 1 minute
+}
+
+const fn default_max_cleanup_attempts() -> u32 {
+    3 // 3 attempts before giving up
 }
 
 /// Processor for handling delivery of messages from the spool
@@ -121,6 +130,24 @@ pub struct DeliveryProcessor {
     #[serde(default)]
     pub smtp_timeouts: SmtpTimeouts,
 
+    /// How often to process the cleanup queue for failed deletions (in seconds)
+    ///
+    /// When spool deletion fails after successful delivery, messages are added
+    /// to the cleanup queue and retried with exponential backoff.
+    ///
+    /// Default: 60 seconds
+    #[serde(default = "default_cleanup_interval")]
+    pub cleanup_interval_secs: u64,
+
+    /// Maximum number of cleanup attempts before giving up
+    ///
+    /// After this many failed deletion attempts, a CRITICAL alert is logged
+    /// and the message is removed from the cleanup queue (manual intervention required).
+    ///
+    /// Default: 3 attempts
+    #[serde(default = "default_max_cleanup_attempts")]
+    pub max_cleanup_attempts: u32,
+
     /// The spool backing store to read messages from (initialized in `init()`)
     #[serde(skip)]
     pub(crate) spool: Option<Arc<dyn empath_spool::BackingStore>>,
@@ -132,6 +159,10 @@ pub struct DeliveryProcessor {
     /// DNS resolver for MX record lookups (initialized in `init()`)
     #[serde(skip)]
     pub(crate) dns_resolver: Option<DnsResolver>,
+
+    /// Cleanup queue for failed spool deletions (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) cleanup_queue: crate::queue::cleanup::CleanupQueue,
 }
 
 impl Default for DeliveryProcessor {
@@ -148,9 +179,12 @@ impl Default for DeliveryProcessor {
             dns: DnsConfig::default(),
             domains: DomainConfigRegistry::default(),
             smtp_timeouts: SmtpTimeouts::default(),
+            cleanup_interval_secs: default_cleanup_interval(),
+            max_cleanup_attempts: default_max_cleanup_attempts(),
             spool: None,
             queue: DeliveryQueue::new(),
             dns_resolver: None,
+            cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
         }
     }
 }
@@ -236,13 +270,16 @@ impl DeliveryProcessor {
 
         let scan_interval = Duration::from_secs(self.scan_interval_secs);
         let process_interval = Duration::from_secs(self.process_interval_secs);
+        let cleanup_interval = Duration::from_secs(self.cleanup_interval_secs);
 
         let mut scan_timer = tokio::time::interval(scan_interval);
         let mut process_timer = tokio::time::interval(process_interval);
+        let mut cleanup_timer = tokio::time::interval(cleanup_interval);
 
         // Skip the first tick to avoid immediate execution
         scan_timer.tick().await;
         process_timer.tick().await;
+        cleanup_timer.tick().await;
 
         // Track if we're currently processing a delivery
         let processing = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -279,6 +316,19 @@ impl DeliveryProcessor {
 
                     // Mark that we're done processing
                     processing.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                _ = cleanup_timer.tick() => {
+                    match cleanup::process_cleanup_queue(self, spool).await {
+                        Ok(count) if count > 0 => {
+                            empath_common::tracing::info!("Cleanup queue processed, {count} messages cleaned up");
+                        }
+                        Ok(_) => {
+                            empath_common::tracing::debug!("Cleanup queue processed, no messages ready for retry");
+                        }
+                        Err(e) => {
+                            empath_common::tracing::error!("Error processing cleanup queue: {e}");
+                        }
+                    }
                 }
                 sig = shutdown.recv() => {
                     match sig {
