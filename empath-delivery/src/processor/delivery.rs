@@ -190,6 +190,10 @@ pub async fn prepare_message(
                 // The message was delivered successfully
             }
 
+            // Remove from in-memory queue to keep queue synchronized with spool
+            // This ensures `queue list` and `queue stats` reflect the actual state
+            processor.queue.remove(message_id);
+
             // Dispatch DeliverySuccess event to modules
             context.delivery = Some(DeliveryContext {
                 message_id: message_id.to_string(),
