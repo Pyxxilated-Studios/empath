@@ -39,6 +39,7 @@ pub struct SmtpMetrics {
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     connections_total_count: Arc<AtomicU64>,
     messages_received_count: Arc<AtomicU64>,
+    connections_failed_count: Arc<AtomicU64>,
     active_count: AtomicU64,
 }
 
@@ -54,6 +55,7 @@ impl SmtpMetrics {
         // Create atomic counters for high-frequency metrics
         let connections_total_ref = Arc::new(AtomicU64::new(0));
         let messages_received_ref = Arc::new(AtomicU64::new(0));
+        let connections_failed_ref = Arc::new(AtomicU64::new(0));
 
         // Observable counter for total connections (reads from atomic)
         // Meter keeps this alive internally via callback
@@ -102,6 +104,30 @@ impl SmtpMetrics {
             .with_description("Distribution of received message sizes")
             .build();
 
+        // Observable gauge for SMTP error rate (failed / total connections)
+        // Pre-calculated for easier alerting
+        let total_for_error_rate = connections_total_ref.clone();
+        let failed_for_error_rate = connections_failed_ref.clone();
+        meter
+            .f64_observable_gauge("empath.smtp.connection.error_rate")
+            .with_description("SMTP connection error rate (failed / total connections, 0-1)")
+            .with_callback(move |observer| {
+                let total = total_for_error_rate.load(Ordering::Relaxed);
+                let failed = failed_for_error_rate.load(Ordering::Relaxed);
+
+                let error_rate = if total > 0 {
+                    #[allow(clippy::cast_precision_loss)]
+                    {
+                        failed as f64 / total as f64
+                    }
+                } else {
+                    0.0
+                };
+
+                observer.observe(error_rate, &[]);
+            })
+            .build();
+
         Ok(Self {
             connections_active,
             errors_total,
@@ -110,6 +136,7 @@ impl SmtpMetrics {
             message_size_bytes,
             connections_total_count: connections_total_ref,
             messages_received_count: messages_received_ref,
+            connections_failed_count: connections_failed_ref,
             active_count: AtomicU64::new(0),
         })
     }
@@ -152,6 +179,15 @@ impl SmtpMetrics {
     #[must_use]
     pub fn active_connections(&self) -> u64 {
         self.active_count.load(Ordering::Relaxed)
+    }
+
+    /// Record a failed SMTP connection
+    ///
+    /// This should be called when a connection fails (e.g., protocol error,
+    /// authentication failure, etc.) to track the connection error rate.
+    pub fn record_connection_failed(&self) {
+        // Fast atomic increment for failed connection tracking
+        self.connections_failed_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 

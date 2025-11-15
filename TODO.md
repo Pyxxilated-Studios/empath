@@ -630,30 +630,45 @@ Implemented queue age metrics with histogram and oldest message gauge for SLO tr
 
 ---
 
-### 🟡 0.38 Add Error Rate SLI Metrics
-**Priority:** High **NEW** (2025-11-15)
+### ✅ 0.38 Add Error Rate SLI Metrics
+**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
 **Complexity:** Simple
 **Effort:** 3 hours
 
-**Expert Review (OTel Expert):** Error rates are primary SLI (Service Level Indicator) but must be calculated in PromQL. Should have pre-calculated metrics.
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**What's Missing:**
-```rust
-// Pre-calculated error rates
-smtp_error_rate: Gauge<f64>,        // failed / total connections (0-1)
-delivery_error_rate: Gauge<f64>,    // failed / total attempts (0-1)
-delivery_success_rate: Gauge<f64>,  // 1 - error_rate
-```
+Added pre-calculated error rate and success rate observable gauges for easier alerting without complex PromQL queries.
 
-**Implementation:**
-1. Background task updates gauges every 10 seconds
-2. Calculate from existing AtomicU64 counters (no additional overhead)
-3. Enable alerting on "error rate > 5%" vs raw failure counts
+**Implementation:** Added observable gauges that calculate error rates on-demand from existing AtomicU64 counters. No background task required - metrics are computed when Prometheus/OTLP scrapes them. Zero additional runtime overhead beyond the atomic counter reads.
 
-**Benefits:**
-- Simpler alerting rules (threshold on 0-1 gauge vs rate calculations)
-- Reduced query load on Prometheus
-- Instant visibility into service health
+**Files Modified:**
+- `empath-metrics/src/delivery.rs` - Added delivery error_rate and success_rate observable gauges
+- `empath-metrics/src/smtp.rs` - Added SMTP connection error_rate gauge and record_connection_failed() method
+- `empath-metrics/tests/metrics_integration.rs` - Added 4 tests for error rate calculations
+
+**Metrics Added:**
+- `empath.delivery.error_rate` (f64 gauge) - Failed / total attempts (0-1)
+- `empath.delivery.success_rate` (f64 gauge) - Delivered / total attempts (0-1)
+- `empath.smtp.connection.error_rate` (f64 gauge) - Failed / total connections (0-1)
+
+**Implementation Approach:**
+- Observable gauges with callbacks that compute rates from atomic counters
+- Calculations: error_rate = failed / (delivered + failed + retrying) for delivery
+- Calculations: error_rate = failed / total for SMTP connections
+- Zero-division protection: returns 0.0 when total = 0
+- No background task needed - computed on scrape
+
+**Benefits Achieved:**
+- ✅ Simpler alerting: "error_rate > 0.05" vs complex rate() PromQL
+- ✅ Zero runtime overhead: only calculated when scraped
+- ✅ Instant visibility: gauge shows current error rate
+- ✅ Reduced Prometheus query load: pre-calculated values
+
+**Tests Added:**
+- test_delivery_error_rate_calculation - Verifies API with mixed outcomes
+- test_delivery_success_rate_with_zero_attempts - Zero-division protection
+- test_smtp_connection_error_rate - SMTP error rate tracking
+- test_smtp_error_rate_with_zero_connections - Zero-division protection
 
 ---
 
