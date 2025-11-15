@@ -56,17 +56,11 @@ pub(super) fn emit(event: Event, context: &Context) {
                 // Calculate duration from queued_at to now
                 #[allow(
                     clippy::cast_precision_loss,
-                    reason = "u64 seconds to f64 is acceptable for time duration metrics"
+                    reason = "Duration as f64 seconds is acceptable for time duration metrics"
                 )]
-                let duration_secs = if delivery.queued_at > 0 {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    (now.saturating_sub(delivery.queued_at)) as f64
-                } else {
-                    0.0
-                };
+                let duration_secs = std::time::SystemTime::now()
+                    .duration_since(delivery.queued_at)
+                    .map_or(0.0, |d| d.as_secs_f64());
 
                 let retry_count = delivery.attempts.unwrap_or(0).into();
                 metrics.delivery.record_delivery_success(

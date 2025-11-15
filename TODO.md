@@ -10,6 +10,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 
 **Recent Updates (2025-11-15):**
 - 🔍 **COMPREHENSIVE REVIEW**: Multi-agent analysis identified 5 new critical tasks and priority adjustments
+- ✅ **COMPLETED** task 4.6: Replace u64 timestamps with SystemTime
 - ✅ **COMPLETED** task 7.2: Improve README.md with comprehensive documentation
 - ✅ **COMPLETED** task 4.1: Replace manual Pin<Box<dyn Future>> with async_trait
 - ✅ **COMPLETED** task 4.3: DashMap for lock-free concurrency (c3efd33)
@@ -828,49 +829,35 @@ Use `JoinSet` for structured concurrency and proper task cleanup.
 
 ---
 
-### 🟡 4.6 Replace u64 Timestamps with SystemTime
-**Priority:** Medium (Correctness)
-**Complexity:** Simple
-**Effort:** 1-2 hours
+### ✅ 4.6 Replace u64 Timestamps with SystemTime
+**Priority:** ~~Medium (Correctness)~~ **COMPLETED**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Expert Review (Rust Expert):** Type confusion risk - u64 could be seconds, milliseconds, or arbitrary numbers. No compile-time guarantee that values are actually timestamps.
+Replaced raw `u64` Unix epoch timestamps with `SystemTime` for better type safety and clarity.
 
-**Current Issues:**
-- `DeliveryAttempt::timestamp: u64`
-- `DeliveryContext::queued_at: u64`
-- `DeliveryContext::next_retry_at: Option<u64>`
-- Repeated `SystemTime::now().duration_since(UNIX_EPOCH).as_secs()` scattered throughout
-- Difficult to handle time arithmetic safely
+**Changes:**
+- Updated `DeliveryAttempt.timestamp` from `u64` to `SystemTime` in `empath-common/src/context.rs`
+- Updated `DeliveryContext.queued_at` and `next_retry_at` to use `SystemTime`
+- Updated `DeliveryInfo` in `empath-delivery/src/types.rs` to use `SystemTime`
+- Changed `calculate_next_retry_time()` to return `SystemTime` instead of `u64`
+- Updated all time comparisons to use `duration_since()` instead of epoch arithmetic
+- Added `default_system_time()` helper for serde defaults
+- Updated control handler to convert `SystemTime` to `u64` for protocol compatibility
 
-**Implementation:**
-```rust
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(transparent)]
-pub struct Timestamp(SystemTime);
+**Files Modified:**
+- `empath-common/src/context.rs` (DeliveryAttempt, DeliveryContext)
+- `empath-delivery/src/types.rs` (DeliveryInfo)
+- `empath-delivery/src/queue/mod.rs` (set_next_retry_at signature)
+- `empath-delivery/src/queue/retry.rs` (calculate_next_retry_time)
+- `empath-delivery/src/processor/process.rs` (time comparisons)
+- `empath-delivery/src/processor/delivery.rs` (timestamp recording)
+- `empath-ffi/src/modules/metrics.rs` (duration calculations)
+- `empath/src/control_handler.rs` (SystemTime to u64 conversions)
+- `empath-delivery/tests/integration_tests.rs` (test updates)
 
-impl Timestamp {
-    pub fn now() -> Self {
-        Self(SystemTime::now())
-    }
+**Note:** This is a **breaking change** - serialization format changed. Existing spooled messages with `u64` timestamps will not deserialize.
 
-    pub fn as_secs_since_epoch(&self) -> u64 {
-        self.0.duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
-
-    pub fn add_secs(self, secs: u64) -> Self {
-        Self(self.0 + Duration::from_secs(secs))
-    }
-}
-```
-
-**Benefits:**
-- Type safety while maintaining serialization compatibility
-- Self-documenting code
-- Safe time arithmetic
-
-Use `SystemTime` instead of raw `u64` for type safety and clarity.
+**Results:** All 91 workspace tests passing
 
 ---
 
@@ -1701,10 +1688,10 @@ changelog:
 
 ## Summary
 
-**Current Status (Updated 2025-11-15):**
-- ✅ 20 tasks completed (including 6 today)
+**Current Status:**
+- ✅ 21 tasks completed (including 7 today)
 - ❌ 1 task rejected (architectural decision)
-- 📝 55 tasks pending
+- 📝 54 tasks pending
 
 **Priority Distribution:**
 - 🔴 **Critical**: 11 tasks (0.8, 0.25, 0.27, 0.28, 0.35, 0.36, 2.4, 4.2, 7.2, 7.16, 7.17)
