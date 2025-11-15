@@ -10,7 +10,7 @@ mod dns;
 mod domain_config;
 mod error;
 mod processor;
-mod queue;
+pub mod queue;
 mod service;
 mod smtp_transaction;
 mod types;

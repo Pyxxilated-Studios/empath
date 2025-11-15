@@ -26,7 +26,7 @@ pub struct CleanupEntry {
 #[derive(Debug, Clone, Default)]
 pub struct CleanupQueue {
     /// Map of message IDs to cleanup entries (lock-free concurrent access)
-    entries: DashMap<SpooledMessageId, CleanupEntry>,
+    pub(crate) entries: DashMap<SpooledMessageId, CleanupEntry>,
 }
 
 impl CleanupQueue {
@@ -48,7 +48,7 @@ impl CleanupQueue {
             message_id.clone(),
             CleanupEntry {
                 message_id,
-                attempt_count: 1, // First failure
+                attempt_count: 1,   // First failure
                 next_retry_at: now, // Retry immediately
                 first_failure: now,
             },
@@ -89,7 +89,6 @@ impl CleanupQueue {
         self.entries.len()
     }
 
-    /// Check if the cleanup queue is empty
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -98,8 +97,9 @@ impl CleanupQueue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_add_failed_deletion() {
@@ -151,7 +151,7 @@ mod tests {
 
         queue.remove(&message_id);
         assert_eq!(queue.len(), 0);
-        assert!(queue.is_empty());
+        assert!(queue.entries.is_empty());
     }
 
     #[test]

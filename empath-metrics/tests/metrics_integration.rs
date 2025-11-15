@@ -1,9 +1,9 @@
 //! Integration tests for metrics collection
 //!
 //! Verifies that metric counters accurately reflect actual events, especially
-//! after the AtomicU64 optimization (task 0.30) which reduced overhead by 90%.
+//! after the `AtomicU64` optimization (task 0.30) which reduced overhead by 90%.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use empath_metrics::{DeliveryMetrics, DnsMetrics, SmtpMetrics};
 
@@ -139,12 +139,12 @@ fn test_dns_cache_metrics() {
 
     // Record cache hits
     for _ in 0..50 {
-        metrics.record_cache_hit();
+        metrics.record_cache_hit("test");
     }
 
     // Record cache misses
     for _ in 0..10 {
-        metrics.record_cache_miss();
+        metrics.record_cache_miss("test");
     }
 
     // Record cache evictions
@@ -153,14 +153,22 @@ fn test_dns_cache_metrics() {
     }
 
     // Verify cache size tracking
-    assert_eq!(metrics.cache_size(), 0, "Initial cache size should be 0");
+    assert_eq!(
+        metrics.get_cache_size(),
+        0,
+        "Initial cache size should be 0"
+    );
 
     metrics.set_cache_size(100);
-    assert_eq!(metrics.cache_size(), 100, "Cache size should be updated");
+    assert_eq!(
+        metrics.get_cache_size(),
+        100,
+        "Cache size should be updated"
+    );
 
     metrics.set_cache_size(95);
     assert_eq!(
-        metrics.cache_size(),
+        metrics.get_cache_size(),
         95,
         "Cache size should decrease after evictions"
     );
@@ -171,13 +179,13 @@ fn test_dns_lookup_duration() {
     let metrics = DnsMetrics::new().expect("Failed to create DNS metrics");
 
     // Record successful lookups with durations
-    metrics.record_lookup_success("example.com", 0.050);
-    metrics.record_lookup_success("test.com", 0.025);
-    metrics.record_lookup_success("mail.example.com", 0.100);
+    metrics.record_lookup("example.com", 0.050);
+    metrics.record_lookup("test.com", 0.025);
+    metrics.record_lookup("mail.example.com", 0.100);
 
     // Record failed lookups
-    metrics.record_lookup_failure("nonexistent.invalid");
-    metrics.record_lookup_failure("error.test");
+    metrics.record_error("nonexistent.invalid");
+    metrics.record_error("error.test");
 
     // Durations are recorded in histograms internally
 }
@@ -264,13 +272,13 @@ fn test_dns_cache_size_updates() {
     // Simulate cache growth
     for i in 1..=50 {
         metrics.set_cache_size(i);
-        assert_eq!(metrics.cache_size(), i);
+        assert_eq!(metrics.get_cache_size(), i);
     }
 
     // Simulate cache evictions
     for i in (0..50).rev().step_by(5) {
         metrics.set_cache_size(i);
-        assert_eq!(metrics.cache_size(), i);
+        assert_eq!(metrics.get_cache_size(), i);
     }
 }
 
@@ -378,7 +386,7 @@ fn test_delivery_error_rate_calculation() {
 
 #[test]
 fn test_delivery_success_rate_with_zero_attempts() {
-    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let _metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
 
     // With zero attempts, success rate should be 0.0 (not NaN or panic)
     // Observable gauge will calculate this when scraped
@@ -405,7 +413,7 @@ fn test_smtp_connection_error_rate() {
 
 #[test]
 fn test_smtp_error_rate_with_zero_connections() {
-    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let _metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
 
     // With zero connections, error rate should be 0.0 (not NaN or panic)
     // Observable gauge will calculate this when scraped

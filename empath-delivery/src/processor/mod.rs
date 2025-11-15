@@ -162,7 +162,7 @@ pub struct DeliveryProcessor {
 
     /// Cleanup queue for failed spool deletions (initialized in `init()`)
     #[serde(skip)]
-    pub(crate) cleanup_queue: crate::queue::cleanup::CleanupQueue,
+    pub cleanup_queue: crate::queue::cleanup::CleanupQueue,
 
     /// Delivery metrics collector (initialized in `init()`)
     #[serde(skip)]

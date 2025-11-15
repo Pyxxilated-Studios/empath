@@ -183,7 +183,9 @@ pub async fn prepare_message(
                     "Failed to delete message from spool after successful delivery - adding to cleanup queue for retry"
                 );
                 // Add to cleanup queue for retry with exponential backoff
-                processor.cleanup_queue.add_failed_deletion(message_id.clone());
+                processor
+                    .cleanup_queue
+                    .add_failed_deletion(message_id.clone());
                 // Don't fail the delivery just because we couldn't delete the spool file
                 // The message was delivered successfully
             }

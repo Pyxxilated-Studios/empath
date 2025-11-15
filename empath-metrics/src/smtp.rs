@@ -187,7 +187,8 @@ impl SmtpMetrics {
     /// authentication failure, etc.) to track the connection error rate.
     pub fn record_connection_failed(&self) {
         // Fast atomic increment for failed connection tracking
-        self.connections_failed_count.fetch_add(1, Ordering::Relaxed);
+        self.connections_failed_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 

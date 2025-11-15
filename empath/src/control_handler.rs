@@ -270,9 +270,7 @@ impl EmpathControlHandler {
             QueueCommand::List { status_filter } => {
                 self.handle_list_command(spool, status_filter).await
             }
-            QueueCommand::View { message_id } => {
-                self.handle_view_command(spool, message_id).await
-            }
+            QueueCommand::View { message_id } => self.handle_view_command(spool, message_id).await,
             QueueCommand::Retry { message_id, force } => {
                 self.handle_retry_command(&message_id, force)
             }
@@ -440,10 +438,12 @@ impl EmpathControlHandler {
         }
 
         // Reset status to pending
-        self.delivery.update_status(&msg_id, empath_common::DeliveryStatus::Pending);
+        self.delivery
+            .update_status(&msg_id, empath_common::DeliveryStatus::Pending);
         self.delivery.reset_server_index(&msg_id);
         // Set next_retry to now for immediate retry
-        self.delivery.set_next_retry_at(&msg_id, std::time::SystemTime::UNIX_EPOCH);
+        self.delivery
+            .set_next_retry_at(&msg_id, std::time::SystemTime::UNIX_EPOCH);
 
         Ok(Response::data(ResponseData::Message(format!(
             "Message {message_id} scheduled for retry"

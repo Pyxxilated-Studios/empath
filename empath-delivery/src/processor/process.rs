@@ -39,7 +39,12 @@ pub async fn process_queue_internal(
     if let Some(metrics) = &processor.metrics {
         let oldest_age_secs = all_messages
             .iter()
-            .filter(|msg| matches!(msg.status, DeliveryStatus::Pending | DeliveryStatus::Retry))
+            .filter(|msg| {
+                matches!(
+                    msg.status,
+                    DeliveryStatus::Pending | DeliveryStatus::Retry { .. }
+                )
+            })
             .filter_map(|msg| now.duration_since(msg.queued_at).ok())
             .map(|duration| duration.as_secs())
             .max()

@@ -2,7 +2,10 @@
 //!
 //! Processes the cleanup queue with exponential backoff retry logic.
 
-use std::{sync::Arc, time::{Duration, SystemTime}};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use empath_spool::BackingStore;
 use empath_tracing::traced;
@@ -105,7 +108,6 @@ pub async fn process_cleanup_queue(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_exponential_backoff() {

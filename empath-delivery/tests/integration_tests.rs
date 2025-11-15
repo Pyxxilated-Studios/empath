@@ -442,15 +442,15 @@ async fn test_cleanup_queue_exponential_backoff() {
     let now = std::time::SystemTime::now();
 
     // Test exponential backoff: 2^n seconds
-    let delays = vec![1, 2, 4, 8, 16]; // 2^0, 2^1, 2^2, 2^3, 2^4
+    let delays = [1, 2, 4, 8, 16]; // 2^0, 2^1, 2^2, 2^3, 2^4
 
-    for (attempt, expected_delay) in delays.iter().enumerate() {
+    for (attempt, _expected_delay) in delays.iter().enumerate() {
         let ready = cleanup_queue.ready_for_retry(now);
         if ready.is_empty() {
             break;
         }
 
-        assert_eq!(ready[0].attempt_count, (attempt + 1) as u32);
+        assert_eq!(ready[0].attempt_count as usize, attempt + 1);
 
         // Schedule next retry with exponential backoff
         let delay = Duration::from_secs(2u64.pow(ready[0].attempt_count));
@@ -458,6 +458,9 @@ async fn test_cleanup_queue_exponential_backoff() {
         cleanup_queue.schedule_retry(&msg_id, next_retry);
 
         // Verify the delay matches expected exponential backoff
-        assert_eq!(delay.as_secs(), 2u64.pow((attempt + 1) as u32));
+        assert_eq!(
+            delay.as_secs(),
+            2u64.pow(u32::try_from(attempt + 1).expect("Invalid u32 value"))
+        );
     }
 }

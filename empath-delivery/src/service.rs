@@ -68,7 +68,11 @@ pub trait DeliveryQueryService: Send + Sync {
     ///
     /// * `message_id` - The ID of the message to update
     /// * `next_retry_at` - The time when the next retry should occur
-    fn set_next_retry_at(&self, message_id: &SpooledMessageId, next_retry_at: std::time::SystemTime);
+    fn set_next_retry_at(
+        &self,
+        message_id: &SpooledMessageId,
+        next_retry_at: std::time::SystemTime,
+    );
 
     /// Reset the mail server index for a message
     ///

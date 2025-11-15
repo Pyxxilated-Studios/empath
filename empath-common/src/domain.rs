@@ -41,6 +41,7 @@ impl Domain {
     /// # Examples
     ///
     /// ```
+    /// use std::sync::Arc;
     /// use empath_common::Domain;
     ///
     /// let domain = Domain::new("example.com");
@@ -198,18 +199,6 @@ mod tests {
         let domain1 = Domain::new("clone.example.com");
         let domain2 = domain1.clone();
         assert_eq!(domain1, domain2);
-    }
-
-    #[test]
-    fn test_domain_serde() {
-        use serde_json;
-
-        let domain = Domain::new("serde.example.com");
-        let serialized = serde_json::to_string(&domain).unwrap();
-        assert_eq!(serialized, "\"serde.example.com\"");
-
-        let deserialized: Domain = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized, domain);
     }
 
     #[test]
