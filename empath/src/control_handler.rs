@@ -49,13 +49,35 @@ impl CommandHandler for EmpathControlHandler {
 impl EmpathControlHandler {
     /// Handle DNS cache management commands
     async fn handle_dns_command(&self, command: DnsCommand) -> empath_control::Result<Response> {
+        // Audit log: Record who executed this command
+        #[cfg(unix)]
+        let uid = unsafe { libc::getuid() };
+        #[cfg(not(unix))]
+        let uid = "N/A";
+
+        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+
+        tracing::event!(
+            tracing::Level::INFO,
+            user = %user,
+            uid = %uid,
+            command = ?command,
+            "Control command: DNS"
+        );
+
         let Some(resolver) = self.delivery.dns_resolver() else {
+            tracing::event!(tracing::Level::WARN, 
+                user = %user,
+                uid = %uid,
+                command = ?command,
+                "DNS command failed: resolver not initialized"
+            );
             return Err(ControlError::ServerError(
                 "DNS resolver not initialized".to_string(),
             ));
         };
 
-        match command {
+        let result = match command {
             DnsCommand::ListCache => {
                 let cache = resolver.list_cache();
 
@@ -117,7 +139,28 @@ impl EmpathControlHandler {
                 let overrides = self.list_mx_overrides();
                 Ok(Response::data(ResponseData::MxOverrides(overrides)))
             }
+        };
+
+        // Audit log: Record command result
+        match &result {
+            Ok(_) => {
+                tracing::event!(tracing::Level::INFO, 
+                    user = %user,
+                    uid = %uid,
+                    "DNS command completed successfully"
+                );
+            }
+            Err(e) => {
+                tracing::event!(tracing::Level::WARN, 
+                    user = %user,
+                    uid = %uid,
+                    error = %e,
+                    "DNS command failed"
+                );
+            }
         }
+
+        result
     }
 
     /// Handle system management commands
@@ -125,7 +168,22 @@ impl EmpathControlHandler {
         &self,
         command: SystemCommand,
     ) -> empath_control::Result<Response> {
-        match command {
+        // Audit log: Record who executed this command
+        #[cfg(unix)]
+        let uid = unsafe { libc::getuid() };
+        #[cfg(not(unix))]
+        let uid = "N/A";
+
+        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+
+        tracing::event!(tracing::Level::INFO, 
+            user = %user,
+            uid = %uid,
+            command = ?command,
+            "Control command: System"
+        );
+
+        let result = match command {
             SystemCommand::Ping => Ok(Response::ok()),
 
             SystemCommand::Status => {
@@ -148,7 +206,28 @@ impl EmpathControlHandler {
 
                 Ok(Response::data(ResponseData::SystemStatus(status)))
             }
+        };
+
+        // Audit log: Record command result
+        match &result {
+            Ok(_) => {
+                tracing::event!(tracing::Level::INFO, 
+                    user = %user,
+                    uid = %uid,
+                    "System command completed successfully"
+                );
+            }
+            Err(e) => {
+                tracing::event!(tracing::Level::WARN, 
+                    user = %user,
+                    uid = %uid,
+                    error = %e,
+                    "System command failed"
+                );
+            }
         }
+
+        result
     }
 
     /// Handle queue management commands
@@ -157,7 +236,28 @@ impl EmpathControlHandler {
         &self,
         command: QueueCommand,
     ) -> empath_control::Result<Response> {
+        // Audit log: Record who executed this command
+        #[cfg(unix)]
+        let uid = unsafe { libc::getuid() };
+        #[cfg(not(unix))]
+        let uid = "N/A";
+
+        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+
+        tracing::event!(tracing::Level::INFO, 
+            user = %user,
+            uid = %uid,
+            command = ?command,
+            "Control command: Queue"
+        );
+
         let Some(spool) = self.delivery.spool() else {
+            tracing::event!(tracing::Level::WARN, 
+                user = %user,
+                uid = %uid,
+                command = ?command,
+                "Queue command failed: spool not initialized"
+            );
             return Err(ControlError::ServerError(
                 "Spool not initialized".to_string(),
             ));
@@ -165,7 +265,7 @@ impl EmpathControlHandler {
 
         let queue = self.delivery.queue();
 
-        match command {
+        let result = match command {
             QueueCommand::List { status_filter } => {
                 // Get all messages from queue
                 let all_info = queue.all_messages().await;
@@ -394,7 +494,28 @@ impl EmpathControlHandler {
 
                 Ok(Response::data(ResponseData::QueueStats(stats)))
             }
+        };
+
+        // Audit log: Record command result
+        match &result {
+            Ok(_) => {
+                tracing::event!(tracing::Level::INFO, 
+                    user = %user,
+                    uid = %uid,
+                    "Queue command completed successfully"
+                );
+            }
+            Err(e) => {
+                tracing::event!(tracing::Level::WARN, 
+                    user = %user,
+                    uid = %uid,
+                    error = %e,
+                    "Queue command failed"
+                );
+            }
         }
+
+        result
     }
 
     /// Update MX override in domain configuration

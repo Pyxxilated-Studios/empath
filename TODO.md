@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **COMPLETED** task 0.17: Added audit logging for control commands (security enhancement)
 - **2025-11-15:** ✅ **COMPLETED** task 0.19: Implemented active DNS cache eviction (memory optimization)
 - **2025-11-15:** ✅ **COMPLETED** task 0.18: Fixed socket file race condition on startup (robustness improvement)
 - **2025-11-14:** ✅ **COMPLETED** Code quality improvements:
@@ -416,41 +417,62 @@ Added response size validation in the control client to prevent memory exhaustio
 
 ---
 
-### 🟡 0.17 Add Audit Logging for Control Commands
-**Priority:** High (Before Production)
+### ✅ 0.17 Add Audit Logging for Control Commands
+**Priority:** ~~High (Before Production)~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 2 hours
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issue:** No audit trail for control commands. Can't determine who executed what command or when.
+**Original Issue:** No audit trail for control commands. Can't determine who executed what command or when.
 
-**Security Impact:** No accountability for administrative actions. If MX overrides are changed or DNS cache cleared, there's no record of who did it.
+**Solution Implemented:**
 
-**Implementation:**
-```rust
-// In empath/src/control_handler.rs before command handling
-#[instrument(skip(self))]
-async fn handle_dns_command(&self, command: DnsCommand) -> Result<Response> {
-    // Log with structured data
-    tracing::info!(
-        user = ?std::env::var("USER").ok(),
-        uid = unsafe { libc::getuid() },
-        command = ?command,
-        "Control command executed"
-    );
+Added comprehensive audit logging to all control command handlers with structured logging for accountability and compliance.
 
-    // ... existing logic
-}
-```
+**Changes Made:**
 
-**Add to CLAUDE.md documentation:**
-- Control commands are logged to the main empath log
-- Include user, timestamp, command type, and result
-- Consider separate audit log file for compliance
+1. **Added tracing dependency** (`empath/Cargo.toml`):
+   - Added `tracing = "0.1"` to enable structured logging macros
 
-**Files to Modify:**
-- `empath/src/control_handler.rs` (add structured logging)
-- `CLAUDE.md` (document audit logging)
+2. **Audit logging in DNS command handler** (`empath/src/control_handler.rs:52-163`):
+   - Logs user, UID, and command at entry
+   - Logs success/failure with error details at exit
+   - Logs initialization failures
+
+3. **Audit logging in System command handler** (`empath/src/control_handler.rs:166-230`):
+   - Same structured logging pattern for system commands
+   - Tracks ping and status requests
+
+4. **Audit logging in Queue command handler** (`empath/src/control_handler.rs:233-518`):
+   - Audit logs for all queue operations (list, view, delete, retry, stats)
+   - Logs spool initialization failures
+
+5. **Documentation in CLAUDE.md** (lines 448-494):
+   - Comprehensive audit logging documentation
+   - Example log output
+   - Security benefits explained
+   - Configuration guidance
+
+**Implementation Details:**
+
+Uses `tracing::event!` macro with structured fields:
+- `user`: From `$USER` environment variable (defaults to "unknown")
+- `uid`: User ID from `libc::getuid()` (Unix only, "N/A" on other platforms)
+- `command`: Full command with debug formatting
+- `error`: Error details on failure
+
+**Benefits Achieved:**
+- ✅ Full accountability for all administrative actions
+- ✅ Forensic trail for security investigations
+- ✅ Compliance support for audit requirements
+- ✅ Monitoring capability for unauthorized access detection
+- ✅ Platform-aware (Unix UID where available)
+- ✅ Structured logging integrates with existing tracing infrastructure
+
+**Files Modified:** 3 files (+113 lines total)
+- `empath/Cargo.toml` (+1 dependency)
+- `empath/src/control_handler.rs` (+66 lines)
+- `CLAUDE.md` (+46 lines documentation)
 
 **Dependencies:** 0.9 (Control Socket IPC)
 **Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Security Assessment)

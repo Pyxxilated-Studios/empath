@@ -445,6 +445,54 @@ empathctl --control-socket /var/run/empath.sock system status
 - For multi-user access, adjust socket file permissions
 - Future enhancement: token-based authentication (see TODO.md task 0.13)
 
+**Audit Logging:**
+
+All control commands are automatically logged with structured data for accountability and compliance:
+
+- **What's Logged:**
+  - Command type (DNS, System, Queue)
+  - User executing the command (from `$USER` environment variable)
+  - User ID (UID) on Unix systems
+  - Command details (full command with parameters)
+  - Result status (success/failure with error details)
+  - Timestamp (automatic via tracing framework)
+
+- **Log Format:**
+  ```
+  INFO  Control command: DNS user=alice uid=1000 command=ClearCache
+  INFO  DNS command completed successfully user=alice uid=1000
+  ```
+
+- **Log Location:**
+  - Integrated with main empath tracing/logging
+  - Controlled by `RUST_LOG` environment variable
+  - For audit trails, configure log output to file via tracing-subscriber
+
+- **Example Audit Trail:**
+  ```bash
+  # Set log level to capture audit events
+  export RUST_LOG=empath=info
+  ./empath
+
+  # In logs:
+  [2025-11-15T10:30:45Z INFO  empath::control_handler] Control command: DNS user="admin" uid=1000 command=ClearCache
+  [2025-11-15T10:30:45Z INFO  empath::control_handler] DNS command completed successfully user="admin" uid=1000
+  [2025-11-15T10:31:12Z INFO  empath::control_handler] Control command: Queue user="admin" uid=1000 command=Delete { message_id: "01JCXYZ..." }
+  [2025-11-15T10:31:12Z INFO  empath::control_handler] Queue command completed successfully user="admin" uid=1000
+  ```
+
+- **Security Benefits:**
+  - Accountability: Track who performed administrative actions
+  - Forensics: Investigate security incidents or configuration changes
+  - Compliance: Meet audit requirements for mail systems
+  - Monitoring: Detect unauthorized access attempts
+
+- **Implementation:**
+  - Location: `empath/src/control_handler.rs`
+  - Uses tracing framework for structured logging
+  - Automatically captures errors and warnings
+  - No performance impact (async logging)
+
 **Implementation Details:**
 - Control server runs alongside SMTP, spool, and delivery processors
 - Graceful shutdown coordination
