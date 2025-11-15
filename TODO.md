@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates (2025-11-15):**
+- ✅ **COMPLETED** task 0.24: Extract queue command handler methods for improved code organization
 - ✅ **COMPLETED** task 0.29: Platform-specific path validation for Windows security
 - ✅ **COMPLETED** task 0.31: Fixed ULID collision error handling to propagate filesystem errors
 - ✅ **COMPLETED** task 0.10: MX record randomization for RFC 5321 compliance
@@ -142,12 +143,24 @@ Add version field to Request/Response to support backward compatibility as proto
 
 ---
 
-### 🟡 0.24 Extract Queue Command Handler Methods
-**Priority:** High (Code Quality)
-**Complexity:** Simple
-**Effort:** 1 hour
+### ✅ 0.24 Extract Queue Command Handler Methods
+**Priority:** ~~High (Code Quality)~~ **COMPLETED**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-Extract queue command handling logic from 200+ line method into focused handler methods per command type.
+Refactored `handle_queue_command()` from 284 lines to 70 lines by extracting 5 command handlers into focused methods.
+
+**Changes:**
+- Extracted `handle_list_command()` - Queue listing with optional status filtering
+- Extracted `handle_view_command()` - Detailed message information display
+- Extracted `handle_retry_command()` - Reset failed messages to pending
+- Extracted `handle_delete_command()` - Remove messages from queue and spool
+- Extracted `handle_stats_command()` - Calculate queue statistics
+- Added `extract_headers()` helper - Parse email headers from message data
+- Added `extract_body_preview()` helper - Extract first 1024 chars of body
+
+**Location:** `empath/src/control_handler.rs:234-572`
+
+**Results:** All 27 tests passing, improved maintainability and testability
 
 ---
 
