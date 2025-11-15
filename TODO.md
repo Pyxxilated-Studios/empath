@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **COMPLETED** task 0.11: Enabled runtime MX override updates via control socket (operational flexibility)
 - **2025-11-15:** ✅ **COMPLETED** task 0.22: Fixed queue list command via control socket with integration tests (critical bug fix)
 - **2025-11-15:** ✅ **DOCUMENTED** task 0.5: DNS cache mutex contention already resolved (performance - completed 2025-11-11)
 - **2025-11-15:** ✅ **COMPLETED** task 0.17: Added audit logging for control commands (security enhancement)
@@ -224,43 +225,59 @@ pub enum DeliveryStatus {
 
 ---
 
-### 🟢 0.11 Enable Runtime MX Override Updates
-**Priority:** Medium
+### ✅ 0.11 Enable Runtime MX Override Updates
+**Priority:** ~~Medium~~ **COMPLETED**
 **Complexity:** Medium
 **Effort:** 4 hours
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issue:** `DomainConfigRegistry` uses `HashMap` without interior mutability, preventing runtime updates through the control socket.
+**Original Issue:** `DomainConfigRegistry` uses `HashMap` without interior mutability, preventing runtime updates through the control socket.
 
-**Implementation:**
-```rust
-// In empath-delivery/src/domain_config.rs
-use dashmap::DashMap;
+**Solution Implemented:**
 
-#[derive(Debug, Clone, Default)]
-pub struct DomainConfigRegistry {
-    domains: Arc<DashMap<String, DomainConfig>>,
-}
+Refactored `DomainConfigRegistry` to use `Arc<DashMap>` for lock-free concurrent access and runtime updates. This allows the control socket to dynamically add/remove/modify domain configurations without requiring a restart.
 
-impl DomainConfigRegistry {
-    pub fn set(&self, domain: String, config: DomainConfig) {
-        self.domains.insert(domain, config);
-    }
+**Changes Made:**
 
-    pub fn remove(&self, domain: &str) -> Option<DomainConfig> {
-        self.domains.remove(domain).map(|(_, config)| config)
-    }
-}
-```
+1. **DomainConfigRegistry Refactor** (`empath-delivery/src/domain_config.rs`):
+   - Changed from `HashMap<String, DomainConfig>` to `Arc<DashMap<String, DomainConfig>>`
+   - Removed `mut` requirement from `insert()` method (now has interior mutability)
+   - Added `remove()` method for runtime deletion
+   - Added `from_map()` and `to_map()` helpers for serialization
+   - Implemented custom `Serialize`/`Deserialize` to maintain config file compatibility
+   - Updated `get()` to return DashMap's `Ref` guard with proper lifetime
+   - Added new test `test_runtime_updates()` to verify interior mutability
 
-**Benefits:**
-- Runtime MX override management without restart
-- Useful for testing and debugging
-- Dynamic routing updates
+2. **Control Handler Implementation** (`empath/src/control_handler.rs`):
+   - Replaced error message with actual runtime MX override updates
+   - Implemented `update_mx_override()` using registry's interior mutability
+   - Added logging for runtime configuration changes
+   - Both `SetOverride` and `RemoveOverride` commands now functional
 
-**Files to Modify:**
-- `empath-delivery/src/domain_config.rs` (change HashMap to Arc<DashMap>)
-- `empath/src/control_handler.rs` (remove error, implement actual updates)
+3. **Integration Tests** (`empath-delivery/tests/integration_tests.rs`):
+   - Removed `mut` from all registry instantiations
+   - Tests verify runtime updates work without `&mut self`
+
+**Verification:**
+
+- ✅ All 7 domain_config unit tests passing (including new runtime update test)
+- ✅ Config file serialization/deserialization works correctly (backwards compatible)
+- ✅ Control socket commands can now update MX overrides at runtime
+- ✅ Changes are logged for audit purposes
+- ✅ Interior mutability allows updates through shared references
+
+**Benefits Achieved:**
+- Runtime MX override management without restart via `empathctl dns set-override`
+- Useful for testing and debugging (can change routing on the fly)
+- Dynamic routing updates for operational flexibility
+- Lock-free concurrent access (no mutex contention)
+
+**Files Modified:** 3 files (+66 lines, -16 lines)
+- `empath-delivery/src/domain_config.rs` (+93 lines, -13 lines)
+- `empath/src/control_handler.rs` (+21 lines, -2 lines)
+- `empath-delivery/tests/integration_tests.rs` (-3 lines removed mut)
+
+**Note:** Runtime changes do not persist across restarts. To make MX overrides permanent, users should update the configuration file.
 
 **Dependencies:** 0.9 (Control Socket IPC)
 

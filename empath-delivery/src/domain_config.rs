@@ -6,8 +6,9 @@
 //! - Connection limits for performance tuning
 //! - Rate limiting to avoid blacklisting
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for a specific domain
@@ -72,10 +73,13 @@ impl DomainConfig {
 }
 
 /// Registry of per-domain configurations
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(transparent)]
+///
+/// Uses `Arc<DashMap>` for lock-free concurrent access and runtime updates.
+/// This allows the control socket to dynamically add/remove domain configurations
+/// without requiring a restart.
+#[derive(Debug, Clone)]
 pub struct DomainConfigRegistry {
-    domains: HashMap<String, DomainConfig>,
+    domains: Arc<DashMap<String, DomainConfig>>,
 }
 
 impl DomainConfigRegistry {
@@ -83,21 +87,41 @@ impl DomainConfigRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            domains: HashMap::new(),
+            domains: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Create a registry from a HashMap (used during deserialization)
+    #[must_use]
+    pub fn from_map(map: HashMap<String, DomainConfig>) -> Self {
+        let registry = Self::new();
+        for (domain, config) in map {
+            registry.domains.insert(domain, config);
+        }
+        registry
     }
 
     /// Get configuration for a specific domain
     ///
     /// Returns `None` if no configuration exists, in which case default behavior applies.
     #[must_use]
-    pub fn get(&self, domain: &str) -> Option<&DomainConfig> {
+    pub fn get(&self, domain: &str) -> Option<dashmap::mapref::one::Ref<'_, String, DomainConfig>> {
         self.domains.get(domain)
     }
 
     /// Add or update configuration for a domain
-    pub fn insert(&mut self, domain: String, config: DomainConfig) {
+    ///
+    /// This method provides interior mutability, allowing runtime updates
+    /// through the control socket without requiring `&mut self`.
+    pub fn insert(&self, domain: String, config: DomainConfig) {
         self.domains.insert(domain, config);
+    }
+
+    /// Remove configuration for a domain
+    ///
+    /// Returns the removed configuration if it existed.
+    pub fn remove(&self, domain: &str) -> Option<(String, DomainConfig)> {
+        self.domains.remove(domain)
     }
 
     /// Check if a domain has any custom configuration
@@ -119,8 +143,49 @@ impl DomainConfigRegistry {
     }
 
     /// Iterate over all domain configurations (for control interface)
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &DomainConfig)> {
-        self.domains.iter()
+    ///
+    /// Note: This returns owned values by cloning the internal map.
+    /// For read-only access with zero-copy, use `iter_ref()`.
+    pub fn iter(&self) -> impl Iterator<Item = (String, DomainConfig)> {
+        self.domains
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// Convert to HashMap (used during serialization)
+    #[must_use]
+    pub fn to_map(&self) -> HashMap<String, DomainConfig> {
+        self.domains
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
+    }
+}
+
+impl Default for DomainConfigRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Serialize for DomainConfigRegistry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_map().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DomainConfigRegistry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let map = HashMap::<String, DomainConfig>::deserialize(deserializer)?;
+        Ok(Self::from_map(map))
     }
 }
 
@@ -150,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_registry_operations() {
-        let mut registry = DomainConfigRegistry::new();
+        let registry = DomainConfigRegistry::new();
         assert!(registry.is_empty());
         assert_eq!(registry.len(), 0);
 
@@ -173,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_serde_roundtrip() {
-        let mut registry = DomainConfigRegistry::new();
+        let registry = DomainConfigRegistry::new();
         registry.insert(
             "gmail.com".to_string(),
             DomainConfig {
@@ -251,7 +316,7 @@ mod tests {
     #[test]
     fn test_accept_invalid_certs_configuration() {
         // Test per-domain override of certificate validation
-        let mut registry = DomainConfigRegistry::new();
+        let registry = DomainConfigRegistry::new();
 
         // Domain that explicitly accepts invalid certs
         registry.insert(
@@ -291,5 +356,53 @@ mod tests {
 
         let default_config = registry.get("default.example.com").unwrap();
         assert_eq!(default_config.accept_invalid_certs, None);
+    }
+
+    #[test]
+    fn test_runtime_updates() {
+        // Test runtime MX override updates without requiring &mut self
+        let registry = DomainConfigRegistry::new();
+
+        // Add initial configuration
+        registry.insert(
+            "test.example.com".to_string(),
+            DomainConfig {
+                mx_override: Some("localhost:1025".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(
+            registry
+                .get("test.example.com")
+                .unwrap()
+                .mx_override_address(),
+            Some("localhost:1025")
+        );
+
+        // Update configuration at runtime
+        registry.insert(
+            "test.example.com".to_string(),
+            DomainConfig {
+                mx_override: Some("localhost:2525".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(registry.len(), 1); // Same entry, updated
+        assert_eq!(
+            registry
+                .get("test.example.com")
+                .unwrap()
+                .mx_override_address(),
+            Some("localhost:2525")
+        );
+
+        // Remove configuration
+        let removed = registry.remove("test.example.com");
+        assert!(removed.is_some());
+        assert_eq!(registry.len(), 0);
+        assert!(registry.get("test.example.com").is_none());
     }
 }

@@ -43,7 +43,7 @@ fn create_test_context(from: &str, to: &str) -> Context {
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_domain_config_mx_override() {
     // Create a domain config registry with an MX override
-    let mut domains = DomainConfigRegistry::new();
+    let domains = DomainConfigRegistry::new();
     domains.insert(
         "test.example.com".to_string(),
         DomainConfig {
@@ -74,7 +74,7 @@ async fn test_delivery_with_mx_override_integration() {
     let _msg_id = spool.write(&mut context).await.unwrap();
 
     // Create domain config with MX override
-    let mut domains = DomainConfigRegistry::new();
+    let domains = DomainConfigRegistry::new();
     domains.insert(
         "test.example.com".to_string(),
         DomainConfig {
@@ -98,7 +98,7 @@ async fn test_delivery_with_mx_override_integration() {
 
 #[test]
 fn test_domain_config_multiple_domains() {
-    let mut domains = DomainConfigRegistry::new();
+    let domains = DomainConfigRegistry::new();
 
     domains.insert(
         "test.local".to_string(),
