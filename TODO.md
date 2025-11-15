@@ -9,6 +9,8 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates (2025-11-15):**
+- ✅ **COMPLETED** task 4.3: Replaced Arc<RwLock<HashMap>> with DashMap for lock-free concurrent access
+- ✅ **COMPLETED** task 0.20: Protocol versioning for control socket forward compatibility
 - ✅ **COMPLETED** task 0.30: Reduced metrics runtime overhead by 90% using AtomicU64
 - ✅ **COMPLETED** task 0.24: Extract queue command handler methods for improved code organization
 - ✅ **COMPLETED** task 0.29: Platform-specific path validation for Windows security
@@ -430,12 +432,24 @@ Create mock SMTP server for integration testing without external dependencies.
 
 ---
 
-### 🟡 4.3 Use DashMap Instead of Arc<RwLock<HashMap>>
-**Priority:** Medium (Performance)
-**Complexity:** Simple
-**Effort:** 1-2 hours
+### ✅ 4.3 Use DashMap Instead of Arc<RwLock<HashMap>>
+**Priority:** ~~Medium~~ **COMPLETED**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-Replace manual locking patterns with DashMap for lock-free concurrent access.
+Replaced `Arc<RwLock<HashMap>>` with `DashMap` for lock-free concurrent access in:
+- `DeliveryQueue` (`empath-delivery/src/queue/mod.rs`)
+- `MemoryBackingStore` (`empath-spool/src/backends/memory.rs`)
+
+**Changes:**
+- Removed all `async` from DeliveryQueue methods (no longer needed)
+- Updated all callers across delivery, process, and control handler modules
+- Simplified TestBackingStore helper methods
+- All 91 library tests passing
+
+**Benefits:**
+- Better concurrent performance through internal sharding
+- Simpler API (no `.await` needed)
+- Reduced lock contention
 
 ---
 

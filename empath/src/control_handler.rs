@@ -205,7 +205,7 @@ impl EmpathControlHandler {
                     .as_ref()
                     .map_or(0, |r| r.cache_stats().total_entries);
 
-                let queue_size = self.delivery.queue().len().await;
+                let queue_size = self.delivery.queue().len();
 
                 let status = empath_control::protocol::SystemStatus {
                     version: env!("CARGO_PKG_VERSION").to_string(),
@@ -320,7 +320,7 @@ impl EmpathControlHandler {
         status_filter: Option<String>,
     ) -> empath_control::Result<Response> {
         // Get all messages from queue
-        let all_info = queue.all_messages().await;
+        let all_info = queue.all_messages();
 
         // Filter by status if requested
         let filtered_info: Vec<_> = if let Some(status) = status_filter {
@@ -378,7 +378,7 @@ impl EmpathControlHandler {
                 })?;
 
         // Get delivery info from queue
-        let info = queue.get(&msg_id).await.ok_or_else(|| {
+        let info = queue.get(&msg_id).ok_or_else(|| {
             ControlError::ServerError(format!("Message not found in queue: {message_id}"))
         })?;
 
@@ -431,7 +431,7 @@ impl EmpathControlHandler {
                 })?;
 
         // Get delivery info from queue
-        let info = queue.get(&msg_id).await.ok_or_else(|| {
+        let info = queue.get(&msg_id).ok_or_else(|| {
             ControlError::ServerError(format!("Message not found in queue: {message_id}"))
         })?;
 
@@ -445,10 +445,9 @@ impl EmpathControlHandler {
 
         // Reset status to pending
         queue
-            .update_status(&msg_id, empath_common::DeliveryStatus::Pending)
-            .await;
-        queue.reset_server_index(&msg_id).await;
-        queue.set_next_retry_at(&msg_id, 0).await;
+            .update_status(&msg_id, empath_common::DeliveryStatus::Pending);
+        queue.reset_server_index(&msg_id);
+        queue.set_next_retry_at(&msg_id, 0);
 
         Ok(Response::data(ResponseData::Message(format!(
             "Message {message_id} scheduled for retry"
@@ -470,7 +469,7 @@ impl EmpathControlHandler {
                 })?;
 
         // Remove from queue
-        queue.remove(&msg_id).await.ok_or_else(|| {
+        queue.remove(&msg_id).ok_or_else(|| {
             ControlError::ServerError(format!("Message not found in queue: {message_id}"))
         })?;
 
@@ -490,7 +489,7 @@ impl EmpathControlHandler {
         queue: &empath_delivery::DeliveryQueue,
     ) -> empath_control::Result<Response> {
         // Get all messages
-        let all_info = queue.all_messages().await;
+        let all_info = queue.all_messages();
 
         // Count by status
         let mut by_status: HashMap<String, usize> = HashMap::new();

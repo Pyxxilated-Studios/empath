@@ -36,7 +36,7 @@ pub async fn process_queue_internal(
         .as_secs();
 
     // Get all messages to check for expiration and retry timing
-    let all_messages = processor.queue.all_messages().await;
+    let all_messages = processor.queue.all_messages();
 
     for info in all_messages {
         // Skip messages that are already completed, failed, expired, or in progress
@@ -62,8 +62,7 @@ pub async fn process_queue_internal(
                 );
                 processor
                     .queue
-                    .update_status(&info.message_id, DeliveryStatus::Expired)
-                    .await;
+                    .update_status(&info.message_id, DeliveryStatus::Expired);
 
                 // Persist the Expired status to spool
                 if let Err(e) =
@@ -104,11 +103,10 @@ pub async fn process_queue_internal(
             );
             processor
                 .queue
-                .update_status(&info.message_id, DeliveryStatus::Pending)
-                .await;
+                .update_status(&info.message_id, DeliveryStatus::Pending);
 
             // Reset to first MX server for new retry cycle
-            processor.queue.reset_server_index(&info.message_id).await;
+            processor.queue.reset_server_index(&info.message_id);
 
             // Persist the Pending status for retry
             if let Err(e) =

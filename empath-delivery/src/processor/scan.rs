@@ -48,7 +48,7 @@ pub async fn scan_spool_internal(
 
     for msg_id in message_ids {
         // Check if already in queue
-        if processor.queue.get(&msg_id).await.is_some() {
+        if processor.queue.get(&msg_id).is_some() {
             continue;
         }
 
@@ -73,12 +73,7 @@ pub async fn scan_spool_internal(
             };
 
             // Add to queue with existing state
-            processor
-                .queue
-                .queue
-                .write()
-                .await
-                .insert(msg_id.clone(), info);
+            processor.queue.insert(msg_id.clone(), info);
             added += 1;
             continue;
         }
@@ -119,7 +114,7 @@ pub async fn scan_spool_internal(
 
         // Enqueue for each unique domain
         for (domain, _recipients) in domains {
-            processor.queue.enqueue(msg_id.clone(), domain).await;
+            processor.queue.enqueue(msg_id.clone(), domain);
             added += 1;
         }
     }

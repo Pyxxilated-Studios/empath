@@ -1,16 +1,14 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use empath_common::context::Context;
 
 use crate::{SpoolError, r#trait::BackingStore, types::SpooledMessageId};
 
 /// In-memory backing store implementation
 ///
-/// This implementation stores messages in a `HashMap` protected by an `RwLock`.
+/// This implementation stores messages in a `DashMap` for lock-free concurrent access.
 /// It's primarily intended for testing, but can also be used for transient
 /// message handling.
 ///
@@ -23,17 +21,17 @@ use crate::{SpoolError, r#trait::BackingStore, types::SpooledMessageId};
 /// - Simulating resource constraints
 ///
 /// # Performance
-/// - Write: O(1) -`HashMap` insert + Arc clone (plus capacity check)
+/// - Write: O(1) - `DashMap` insert + Arc clone (plus capacity check)
 /// - List: O(n log n) - Must clone all keys and sort
-/// - Read: O(1) - `HashMap` lookup + Context clone
-/// - Delete: O(1) - `HashMap` remove
+/// - Read: O(1) - `DashMap` lookup + Context clone
+/// - Delete: O(1) - `DashMap` remove
 ///
 /// # Concurrency
-/// Uses an `RwLock` for interior mutability. Production workloads should use
-/// file-backed or database-backed stores with better concurrency primitives.
+/// Uses `DashMap` for lock-free concurrent access through internal sharding.
+/// Production workloads should use file-backed or database-backed stores.
 #[derive(Debug, Clone)]
 pub struct MemoryBackingStore {
-    pub(crate) messages: Arc<RwLock<HashMap<SpooledMessageId, Context>>>,
+    pub(crate) messages: Arc<DashMap<SpooledMessageId, Context>>,
     /// Maximum number of messages to store (None = unlimited)
     capacity: Option<usize>,
 }
@@ -43,7 +41,7 @@ impl MemoryBackingStore {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            messages: Arc::new(RwLock::new(HashMap::new())),
+            messages: Arc::new(DashMap::new()),
             capacity: None,
         }
     }
@@ -58,20 +56,15 @@ impl MemoryBackingStore {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            messages: Arc::new(RwLock::new(HashMap::new())),
+            messages: Arc::new(DashMap::new()),
             capacity: Some(capacity),
         }
     }
 
     /// Get the current number of messages in the store
-    ///
-    /// Recovers gracefully if the lock is poisoned by accessing the underlying data.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.messages
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len()
+        self.messages.len()
     }
 
     /// Check if the store is empty
@@ -104,7 +97,7 @@ impl BackingStore for MemoryBackingStore {
 
         // Check capacity before inserting (don't count if overwriting existing)
         if let Some(cap) = self.capacity
-            && !self.messages.read()?.contains_key(&id)
+            && !self.messages.contains_key(&id)
             && self.len() >= cap
         {
             return Err(SpoolError::Internal(format!(
@@ -114,13 +107,13 @@ impl BackingStore for MemoryBackingStore {
             )));
         }
 
-        self.messages.write()?.insert(id.clone(), context.clone());
+        self.messages.insert(id.clone(), context.clone());
 
         Ok(id)
     }
 
     async fn list(&self) -> crate::Result<Vec<SpooledMessageId>> {
-        let mut ids: Vec<_> = self.messages.read()?.keys().cloned().collect();
+        let mut ids: Vec<_> = self.messages.iter().map(|entry| entry.key().clone()).collect();
 
         // ULIDs are lexicographically sortable by creation time
         ids.sort();
@@ -130,15 +123,14 @@ impl BackingStore for MemoryBackingStore {
 
     async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context> {
         self.messages
-            .read()?
             .get(id)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| SpoolError::NotFound(id.clone()))
     }
 
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
-        if self.messages.read()?.contains_key(id) {
-            self.messages.write()?.insert(id.clone(), context.clone());
+        if self.messages.contains_key(id) {
+            self.messages.insert(id.clone(), context.clone());
             Ok(())
         } else {
             Err(SpoolError::NotFound(id.clone()))
@@ -147,7 +139,6 @@ impl BackingStore for MemoryBackingStore {
 
     async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()> {
         self.messages
-            .write()?
             .remove(id)
             .ok_or_else(|| SpoolError::NotFound(id.clone()))?;
         Ok(())

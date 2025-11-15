@@ -63,23 +63,13 @@ impl TestBackingStore {
     }
 
     /// Clear all messages from the store
-    ///
-    /// # Errors
-    /// If there was an isue getting the lock for the message store, e.g. the lock has been poisoned
-    pub fn clear(&self) -> crate::Result<()> {
-        self.inner.messages.write()?.clear();
-        Ok(())
+    pub fn clear(&self) {
+        self.inner.messages.clear();
     }
 
     /// Get the number of spooled messages
-    ///
-    /// Recovers gracefully if the lock is poisoned.
     pub fn message_count(&self) -> usize {
-        self.inner
-            .messages
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len()
+        self.inner.messages.len()
     }
 
     /// Get all messages (for test assertions)

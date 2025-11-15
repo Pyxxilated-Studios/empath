@@ -691,6 +691,7 @@ dependencies = [
  "async-trait",
  "bincode 2.0.1",
  "criterion",
+ "dashmap",
  "empath-common",
  "empath-tracing",
  "mailparse",
