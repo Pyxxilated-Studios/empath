@@ -14,6 +14,7 @@ bincode = "1"
 
 # Async runtime
 tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "rt"] }
+async-trait = "0.1"
 
 # Error handling
 thiserror = "2"

@@ -3,8 +3,9 @@
 //! This module implements the `CommandHandler` trait to process control requests
 //! for managing the running MTA instance.
 
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
+use async_trait::async_trait;
 use empath_common::{context::Context, internal};
 use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SystemCommand,
@@ -32,27 +33,23 @@ impl EmpathControlHandler {
     }
 }
 
+#[async_trait]
 impl CommandHandler for EmpathControlHandler {
-    fn handle_request(
-        &self,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = empath_control::Result<Response>> + Send + '_>> {
-        Box::pin(async move {
-            // Validate protocol version
-            if !request.is_version_compatible() {
-                return Err(ControlError::ServerError(format!(
-                    "Incompatible protocol version: client={}, server={}",
-                    request.version,
-                    empath_control::PROTOCOL_VERSION
-                )));
-            }
+    async fn handle_request(&self, request: Request) -> empath_control::Result<Response> {
+        // Validate protocol version
+        if !request.is_version_compatible() {
+            return Err(ControlError::ServerError(format!(
+                "Incompatible protocol version: client={}, server={}",
+                request.version,
+                empath_control::PROTOCOL_VERSION
+            )));
+        }
 
-            match request.command {
-                RequestCommand::Dns(dns_cmd) => self.handle_dns_command(dns_cmd).await,
-                RequestCommand::System(sys_cmd) => self.handle_system_command(&sys_cmd),
-                RequestCommand::Queue(queue_cmd) => self.handle_queue_command(queue_cmd).await,
-            }
-        })
+        match request.command {
+            RequestCommand::Dns(dns_cmd) => self.handle_dns_command(dns_cmd).await,
+            RequestCommand::System(sys_cmd) => self.handle_system_command(&sys_cmd),
+            RequestCommand::Queue(queue_cmd) => self.handle_queue_command(queue_cmd).await,
+        }
     }
 }
 

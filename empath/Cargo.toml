@@ -31,6 +31,7 @@ path = "bin/empathctl.rs"
 
 [dependencies]
 anyhow = "1.0.93"
+async-trait = "0.1"
 bincode = { version = "2", features = ["serde"] }
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }

@@ -10,6 +10,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 
 **Recent Updates (2025-11-15):**
 - 🔍 **COMPREHENSIVE REVIEW**: Multi-agent analysis identified 5 new critical tasks and priority adjustments
+- ✅ **COMPLETED** task 4.1: Replace manual Pin<Box<dyn Future>> with async_trait
 - ✅ **COMPLETED** task 4.3: DashMap for lock-free concurrency (c3efd33)
 - ✅ **COMPLETED** task 0.20: Protocol versioning for control socket (f9beb9c)
 
@@ -670,32 +671,21 @@ Major refactoring to improve codebase organization and maintainability.
 
 ---
 
-### 🟡 4.1 Replace Manual Future Boxing with RPITIT
-**Priority:** High (Code Quality) **#1 RUST PRIORITY** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 2-3 hours
+### ✅ 4.1 Replace Manual Future Boxing with async_trait
+**Priority:** ~~High (Code Quality)~~ **COMPLETED**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Expert Review (Rust Expert):** This is the #1 code quality priority. `async_trait` adds 10-20ns heap allocation per async call. RPITIT is stable in Rust 1.75+ (you're on 1.93 nightly).
+Replaced manual `Pin<Box<dyn Future>>` boxing in `CommandHandler` trait with `async_trait` macro for cleaner, more maintainable code.
 
-**Current Inconsistency:**
-- `BackingStore` trait uses `async_trait` with `Box<dyn Future>` allocations
-- `SessionHandler::run()` already uses RPITIT correctly
-- Should be consistent across all async traits
+**Changes:**
+- Added `async_trait` dependency to `empath` and `empath-control` crates
+- Converted `CommandHandler::handle_request` from manual `Pin<Box<dyn Future>>` to `async fn` with `#[async_trait]`
+- Updated implementations in `empath/src/control_handler.rs` and `empath-control/tests/integration_test.rs`
+- Removed manual `Box::pin(async move { ... })` boilerplate
 
-**Implementation:**
-Convert `BackingStore` trait to native async fn:
-```rust
-pub trait BackingStore: Send + Sync + std::fmt::Debug {
-    async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId>;
-    async fn list(&self) -> crate::Result<Vec<SpooledMessageId>>;
-    // ... etc (no more Box allocations)
-}
-```
+**Note:** The `BackingStore` trait correctly uses `async_trait` and must remain so for dyn compatibility (`Arc<dyn BackingStore>`). Native `async fn` in traits (RPITIT) is not dyn-compatible, so `async_trait` is the proper solution for trait objects.
 
-**Benefits:**
-- Remove unnecessary dependency
-- Eliminate proc macro overhead
-- Zero-allocation async calls in hot paths
+**Results:** All 91 workspace tests passing
 
 ---
 
@@ -1727,14 +1717,7 @@ changelog:
 **Current Status (Updated 2025-11-15):**
 - ✅ **19 tasks completed** (18 + 7.15 Docker already exists)
 - ❌ 1 task rejected (architectural decision)
-- 🆕 **15 new tasks added:**
-  - 5 observability tasks (0.35-0.39: OpenTelemetry, metrics)
-  - 10 DX tasks (7.16-7.25: CI/CD, onboarding, tooling)
-- 📝 **72 tasks pending** (57 original + 15 new)
-- 🔼 **13 tasks upgraded in priority:**
-  - 6 from multi-agent review (0.8, 0.25, 0.32, 2.4, 4.2, 4.5, 7.11)
-  - 7 from DX review (7.2, 7.5, 7.7, 7.8, 7.9)
-- 🔽 1 task downgraded in priority (0.14)
+- 📝 56 tasks pending
 
 **Priority Distribution:**
 - 🔴 **Critical**: 11 tasks (0.8, 0.25, 0.27, 0.28, 0.35, 0.36, 2.4, 4.2, 7.2, 7.16, 7.17)
