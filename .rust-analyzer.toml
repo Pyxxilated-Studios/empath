@@ -1,0 +1,105 @@
+# rust-analyzer Configuration for Empath MTA
+#
+# This file configures rust-analyzer for optimal development experience.
+# rust-analyzer is the official Rust language server used by VS Code,
+# Neovim, Emacs, and other editors.
+#
+# Documentation: https://rust-analyzer.github.io/manual.html#configuration
+
+# Use clippy for additional lints (matches project's strict linting)
+[check]
+command = "clippy"
+allTargets = true
+
+# Enable all features when checking
+[check.features]
+all = true
+
+# Cargo configuration
+[cargo]
+# Check all targets (lib, bins, tests, benches, examples)
+allTargets = true
+
+# Enable all features
+features = "all"
+
+# Use nightly toolchain (required for Edition 2024)
+# This ensures rust-analyzer uses the same toolchain as the project
+[rustc]
+source = "discover"
+
+# Proc macro support (for empath-tracing and other proc macros)
+[procMacro]
+enable = true
+# Load proc macros from all workspace crates
+attributes.enable = true
+
+# Diagnostics configuration
+[diagnostics]
+# Enable experimental diagnostics
+experimental.enable = true
+
+# Disable certain noisy diagnostics
+disabled = [
+    # Disable "unused" warnings during development (handled by clippy)
+    # "inactive-code",
+]
+
+# Inlay hints configuration (optional, can be overwhelming)
+[inlayHints]
+# Show inferred types for let bindings
+typeHints.enable = true
+# Show parameter names in function calls
+parameterHints.enable = true
+# Show inferred types for closures
+closureReturnTypeHints.enable = "with_block"
+# Show type hints for method chains
+chainingHints.enable = true
+
+# Assist configuration (code actions and quick fixes)
+[assist]
+# Import granularity for auto-imports
+importGranularity = "module"
+# Prefer absolute imports
+importPrefix = "plain"
+
+# Completion configuration
+[completion]
+# Show postfix completions (.if, .match, etc.)
+postfix.enable = true
+# Auto-import on completion
+autoimport.enable = true
+
+# Hover documentation
+[hover.actions]
+# Enable runnable hover actions
+enable = true
+# Show implementations on hover
+implementations.enable = true
+# Show references on hover
+references.enable = true
+
+# Lens configuration (code lenses above items)
+[lens]
+enable = true
+# Show run/debug buttons
+run.enable = true
+# Show implementations count
+implementations.enable = true
+# Show references count
+references.enable = true
+# Show method references
+method.references.enable = true
+
+# Files to exclude from analysis (for performance)
+[files]
+excludeDirs = [
+    "target",
+    ".git",
+    "node_modules",
+    "spool",
+    ".vscode",
+]
+
+# Linked projects (if using rust-project.json, not needed for cargo workspaces)
+# [linkedProjects]
