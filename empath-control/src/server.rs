@@ -64,23 +64,19 @@ impl ControlServer {
         let socket_path = Path::new(&self.socket_path);
         if socket_path.exists() {
             // Test if socket is active by attempting connection
-            match UnixStream::connect(socket_path).await {
-                Ok(_) => {
-                    // Active socket - another instance is running
-                    return Err(ControlError::Io(std::io::Error::new(
-                        std::io::ErrorKind::AddrInUse,
-                        format!(
-                            "Socket already in use by running instance: {}",
-                            self.socket_path
-                        ),
-                    )));
-                }
-                Err(_) => {
-                    // Stale socket from crashed process, safe to remove
-                    info!("Removing stale socket file: {}", self.socket_path);
-                    tokio::fs::remove_file(socket_path).await?;
-                }
+            if UnixStream::connect(socket_path).await.is_ok() {
+                // Active socket - another instance is running
+                return Err(ControlError::Io(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!(
+                        "Socket already in use by running instance: {}",
+                        self.socket_path
+                    ),
+                )));
             }
+            // Stale socket from crashed process, safe to remove
+            info!("Removing stale socket file: {}", self.socket_path);
+            tokio::fs::remove_file(socket_path).await?;
         }
 
         // Bind the Unix socket

@@ -433,14 +433,24 @@ impl DnsResolver {
     ///
     /// Returns a `HashMap` mapping domain names to their cached mail servers.
     /// Each entry includes the time remaining until the cache expires.
+    ///
+    /// As a side effect, this method actively evicts expired entries from the cache,
+    /// preventing memory waste in long-running MTAs.
     #[must_use]
     pub fn list_cache(&self) -> std::collections::HashMap<String, Vec<(MailServer, Duration)>> {
         let now = Instant::now();
         let mut result = std::collections::HashMap::new();
+        let mut expired_keys = Vec::new();
 
         for entry in self.cache.iter() {
             let domain = entry.key().clone();
             let cached = entry.value();
+
+            // Check if entry is expired
+            if cached.expires_at <= now {
+                expired_keys.push(domain);
+                continue; // Skip expired entries
+            }
 
             // Calculate remaining TTL
             let ttl_remaining = cached
@@ -456,6 +466,14 @@ impl DnsResolver {
                 .collect();
 
             result.insert(domain, servers_with_ttl);
+        }
+
+        // Clean up expired entries
+        if !expired_keys.is_empty() {
+            debug!("Evicting {} expired DNS cache entries", expired_keys.len());
+            for key in expired_keys {
+                self.cache.remove(&key);
+            }
         }
 
         result

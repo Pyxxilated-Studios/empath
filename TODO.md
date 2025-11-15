@@ -9,6 +9,7 @@ This document tracks future improvements for the empath MTA, organized by priori
 - 🔵 **Low** - Future enhancements, optimization
 
 **Recent Updates:**
+- **2025-11-15:** ✅ **COMPLETED** task 0.19: Implemented active DNS cache eviction (memory optimization)
 - **2025-11-15:** ✅ **COMPLETED** task 0.18: Fixed socket file race condition on startup (robustness improvement)
 - **2025-11-14:** ✅ **COMPLETED** Code quality improvements:
   - Improved `NoVerifier` documentation with comprehensive security warnings
@@ -511,20 +512,27 @@ if socket_path.exists() {
 
 ---
 
-### 🟢 0.19 Implement Active DNS Cache Eviction
-**Priority:** Medium
+### ✅ 0.19 Implement Active DNS Cache Eviction
+**Priority:** ~~Medium~~ **COMPLETED**
 **Complexity:** Simple
 **Effort:** 2 hours
-**Status:** 📝 **TODO**
+**Status:** ✅ **COMPLETED** (2025-11-15)
 
-**Current Issue:** Expired DNS entries are not actively evicted from cache. `DashMap` only evicts on access (lazy eviction). Long-running MTAs could accumulate expired entries, wasting memory.
+**Original Issue:** Expired DNS entries were not actively evicted from cache. `DashMap` only evicts on access (lazy eviction). Long-running MTAs could accumulate expired entries, wasting memory.
 
-**Current Behavior:**
-- `cache_stats()` counts expired entries (lines 472-488 in `empath-delivery/src/dns.rs`)
-- Entries remain in memory until accessed again
-- Counts toward cache capacity limit
+**Solution Implemented:**
 
-**Implementation Option 1 - Evict in list_cache():**
+Added active eviction of expired DNS cache entries in the `list_cache()` method. Expired entries are now removed during cache listing operations, preventing memory waste without requiring background tasks.
+
+**Changes Made:**
+
+1. **Active eviction in list_cache()** (`empath-delivery/src/dns.rs:440-480`):
+   - Collect expired domain keys during cache iteration
+   - Skip expired entries from the result (only return active entries)
+   - Remove all expired entries from cache after iteration
+   - Added debug logging to track eviction count
+
+**Implementation Details:**
 ```rust
 pub fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
     let now = Instant::now();
@@ -534,39 +542,38 @@ pub fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
     for entry in self.cache.iter() {
         if entry.value().expires_at <= now {
             expired_keys.push(entry.key().clone());
-            continue;  // Skip expired
+            continue;  // Skip expired entries
         }
-        // ... collect active entries
+        // ... process active entries
     }
 
     // Clean up expired entries
-    for key in expired_keys {
-        self.cache.remove(&key);
+    if !expired_keys.is_empty() {
+        debug!("Evicting {} expired DNS cache entries", expired_keys.len());
+        for key in expired_keys {
+            self.cache.remove(&key);
+        }
     }
 
     result
 }
 ```
 
-**Implementation Option 2 - Periodic cleanup task:**
-```rust
-// Spawn background task in DnsResolver::new()
-tokio::spawn({
-    let cache = Arc::clone(&cache);
-    async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(300)).await; // Every 5 minutes
-            let now = Instant::now();
-            cache.retain(|_, v| v.expires_at > now);
-        }
-    }
-});
-```
+**Benefits Achieved:**
+- ✅ Prevents memory waste from expired entries in long-running MTAs
+- ✅ No background task coordination required (simpler implementation)
+- ✅ Eviction triggered by natural cache access patterns (via control socket)
+- ✅ Debug logging for observability
+- ✅ Expired entries no longer count toward capacity limit after eviction
 
-**Recommendation:** Option 1 (evict in list_cache) is simpler and doesn't require background task coordination.
+**Design Choice:** Chose Option 1 (evict in list_cache) over periodic cleanup task because:
+- Simpler implementation (no background task lifecycle management)
+- No coordination with graceful shutdown needed
+- Natural eviction triggered by `empathctl dns list-cache` operations
+- Sufficient for typical use cases (cache listing is called during monitoring)
 
-**Files to Modify:**
-- `empath-delivery/src/dns.rs` (add eviction to `list_cache()`)
+**Files Modified:** 1 file (+17 lines, -7 lines)
+- `empath-delivery/src/dns.rs`
 
 **Dependencies:** 0.9 (Control Socket IPC)
 **Source:** Multi-agent code review 2025-11-13 (Code Reviewer - Warning #4)

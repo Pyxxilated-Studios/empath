@@ -113,7 +113,7 @@ impl ClientConnection {
 ///
 /// This verifier **completely disables TLS certificate validation**, accepting any certificate
 /// including expired, self-signed, or certificates with mismatched hostnames. This creates a
-/// significant security risk as it allows Man-in-the-Middle (MitM) attacks.
+/// significant security risk as it allows Man-in-the-Middle (`MitM`) attacks.
 ///
 /// # When to Use
 ///
