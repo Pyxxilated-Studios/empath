@@ -1,0 +1,42 @@
+# cargo-nextest configuration for empath MTA
+# See: https://nexte.st/book/configuration.html
+
+# Default profile for local development
+[profile.default]
+# Number of retries for failed tests (0 = fail immediately)
+retries = 0
+
+# Number of threads to use for running tests
+# "num-cpus" uses all available CPU cores
+test-threads = "num-cpus"
+
+# Timeout settings for slow tests
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# Show output for all tests (not just failed ones)
+# Options: immediate, immediate-final, final, never
+failure-output = "immediate-final"
+success-output = "never"
+
+# CI profile optimized for continuous integration
+[profile.ci]
+# Retry flaky tests up to 2 times in CI
+retries = 2
+
+# Use all available CPU cores for parallel test execution
+test-threads = "num-cpus"
+
+# Fail fast - stop on first test failure to save CI time
+fail-fast = false
+
+# Timeout configuration - more aggressive than default
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# Always show output for failures
+failure-output = "immediate"
+success-output = "never"
+
+# Test groups configuration
+[test-groups]
+# Group integration tests separately for better resource management
+integration = { max-threads = 4 }
