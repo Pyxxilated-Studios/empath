@@ -100,7 +100,8 @@ impl FileBackingStore {
             ));
         }
 
-        // Reject sensitive system paths
+        // Reject sensitive system paths (platform-specific)
+        #[cfg(unix)]
         let sensitive_prefixes = [
             "/etc",
             "/bin",
@@ -112,6 +113,22 @@ impl FileBackingStore {
             "/proc",
             "/dev",
         ];
+
+        #[cfg(windows)]
+        let sensitive_prefixes = [
+            "C:\\Windows",
+            "C:\\Program Files",
+            "C:\\Program Files (x86)",
+            "C:\\ProgramData",
+            // Also check lowercase variants for case-insensitive matching
+            "c:\\windows",
+            "c:\\program files",
+            "c:\\program files (x86)",
+            "c:\\programdata",
+        ];
+
+        #[cfg(not(any(unix, windows)))]
+        let sensitive_prefixes: [&str; 0] = [];
 
         for prefix in &sensitive_prefixes {
             if path.starts_with(prefix) {
