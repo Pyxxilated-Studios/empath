@@ -73,9 +73,9 @@ impl CommandHandler for MockHandler {
                 DnsCommand::SetOverride { domain, mx_server } => Ok(Response::data(
                     ResponseData::Message(format!("Set override {domain} -> {mx_server}")),
                 )),
-                DnsCommand::RemoveOverride(domain) => Ok(Response::data(
-                    ResponseData::Message(format!("Removed override for {domain}")),
-                )),
+                DnsCommand::RemoveOverride(domain) => Ok(Response::data(ResponseData::Message(
+                    format!("Removed override for {domain}"),
+                ))),
                 DnsCommand::ListOverrides => Ok(Response::data(ResponseData::MxOverrides(
                     self.mx_overrides.clone(),
                 ))),

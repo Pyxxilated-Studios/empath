@@ -3,3 +3,56 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [registries.crates-io]
 protocol = "sparse"
+
+# Cargo aliases for common workflows
+[alias]
+# Development workflow
+dev = "hack check --feature-powerset && cargo fmt && cargo clippy --all-targets --all-features"
+ci = "hack check --feature-powerset && cargo fmt --check && cargo clippy --all-targets --all-features && cargo test --lib"
+
+# Testing
+t = "test"
+tq = "test --quiet"
+tw = "watch -x test"
+tl = "test --lib"
+nextest = "nextest run"
+nt = "nextest run"
+
+# Building
+b = "build"
+br = "build --release"
+ba = "build --all-features"
+bw = "watch -x build"
+
+# Clippy and formatting
+c = "clippy --all-targets --all-features"
+cw = "watch -x 'clippy --all-targets --all-features'"
+fmt-check = "fmt --check"
+f = "fmt"
+
+# Documentation
+d = "doc --no-deps --open"
+da = "doc --no-deps --all-features --open"
+
+# Benchmarking
+bench-all = "bench"
+bench-smtp = "bench -p empath-smtp"
+bench-spool = "bench -p empath-spool"
+
+# Dependency management
+outdated = "outdated -R"
+tree = "tree --depth 3"
+dup = "tree -d"
+
+# Binary execution
+r = "run"
+rr = "run --release"
+
+# Queue management (via empathctl)
+queue-list = "run --bin empathctl -- queue list"
+queue-stats = "run --bin empathctl -- queue stats"
+queue-watch = "run --bin empathctl -- queue stats --watch"
+
+# Control commands (via empathctl)
+status = "run --bin empathctl -- system status"
+ping = "run --bin empathctl -- system ping"

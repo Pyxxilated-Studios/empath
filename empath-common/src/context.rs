@@ -109,7 +109,7 @@ pub struct DeliveryContext {
     pub current_server_index: usize,
 }
 
-fn default_system_time() -> SystemTime {
+const fn default_system_time() -> SystemTime {
     SystemTime::UNIX_EPOCH
 }
 
