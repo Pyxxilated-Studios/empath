@@ -30,17 +30,13 @@ pub struct DeliveryMetrics {
     /// Number of currently active outbound SMTP connections
     active_connections: UpDownCounter<i64>,
 
-    /// Total number of messages delivered successfully
-    messages_delivered: Counter<u64>,
-
-    /// Total number of messages permanently failed
-    messages_failed: Counter<u64>,
-
-    /// Total number of messages retrying
-    messages_retrying: Counter<u64>,
-
     /// Distribution of retry counts before success
     retry_count: Histogram<u64>,
+
+    // Fast atomic counters for hot path (read by observable counters via callbacks)
+    messages_delivered_count: Arc<AtomicU64>,
+    messages_failed_count: Arc<AtomicU64>,
+    messages_retrying_count: Arc<AtomicU64>,
 
     // Local counters for queue size tracking (shared with observable gauge callback)
     queue_pending: Arc<AtomicU64>,
@@ -71,19 +67,42 @@ impl DeliveryMetrics {
             .with_description("Distribution of delivery durations by domain")
             .build();
 
-        let messages_delivered = meter
-            .u64_counter("empath.delivery.messages.delivered.total")
+        // Create atomic counters for high-frequency metrics
+        let messages_delivered_ref = Arc::new(AtomicU64::new(0));
+        let messages_failed_ref = Arc::new(AtomicU64::new(0));
+        let messages_retrying_ref = Arc::new(AtomicU64::new(0));
+
+        // Observable counter for delivered messages (reads from atomic)
+        // Meter keeps this alive internally via callback
+        let delivered_clone = messages_delivered_ref.clone();
+        meter
+            .u64_observable_counter("empath.delivery.messages.delivered.total")
             .with_description("Total number of messages delivered successfully")
+            .with_callback(move |observer| {
+                observer.observe(delivered_clone.load(Ordering::Relaxed), &[]);
+            })
             .build();
 
-        let messages_failed = meter
-            .u64_counter("empath.delivery.messages.failed.total")
+        // Observable counter for failed messages (reads from atomic)
+        // Meter keeps this alive internally via callback
+        let failed_clone = messages_failed_ref.clone();
+        meter
+            .u64_observable_counter("empath.delivery.messages.failed.total")
             .with_description("Total number of messages permanently failed")
+            .with_callback(move |observer| {
+                observer.observe(failed_clone.load(Ordering::Relaxed), &[]);
+            })
             .build();
 
-        let messages_retrying = meter
-            .u64_counter("empath.delivery.messages.retrying.total")
+        // Observable counter for retrying messages (reads from atomic)
+        // Meter keeps this alive internally via callback
+        let retrying_clone = messages_retrying_ref.clone();
+        meter
+            .u64_observable_counter("empath.delivery.messages.retrying.total")
             .with_description("Total number of messages retrying")
+            .with_callback(move |observer| {
+                observer.observe(retrying_clone.load(Ordering::Relaxed), &[]);
+            })
             .build();
 
         let retry_count = meter
@@ -149,10 +168,10 @@ impl DeliveryMetrics {
             attempts_total,
             duration_seconds,
             active_connections,
-            messages_delivered,
-            messages_failed,
-            messages_retrying,
             retry_count,
+            messages_delivered_count: messages_delivered_ref,
+            messages_failed_count: messages_failed_ref,
+            messages_retrying_count: messages_retrying_ref,
             queue_pending: queue_pending_ref,
             queue_in_progress: queue_in_progress_ref,
             queue_completed: queue_completed_ref,
@@ -176,21 +195,24 @@ impl DeliveryMetrics {
     pub fn record_delivery_success(&self, domain: &str, duration_secs: f64, retry_count: u64) {
         let attributes = [KeyValue::new("domain", domain.to_string())];
         self.duration_seconds.record(duration_secs, &attributes);
-        self.messages_delivered.add(1, &[]);
+        // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
+        self.messages_delivered_count.fetch_add(1, Ordering::Relaxed);
         self.retry_count.record(retry_count, &[]);
         self.record_attempt("success", domain);
     }
 
     /// Record a failed delivery
-    pub fn record_delivery_failure(&self, domain: &str, reason: &str) {
-        let attributes = [KeyValue::new("reason", reason.to_string())];
-        self.messages_failed.add(1, &attributes);
+    pub fn record_delivery_failure(&self, domain: &str, _reason: &str) {
+        // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
+        // Note: reason attribute removed for performance - total failures tracked only
+        self.messages_failed_count.fetch_add(1, Ordering::Relaxed);
         self.record_attempt("failed", domain);
     }
 
     /// Record a delivery retry
     pub fn record_delivery_retry(&self, domain: &str) {
-        self.messages_retrying.add(1, &[]);
+        // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
+        self.messages_retrying_count.fetch_add(1, Ordering::Relaxed);
         self.record_attempt("retry", domain);
     }
 

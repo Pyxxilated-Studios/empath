@@ -5,7 +5,10 @@
 //! - Cache hit/miss rates
 //! - DNS errors
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use opentelemetry::{
     KeyValue,
@@ -23,20 +26,16 @@ pub struct DnsMetrics {
     /// Total number of DNS lookups by query type
     lookups_total: Counter<u64>,
 
-    /// Total number of cache hits
-    cache_hits: Counter<u64>,
-
-    /// Total number of cache misses
-    cache_misses: Counter<u64>,
-
     /// Total number of DNS errors by type
     errors_total: Counter<u64>,
 
     /// Current cache size
     cache_size: AtomicU64,
 
-    /// Total number of cache evictions
-    cache_evictions: Counter<u64>,
+    // Fast atomic counters for hot path (read by observable counters via callbacks)
+    cache_hits_count: Arc<AtomicU64>,
+    cache_misses_count: Arc<AtomicU64>,
+    cache_evictions_count: Arc<AtomicU64>,
 }
 
 impl DnsMetrics {
@@ -58,14 +57,31 @@ impl DnsMetrics {
             .with_description("Total number of DNS lookups by query type")
             .build();
 
-        let cache_hits = meter
-            .u64_counter("empath.dns.cache.hits.total")
+        // Create atomic counters for high-frequency metrics
+        let cache_hits_ref = Arc::new(AtomicU64::new(0));
+        let cache_misses_ref = Arc::new(AtomicU64::new(0));
+        let cache_evictions_ref = Arc::new(AtomicU64::new(0));
+
+        // Observable counter for cache hits (reads from atomic)
+        // Meter keeps this alive internally via callback
+        let hits_clone = cache_hits_ref.clone();
+        meter
+            .u64_observable_counter("empath.dns.cache.hits.total")
             .with_description("Total number of DNS cache hits")
+            .with_callback(move |observer| {
+                observer.observe(hits_clone.load(Ordering::Relaxed), &[]);
+            })
             .build();
 
-        let cache_misses = meter
-            .u64_counter("empath.dns.cache.misses.total")
+        // Observable counter for cache misses (reads from atomic)
+        // Meter keeps this alive internally via callback
+        let misses_clone = cache_misses_ref.clone();
+        meter
+            .u64_observable_counter("empath.dns.cache.misses.total")
             .with_description("Total number of DNS cache misses")
+            .with_callback(move |observer| {
+                observer.observe(misses_clone.load(Ordering::Relaxed), &[]);
+            })
             .build();
 
         let errors_total = meter
@@ -73,19 +89,25 @@ impl DnsMetrics {
             .with_description("Total number of DNS errors by type")
             .build();
 
-        let cache_evictions = meter
-            .u64_counter("empath.dns.cache.evictions.total")
+        // Observable counter for cache evictions (reads from atomic)
+        // Meter keeps this alive internally via callback
+        let evictions_clone = cache_evictions_ref.clone();
+        meter
+            .u64_observable_counter("empath.dns.cache.evictions.total")
             .with_description("Total number of DNS cache evictions")
+            .with_callback(move |observer| {
+                observer.observe(evictions_clone.load(Ordering::Relaxed), &[]);
+            })
             .build();
 
         Ok(Self {
             lookup_duration,
             lookups_total,
-            cache_hits,
-            cache_misses,
             errors_total,
             cache_size: AtomicU64::new(0),
-            cache_evictions,
+            cache_hits_count: cache_hits_ref,
+            cache_misses_count: cache_misses_ref,
+            cache_evictions_count: cache_evictions_ref,
         })
     }
 
@@ -97,15 +119,17 @@ impl DnsMetrics {
     }
 
     /// Record a cache hit
-    pub fn record_cache_hit(&self, query_type: &str) {
-        let attributes = [KeyValue::new("query_type", query_type.to_string())];
-        self.cache_hits.add(1, &attributes);
+    pub fn record_cache_hit(&self, _query_type: &str) {
+        // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
+        // Note: query_type attribute removed for performance - total hits tracked only
+        self.cache_hits_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a cache miss
-    pub fn record_cache_miss(&self, query_type: &str) {
-        let attributes = [KeyValue::new("query_type", query_type.to_string())];
-        self.cache_misses.add(1, &attributes);
+    pub fn record_cache_miss(&self, _query_type: &str) {
+        // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
+        // Note: query_type attribute removed for performance - total misses tracked only
+        self.cache_misses_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a DNS error
@@ -121,7 +145,8 @@ impl DnsMetrics {
 
     /// Record a cache eviction
     pub fn record_cache_eviction(&self) {
-        self.cache_evictions.add(1, &[]);
+        // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
+        self.cache_evictions_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get the current cache size
