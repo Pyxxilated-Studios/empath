@@ -278,6 +278,14 @@ impl EmpathControlHandler {
                 self.handle_delete_command(spool, message_id).await
             }
             QueueCommand::Stats => Ok(self.handle_stats_command()),
+            QueueCommand::ProcessNow => {
+                // Note: Manual queue triggering not yet implemented
+                // Queue processing happens automatically based on scan_interval and process_interval
+                Ok(Response::data(ResponseData::Message(
+                    "Queue processing is automatic. Use 'queue stats' to view processing status. \
+                    Manual triggering will be available in a future release.".to_string()
+                )))
+            }
         };
 
         // Audit log: Record command result

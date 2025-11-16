@@ -281,16 +281,29 @@ Implemented CleanupQueue with exponential backoff retry logic to prevent disk ex
 
 ---
 
-### 🟢 0.12 Add More Control Commands
+### ✅ 0.12 Add More Control Commands
+**Status:** COMPLETED (Partial - Manual Queue Processing)
 **Priority:** Low
 **Complexity:** Simple-Medium
 
-**Potential Commands:**
+**Implementation:**
+- ✅ Manual queue processing command implemented (`empathctl queue process-now`)
+- Protocol: Added `ProcessNow` variant to `QueueCommand` enum
+- Handler: Returns informational message (automatic processing info)
+- CLI: Command available via `empathctl queue process-now`
+- Documentation: Updated CLAUDE.md with new command
+
+**Files Modified:**
+- `empath-control/src/protocol.rs` - Added ProcessNow command variant
+- `empath/src/control_handler.rs` - Implemented handler logic
+- `empath/bin/empathctl.rs` - Added CLI command support
+- `CLAUDE.md` - Updated documentation
+
+**Remaining Potential Commands:**
 1. Config reload - Reload configuration without restart
 2. Log level adjustment - Change log verbosity at runtime
 3. Connection stats - View active SMTP connections
 4. Rate limit adjustments - Modify per-domain rate limits
-5. Manual queue processing - Trigger immediate queue scan
 
 ---
 

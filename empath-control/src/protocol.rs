@@ -85,6 +85,8 @@ pub enum QueueCommand {
     },
     /// Get queue statistics
     Stats,
+    /// Trigger immediate queue processing (scan and process)
+    ProcessNow,
 }
 
 /// Response from the control server (versioned wrapper)

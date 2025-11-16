@@ -89,7 +89,7 @@ gcc event.c -fpic -shared -o libevent.so -l empath -L ../../target/debug
 # Queue Management and Runtime Control with empathctl
 cargo build --bin empathctl            # Build empathctl CLI utility
 
-# Queue Management (file-based)
+# Queue Management (via control socket IPC)
 ./target/debug/empathctl queue list    # List all messages in queue
 ./target/debug/empathctl queue list --status=failed  # List only failed messages
 ./target/debug/empathctl queue view <message-id>  # View message details
@@ -99,6 +99,7 @@ cargo build --bin empathctl            # Build empathctl CLI utility
 ./target/debug/empathctl queue unfreeze  # Resume delivery processing
 ./target/debug/empathctl queue stats     # Show queue statistics
 ./target/debug/empathctl queue stats --watch --interval 2  # Live stats view
+./target/debug/empathctl queue process-now  # Trigger immediate queue processing
 
 # Runtime Control (via control socket IPC)
 ./target/debug/empathctl system ping              # Health check

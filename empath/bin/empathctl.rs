@@ -139,6 +139,8 @@ enum QueueAction {
         #[arg(long, default_value = "2")]
         interval: u64,
     },
+    /// Trigger immediate queue processing
+    ProcessNow,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -434,6 +436,9 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
             } else {
                 Request::new(RequestCommand::Queue(QueueCommand::Stats))
             }
+        }
+        QueueAction::ProcessNow => {
+            Request::new(RequestCommand::Queue(QueueCommand::ProcessNow))
         }
     };
 
