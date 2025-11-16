@@ -722,6 +722,22 @@ for (int i = 0; i < recipients.len; i++) {
 em_free_string_vector(recipients);  // Always free!
 ```
 
+**Security: Null Byte Sanitization**
+
+FFI string conversions automatically sanitize null bytes (`\0`) to prevent panics from malicious module input:
+- Embedded null bytes are **removed** from strings (not replaced)
+- The `len` field reflects the sanitized length, not the original
+- Empty strings remain valid (non-null data pointer)
+- This prevents modules from crashing the MTA via null byte injection attacks
+
+Example:
+```rust
+// Input:  "test\0with\0nulls"
+// Output: "testwithnulls" (sanitized, len=13)
+// Input:  "\0\0\0"
+// Output: "" (empty string, len=0, valid data pointer)
+```
+
 Location: `empath-ffi/src/string.rs`
 
 ### Testing Patterns

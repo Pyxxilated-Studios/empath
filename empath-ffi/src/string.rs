@@ -1,5 +1,11 @@
 use std::{bstr::ByteStr, ffi::CString, ptr::null, rc::Rc, str::Utf8Error, sync::Arc};
 
+/// Sanitize bytes by filtering out null bytes (\0).
+/// This prevents CString creation from panicking on malicious FFI module input.
+fn sanitize_null_bytes(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().copied().filter(|&b| b != 0).collect()
+}
+
 #[repr(C)]
 #[derive(Default)]
 pub struct String {
@@ -44,8 +50,10 @@ impl TryFrom<&[u8]> for String {
 
 impl From<&str> for String {
     fn from(value: &str) -> Self {
-        let len = value.len();
-        let id = CString::new(value).expect("Invalid CString");
+        // SAFETY: Sanitize null bytes to prevent panics from malicious FFI module input.
+        let sanitized = sanitize_null_bytes(value.as_bytes());
+        let len = sanitized.len();
+        let id = CString::new(sanitized).unwrap_or_default();
         let data = id.into_raw().cast::<i8>();
 
         Self { len, data }
@@ -60,8 +68,10 @@ impl From<&ByteStr> for String {
 
 impl From<&Arc<str>> for String {
     fn from(value: &Arc<str>) -> Self {
-        let len = value.len();
-        let id = CString::new(value.as_bytes()).expect("Invalid CString");
+        // SAFETY: Sanitize null bytes to prevent panics from malicious FFI module input.
+        let sanitized = sanitize_null_bytes(value.as_bytes());
+        let len = sanitized.len();
+        let id = CString::new(sanitized).unwrap_or_default();
         let data = id.into_raw().cast::<i8>();
 
         Self { len, data }
@@ -70,8 +80,10 @@ impl From<&Arc<str>> for String {
 
 impl From<&Rc<str>> for String {
     fn from(value: &Rc<str>) -> Self {
-        let len = value.len();
-        let id = CString::new(value.as_bytes()).expect("Invalid CString");
+        // SAFETY: Sanitize null bytes to prevent panics from malicious FFI module input.
+        let sanitized = sanitize_null_bytes(value.as_bytes());
+        let len = sanitized.len();
+        let id = CString::new(sanitized).unwrap_or_default();
         let data = id.into_raw().cast::<i8>();
 
         Self { len, data }
@@ -201,5 +213,91 @@ mod test {
         assert_ne!(s.data, null());
 
         em_free_string(s);
+    }
+
+    #[test]
+    fn string_null_byte_sanitization_str() {
+        // Test that null bytes are removed from &str input
+        let s = String::from("test\0with\0nulls");
+        assert_eq!(s.len, "testwithnulls".len());
+        assert_ne!(s.data, null());
+        em_free_string(s);
+
+        // Test string that is only null bytes becomes empty
+        let s = String::from("\0\0\0");
+        assert_eq!(s.len, 0);
+        assert_ne!(s.data, null());
+        em_free_string(s);
+
+        // Test null byte at start
+        let s = String::from("\0test");
+        assert_eq!(s.len, "test".len());
+        assert_ne!(s.data, null());
+        em_free_string(s);
+
+        // Test null byte at end
+        let s = String::from("test\0");
+        assert_eq!(s.len, "test".len());
+        assert_ne!(s.data, null());
+        em_free_string(s);
+    }
+
+    #[test]
+    fn string_null_byte_sanitization_arc() {
+        // Test that null bytes are removed from Arc<str> input
+        let s = String::from(&Arc::from("test\0with\0nulls"));
+        assert_eq!(s.len, "testwithnulls".len());
+        assert_ne!(s.data, null());
+        em_free_string(s);
+
+        // Test Arc<str> with only null bytes
+        let s = String::from(&Arc::from("\0\0"));
+        assert_eq!(s.len, 0);
+        assert_ne!(s.data, null());
+        em_free_string(s);
+    }
+
+    #[test]
+    fn string_null_byte_sanitization_rc() {
+        use std::rc::Rc;
+
+        // Test that null bytes are removed from Rc<str> input
+        let s = String::from(&Rc::from("test\0with\0nulls"));
+        assert_eq!(s.len, "testwithnulls".len());
+        assert_ne!(s.data, null());
+        em_free_string(s);
+
+        // Test Rc<str> with only null bytes
+        let s = String::from(&Rc::from("\0\0"));
+        assert_eq!(s.len, 0);
+        assert_ne!(s.data, null());
+        em_free_string(s);
+    }
+
+    #[test]
+    fn string_null_byte_no_panic() {
+        // This test verifies that we don't panic on null bytes (the original bug)
+        // If this test completes without panicking, the fix is working
+        let malicious_inputs = vec![
+            "normal",
+            "\0",
+            "start\0end",
+            "\0\0\0",
+            "multiple\0null\0bytes\0here",
+        ];
+
+        for input in malicious_inputs {
+            let s = String::from(input);
+            assert_ne!(s.data, null());
+            em_free_string(s);
+
+            let s = String::from(&Arc::from(input));
+            assert_ne!(s.data, null());
+            em_free_string(s);
+
+            let s = String::from(&std::rc::Rc::from(input));
+            assert_ne!(s.data, null());
+            em_free_string(s);
+        }
     }
 }
