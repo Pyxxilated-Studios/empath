@@ -366,6 +366,10 @@ impl EmpathControlHandler {
     }
 
     /// Handle queue view command
+    ///
+    /// This command can view ANY message in the spool, regardless of whether it's
+    /// currently in the delivery queue. If the message is not in the queue, we use
+    /// the persisted delivery context from the spool.
     async fn handle_view_command(
         &self,
         spool: &Arc<dyn BackingStore>,
@@ -377,16 +381,14 @@ impl EmpathControlHandler {
                 ControlError::ServerError(format!("Invalid message ID: {message_id}"))
             })?;
 
-        // Get delivery info from queue
-        let info = self.delivery.get_message(&msg_id).ok_or_else(|| {
-            ControlError::ServerError(format!("Message not found in queue: {message_id}"))
-        })?;
-
-        // Read message from spool
+        // Read message from spool first (this is the source of truth)
         let context = spool
             .read(&msg_id)
             .await
-            .map_err(|e| ControlError::ServerError(format!("Failed to read message: {e}")))?;
+            .map_err(|e| ControlError::ServerError(format!("Message not found in spool: {e}")))?;
+
+        // Try to get delivery info from queue (optional - message may have been delivered already)
+        let info = self.delivery.get_message(&msg_id);
 
         // Extract headers
         let headers = Self::extract_headers(&context);
@@ -394,28 +396,81 @@ impl EmpathControlHandler {
         // Extract body preview
         let body_preview = Self::extract_body_preview(&context);
 
-        let details = empath_control::protocol::QueueMessageDetails {
-            id: message_id,
-            from: context
-                .envelope
-                .sender()
-                .map_or_else(|| "<>".to_string(), ToString::to_string),
-            to: context.envelope.recipients().map_or_else(Vec::new, |list| {
-                list.iter().map(std::string::ToString::to_string).collect()
-            }),
-            domain: info.recipient_domain.to_string(),
-            status: format!("{:?}", info.status),
-            attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
-            next_retry: info.next_retry_at.and_then(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .ok()
-                    .map(|d| d.as_secs())
-            }),
-            last_error: info.attempts.last().and_then(|a| a.error.clone()),
-            size: context.data.as_ref().map_or(0, |d| d.len()),
-            spooled_at: msg_id.timestamp_ms() / 1000,
-            headers,
-            body_preview,
+        // Build details from either queue info or persisted delivery context
+        let details = if let Some(queue_info) = info {
+            // Message is in the active queue - use queue state
+            empath_control::protocol::QueueMessageDetails {
+                id: message_id,
+                from: context
+                    .envelope
+                    .sender()
+                    .map_or_else(|| "<>".to_string(), ToString::to_string),
+                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
+                    list.iter().map(std::string::ToString::to_string).collect()
+                }),
+                domain: queue_info.recipient_domain.to_string(),
+                status: format!("{:?}", queue_info.status),
+                attempts: u32::try_from(queue_info.attempts.len()).unwrap_or_default(),
+                next_retry: queue_info.next_retry_at.and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
+                }),
+                last_error: queue_info.attempts.last().and_then(|a| a.error.clone()),
+                size: context.data.as_ref().map_or(0, |d| d.len()),
+                spooled_at: msg_id.timestamp_ms() / 1000,
+                headers,
+                body_preview,
+            }
+        } else if let Some(ref delivery_ctx) = context.delivery {
+            // Message not in queue but has persisted delivery context (e.g., completed/failed)
+            empath_control::protocol::QueueMessageDetails {
+                id: message_id,
+                from: context
+                    .envelope
+                    .sender()
+                    .map_or_else(|| "<>".to_string(), ToString::to_string),
+                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
+                    list.iter().map(std::string::ToString::to_string).collect()
+                }),
+                domain: delivery_ctx.domain.to_string(),
+                status: format!("{:?}", delivery_ctx.status),
+                attempts: u32::try_from(delivery_ctx.attempt_history.len()).unwrap_or_default(),
+                next_retry: delivery_ctx.next_retry_at.and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
+                }),
+                last_error: delivery_ctx
+                    .attempt_history
+                    .last()
+                    .and_then(|a| a.error.clone()),
+                size: context.data.as_ref().map_or(0, |d| d.len()),
+                spooled_at: msg_id.timestamp_ms() / 1000,
+                headers,
+                body_preview,
+            }
+        } else {
+            // Message exists in spool but has no delivery context (shouldn't happen in normal operation)
+            empath_control::protocol::QueueMessageDetails {
+                id: message_id,
+                from: context
+                    .envelope
+                    .sender()
+                    .map_or_else(|| "<>".to_string(), ToString::to_string),
+                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
+                    list.iter().map(std::string::ToString::to_string).collect()
+                }),
+                domain: "unknown".to_string(),
+                status: "Unknown".to_string(),
+                attempts: 0,
+                next_retry: None,
+                last_error: None,
+                size: context.data.as_ref().map_or(0, |d| d.len()),
+                spooled_at: msg_id.timestamp_ms() / 1000,
+                headers,
+                body_preview,
+            }
         };
 
         Ok(Response::data(ResponseData::QueueMessageDetails(details)))
