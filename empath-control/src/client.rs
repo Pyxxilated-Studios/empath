@@ -19,6 +19,8 @@ const MAX_RESPONSE_SIZE: u32 = 10_000_000;
 pub struct ControlClient {
     socket_path: String,
     timeout: Duration,
+    /// Optional authentication token
+    token: Option<String>,
     /// Optional persistent connection for watch mode to avoid reconnection overhead
     persistent_connection: Option<Arc<Mutex<Option<UnixStream>>>>,
 }
@@ -30,6 +32,7 @@ impl ControlClient {
         Self {
             socket_path: socket_path.into(),
             timeout: Duration::from_secs(10),
+            token: None,
             persistent_connection: None,
         }
     }
@@ -38,6 +41,16 @@ impl ControlClient {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Set the authentication token
+    ///
+    /// This token will be included in all requests to the control server.
+    /// The server will validate the token against its configured token hashes.
+    #[must_use]
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
         self
     }
 
@@ -150,8 +163,13 @@ impl ControlClient {
     async fn send_and_receive(
         &self,
         stream: &mut UnixStream,
-        request: Request,
+        mut request: Request,
     ) -> Result<Response> {
+        // Add authentication token if configured
+        if let Some(token) = &self.token {
+            request.token = Some(token.clone());
+        }
+
         // Serialize request
         let request_bytes = bincode::serde::encode_to_vec(&request, bincode::config::legacy())?;
         let request_len = u32::try_from(request_bytes.len())
@@ -235,6 +253,7 @@ mod tests {
         let client = ControlClient::new("/tmp/test.sock");
         assert_eq!(client.socket_path, "/tmp/test.sock");
         assert_eq!(client.timeout, Duration::from_secs(10));
+        assert!(client.token.is_none());
         assert!(client.persistent_connection.is_none());
     }
 
@@ -242,6 +261,14 @@ mod tests {
     fn test_client_with_timeout() {
         let client = ControlClient::new("/tmp/test.sock").with_timeout(Duration::from_secs(5));
         assert_eq!(client.timeout, Duration::from_secs(5));
+        assert!(client.token.is_none());
+        assert!(client.persistent_connection.is_none());
+    }
+
+    #[test]
+    fn test_client_with_token() {
+        let client = ControlClient::new("/tmp/test.sock").with_token("test-token");
+        assert_eq!(client.token, Some("test-token".to_string()));
         assert!(client.persistent_connection.is_none());
     }
 
@@ -255,8 +282,10 @@ mod tests {
     fn test_client_builder_chain() {
         let client = ControlClient::new("/tmp/test.sock")
             .with_timeout(Duration::from_secs(5))
+            .with_token("my-token")
             .with_persistent_connection();
         assert_eq!(client.timeout, Duration::from_secs(5));
+        assert_eq!(client.token, Some("my-token".to_string()));
         assert!(client.persistent_connection.is_some());
     }
 }

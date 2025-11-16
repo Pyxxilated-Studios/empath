@@ -7,11 +7,13 @@
 //!
 //! The protocol uses bincode for efficient serialization.
 
+pub mod auth;
 pub mod client;
 pub mod error;
 pub mod protocol;
 pub mod server;
 
+pub use auth::ControlAuthConfig;
 pub use client::ControlClient;
 pub use error::{ControlError, Result};
 pub use protocol::{

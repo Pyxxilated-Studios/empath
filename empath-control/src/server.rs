@@ -12,7 +12,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace, warn};
 
-use crate::{ControlError, Request, Response, Result};
+use crate::{ControlAuthConfig, ControlError, Request, Response, Result};
 
 /// Handler trait for processing control requests
 ///
@@ -31,18 +31,49 @@ pub trait CommandHandler: Send + Sync {
 pub struct ControlServer {
     socket_path: String,
     handler: Arc<dyn CommandHandler>,
+    auth_config: Option<ControlAuthConfig>,
 }
 
 impl ControlServer {
-    /// Create a new control server
+    /// Create a new control server without authentication
     ///
     /// # Errors
     ///
     /// Returns an error if the socket path is invalid
     pub fn new(socket_path: impl Into<String>, handler: Arc<dyn CommandHandler>) -> Result<Self> {
+        Self::with_auth(socket_path, handler, None)
+    }
+
+    /// Create a new control server with optional authentication
+    ///
+    /// # Arguments
+    ///
+    /// * `socket_path` - Path to the Unix domain socket
+    /// * `handler` - Command handler implementation
+    /// * `auth_config` - Optional authentication configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket path is invalid
+    pub fn with_auth(
+        socket_path: impl Into<String>,
+        handler: Arc<dyn CommandHandler>,
+        auth_config: Option<ControlAuthConfig>,
+    ) -> Result<Self> {
+        let auth_enabled = auth_config
+            .as_ref()
+            .map_or(false, ControlAuthConfig::requires_auth);
+
+        if auth_enabled {
+            info!("Control socket authentication is ENABLED");
+        } else {
+            info!("Control socket authentication is DISABLED (relying on filesystem permissions)");
+        }
+
         Ok(Self {
             socket_path: socket_path.into(),
             handler,
+            auth_config,
         })
     }
 
@@ -104,8 +135,9 @@ impl ControlServer {
                     match result {
                         Ok((stream, _addr)) => {
                             let handler = Arc::clone(&self.handler);
+                            let auth_config = self.auth_config.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(stream, handler).await {
+                                if let Err(e) = Self::handle_connection(stream, handler, auth_config).await {
                                     error!("Error handling control connection: {e}");
                                 }
                             });
@@ -143,6 +175,7 @@ impl ControlServer {
     async fn handle_connection(
         mut stream: UnixStream,
         handler: Arc<dyn CommandHandler>,
+        auth_config: Option<ControlAuthConfig>,
     ) -> Result<()> {
         // Set a read timeout to prevent hanging on malicious/broken clients
         let timeout = Duration::from_secs(30);
@@ -153,6 +186,41 @@ impl ControlServer {
             .map_err(|_| ControlError::Timeout)??;
 
         trace!("Received request: {request:?}");
+
+        // Validate authentication if enabled
+        if let Some(auth) = &auth_config {
+            if auth.requires_auth() {
+                match auth.validate_token_option(request.token.as_deref()) {
+                    Ok(()) => {
+                        // Get user info for audit logging
+                        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                        #[cfg(unix)]
+                        let uid = unsafe { libc::getuid() };
+                        #[cfg(not(unix))]
+                        let uid = 0;
+
+                        info!(
+                            user = %user,
+                            uid = %uid,
+                            command = ?request.command,
+                            "Control socket authentication successful"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            command = ?request.command,
+                            "Control socket authentication failed"
+                        );
+                        let response = Response::error(format!("Authentication failed: {e}"));
+                        tokio::time::timeout(timeout, Self::write_response(&mut stream, &response))
+                            .await
+                            .map_err(|_| ControlError::Timeout)??;
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         // Process request
         let response = match handler.handle_request(request).await {

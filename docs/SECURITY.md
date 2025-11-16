@@ -58,8 +58,8 @@ Empath MTA exposes the following attack surfaces:
 
 2. **Control Socket (Unix Domain Socket)**
    - **Threat:** Unauthorized administrative access
-   - **Mitigation:** Filesystem permissions (mode 0600)
-   - **Risk Level:** MEDIUM (local access required)
+   - **Mitigation:** Filesystem permissions (mode 0600) + optional token-based authentication
+   - **Risk Level:** LOW (with authentication enabled) / MEDIUM (filesystem permissions only)
 
 3. **SMTP Client (Outbound Delivery)**
    - **Threat:** Man-in-the-Middle attacks, certificate spoofing
@@ -133,10 +133,12 @@ Empath MTA exposes the following attack surfaces:
 **Mitigations:**
 - **Unix domain socket:** Local access only (no network exposure)
 - **Restrictive permissions:** Mode 0600 (owner read/write only)
+- **Token-based authentication:** Optional SHA-256 hashed bearer tokens (enabled by default in production)
+- **Multiple token support:** Different access levels possible (admin vs read-only tokens)
 - **Stale socket detection:** Prevents socket hijacking from crashed processes
-- **Audit logging:** All control commands logged with user/UID
+- **Comprehensive audit logging:** All control commands logged with user/UID and authentication status
 
-**Residual Risk:** MEDIUM. No token-based authentication yet (see roadmap).
+**Residual Risk:** LOW (with authentication enabled). Filesystem permissions alone provide MEDIUM protection.
 
 ---
 
@@ -456,10 +458,49 @@ chown empath:admin /var/run/empath.sock
 chmod 660 /var/run/empath.sock  # Group read/write
 ```
 
-**Known Limitations:**
-- ⚠️ **No token-based authentication** (planned - see roadmap)
-- Security relies on filesystem permissions
-- Suitable for single-user deployments or trusted environments
+5. **Token-Based Authentication (Optional):**
+   ```ron
+   control_auth: (
+       enabled: true,
+       token_hashes: [
+           // SHA-256 hash of "your-secret-token"
+           "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e",
+       ],
+   )
+   ```
+
+**Implementation Details:**
+- Tokens stored as SHA-256 hashes (not plaintext)
+- Multiple tokens supported for different access levels
+- Client sends plaintext token, server validates against hash
+- Authentication failures logged with warnings
+
+**Generating Tokens:**
+```bash
+# Generate secure token
+TOKEN=$(openssl rand -hex 32)
+
+# Generate hash for config
+echo -n "$TOKEN" | sha256sum
+```
+
+**Client Usage:**
+```rust
+use empath_control::ControlClient;
+
+let client = ControlClient::new("/tmp/empath.sock")
+    .with_token("your-secret-token");
+
+let response = client.send_request(request).await?;
+```
+
+**Deployment Recommendations:**
+- ✅ Enable authentication in production multi-user environments
+- ✅ Use strong cryptographically random tokens (32+ bytes)
+- ✅ Rotate tokens periodically
+- ✅ Use different tokens for different administrators
+- ❌ Don't commit token hashes to version control
+- ❌ Don't share tokens across environments
 
 ---
 
@@ -472,6 +513,7 @@ chmod 660 /var/run/empath.sock  # Group read/write
 metrics: (
     enabled: true,
     endpoint: "http://otel-collector:4318/v1/metrics",
+    api_key: "your-metrics-api-key",  // Optional API key authentication
 )
 ```
 
@@ -480,9 +522,50 @@ metrics: (
 - OTLP Collector can then expose to Prometheus
 - Securing Prometheus/Grafana is deployment-specific
 
-**Known Limitations:**
-- ⚠️ **No authentication for OTLP endpoint** (relies on network security)
-- Recommendation: Use network segmentation or VPN for OTLP traffic
+**API Key Authentication (Optional):**
+
+When an API key is configured, Empath sends it in the `Authorization: Bearer <key>` header with all OTLP requests. The collector must be configured to validate the key.
+
+**OTLP Collector Configuration Example:**
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        auth:
+          authenticator: bearertokenauth
+
+extensions:
+  bearertokenauth:
+    scheme: "Bearer"
+    tokens:
+      - token: "your-metrics-api-key"
+
+service:
+  extensions: [bearertokenauth]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]
+```
+
+**Security Considerations:**
+- ⚠️ API key stored in **plaintext** in config (required for OTLP protocol)
+- ✅ Use environment variable substitution for production:
+  ```bash
+  export METRICS_API_KEY="your-secret-key"
+  # Reference in config: api_key: "$ENV:METRICS_API_KEY" (future)
+  ```
+- ✅ Or use Kubernetes secrets mounting
+- ✅ Rotate API keys periodically
+- ✅ Use unique keys per environment (dev/staging/prod)
+
+**Deployment Recommendations:**
+- Enable API key authentication for production deployments
+- Use network segmentation as defense-in-depth
+- Monitor collector logs for authentication failures
+- Implement rate limiting at the collector level
 
 ---
 
@@ -824,9 +907,9 @@ sudo cp /var/spool/empath/queue_state.bin /backup/queue_state-$(date +%Y%m%d).bi
 
 | Task | Description | Effort | Status |
 |------|-------------|--------|--------|
-| 0.28 | SMTP AUTH support | 1 week | Planned |
-| 0.13 | Control socket token auth | 2-3 days | Planned |
-| 0.27 | Metrics endpoint auth | 1-2 days | Planned |
+| 0.27 | **Control socket token auth** | 2-3 days | **✅ Complete** |
+| 0.28 | **Metrics endpoint API key** | 1-2 days | **✅ Complete** |
+| - | SMTP AUTH support | 1 week | Planned |
 
 ### Phase 2: DNS Security (Medium Priority)
 
@@ -909,9 +992,27 @@ Empath includes security-focused tests:
    ls -la /var/run/empath.sock
    # Should show: srw------- (0600)
 
-   # Test unauthorized access
+   # Test unauthorized access (filesystem permissions)
    sudo -u nobody empathctl system status
    # Should fail with permission denied
+
+   # Test authentication (if enabled)
+   empathctl system status  # Without token - should fail
+   empathctl --token "wrong-token" system status  # Invalid token - should fail
+   empathctl --token "$VALID_TOKEN" system status  # Valid token - should succeed
+
+   # Check authentication logs
+   grep "authentication" /var/log/empath.log
+   # Should show authentication events with user/UID
+   ```
+
+4. **Metrics Authentication:**
+   ```bash
+   # Monitor OTLP collector logs for auth failures
+   docker logs otel-collector | grep "401\|403"
+
+   # Test with invalid API key
+   # (Modify config temporarily with wrong key, check collector logs)
    ```
 
 ---

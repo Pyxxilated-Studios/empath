@@ -381,6 +381,31 @@ Empath (
     ),
     // Control socket configuration (optional)
     control_socket: "/tmp/empath.sock",  // Path for IPC control socket
+
+    // Control socket authentication (optional, disabled by default)
+    control_auth: (
+        enabled: true,
+        token_hashes: [
+            // SHA-256 hash of "your-secret-token"
+            "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e",
+        ],
+    ),
+
+    // Metrics configuration (optional)
+    metrics: (
+        enabled: true,
+        endpoint: "http://localhost:4318/v1/metrics",
+        max_domain_cardinality: 1000,
+        high_priority_domains: ["gmail.com", "outlook.com"],
+        api_key: "your-metrics-api-key",  // Optional API key for OTLP collector
+    ),
+
+    // Health check configuration (optional)
+    health: (
+        enabled: true,
+        listen_address: "[::]:8080",
+        max_queue_size: 10000,
+    ),
 )
 ```
 
@@ -445,9 +470,9 @@ empathctl --control-socket /var/run/empath.sock system status
 ```
 
 **Security:**
-- Socket permissions inherited from umask
+- Socket permissions inherited from umask (default: mode 0600, owner only)
 - For multi-user access, adjust socket file permissions
-- Future enhancement: token-based authentication (see TODO.md task 0.13)
+- Token-based authentication available (see Authentication section below)
 
 **Audit Logging:**
 
@@ -1068,6 +1093,178 @@ let accept_invalid_certs = self
     .and_then(|config| config.accept_invalid_certs)
     .unwrap_or(self.accept_invalid_certs);
 ```
+
+### Authentication
+
+Empath provides optional authentication for both the control socket and metrics endpoint to secure administrative access and observability data.
+
+#### Control Socket Authentication
+
+Token-based authentication using SHA-256 hashed bearer tokens protects control socket commands from unauthorized access.
+
+**Configuration:**
+
+```ron
+control_auth: (
+    enabled: true,
+    token_hashes: [
+        // SHA-256 hash of "admin-token-12345"
+        "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+        // SHA-256 hash of "read-only-token"
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    ],
+)
+```
+
+**Generating Token Hashes:**
+
+```bash
+# Generate a secure token
+TOKEN=$(openssl rand -hex 32)
+echo "Token: $TOKEN"
+
+# Generate SHA-256 hash for config
+HASH=$(echo -n "$TOKEN" | sha256sum | awk '{print $1}')
+echo "Hash for config: $HASH"
+
+# Alternative: use a simple passphrase
+echo -n "my-secret-password" | sha256sum
+```
+
+**Using Authenticated Clients:**
+
+```bash
+# Set token via environment variable
+export EMPATH_TOKEN="admin-token-12345"
+
+# Use with empathctl (future enhancement)
+empathctl --token "$EMPATH_TOKEN" system status
+
+# Or via programmatic client
+```
+
+```rust
+use empath_control::ControlClient;
+
+let client = ControlClient::new("/tmp/empath.sock")
+    .with_token("admin-token-12345");
+
+let response = client.send_request(request).await?;
+```
+
+**Security Features:**
+
+- Tokens stored as SHA-256 hashes (not plaintext)
+- Config file leaks don't expose tokens
+- Multiple tokens supported (different access levels possible)
+- Authentication failures logged with warnings
+- Audit logging includes user and UID for all commands
+- Backward compatible (disabled by default)
+
+**Audit Logging:**
+
+All authentication events are logged:
+
+```
+INFO  Control socket authentication is ENABLED
+INFO  Control socket authentication successful user=alice uid=1000 command=System(Status)
+WARN  Control socket authentication failed error="Invalid authentication token" command=Dns(ClearCache)
+```
+
+**When to Enable:**
+
+- ✅ Multi-user systems where filesystem permissions aren't sufficient
+- ✅ Production deployments with multiple administrators
+- ✅ Compliance requirements for access control
+- ✅ Remote access scenarios (though Unix sockets are local-only)
+
+**When to Disable:**
+
+- Single-user development environments
+- Docker containers with isolated control sockets
+- When filesystem permissions (mode 0600) are sufficient
+
+**Implementation:** `empath-control/src/auth.rs`, `empath-control/src/server.rs:190-223`
+
+#### Metrics Authentication
+
+Optional API key authentication for OTLP metrics export protects observability data from unauthorized access.
+
+**Configuration:**
+
+```ron
+metrics: (
+    enabled: true,
+    endpoint: "http://otel-collector:4318/v1/metrics",
+    api_key: "your-secret-api-key-here",  // Optional
+)
+```
+
+**How It Works:**
+
+- API key sent in `Authorization: Bearer <key>` header
+- Validation happens at the OTLP collector, not in Empath
+- The collector must be configured to validate the key
+
+**OTLP Collector Configuration Example:**
+
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        auth:
+          authenticator: bearertokenauth
+
+extensions:
+  bearertokenauth:
+    scheme: "Bearer"
+    tokens:
+      - token: "your-secret-api-key-here"
+
+service:
+  extensions: [bearertokenauth]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]
+```
+
+**Security Considerations:**
+
+- ⚠️ API key stored in **plaintext** in config (required for OTLP protocol)
+- ✅ Recommend using environment variable substitution:
+  ```ron
+  api_key: "$ENV:METRICS_API_KEY",  // Future enhancement
+  ```
+- ✅ Or Kubernetes secrets mounting:
+  ```yaml
+  env:
+    - name: METRICS_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: empath-secrets
+          key: metrics-api-key
+  ```
+
+**When to Enable:**
+
+- Production deployments with exposed metrics endpoints
+- Multi-tenant environments
+- Compliance requirements for metrics data protection
+
+**Implementation:** `empath-metrics/src/exporter.rs:28-39`
+
+**Comparison with Control Socket Auth:**
+
+| Feature | Control Socket | Metrics Endpoint |
+|---------|---------------|------------------|
+| Storage | SHA-256 hash | Plaintext |
+| Validation | In Empath | At OTLP collector |
+| Protocol | Custom (bincode) | Standard (OTLP/HTTP) |
+| Multiple Keys | Yes | Single key |
+| Audit Logging | Yes (full) | No (collector-side) |
 
 ### SMTP Operation Timeouts
 

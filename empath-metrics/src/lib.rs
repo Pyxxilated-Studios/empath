@@ -30,6 +30,7 @@
 //!     endpoint: "http://localhost:4318".to_string(),
 //!     max_domain_cardinality: 1000,
 //!     high_priority_domains: vec!["gmail.com".to_string(), "outlook.com".to_string()],
+//!     api_key: None, // Optional API key for OTLP collector authentication
 //! };
 //!
 //! init_metrics(&config)?;
@@ -87,6 +88,7 @@ pub struct Metrics {
 ///     endpoint: "http://localhost:4318".to_string(),
 ///     max_domain_cardinality: 1000,
 ///     high_priority_domains: vec!["gmail.com".to_string(), "outlook.com".to_string()],
+///     api_key: None, // Optional API key for OTLP collector authentication
 /// };
 ///
 /// init_metrics(&config)?;
@@ -105,7 +107,7 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
     );
 
     // Initialize the OTLP exporter
-    let provider = exporter::init_otlp_exporter(&config.endpoint)?;
+    let provider = exporter::init_otlp_exporter(config)?;
 
     // Install the provider as the global meter provider
     opentelemetry::global::set_meter_provider(provider);

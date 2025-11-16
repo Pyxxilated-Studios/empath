@@ -59,6 +59,28 @@ pub struct MetricsConfig {
     /// Default: empty list
     #[serde(default)]
     pub high_priority_domains: Vec<String>,
+
+    /// Optional API key for authenticating with the OTLP collector
+    ///
+    /// When set, this API key will be sent in the `Authorization: Bearer <key>` header
+    /// with all OTLP metric exports. The collector must be configured to validate this key.
+    ///
+    /// **Security Note:** This stores the API key in plaintext in the configuration file.
+    /// For better security, consider using environment variable substitution in your
+    /// configuration management system, or mounting secrets in Kubernetes.
+    ///
+    /// Example:
+    /// ```ron
+    /// metrics: (
+    ///     enabled: true,
+    ///     endpoint: "http://otel-collector:4318/v1/metrics",
+    ///     api_key: "your-secret-api-key-here",
+    /// )
+    /// ```
+    ///
+    /// Default: None (no authentication)
+    #[serde(default)]
+    pub api_key: Option<String>,
 }
 
 const fn default_enabled() -> bool {
@@ -80,6 +102,7 @@ impl Default for MetricsConfig {
             endpoint: default_endpoint(),
             max_domain_cardinality: default_max_domain_cardinality(),
             high_priority_domains: Vec::new(),
+            api_key: None,
         }
     }
 }

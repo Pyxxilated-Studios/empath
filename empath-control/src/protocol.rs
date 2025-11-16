@@ -12,6 +12,12 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub struct Request {
     /// Protocol version
     pub version: u32,
+    /// Optional authentication token (bearer token)
+    ///
+    /// When authentication is enabled on the server, this must be provided
+    /// and must match one of the configured token hashes.
+    #[serde(default)]
+    pub token: Option<String>,
     /// The actual command to execute
     pub command: RequestCommand,
 }
@@ -225,6 +231,17 @@ impl Request {
     pub const fn new(command: RequestCommand) -> Self {
         Self {
             version: PROTOCOL_VERSION,
+            token: None,
+            command,
+        }
+    }
+
+    /// Create a new request with authentication token
+    #[must_use]
+    pub fn with_token(command: RequestCommand, token: impl Into<String>) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            token: Some(token.into()),
             command,
         }
     }

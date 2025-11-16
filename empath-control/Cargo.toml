@@ -27,6 +27,13 @@ empath-delivery = { path = "../empath-delivery" }
 # Tracing
 tracing = "0.1"
 
+# Cryptography (for token hashing)
+sha2 = "0.10"
+hex = "0.4"
+
+# System (for Unix UID in audit logging)
+libc = "0.2"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
