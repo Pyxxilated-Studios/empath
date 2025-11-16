@@ -1,4 +1,5 @@
 //! Integration tests for delivery processor
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod support;
 

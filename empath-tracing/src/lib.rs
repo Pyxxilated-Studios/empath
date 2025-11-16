@@ -158,8 +158,8 @@ pub fn traced(
     };
     item_fn.attrs.push(clippy_attr);
 
-    if args.instrument.is_some() {
-        let fields = args.instrument.unwrap().to_token_stream();
+    if let Some(instrument) = args.instrument {
+        let fields = instrument.to_token_stream();
         let instrument_attr: syn::Attribute = parse_quote! {
             #[tracing::instrument(#fields)]
         };
@@ -167,12 +167,10 @@ pub fn traced(
     }
 
     let id = item_fn.sig.ident.to_string();
-    let timing: Stmt = if args.timing.is_none() {
-        parse_quote! { tracing::trace!("OnExit: {}", #id); }
-    } else {
-        let timing = args.timing.unwrap()();
+    let timing: Stmt = args.timing.map_or_else(|| parse_quote! { tracing::trace!("OnExit: {}", #id); }, |timing| {
+        let timing = timing();
         parse_quote! { tracing::trace!("OnExit: {} ({})", #id, (#timing)(self.timer.elapsed())); }
-    };
+    });
 
     let decl: Vec<Stmt> = parse_quote! {
         struct __Instrument {

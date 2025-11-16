@@ -6,5 +6,5 @@
 pub mod harness;
 pub mod mock_server;
 
-pub use harness::{E2ETestHarness, E2ETestHarnessBuilder};
-pub use mock_server::{MockSmtpServer, SmtpCommand};
+pub use harness::E2ETestHarness;
+pub use mock_server::SmtpCommand;

@@ -93,7 +93,7 @@ impl Empath {
     /// to initialise.
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, err), timing(precision = "s"))]
     pub async fn run(mut self) -> anyhow::Result<()> {
-        logging::init();
+        logging::init()?;
 
         internal!("Controller running");
 

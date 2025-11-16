@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use empath_control::protocol::{
     QueueCommand, Request, RequestCommand, Response, ResponseData, ResponsePayload,
 };

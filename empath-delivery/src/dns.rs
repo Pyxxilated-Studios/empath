@@ -184,7 +184,7 @@ impl DnsResolver {
 
         // Try system DNS configuration first
         let resolver_result = TokioResolver::builder(TokioConnectionProvider::default())
-            .and_then(|builder| Ok(builder.with_options(opts.clone()).build()));
+            .map(|builder| builder.with_options(opts.clone()).build());
 
         let resolver = match resolver_result {
             Ok(r) => r,
@@ -614,6 +614,7 @@ impl Default for DnsResolver {
                 "System DNS configuration failed, using Cloudflare fallback (1.1.1.1)"
             );
 
+            #[allow(clippy::expect_used, reason = "The default resolver should not error")]
             Self::with_resolver_config(
                 ResolverConfig::cloudflare(),
                 ResolverOpts::default(),
@@ -625,6 +626,7 @@ impl Default for DnsResolver {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

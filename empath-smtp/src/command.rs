@@ -403,6 +403,7 @@ impl TryFrom<String> for Command {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use crate::command::{Command, HeloVariant, MailParameters};
 

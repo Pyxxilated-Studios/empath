@@ -123,6 +123,7 @@ pub async fn scan_spool_internal(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

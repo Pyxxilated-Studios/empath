@@ -2,6 +2,7 @@
 //!
 //! Verifies that metric counters accurately reflect actual events, especially
 //! after the `AtomicU64` optimization (task 0.30) which reduced overhead by 90%.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::{sync::Arc, time::SystemTime};
 

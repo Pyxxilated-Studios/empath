@@ -1,6 +1,7 @@
 //! Integration tests for the SMTP client.
 //!
 //! These tests verify that the client can interact with a real SMTP server.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 

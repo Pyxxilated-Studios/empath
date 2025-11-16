@@ -150,6 +150,7 @@ impl BackingStore for MemoryBackingStore {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use std::sync::Arc;
 

@@ -5,6 +5,7 @@
 //! - ESMTP parameter parsing with perfect hash map
 //! - FSM state transitions
 //! - Context operations
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::{hint::black_box, sync::Arc};
 

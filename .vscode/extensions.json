@@ -3,15 +3,9 @@
     "rust-lang.rust-analyzer",
     "tamasfe.even-better-toml",
     "serayuzgur.crates",
-    "vadimcn.vscode-lldb",
-    "yzhang.markdown-all-in-one",
-    "foxundermoon.shell-format",
     "eamodio.gitlens",
     "editorconfig.editorconfig",
-    "skellock.just",
-    "ms-azuretools.vscode-docker",
     "usernamehw.errorlens",
-    "aaron-bond.better-comments"
   ],
   "unwantedRecommendations": [
     "rust-lang.rust",

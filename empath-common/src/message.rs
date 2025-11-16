@@ -184,10 +184,9 @@ impl<'a> Headers<'a> {
 
         while parser.peek().is_some() {
             if parser.peek_n::<END_OF_HEADER_LENGTH>() == Some(END_OF_HEADER) {
-                // SAFETY: peek_n() guarantees sufficient elements exist
                 parser
                     .advance_by(END_OF_HEADER_LENGTH)
-                    .expect("peek_n guarantees sufficient elements");
+                    .map_err(MessageParseError::UnexpectedEOF)?;
                 break;
             }
 
@@ -214,7 +213,7 @@ impl<'a> Headers<'a> {
                 // SAFETY: peek_n() guarantees sufficient elements exist
                 parser
                     .advance_by(END_OF_HEADER_LENGTH)
-                    .expect("peek_n guarantees sufficient elements");
+                    .map_err(MessageParseError::UnexpectedEOF)?;
             }
         }
 
@@ -252,6 +251,7 @@ impl<'buf> Message<'buf> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use pretty_assertions::assert_eq;
 

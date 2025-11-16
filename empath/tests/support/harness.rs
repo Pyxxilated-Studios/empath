@@ -31,12 +31,7 @@
 //! }
 //! ```
 
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use empath_common::{Signal, traits::protocol::Protocol};
 use empath_delivery::{DeliveryProcessor, DomainConfig, DomainConfigRegistry};
@@ -96,7 +91,7 @@ impl E2ETestHarness {
     /// Get the mock server address
     #[must_use]
     #[allow(dead_code)] // Available for advanced test scenarios
-    pub fn mock_addr(&self) -> SocketAddr {
+    pub const fn mock_addr(&self) -> SocketAddr {
         self.mock_server.addr()
     }
 
@@ -107,12 +102,7 @@ impl E2ETestHarness {
     /// # Errors
     ///
     /// Returns an error if the SMTP transaction fails.
-    pub async fn send_email(
-        &self,
-        from: &str,
-        to: &str,
-        message: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn send_email(&self, from: &str, to: &str, message: &str) -> anyhow::Result<()> {
         SmtpClientBuilder::new(
             format!("127.0.0.1:{}", self.smtp_port),
             "localhost".to_string(),
@@ -365,9 +355,7 @@ impl E2ETestHarnessBuilder {
 
         // 4. Create spool (memory-backed for simplicity in tests)
         // File-backed spool would require inotify which adds complexity
-        let spool_config = empath_spool::SpoolConfig::Memory(MemoryConfig {
-            capacity: None,
-        });
+        let spool_config = empath_spool::SpoolConfig::Memory(MemoryConfig { capacity: None });
         let spool = spool_config.into_spool()?;
 
         // Spawn spool watcher task

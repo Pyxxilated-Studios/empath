@@ -35,7 +35,7 @@ use sha2::{Digest, Sha256};
 /// ```bash
 /// echo -n "your-secret-token" | sha256sum
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ControlAuthConfig {
     /// Enable or disable authentication
     ///
@@ -50,15 +50,6 @@ pub struct ControlAuthConfig {
     /// Incoming tokens are hashed and compared against this list.
     #[serde(default)]
     pub token_hashes: Vec<String>,
-}
-
-impl Default for ControlAuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            token_hashes: Vec::new(),
-        }
-    }
 }
 
 impl ControlAuthConfig {
@@ -156,16 +147,16 @@ impl ControlAuthConfig {
             return Ok(()); // Auth disabled, allow all
         }
 
-        match token {
-            None => Err("Authentication required but no token provided".to_string()),
-            Some(t) => {
+        token.map_or_else(
+            || Err("Authentication required but no token provided".to_string()),
+            |t| {
                 if self.validate_token(t) {
                     Ok(())
                 } else {
                     Err("Invalid authentication token".to_string())
                 }
-            }
-        }
+            },
+        )
     }
 }
 

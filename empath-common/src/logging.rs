@@ -3,8 +3,8 @@ use std::str::FromStr;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    trace::{RandomIdGenerator, SdkTracerProvider},
     Resource,
+    trace::{RandomIdGenerator, SdkTracerProvider},
 };
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{
@@ -57,10 +57,10 @@ macro_rules! internal {
 /// Initialize the global tracing subscriber with JSON structured logging and OpenTelemetry
 ///
 /// This configures:
-/// - JSON formatted logs for machine parsing and LogQL queries
-/// - OpenTelemetry trace context (trace_id, span_id) injected into all log entries
+/// - JSON formatted logs for machine parsing and `LogQL` queries
+/// - OpenTelemetry trace context (`trace_id`, `span_id`) injected into all log entries
 /// - OTLP trace export to Jaeger via OpenTelemetry Collector
-/// - Environment-based log level filtering (LOG_LEVEL or RUST_LOG)
+/// - Environment-based log level filtering (`LOG_LEVEL` or `RUST_LOG`)
 /// - File and line number information for debugging
 /// - Current span context included in log entries
 ///
@@ -91,7 +91,7 @@ macro_rules! internal {
 /// }
 /// ```
 ///
-/// # LogQL Query Examples with Trace Correlation
+/// # `LogQL` Query Examples with Trace Correlation
 ///
 /// ```logql
 /// # Find all logs for a specific trace
@@ -106,7 +106,11 @@ macro_rules! internal {
 /// # Track delivery attempts by domain
 /// sum by (domain) (count_over_time({service="empath"} | json | delivery_attempt > 0 [1h]))
 /// ```
-pub fn init() {
+///
+/// # Errors
+/// If there is an issue setting up the OTLP exporter
+///
+pub fn init() -> anyhow::Result<()> {
     let default = if cfg!(debug_assertions) {
         LevelFilter::TRACE
     } else {
@@ -130,14 +134,14 @@ pub fn init() {
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
         .with_endpoint(otlp_endpoint)
-        .build()
-        .expect("Failed to build OTLP exporter");
+        .build()?;
 
     let resource = Resource::builder_empty()
         .with_service_name("empath-mta")
-        .with_attributes([
-            opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-        ])
+        .with_attributes([opentelemetry::KeyValue::new(
+            "service.version",
+            env!("CARGO_PKG_VERSION"),
+        )])
         .build();
 
     // Create batch processor for the exporter
@@ -178,4 +182,6 @@ pub fn init() {
                 })),
         )
         .init();
+
+    Ok(())
 }

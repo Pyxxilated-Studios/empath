@@ -29,10 +29,7 @@ pub fn init_otlp_exporter(config: &MetricsConfig) -> Result<SdkMeterProvider, Me
     if let Some(api_key) = &config.api_key {
         tracing::info!("Metrics API key authentication enabled");
         let mut headers = HashMap::new();
-        headers.insert(
-            "authorization".to_string(),
-            format!("Bearer {api_key}"),
-        );
+        headers.insert("authorization".to_string(), format!("Bearer {api_key}"));
         builder = builder.with_headers(headers);
     } else {
         tracing::info!("Metrics API key authentication disabled");

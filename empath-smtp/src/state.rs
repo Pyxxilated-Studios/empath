@@ -306,6 +306,7 @@ impl State {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use empath_common::address::AddressList;
     use mailparse::addrparse;

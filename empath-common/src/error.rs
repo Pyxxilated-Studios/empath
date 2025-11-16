@@ -3,7 +3,7 @@
 //! This module provides foundational error types used across all protocols
 //! and session handlers in the Empath MTA.
 
-use std::io;
+use std::{io, num::NonZeroUsize};
 
 use thiserror::Error;
 
@@ -147,6 +147,9 @@ pub enum MessageParseError {
     /// I/O error during parsing.
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+
+    #[error("Not enough bytes left")]
+    UnexpectedEOF(NonZeroUsize),
 }
 
 #[cfg(test)]

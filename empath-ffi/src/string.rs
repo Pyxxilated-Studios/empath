@@ -1,7 +1,7 @@
 use std::{bstr::ByteStr, ffi::CString, ptr::null, rc::Rc, str::Utf8Error, sync::Arc};
 
 /// Sanitize bytes by filtering out null bytes (\0).
-/// This prevents CString creation from panicking on malicious FFI module input.
+/// This prevents `CString` creation from panicking on malicious FFI module input.
 fn sanitize_null_bytes(bytes: &[u8]) -> Vec<u8> {
     bytes.iter().copied().filter(|&b| b != 0).collect()
 }

@@ -282,6 +282,7 @@ pub extern "C" fn em_delivery_get_attempts(validate_context: &Context) -> u32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use std::{
         borrow::Cow,

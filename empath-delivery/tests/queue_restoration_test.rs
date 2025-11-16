@@ -2,10 +2,14 @@
 //!
 //! This test verifies that:
 //! 1. Queue state is restored from Context.delivery in spooled messages
-//! 2. next_retry_at timestamps are honored (no immediate retries)
-//! 3. All delivery state fields are preserved (status, attempts, current_server_index)
+//! 2. `next_retry_at` timestamps are honored (no immediate retries)
+//! 3. All delivery state fields are preserved (status, attempts, `current_server_index`)
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{sync::Arc, time::{Duration, SystemTime}};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use empath_common::{
     DeliveryAttempt, DeliveryStatus,
@@ -68,7 +72,9 @@ fn create_test_context_with_delivery_state(
     Context {
         envelope,
         id: "test-session".to_string(),
-        data: Some(Arc::from(b"Test message content for queue restoration".as_slice())),
+        data: Some(Arc::from(
+            b"Test message content for queue restoration".as_slice(),
+        )),
         delivery: Some(delivery),
         ..Default::default()
     }
@@ -76,6 +82,7 @@ fn create_test_context_with_delivery_state(
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Async operations")]
+#[allow(clippy::too_many_lines)]
 async fn test_queue_restoration_across_restart() {
     // **Phase 1: Create first processor and spool a message with delivery state**
 
@@ -87,7 +94,9 @@ async fn test_queue_restoration_across_restart() {
     processor1.max_attempts = 5;
     processor1.base_retry_delay_secs = 60;
 
-    processor1.init(spool.clone()).expect("Failed to init processor");
+    processor1
+        .init(spool.clone())
+        .expect("Failed to init processor");
 
     // Create a message with Retry status and next_retry_at in the future
     let future_retry_time = SystemTime::now() + Duration::from_secs(3600); // Retry in 1 hour
@@ -107,9 +116,7 @@ async fn test_queue_restoration_across_restart() {
         .await
         .expect("Failed to spool message");
 
-    println!(
-        "Phase 1: Spooled message {msg_id:?} with Retry status and next_retry_at in 1 hour"
-    );
+    println!("Phase 1: Spooled message {msg_id:?} with Retry status and next_retry_at in 1 hour");
 
     // Verify the message was written to disk
     let persisted_context: Context = BackingStore::read(spool.as_ref(), &msg_id)
@@ -139,7 +146,9 @@ async fn test_queue_restoration_across_restart() {
     processor2.max_attempts = 5;
     processor2.base_retry_delay_secs = 60;
 
-    processor2.init(spool.clone()).expect("Failed to init processor");
+    processor2
+        .init(spool.clone())
+        .expect("Failed to init processor");
 
     // Trigger initial spool scan manually (this is what happens in serve())
     // Note: We can't call scan_spool_internal directly because it's private,
@@ -147,12 +156,16 @@ async fn test_queue_restoration_across_restart() {
     // For this test, we'll manually trigger the queue restoration by simulating what serve() does.
 
     // The scan happens during serve(), but for testing we can just list and check queue
-    let messages = BackingStore::list(spool.as_ref()).await.expect("Failed to list spool");
+    let messages = BackingStore::list(spool.as_ref())
+        .await
+        .expect("Failed to list spool");
     assert_eq!(messages.len(), 1, "Should have 1 message in spool");
 
     // Manually restore queue state (this is what scan_spool_internal does)
     for msg_id in &messages {
-        let context = BackingStore::read(spool.as_ref(), msg_id).await.expect("Failed to read message");
+        let context = BackingStore::read(spool.as_ref(), msg_id)
+            .await
+            .expect("Failed to read message");
 
         if let Some(delivery_ctx) = &context.delivery {
             // Restore from persisted state (this is what scan.rs does)
@@ -181,7 +194,10 @@ async fn test_queue_restoration_across_restart() {
         .expect("Message should be in queue");
 
     assert!(
-        matches!(restored_info.status, DeliveryStatus::Retry { attempts: 2, .. }),
+        matches!(
+            restored_info.status,
+            DeliveryStatus::Retry { attempts: 2, .. }
+        ),
         "Status should be restored as Retry with 2 attempts"
     );
     assert_eq!(
@@ -209,10 +225,7 @@ async fn test_queue_restoration_across_restart() {
     );
 
     println!("Phase 3: ✓ Queue state verified - all fields restored correctly");
-    println!(
-        "  - Status: {:?}",
-        restored_info.status
-    );
+    println!("  - Status: {:?}", restored_info.status);
     println!("  - Attempts: {}", restored_info.attempt_count());
     println!("  - Server index: {}", restored_info.current_server_index);
     println!(
@@ -277,21 +290,30 @@ async fn test_queue_restoration_with_multiple_messages() {
             next_retry_at,
         );
 
-        let msg_id = BackingStore::write(spool.as_ref(), &mut context).await.expect("Failed to spool");
+        let msg_id = BackingStore::write(spool.as_ref(), &mut context)
+            .await
+            .expect("Failed to spool");
         message_ids.push((msg_id, status, attempts, next_retry_at));
     }
 
-    println!("Spooled {} messages with different states", message_ids.len());
+    println!(
+        "Spooled {} messages with different states",
+        message_ids.len()
+    );
 
     // Create processor and restore queue
     let mut processor = DeliveryProcessor::default();
     processor.init(spool.clone()).expect("Failed to init");
 
     // Manually trigger restoration (simulating scan_spool_internal)
-    let messages = BackingStore::list(spool.as_ref()).await.expect("Failed to list spool");
+    let messages = BackingStore::list(spool.as_ref())
+        .await
+        .expect("Failed to list spool");
 
     for msg_id in &messages {
-        let context = BackingStore::read(spool.as_ref(), msg_id).await.expect("Failed to read");
+        let context = BackingStore::read(spool.as_ref(), msg_id)
+            .await
+            .expect("Failed to read");
         if let Some(delivery_ctx) = &context.delivery {
             let info = empath_delivery::DeliveryInfo {
                 message_id: msg_id.clone(),
@@ -315,7 +337,10 @@ async fn test_queue_restoration_with_multiple_messages() {
     );
 
     for (msg_id, expected_status, expected_attempts, expected_retry_at) in message_ids {
-        let info = processor.queue().get(&msg_id).expect("Message should be in queue");
+        let info = processor
+            .queue()
+            .get(&msg_id)
+            .expect("Message should be in queue");
 
         // Verify status
         assert_eq!(

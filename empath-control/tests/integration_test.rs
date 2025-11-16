@@ -2,6 +2,7 @@
 //!
 //! These tests verify the full request/response cycle between the control
 //! client and server, including error handling, timeouts, and protocol correctness.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 

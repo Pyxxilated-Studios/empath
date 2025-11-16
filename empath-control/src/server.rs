@@ -62,7 +62,7 @@ impl ControlServer {
     ) -> Result<Self> {
         let auth_enabled = auth_config
             .as_ref()
-            .map_or(false, ControlAuthConfig::requires_auth);
+            .is_some_and(ControlAuthConfig::requires_auth);
 
         if auth_enabled {
             info!("Control socket authentication is ENABLED");
@@ -188,36 +188,36 @@ impl ControlServer {
         trace!("Received request: {request:?}");
 
         // Validate authentication if enabled
-        if let Some(auth) = &auth_config {
-            if auth.requires_auth() {
-                match auth.validate_token_option(request.token.as_deref()) {
-                    Ok(()) => {
-                        // Get user info for audit logging
-                        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                        #[cfg(unix)]
-                        let uid = unsafe { libc::getuid() };
-                        #[cfg(not(unix))]
-                        let uid = 0;
+        if let Some(auth) = &auth_config
+            && auth.requires_auth()
+        {
+            match auth.validate_token_option(request.token.as_deref()) {
+                Ok(()) => {
+                    // Get user info for audit logging
+                    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                    #[cfg(unix)]
+                    let uid = unsafe { libc::getuid() };
+                    #[cfg(not(unix))]
+                    let uid = 0;
 
-                        info!(
-                            user = %user,
-                            uid = %uid,
-                            command = ?request.command,
-                            "Control socket authentication successful"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            command = ?request.command,
-                            "Control socket authentication failed"
-                        );
-                        let response = Response::error(format!("Authentication failed: {e}"));
-                        tokio::time::timeout(timeout, Self::write_response(&mut stream, &response))
-                            .await
-                            .map_err(|_| ControlError::Timeout)??;
-                        return Ok(());
-                    }
+                    info!(
+                        user = %user,
+                        uid = %uid,
+                        command = ?request.command,
+                        "Control socket authentication successful"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        command = ?request.command,
+                        "Control socket authentication failed"
+                    );
+                    let response = Response::error(format!("Authentication failed: {e}"));
+                    tokio::time::timeout(timeout, Self::write_response(&mut stream, &response))
+                        .await
+                        .map_err(|_| ControlError::Timeout)??;
+                    return Ok(());
                 }
             }
         }

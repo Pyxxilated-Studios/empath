@@ -2,6 +2,7 @@
 //!
 //! These tests verify the complete flow from SMTP reception through delivery
 //! using a self-contained test harness.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod support;
 
@@ -63,9 +64,7 @@ async fn test_full_delivery_flow_success() {
         "Mock server should receive MAIL FROM"
     );
     assert!(
-        commands
-            .iter()
-            .any(|c| matches!(c, SmtpCommand::RcptTo(_))),
+        commands.iter().any(|c| matches!(c, SmtpCommand::RcptTo(_))),
         "Mock server should receive RCPT TO"
     );
     assert!(
@@ -157,9 +156,7 @@ async fn test_delivery_with_recipient_rejection() {
         "Should attempt MAIL FROM"
     );
     assert!(
-        commands
-            .iter()
-            .any(|c| matches!(c, SmtpCommand::RcptTo(_))),
+        commands.iter().any(|c| matches!(c, SmtpCommand::RcptTo(_))),
         "Should attempt RCPT TO"
     );
 

@@ -152,6 +152,7 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
 /// }
 /// ```
 #[must_use]
+#[allow(clippy::expect_used)]
 pub fn metrics() -> &'static Metrics {
     METRICS_INSTANCE
         .get()

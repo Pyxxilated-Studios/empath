@@ -380,6 +380,7 @@ fn guess_content_type(path: &Path) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

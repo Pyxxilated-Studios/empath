@@ -5,6 +5,7 @@
 //! - Bincode serialization/deserialization of metadata
 //! - ULID generation and parsing
 //! - In-memory spool operations (write, read, list, delete)
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::{borrow::Cow, hint::black_box, sync::Arc};
 
