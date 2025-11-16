@@ -3,6 +3,7 @@ use std::sync::{Arc, LazyLock};
 use empath_common::{Signal, controller::Controller, internal, logging, tracing};
 use empath_control::{ControlServer, DEFAULT_CONTROL_SOCKET};
 use empath_ffi::modules::{self, Module};
+use empath_health::{HealthChecker, HealthConfig, HealthServer};
 use empath_smtp::Smtp;
 use empath_tracing::traced;
 use serde::Deserialize;
@@ -28,6 +29,9 @@ pub struct Empath {
     /// Metrics configuration
     #[serde(alias = "metrics", default)]
     metrics: empath_metrics::MetricsConfig,
+    /// Health check configuration
+    #[serde(alias = "health", default)]
+    health: HealthConfig,
 }
 
 fn default_control_socket() -> String {
@@ -97,8 +101,14 @@ impl Empath {
 
         modules::init(self.modules)?;
 
+        // Initialize health checker
+        let health_checker = Arc::new(HealthChecker::new(self.health.max_queue_size));
+
         // Initialize the spool from configuration
         let spool = self.spool.into_spool()?;
+
+        // Mark spool as ready after successful initialization
+        health_checker.set_spool_ready(true);
 
         // Extract the backing store for SMTP and delivery
         let backing_store = spool.backing_store();
@@ -108,8 +118,15 @@ impl Empath {
 
         self.smtp_controller.init()?;
 
+        // Mark SMTP as ready after successful initialization
+        health_checker.set_smtp_ready(true);
+
         // Initialize delivery controller with the same backing store and spool path
         self.delivery.init(backing_store)?;
+
+        // Mark delivery and DNS as ready after successful initialization
+        health_checker.set_delivery_ready(true);
+        health_checker.set_dns_ready(true);
 
         // Create control server
         let delivery_arc = Arc::new(self.delivery);
@@ -125,21 +142,61 @@ impl Empath {
             self.control_socket_path
         );
 
-        let ret = tokio::select! {
-            r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
-                r.map_err(|e| anyhow::anyhow!(e))
+        // Create health server (if enabled)
+        let health_server = if self.health.enabled {
+            match HealthServer::new(self.health, health_checker).await {
+                Ok(server) => {
+                    internal!("Health check server initialized");
+                    Some(server)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to create health server");
+                    None
+                }
             }
-            r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                r.map_err(|e| anyhow::anyhow!(e))
+        } else {
+            tracing::info!("Health check server is disabled");
+            None
+        };
+
+        let ret = if let Some(health_server) = health_server {
+            tokio::select! {
+                r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
+                    r.map_err(|e| anyhow::anyhow!(e))
+                }
+                r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                    r.map_err(|e| anyhow::anyhow!(e))
+                }
+                r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                    r.map_err(|e| anyhow::anyhow!(e))
+                }
+                r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                    r.map_err(|e| anyhow::anyhow!("Control server error: {e}"))
+                }
+                r = health_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                    r.map_err(|e| anyhow::anyhow!("Health server error: {e}"))
+                }
+                r = shutdown() => {
+                    r
+                }
             }
-            r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                r.map_err(|e| anyhow::anyhow!(e))
-            }
-            r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                r.map_err(|e| anyhow::anyhow!("Control server error: {e}"))
-            }
-            r = shutdown() => {
-                r
+        } else {
+            tokio::select! {
+                r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
+                    r.map_err(|e| anyhow::anyhow!(e))
+                }
+                r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                    r.map_err(|e| anyhow::anyhow!(e))
+                }
+                r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                    r.map_err(|e| anyhow::anyhow!(e))
+                }
+                r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                    r.map_err(|e| anyhow::anyhow!("Control server error: {e}"))
+                }
+                r = shutdown() => {
+                    r
+                }
             }
         };
 

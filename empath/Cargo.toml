@@ -39,6 +39,7 @@ empath-common = { path = "../empath-common", version = "*" }
 empath-control = { path = "../empath-control", version = "*" }
 empath-delivery = { path = "../empath-delivery", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
+empath-health = { path = "../empath-health", version = "*" }
 empath-metrics = { path = "../empath-metrics", version = "*" }
 empath-smtp = { path = "../empath-smtp", version = "*" }
 empath-spool = { path = "../empath-spool", version = "*" }

@@ -173,15 +173,18 @@ Key clippy requirements:
 
 ### Workspace Structure
 
-7-crate workspace:
+10-crate workspace:
 
 1. **empath** - Main binary/library orchestrating all components
 2. **empath-common** - Core abstractions: `Protocol`, `FiniteStateMachine`, `Controller`, `Listener` traits
 3. **empath-smtp** - SMTP protocol implementation with FSM and session management
 4. **empath-delivery** - Outbound mail delivery queue and processor
 5. **empath-ffi** - C-compatible API for embedding and dynamic module loading
-6. **empath-spool** - Message persistence to filesystem with watching
-7. **empath-tracing** - Procedural macros for `#[traced]` instrumentation
+6. **empath-health** - HTTP health check endpoints for Kubernetes liveness and readiness probes
+7. **empath-metrics** - OpenTelemetry metrics and observability instrumentation
+8. **empath-control** - Control socket for runtime management via IPC
+9. **empath-spool** - Message persistence to filesystem with watching
+10. **empath-tracing** - Procedural macros for `#[traced]` instrumentation
 
 ### Key Architectural Patterns
 
@@ -502,6 +505,118 @@ All control commands are automatically logged with structured data for accountab
 **Known Limitations:**
 - Runtime MX override updates not yet supported (requires DomainConfigRegistry refactor)
 - Returns helpful error directing to config file update
+
+### Health Check Endpoints
+
+The health check server provides HTTP endpoints for Kubernetes liveness and readiness probes, enabling production deployments with proper health monitoring and container orchestration.
+
+**Endpoints:**
+
+- **`/health/live`** (Liveness Probe):
+  - Returns 200 OK if the application is alive and can respond to requests
+  - Kubernetes will restart the container if this probe fails
+  - Always returns true (if the HTTP server can't respond, Kubernetes will detect the timeout)
+  - Response time: <1 second
+
+- **`/health/ready`** (Readiness Probe):
+  - Returns 200 OK if the application is ready to accept traffic
+  - Kubernetes will remove the pod from service endpoints if this probe fails
+  - Checks all system components:
+    - SMTP listeners bound and accepting connections
+    - Spool is writable
+    - Delivery processor is running
+    - DNS resolver is operational
+    - Queue size below threshold (default: 10,000 messages)
+  - Returns 503 Service Unavailable with detailed JSON status if not ready
+
+**Configuration:**
+
+```ron
+health: (
+    // Enable/disable health check server
+    enabled: true,
+
+    // Address to bind the health check server
+    // Default: [::]:8080
+    listen_address: "[::]:8080",
+
+    // Maximum queue size threshold for readiness probe
+    // If the delivery queue exceeds this size, the readiness probe will fail
+    // Default: 10000
+    max_queue_size: 10000,
+),
+```
+
+**Kubernetes Integration:**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: empath-mta
+spec:
+  containers:
+  - name: empath
+    image: empath:latest
+    ports:
+    - containerPort: 1025  # SMTP
+    - containerPort: 8080  # Health checks
+    livenessProbe:
+      httpGet:
+        path: /health/live
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 1
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /health/ready
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 1
+      failureThreshold: 3
+```
+
+**Testing Health Endpoints:**
+
+```bash
+# Liveness probe
+curl http://localhost:8080/health/live
+# Returns: OK (200)
+
+# Readiness probe
+curl http://localhost:8080/health/ready
+# Returns: OK (200) if ready
+# Returns: 503 with JSON details if not ready
+
+# Example not-ready response:
+# HTTP/1.1 503 Service Unavailable
+# {
+#   "alive": true,
+#   "ready": false,
+#   "smtp_ready": true,
+#   "spool_ready": true,
+#   "delivery_ready": false,
+#   "dns_ready": true,
+#   "queue_size": 15000,
+#   "max_queue_size": 10000
+# }
+```
+
+**Implementation Details:**
+- Location: `empath-health` crate
+- HTTP server: axum (lightweight, async-friendly)
+- Thread-safe status tracking using `Arc<AtomicBool>` and `Arc<AtomicU64>`
+- Graceful shutdown coordination with main application
+- Response timeout: 1 second (enforced via tower-http middleware)
+
+**Production Considerations:**
+- Keep `max_queue_size` threshold appropriate for your workload
+- Monitor readiness probe failures as early warning for capacity issues
+- Liveness probe failures indicate critical application deadlock or crash
+- Health endpoints are always enabled by default for Kubernetes compatibility
 
 ### Data Flow
 

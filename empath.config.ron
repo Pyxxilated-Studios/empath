@@ -113,4 +113,25 @@ Empath (
         // NOTE: When running in Docker Compose, use the service name (otel-collector)
         endpoint: "http://otel-collector:4318/v1/metrics",
     ),
+    // Health check endpoints configuration
+    // Provides /health/live and /health/ready endpoints for Kubernetes probes
+    health: (
+        // Enable/disable health check server
+        // When disabled, the health server will not start
+        enabled: true,
+
+        // Address to bind the health check server
+        // Common values:
+        //   - "[::]:8080" (IPv6 any address, port 8080)
+        //   - "0.0.0.0:8080" (IPv4 any address, port 8080)
+        //   - "127.0.0.1:8080" (localhost only, port 8080)
+        // Default: [::]:8080
+        listen_address: "[::]:8080",
+
+        // Maximum queue size threshold for readiness probe
+        // If the delivery queue exceeds this size, the readiness probe will fail
+        // This prevents the service from accepting new traffic when overwhelmed
+        // Default: 10000
+        max_queue_size: 10000,
+    ),
 )
