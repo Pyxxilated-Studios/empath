@@ -406,6 +406,14 @@ Empath (
         listen_address: "[::]:8080",
         max_queue_size: 10000,
     ),
+
+    // DSN (Delivery Status Notification) configuration (optional)
+    // Generates bounce messages for failed deliveries per RFC 3464
+    dsn: (
+        enabled: true,                          // Enable/disable DSN generation
+        reporting_mta: "mail.example.com",      // Hostname for Reporting-MTA field (FQDN)
+        postmaster: "postmaster@example.com",   // Postmaster email for DSN sender
+    ),
 )
 ```
 
@@ -643,6 +651,140 @@ curl http://localhost:8080/health/ready
 - Monitor readiness probe failures as early warning for capacity issues
 - Liveness probe failures indicate critical application deadlock or crash
 - Health endpoints are always enabled by default for Kubernetes compatibility
+
+### Delivery Status Notifications (DSNs)
+
+Empath implements RFC 3464 compliant Delivery Status Notifications (bounce messages) to inform senders when their messages cannot be delivered.
+
+**What are DSNs?**
+
+DSNs are automated bounce messages sent back to the original sender when email delivery fails. They provide detailed information about:
+- Why the delivery failed
+- Which recipients were affected
+- When delivery was attempted
+- Original message headers for reference
+
+**When DSNs are Generated:**
+
+1. **Permanent Failures (5xx SMTP errors)**:
+   - Invalid recipient address
+   - Domain not found
+   - Message rejected by recipient server
+   - Message too large
+
+2. **Max Retry Attempts Exhausted**:
+   - Temporary failures that persisted beyond max_attempts (default: 25)
+   - Connection timeouts that couldn't be resolved
+   - Server busy errors that didn't clear
+
+**DSN Prevention (Bounce Loop Protection):**
+
+DSNs are **NOT** generated for:
+- Messages with null sender (`MAIL FROM:<>`) - prevents bounce loops
+- Temporary failures still in retry state
+- System errors (internal errors that don't indicate delivery failure)
+
+**Configuration:**
+
+```ron
+dsn: (
+    // Enable/disable DSN generation globally
+    enabled: true,
+
+    // Hostname for Reporting-MTA field (use FQDN of your server)
+    reporting_mta: "mail.example.com",
+
+    // Postmaster email address (DSN sender)
+    postmaster: "postmaster@example.com",
+)
+```
+
+**DSN Message Structure (RFC 3464):**
+
+DSNs use the `multipart/report` MIME format with three parts:
+
+1. **Part 1: Human-Readable Explanation** (`text/plain`)
+   - Clear explanation of the failure
+   - Message details (sender, recipients, attempts, domain)
+   - Contact information for assistance
+
+2. **Part 2: Machine-Readable Status** (`message/delivery-status`)
+   - Per-message fields: Reporting-MTA, Arrival-Date
+   - Per-recipient fields: Final-Recipient, Action, Status, Diagnostic-Code
+   - SMTP status codes (5.0.0 for permanent, 4.0.0 for exhausted retries)
+
+3. **Part 3: Original Message Headers** (`text/rfc822-headers`)
+   - First 1KB of original message headers
+   - Includes From, To, Subject, Message-ID for reference
+   - Body not included to keep DSN size manageable
+
+**Example DSN:**
+
+```
+From: Mail Delivery System <postmaster@example.com>
+To: sender@example.org
+Subject: Delivery Status Notification (Failure)
+Content-Type: multipart/report; report-type="delivery-status"
+
+This is the mail system at host example.com.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients.
+
+Your message could not be delivered:
+
+recipient@example.com: Invalid recipient: user not found
+
+Message details:
+- Original sender: sender@example.org
+- Failed recipient(s): recipient@example.com
+- Delivery attempts: 25
+- Domain: example.com
+- Last server attempted: mx1.example.com:25
+
+---
+
+Reporting-MTA: dns; mail.example.com
+Arrival-Date: Sat, 16 Nov 2025 10:30:45 +0000
+
+Final-Recipient: rfc822; recipient@example.com
+Action: failed
+Status: 5.0.0
+Diagnostic-Code: smtp; Invalid recipient: user not found
+Remote-MTA: dns; mx1.example.com
+Last-Attempt-Date: Sat, 16 Nov 2025 10:35:12 +0000
+```
+
+**Implementation Details:**
+
+- Location: `empath-delivery/src/dsn.rs`
+- DSNs are automatically spooled and delivered like regular messages
+- Module events (`DeliveryFailure`) are dispatched before DSN generation
+- Logs include DSN tracking: `message_id`, `dsn_id`, `original_sender`
+
+**Monitoring DSN Generation:**
+
+```logql
+# Find all generated DSNs
+{service="empath"} | json | fields.message=~"DSN generated"
+
+# Track DSN spool failures
+{service="empath"} | json | fields.message=~"Failed to spool DSN"
+
+# Count DSNs by original domain
+sum by (fields_domain) (
+  count_over_time(
+    {service="empath"} | json | fields.message=~"DSN generated" [1h]
+  )
+)
+```
+
+**Best Practices:**
+
+1. **Use proper FQDN** for `reporting_mta` (improves deliverability)
+2. **Monitor DSN rates** (high rates indicate delivery problems)
+3. **Keep enabled** in production (RFC requirement for MTAs)
+4. **Review bounce patterns** to identify configuration issues
 
 ### JSON Structured Logging
 

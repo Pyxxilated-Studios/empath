@@ -14,6 +14,7 @@ use serde::Deserialize;
 use crate::{
     dns::{DnsConfig, DnsResolver},
     domain_config::DomainConfigRegistry,
+    dsn::DsnConfig,
     error::DeliveryError,
     queue::DeliveryQueue,
     types::SmtpTimeouts,
@@ -130,6 +131,16 @@ pub struct DeliveryProcessor {
     #[serde(default)]
     pub smtp_timeouts: SmtpTimeouts,
 
+    /// DSN (Delivery Status Notification) configuration
+    ///
+    /// Controls generation of bounce messages for failed deliveries.
+    /// DSNs are sent back to the original sender when delivery fails permanently
+    /// or after max retry attempts are exhausted.
+    ///
+    /// Default: enabled with localhost as reporting MTA
+    #[serde(default)]
+    pub dsn: DsnConfig,
+
     /// How often to process the cleanup queue for failed deletions (in seconds)
     ///
     /// When spool deletion fails after successful delivery, messages are added
@@ -183,6 +194,7 @@ impl Default for DeliveryProcessor {
             dns: DnsConfig::default(),
             domains: DomainConfigRegistry::default(),
             smtp_timeouts: SmtpTimeouts::default(),
+            dsn: DsnConfig::default(),
             cleanup_interval_secs: default_cleanup_interval(),
             max_cleanup_attempts: default_max_cleanup_attempts(),
             spool: None,

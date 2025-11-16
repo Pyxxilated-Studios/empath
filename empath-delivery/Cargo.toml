@@ -21,7 +21,9 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ahash = "0.8"
 bincode = { version = "2", features = ["serde"] }
+chrono = "0.4"
 dashmap = "6"
 empath-common = { path = "../empath-common", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
@@ -36,6 +38,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
 tokio = { version = "1", default-features = false, features = ["sync", "fs", "time"] }
 tracing = { version = "0.1", default-features = false }
+ulid = "1"
 
 [dev-dependencies]
 mailparse = "0.16"

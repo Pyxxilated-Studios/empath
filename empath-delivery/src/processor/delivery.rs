@@ -362,6 +362,47 @@ pub async fn handle_delivery_error(
 
     modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
 
+    // Generate DSN if appropriate
+    if processor.dsn.enabled && crate::dsn::should_generate_dsn(context, &updated_info, &error) {
+        match crate::dsn::generate_dsn(context, &updated_info, &error, &processor.dsn) {
+            Ok(dsn_context) => {
+                // Spool the DSN for delivery
+                if let Some(spool) = &processor.spool {
+                    let mut dsn_context_mut = dsn_context;
+                    match spool.write(&mut dsn_context_mut).await {
+                        Ok(dsn_id) => {
+                            info!(
+                                message_id = %message_id,
+                                dsn_id = %dsn_id,
+                                original_sender = %context.sender(),
+                                "DSN generated and spooled successfully"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                message_id = %message_id,
+                                error = %e,
+                                "Failed to spool DSN message"
+                            );
+                        }
+                    }
+                } else {
+                    warn!(
+                        message_id = %message_id,
+                        "Cannot spool DSN: spool not initialized"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    message_id = %message_id,
+                    error = %e,
+                    "Failed to generate DSN"
+                );
+            }
+        }
+    }
+
     error
 }
 

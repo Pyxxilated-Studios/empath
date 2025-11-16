@@ -5,9 +5,11 @@
 //! - Manage delivery attempts and retries
 //! - Prepare messages for sending via SMTP
 //! - DNS MX record resolution for recipient domains
+//! - Generate Delivery Status Notifications (DSNs) for failed deliveries
 
 mod dns;
 mod domain_config;
+mod dsn;
 mod error;
 mod processor;
 pub mod queue;
@@ -21,6 +23,8 @@ pub use dns::{CacheStats, DnsConfig, DnsError, DnsResolver, MailServer};
 pub use domain_config::{DomainConfig, DomainConfigRegistry};
 // Re-export common types
 pub use empath_common::{DeliveryAttempt, DeliveryStatus};
+// Re-export DSN types
+pub use dsn::DsnConfig;
 // Re-export error types
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 // Re-export core types
