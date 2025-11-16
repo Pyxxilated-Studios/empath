@@ -654,7 +654,7 @@ Empath uses JSON structured logging for production observability, enabling power
 - **Span Context**: Current span information included for distributed tracing correlation
 - **File/Line Info**: Debug information (filename, line_number) included
 - **ISO 8601 Timestamps**: RFC 3339 compliant timestamps
-- **Trace Correlation**: OpenTelemetry trace context (trace_id, span_id) will be added in tasks 0.35+0.36
+- **Trace Correlation**: OpenTelemetry trace context (trace_id, span_id) automatically injected into all log entries
 
 **Example Log Output:**
 
@@ -766,14 +766,9 @@ sum by (fields_domain) (
 - **90% reduction in log investigation time** via structured queries
 - **Instant filtering** by message_id, domain, or delivery_attempt
 - **Aggregate metrics** from logs (retry rates, error distributions)
-- **Correlation** across components via span context
+- **Correlation** across components via span context and trace_id
 - **Machine-readable** for automated alerting and dashboards
-
-**Future Enhancements (Tasks 0.35+0.36):**
-- Full OpenTelemetry trace context propagation
-- Global trace_id and span_id in all logs
-- Distributed tracing across SMTP reception → Spooling → Delivery
-- Jaeger/Tempo integration for trace visualization
+- **Distributed tracing** integration with Jaeger for end-to-end request tracking
 
 ### Log Aggregation with Loki
 
@@ -873,7 +868,7 @@ labels:
 - **Historical Analysis**: 7-day retention for troubleshooting past issues
 - **Powerful Queries**: LogQL supports filtering, aggregation, and metrics extraction
 - **Visual Exploration**: Pre-built dashboards for common queries
-- **Correlation**: Link logs to metrics via Grafana (future: link to traces via trace_id)
+- **Correlation**: Link logs to metrics via Grafana, and logs to traces via trace_id in Jaeger
 
 **Production Considerations:**
 
@@ -882,6 +877,194 @@ labels:
 - Consider remote storage (S3, GCS) for long-term retention
 - Scale Promtail horizontally for high-volume environments
 - Use Grafana alerting for ERROR log spikes
+
+### Distributed Tracing with OpenTelemetry
+
+Empath implements distributed tracing using OpenTelemetry and Jaeger, providing end-to-end visibility into message processing from SMTP reception through delivery. Every log entry automatically includes trace context (`trace_id`, `span_id`) for correlation.
+
+**Architecture:**
+
+1. **OpenTelemetry SDK** - Generates trace IDs and span IDs for all operations
+2. **OTLP Exporter** - Sends trace data to OpenTelemetry Collector via HTTP
+3. **OpenTelemetry Collector** - Receives traces and forwards to Jaeger
+4. **Jaeger** - Stores and visualizes distributed traces
+5. **tracing-opentelemetry** - Bridges Rust `tracing` spans with OpenTelemetry
+
+**Components:**
+
+- **Trace ID**: Unique identifier for the entire message journey (SMTP → Spool → Delivery)
+- **Span ID**: Unique identifier for each operation within the trace
+- **Parent Span**: Links operations into a hierarchical call tree
+- **Trace Context Propagation**: Automatic injection of trace IDs into all log entries
+
+**Configuration:**
+
+The OpenTelemetry exporter endpoint is configured via environment variable:
+
+```bash
+# Default: http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+```
+
+In the Docker stack, this is automatically configured to point to the otel-collector service:
+
+```yaml
+environment:
+  - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+```
+
+**Example Trace Hierarchy:**
+
+```
+Trace ID: a1b2c3d4e5f6g7h8i9j0...
+├─ smtp_session (span_id: 1a2b3c4d)
+│  ├─ receive_headers (span_id: 2b3c4d5e)
+│  ├─ validate_message (span_id: 3c4d5e6f)
+│  └─ spool_message (span_id: 4d5e6f7g)
+└─ deliver_message (span_id: 5e6f7g8h)
+   ├─ dns_lookup (span_id: 6f7g8h9i)
+   ├─ connect_mx (span_id: 7g8h9i0j)
+   ├─ smtp_handshake (span_id: 8h9i0j1k)
+   └─ transmit_data (span_id: 9i0j1k2l)
+```
+
+**Log-to-Trace Correlation:**
+
+Every JSON log entry automatically includes the current trace context:
+
+```json
+{
+  "timestamp": "2025-11-16T10:30:45.123456789Z",
+  "level": "INFO",
+  "target": "empath_delivery",
+  "fields": {
+    "message": "Delivery successful",
+    "message_id": "01JCXYZ...",
+    "domain": "example.com",
+    "delivery_attempt": 1
+  },
+  "span": {
+    "name": "deliver_message",
+    "trace_id": "a1b2c3d4e5f6g7h8...",
+    "span_id": "9i0j1k2l..."
+  },
+  "spans": [
+    {"name": "process_queue", "trace_id": "a1b2c3d4...", "span_id": "3m4n5o6p..."},
+    {"name": "deliver_message", "trace_id": "a1b2c3d4...", "span_id": "9i0j1k2l..."}
+  ],
+  "file": "empath-delivery/src/lib.rs",
+  "line": 456
+}
+```
+
+**Querying Traces:**
+
+LogQL queries can filter by trace ID to find all logs for a specific trace:
+
+```logql
+# Find all logs for a specific trace
+{service="empath"} | json | span.trace_id="a1b2c3d4e5f6g7h8..."
+
+# Find all logs for a specific message
+{service="empath"} | json | message_id="01JCXYZ..."
+
+# Find delivery failures and their trace IDs
+{service="empath"} | json | level="ERROR" | line_format "{{.span.trace_id}}: {{.domain}}: {{.message}}"
+```
+
+**Jaeger UI:**
+
+Access Jaeger at `http://localhost:16686` to visualize traces:
+
+1. **Service Selection**: Select "empath-mta" service
+2. **Operation**: Choose operation (e.g., "smtp_session", "deliver_message")
+3. **Trace Timeline**: View the complete timeline of spans across components
+4. **Span Details**: Click spans to see logs, tags, and metadata
+5. **Dependency Graph**: Visualize service dependencies and call patterns
+
+**Docker Stack Services:**
+
+```yaml
+# Jaeger (distributed tracing backend)
+jaeger:
+  image: jaegertracing/all-in-one:latest
+  ports:
+    - "16686:16686"  # Jaeger UI
+    - "4317:4317"    # OTLP gRPC receiver
+    - "4318:4318"    # OTLP HTTP receiver
+  environment:
+    - COLLECTOR_OTLP_ENABLED=true
+    - SPAN_STORAGE_TYPE=badger  # Embedded database
+  volumes:
+    - jaeger-data:/badger  # Persistent storage
+
+# OpenTelemetry Collector (trace routing)
+otel-collector:
+  image: otel/opentelemetry-collector-contrib:latest
+  command: ["--config=/etc/otel-collector-config.yml"]
+  volumes:
+    - ./otel-collector.yml:/etc/otel-collector-config.yml
+  ports:
+    - "4318:4318"  # OTLP HTTP receiver
+
+# Empath MTA (trace source)
+empath:
+  environment:
+    - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+```
+
+**Trace Storage:**
+
+Jaeger uses Badger embedded database for trace storage:
+
+- **Persistence**: Traces are stored in the `jaeger-data` Docker volume
+- **Retention**: No automatic expiration (managed manually)
+- **Performance**: Fast queries for recent traces, slower for historical data
+- **Production**: Consider Elasticsearch or Cassandra backend for high-volume production
+
+**Use Cases:**
+
+1. **Debugging Delivery Failures**: Trace the complete path of a failed delivery
+2. **Performance Analysis**: Identify slow components (DNS, SMTP handshake, etc.)
+3. **Error Investigation**: Correlate errors across SMTP reception and delivery
+4. **Capacity Planning**: Analyze trace durations to understand system load
+5. **Dependency Mapping**: Visualize how components interact (SMTP → Spool → Delivery → MX servers)
+
+**Implementation Details:**
+
+- **Location**: `empath-common/src/logging.rs`
+- **Tracer Provider**: Configured with OTLP HTTP exporter, batch processor, and resource attributes
+- **Service Name**: `empath-mta` (configurable via `Resource::with_service_name`)
+- **Sampling**: Always-on sampling (all traces collected)
+- **Propagation**: Automatic trace context propagation across async tasks
+
+**Benefits:**
+
+- **End-to-End Visibility**: Track a message from SMTP reception to final delivery
+- **Root Cause Analysis**: Quickly identify where failures occur in the pipeline
+- **Performance Optimization**: Measure span durations to find bottlenecks
+- **Log Correlation**: Jump from Jaeger trace to related Loki logs via trace_id
+- **Service Insights**: Understand real-world service behavior and dependencies
+
+**Starting the Stack:**
+
+```bash
+just docker-up         # Start Empath + OTEL + Jaeger + Loki + Grafana
+just docker-logs       # View logs
+
+# Access services:
+# Grafana: http://localhost:3000 (admin/admin)
+# Jaeger UI: http://localhost:16686
+# Prometheus: http://localhost:9090
+```
+
+**Grafana Integration:**
+
+The Jaeger datasource is pre-configured in Grafana with trace-to-logs correlation:
+
+- Datasource: `docker/grafana/provisioning/datasources/jaeger.yml`
+- Clicking a trace in Jaeger can jump to related Loki logs
+- Loki logs include `trace_id` field for reverse correlation
 
 ### Data Flow
 

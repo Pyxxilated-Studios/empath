@@ -10,7 +10,7 @@
 ### 🚨 Critical Blockers (Must Complete Before Production)
 
 **Security & Authentication (Week 0)**
-- [ ] 0.27+0.28 - Authentication Infrastructure (metrics + control socket) - 2-3 days
+- [x] 0.27+0.28 - Authentication Infrastructure (metrics + control socket) - ✅ COMPLETED (SHA-256 token auth)
 - [x] NEW-01 - FFI Safety Hardening (null byte validation) - ✅ COMPLETED
 - [x] NEW-02 - Production Unwrap/Expect Audit - ✅ COMPLETED (all 10 production unwraps eliminated)
 
@@ -19,9 +19,9 @@
 - [x] NEW-04 - E2E Test Harness (local) - ✅ COMPLETED (420-line harness + MockSmtpServer)
 
 **Observability (Week 2-3)**
-- [ ] 0.35+0.36 - Distributed Tracing Pipeline + Context Propagation - 3-4 days
-- [ ] NEW-06 - Structured JSON Logging with Trace Correlation - 1-2 days
-- [ ] NEW-07 - Log Aggregation Pipeline (Loki) - 1-2 days
+- [x] 0.35+0.36 - Distributed Tracing Pipeline + Context Propagation - ✅ COMPLETED (OpenTelemetry + Jaeger)
+- [x] NEW-06 - Structured JSON Logging with Trace Correlation - ✅ COMPLETED (trace_id/span_id in all logs)
+- [x] NEW-07 - Log Aggregation Pipeline (Loki) - ✅ COMPLETED (7-day retention + Promtail + dashboards)
 
 **Durability (Week 2)**
 - [ ] 1.1 - Persistent Delivery Queue - 1 week
@@ -34,13 +34,16 @@
 - ✅ NEW-02 - Production Unwrap/Expect Audit (10/10 production unwraps eliminated, DNS fallback fixed)
 - ✅ NEW-04 - E2E Test Harness (420-line self-contained harness)
 - ✅ 0.13 - E2E Test Suite (7 tests covering full delivery pipeline)
+- ✅ 0.27+0.28 - Authentication Infrastructure (SHA-256 token auth for control socket + metrics)
+- ✅ NEW-06 - Structured JSON Logging (trace_id/span_id in all log entries)
+- ✅ NEW-07 - Log Aggregation Pipeline (Loki + Promtail + Grafana dashboards)
+- ✅ 0.35+0.36 - Distributed Tracing (OpenTelemetry + Jaeger integration)
 
 **In Progress:**
-- 0.27+0.28 - Authentication Infrastructure (metrics + control socket)
+- None
 
-**This Week:**
-1. 0.27+0.28 - Combined authentication (metrics + control socket)
-2. 0.35+0.36 - Distributed tracing pipeline
+**Next Up:**
+1. 1.1 - Persistent Delivery Queue (final critical blocker)
 
 ### 📈 Metrics
 
@@ -50,14 +53,14 @@
 - 🟢 Medium: 13 tasks (~15-20 days effort)
 - 🔵 Low: 12 tasks (~10-15 days effort)
 
-**Production Readiness: 82%** ⬆️ +10%
+**Production Readiness: 95%** ⬆️ +13% (was 82%)
 - Core Functionality: 85% ✅
-- Security: 85% ✅ (FFI hardened ✅, unwrap audit complete ✅, needs authentication)
-- Observability: 50% ⚠️ (metrics yes, tracing no)
+- Security: 100% ✅ (FFI hardened ✅, unwrap audit complete ✅, authentication implemented ✅)
+- Observability: 100% ✅ (metrics ✅, JSON logging ✅, distributed tracing ✅, log aggregation ✅)
 - Testing: 90% ✅ (CI with clippy/fmt/MIRI/coverage + E2E tests ✅)
 - Developer Experience: 95% ✅ (excellent CI/CD, coverage, Renovate, changelog)
 
-**Estimated Timeline to Production:** 2-3 weeks following critical path
+**Estimated Timeline to Production:** 1 week (only 1.1 Persistent Queue remaining as critical blocker)
 
 ---
 

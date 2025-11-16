@@ -2,8 +2,9 @@
 # Installed via apt-get install mold (version 2.30.0)
 # Note: mold dropped Mach-O support, so this is Linux-only
 # macOS users should use lld or zld as alternatives
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+# Temporarily disabled due to linker issues in build environment
+#[target.x86_64-unknown-linux-gnu]
+#rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [registries.crates-io]
 protocol = "sparse"

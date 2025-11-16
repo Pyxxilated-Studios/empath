@@ -41,6 +41,12 @@ exporters:
     const_labels:
       environment: development
 
+  # Export traces to Jaeger via OTLP
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
 service:
   pipelines:
     # Metrics pipeline: OTLP receiver → processors → Prometheus exporter
@@ -48,6 +54,12 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource]
       exporters: [prometheus]
+
+    # Traces pipeline: OTLP receiver → processors → Jaeger exporter
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, resource]
+      exporters: [otlp/jaeger]
 
   # Enable telemetry for the collector itself
   telemetry:

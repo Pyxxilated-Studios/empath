@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    isDefault: false
+    editable: false
+    jsonData:
+      # Trace-to-logs integration (requires tasks 0.35+0.36 completion)
+      tracesToLogs:
+        datasourceUid: loki
+        # Extract trace_id from Jaeger span and query Loki
+        filterByTraceID: true
+        # LogQL query template: {service="empath"} | json | span.trace_id="$${__trace.traceId}"
+        tags: ['trace_id']

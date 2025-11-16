@@ -1,5 +1,11 @@
 use std::str::FromStr;
 
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::{
+    trace::{RandomIdGenerator, SdkTracerProvider},
+    Resource,
+};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{
     Layer, filter::FilterFn, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
@@ -48,19 +54,17 @@ macro_rules! internal {
     };
 }
 
-/// Initialize the global tracing subscriber with JSON structured logging
+/// Initialize the global tracing subscriber with JSON structured logging and OpenTelemetry
 ///
 /// This configures:
 /// - JSON formatted logs for machine parsing and LogQL queries
+/// - OpenTelemetry trace context (trace_id, span_id) injected into all log entries
+/// - OTLP trace export to Jaeger via OpenTelemetry Collector
 /// - Environment-based log level filtering (LOG_LEVEL or RUST_LOG)
 /// - File and line number information for debugging
 /// - Current span context included in log entries
 ///
-/// **Note**: OpenTelemetry trace context (trace_id, span_id) will be added in tasks 0.35+0.36
-/// (Distributed Tracing Pipeline). For now, span names and fields are included but not
-/// globally unique trace IDs.
-///
-/// # Example JSON Output
+/// # Example JSON Output with Trace Context
 ///
 /// ```json
 /// {
@@ -74,25 +78,30 @@ macro_rules! internal {
 ///     "delivery_attempt": 1
 ///   },
 ///   "span": {
-///     "name": "deliver_message"
+///     "name": "deliver_message",
+///     "trace_id": "a1b2c3d4e5f6g7h8...",
+///     "span_id": "9i0j1k2l..."
 ///   },
 ///   "spans": [
-///     {"name": "process_queue"},
-///     {"name": "deliver_message"}
+///     {"name": "process_queue", "trace_id": "a1b2c3d4...", "span_id": "3m4n5o6p..."},
+///     {"name": "deliver_message", "trace_id": "a1b2c3d4...", "span_id": "9i0j1k2l..."}
 ///   ],
 ///   "file": "empath-delivery/src/lib.rs",
 ///   "line": 456
 /// }
 /// ```
 ///
-/// # LogQL Query Examples
+/// # LogQL Query Examples with Trace Correlation
 ///
 /// ```logql
+/// # Find all logs for a specific trace
+/// {service="empath"} | json | span.trace_id="a1b2c3d4e5f6g7h8..."
+///
 /// # Find all logs for a specific message
 /// {service="empath"} | json | message_id="01JCXYZ..."
 ///
-/// # Find delivery failures
-/// {service="empath"} | json | level="ERROR" | line_format "{{.domain}}: {{.message}}"
+/// # Find delivery failures and their trace IDs
+/// {service="empath"} | json | level="ERROR" | line_format "{{.span.trace_id}}: {{.domain}}: {{.message}}"
 ///
 /// # Track delivery attempts by domain
 /// sum by (domain) (count_over_time({service="empath"} | json | delivery_attempt > 0 [1h]))
@@ -114,7 +123,47 @@ pub fn init() {
             })
         });
 
+    // Set up OpenTelemetry tracer with OTLP exporter to send traces to Jaeger
+    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4318".to_string());
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_endpoint(otlp_endpoint)
+        .build()
+        .expect("Failed to build OTLP exporter");
+
+    let resource = Resource::builder_empty()
+        .with_service_name("empath-mta")
+        .with_attributes([
+            opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+        ])
+        .build();
+
+    // Create batch processor for the exporter
+    let batch_processor = opentelemetry_sdk::trace::BatchSpanProcessor::builder(exporter)
+        .with_batch_config(
+            opentelemetry_sdk::trace::BatchConfigBuilder::default()
+                .with_max_queue_size(2048)
+                .build(),
+        )
+        .build();
+
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_span_processor(batch_processor)
+        .with_resource(resource)
+        .with_id_generator(RandomIdGenerator::default())
+        .build();
+
+    // Set as global provider and get tracer
+    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+    let tracer = tracer_provider.tracer("empath");
+
     tracing_subscriber::Registry::default()
+        .with(
+            // OpenTelemetry layer for trace context (trace_id, span_id)
+            tracing_opentelemetry::layer().with_tracer(tracer),
+        )
         .with(
             tracing_subscriber::fmt::layer()
                 .with_file(true) // Include file for debugging

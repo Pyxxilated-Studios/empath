@@ -36,6 +36,8 @@ services:
       - "4318:4318"  # OTLP HTTP receiver
       - "8888:8888"  # Prometheus metrics (collector's own metrics)
       - "8889:8889"  # Prometheus exporter (empath metrics)
+    depends_on:
+      - jaeger
     networks:
       - empath-network
 
@@ -85,6 +87,26 @@ services:
     networks:
       - empath-network
 
+  # Jaeger (distributed tracing)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver (alternative)
+      - "14268:14268"  # Jaeger collector HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+    volumes:
+      - jaeger-data:/badger
+    networks:
+      - empath-network
+
   # Grafana (optional, for visualization)
   grafana:
     image: grafana/grafana:latest
@@ -101,6 +123,7 @@ services:
     depends_on:
       - prometheus
       - loki
+      - jaeger
     networks:
       - empath-network
 
@@ -112,3 +135,4 @@ volumes:
   prometheus-data:
   grafana-data:
   loki-data:
+  jaeger-data:

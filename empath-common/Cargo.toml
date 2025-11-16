@@ -44,10 +44,11 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "registry",
     "tracing-log",
 ] }
-# OpenTelemetry trace context (trace_id, span_id) will be added in tasks 0.35+0.36
-# tracing-opentelemetry = "0.31"
-# opentelemetry = { version = "0.31", features = ["trace"] }
-# opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "trace"] }
+# OpenTelemetry trace context (trace_id, span_id) for distributed tracing
+tracing-opentelemetry = "0.31"
+opentelemetry = { version = "0.30", features = ["trace"] }
+opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "trace"] }
+opentelemetry-otlp = { version = "0.30", features = ["trace", "http-proto"] }
 tokio = { version = "1", default-features = false, features = [
     "io-util",
     "net",
