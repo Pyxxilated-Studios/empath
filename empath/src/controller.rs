@@ -35,6 +35,9 @@ pub struct Empath {
     /// Health check configuration
     #[serde(alias = "health", default)]
     health: HealthConfig,
+    /// Audit logging configuration
+    #[serde(alias = "audit", default)]
+    audit: empath_common::audit::AuditConfig,
 }
 
 fn default_control_socket() -> String {
@@ -85,6 +88,17 @@ async fn shutdown() -> anyhow::Result<()> {
 }
 
 impl Empath {
+    /// Initialize the audit logging system with the configured settings
+    pub fn init_audit(&self) {
+        empath_common::audit::init(self.audit.clone());
+        tracing::info!(
+            enabled = self.audit.enabled,
+            redact_sender = self.audit.redact_sender,
+            redact_recipients = self.audit.redact_recipients,
+            "Audit logging initialized"
+        );
+    }
+
     /// Run this controller, and everything it controls
     ///
     /// # Errors

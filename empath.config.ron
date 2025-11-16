@@ -134,4 +134,28 @@ Empath (
         // Default: 10000
         max_queue_size: 10000,
     ),
+    // Audit logging configuration for compliance and security monitoring
+    // Logs all message lifecycle events (received, delivery attempts, success, failure)
+    audit: (
+        // Enable/disable audit logging
+        // When disabled, audit events will not be logged
+        // Default: true
+        enabled: true,
+
+        // Redact sender email addresses from audit logs (PII protection)
+        // When enabled, sender addresses are redacted to [REDACTED]@domain.com
+        // Useful for GDPR/HIPAA compliance
+        // Default: false (full sender address logged)
+        redact_sender: false,
+
+        // Redact recipient email addresses from audit logs (PII protection)
+        // When enabled, recipient addresses are redacted to [REDACTED]@domain.com
+        // Default: false (full recipient addresses logged)
+        redact_recipients: false,
+
+        // Redact message content from audit logs (PII protection)
+        // When enabled, message content previews are not included in logs
+        // Default: true (content is redacted)
+        redact_message_content: true,
+    ),
 )

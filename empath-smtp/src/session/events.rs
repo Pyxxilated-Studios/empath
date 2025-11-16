@@ -129,6 +129,22 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             ),
         ));
 
+        // Audit log: Message received and spooled
+        if let Some(id) = &tracking_id {
+            let sender = validate_context.sender();
+            let recipients = validate_context.recipients();
+            let size = validate_context.data.as_ref().map_or(0, |d| d.len());
+            let from_ip = self.peer.to_string();
+
+            empath_common::audit::log_message_received(
+                &id.to_string(),
+                &sender,
+                &recipients,
+                size,
+                &from_ip,
+            );
+        }
+
         // Dispatch message received event
         modules::dispatch(
             modules::Event::Event(modules::Ev::SmtpMessageReceived),

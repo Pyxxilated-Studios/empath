@@ -8,6 +8,7 @@
 )]
 
 pub mod address;
+pub mod audit;
 pub mod context;
 pub mod controller;
 pub mod domain;

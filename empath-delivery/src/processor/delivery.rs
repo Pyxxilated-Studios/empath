@@ -195,6 +195,14 @@ pub async fn prepare_message(
         return Ok(()); // Not an error, just delayed
     }
 
+    // Audit log: Delivery attempt
+    empath_common::audit::log_delivery_attempt(
+        &message_id.to_string(),
+        &info.recipient_domain,
+        &mx_address,
+        usize::try_from(info.attempt_count()).unwrap_or(0) + 1, // Next attempt number (1-based)
+    );
+
     // Deliver the message via SMTP (including DATA command)
     let result = deliver_message(processor, &mx_address, &context, &info).await;
 
@@ -248,6 +256,16 @@ pub async fn prepare_message(
                 current_server_index: info.current_server_index,
             });
             modules::dispatch(Event::Event(Ev::DeliverySuccess), &mut context);
+
+            // Audit log: Delivery successful
+            let duration_ms = info.queued_at.elapsed().map_or(0, |d| d.as_millis());
+            empath_common::audit::log_delivery_success(
+                &message_id.to_string(),
+                &info.recipient_domain,
+                &mx_address,
+                usize::try_from(info.attempt_count()).unwrap_or(0) + 1,
+                duration_ms,
+            );
 
             // Record circuit breaker success
             if let Some(circuit_breaker) = &processor.circuit_breaker_instance {
@@ -412,6 +430,15 @@ pub async fn handle_delivery_error(
     });
 
     modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
+
+    // Audit log: Delivery failed
+    empath_common::audit::log_delivery_failure(
+        &message_id.to_string(),
+        &updated_info.recipient_domain,
+        &error.to_string(),
+        usize::try_from(updated_info.attempt_count()).unwrap_or(0),
+        &format!("{new_status:?}"),
+    );
 
     // Record circuit breaker failure (only for temporary failures)
     // Permanent failures are recipient/config issues, not server health problems
