@@ -1,305 +1,155 @@
-# Empath MTA - Future Work Roadmap
+# Empath MTA - Active Tasks
 
-This document tracks future improvements for the empath MTA, organized by priority and complexity. All critical security and code quality issues have been addressed in the initial implementation.
-
-**Status Legend:**
-- 🔴 **Critical** - Required for production deployment
-- 🟡 **High** - Important for scalability and operations
-- 🟢 **Medium** - Nice to have, improves functionality
-- 🔵 **Low** - Future enhancements, optimization
-
-**Recent Updates (2025-11-15):**
-- 🔍 **COMPREHENSIVE REVIEW**: Multi-agent analysis identified 5 new critical tasks and priority adjustments
-- ✅ **COMPLETED** task 0.25: Create DeliveryQueryService Abstraction - CRITICAL architectural improvement, 80% coupling reduction
-- ✅ **COMPLETED** task 0.8: Add Spool Deletion Retry Mechanism - CRITICAL production blocker fix preventing disk exhaustion
-- ✅ **COMPLETED** task 7.6: Add rust-analyzer Configuration - optimal IDE experience across all editors
-- ✅ **COMPLETED** task 7.10: Add Examples Directory - practical examples for SMTP, configs, and modules
-- ✅ **COMPLETED** task 7.23: Add Architecture Diagram - 10 Mermaid diagrams, reduces learning time by 50%
-- ✅ **COMPLETED** task 7.12: Add CONTRIBUTING.md - complete documentation suite (ONBOARDING + TROUBLESHOOTING + CONTRIBUTING + ARCHITECTURE)
-- ✅ **COMPLETED** task 7.19: Add Troubleshooting Guide - reduces support burden by ~60%
-- ✅ **COMPLETED** task 7.18: Create Developer Onboarding Checklist - reduces onboarding from 4-6 hours to <30 min
-- ✅ **COMPLETED** task 7.11: Add Benchmark Baseline Tracking for performance regression detection
-- ✅ **COMPLETED** task 7.22: Add Development Environment Health Check
-- ✅ **COMPLETED** task 7.5: Enable mold Linker for 40-60% faster builds
-- ✅ **COMPLETED** task 7.21: Improve justfile Discoverability
-- ✅ **COMPLETED** task 7.20: Add VS Code Workspace Configuration
-- ✅ **COMPLETED** task 7.7: Add Git Pre-commit Hook
-- ✅ **COMPLETED** task 7.9: Add cargo-deny Configuration
-- ✅ **COMPLETED** task 7.8: Add cargo-nextest Configuration
-- ✅ **COMPLETED** task 7.3: Add Cargo aliases for common workflows
-- ✅ **COMPLETED** task 7.4: Add .editorconfig for consistent editor settings
-- ✅ **COMPLETED** task 4.6: Replace u64 timestamps with SystemTime
-- ✅ **COMPLETED** task 7.2: Improve README.md with comprehensive documentation
-- ✅ **COMPLETED** task 4.1: Replace manual Pin<Box<dyn Future>> with async_trait
-- ✅ **COMPLETED** task 4.3: DashMap for lock-free concurrency (c3efd33)
-- ✅ **COMPLETED** task 0.20: Protocol versioning for control socket (f9beb9c)
-
-**Expert Review Findings (6 specialized agents consulted):**
-- **Observability Gap**: No distributed tracing pipeline configured (new task 0.35)
-- **Testing Gap**: Inverted test pyramid - need E2E tests (upgrade task 4.2 to Critical)
-- **Architecture**: DeliveryQueryService abstraction needed (upgrade 0.25 to Critical)
-- **Rust Quality**: RPITIT migration is #1 code quality priority (task 4.1)
-- **DX Emergency**: README actively repels contributors - #1 DX priority (upgrade task 7.2 to Critical)
-- **DX Tooling**: mold not configured for macOS, broken git hooks, missing config files (tasks 7.5, 7.7-7.9)
-
-**Completed Tasks Archive** (See git history for full details):
-- ✅ 0.25 (2025-11-15): DeliveryQueryService abstraction (Interface Segregation Principle)
-- ✅ 0.8 (2025-11-15): Spool deletion retry mechanism with CleanupQueue (production blocker)
-- ✅ 4.3 (2025-11-15): DashMap instead of Arc<RwLock<HashMap>>
-- ✅ 0.30 (2025-11-15): Metrics runtime overhead reduction (AtomicU64)
-- ✅ 0.29 (2025-11-15): Platform-specific path validation
-- ✅ 0.31 (2025-11-15): ULID collision error handling
-- ✅ 0.24 (2025-11-15): Queue command handler refactoring
-- ✅ 0.22 (2025-11-15): Queue list command protocol fixes
-- ✅ 0.21 (2025-11-15): Connection pooling for empathctl watch mode
-- ✅ 0.20 (2025-11-15): Control socket protocol versioning
-- ✅ 0.19 (2025-11-15): Active DNS cache eviction
-- ✅ 0.18 (2025-11-15): Socket file race condition fix
-- ✅ 0.17 (2025-11-15): Audit logging for control commands
-- ✅ 0.16 (2025-11-14): Client-side response size validation
-- ✅ 0.15 (2025-11-14): Unix socket permissions (0o600)
-- ✅ 0.11 (2025-11-14): Runtime MX override updates
-- ✅ 0.10 (2025-11-14): MX record randomization (RFC 5321)
-- ✅ 0.6 (2025-11-14): NoVerifier security documentation
-- ✅ 0.5 (2025-11-11): DNS cache DashMap replacement
-- ✅ 0.34, 0.33, 0.26, 0.23 (2025-11-14): Various refactoring and cleanup
+> **Last Updated**: 2025-11-16
+> **Total Active**: 47 tasks | **Completed**: 44 tasks (40 in archive + 4 discovered existing) → [COMPLETED.md](docs/COMPLETED.md)
 
 ---
 
-## Phase 0: Code Review Follow-ups (Week 0)
+## 📊 Dashboard
 
-### ❌ 0.3 Fix Context/Message Layer Violation in Spool
-**Priority:** ~~Critical~~ **REJECTED**
-**Status:** ❌ **REJECTED** (2025-11-11)
+### 🚨 Critical Blockers (Must Complete Before Production)
 
-**Decision: REJECTED**
+**Security & Authentication (Week 0)**
+- [ ] 0.27+0.28 - Authentication Infrastructure (metrics + control socket) - 2-3 days
+- [ ] NEW-01 - FFI Safety Hardening (null byte validation) - 1-2 days
+- [ ] NEW-02 - Production Unwrap/Expect Audit - 3-5 days
 
-After thorough analysis, this is **NOT** a layer violation but an **intentional architectural feature** that serves the module/plugin system. The apparent "session-only" fields in Context (id, metadata, extended, banner) are actually part of the **module contract**.
+**Testing Foundation (Week 1)**
+- [ ] 0.13 - E2E Test Suite - 3-5 days **UNBLOCKS REFACTORING**
+- [ ] NEW-04 - E2E Test Harness (local) - 1-2 days
 
-**Why Context Persistence Is Correct:**
+**Observability (Week 2-3)**
+- [ ] 0.35+0.36 - Distributed Tracing Pipeline + Context Propagation - 3-4 days
+- [ ] NEW-06 - Structured JSON Logging with Trace Correlation - 1-2 days
+- [ ] NEW-07 - Log Aggregation Pipeline (Loki) - 1-2 days
 
-1. **Module Lifecycle Tracking**: Modules can set `context.metadata` during SMTP reception and reference it during delivery events (hours or days later)
-2. **Single Source of Truth**: Delivery queue state stored in `Context.delivery` using spool as persistent queue backend
-3. **Storage Overhead**: Negligible (~100 bytes per message vs 4KB-10MB+ email sizes)
+**Durability (Week 2)**
+- [ ] 1.1 - Persistent Delivery Queue - 1 week
 
-**See Also:** CLAUDE.md "Context Persistence and the Module Contract" section
+### 📅 Current Sprint (Week of 2025-11-16)
 
----
+**In Progress:**
+- ✅ 4.2 - Mock SMTP Server **MARK AS COMPLETED** (527 lines verified, ready for integration)
 
-### ✅ 0.10 Add MX Record Randomization (RFC 5321)
-**Priority:** ~~Medium~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+**This Week:**
+1. Mark 4.2 complete, update summary count (41 completed)
+2. 0.27+0.28 - Combined authentication (metrics + control socket)
+3. NEW-01 - FFI Safety Hardening (null byte validation)
 
-Added RFC 5321-compliant MX record randomization that preserves priority ordering while randomizing servers within each priority group for load balancing.
+### 📈 Metrics
 
-**Changes:**
-- New `randomize_equal_priority()` static method in `empath-delivery/src/dns.rs:418-448`
-- Applied to all MX record lookups after sorting
-- 4 new tests verifying randomization and priority preservation
+**Priority Distribution:**
+- 🔴 Critical: 15 tasks (~25-30 days effort) - **PRODUCTION BLOCKERS**
+- 🟡 High: 11 tasks (~20-25 days effort)
+- 🟢 Medium: 13 tasks (~15-20 days effort)
+- 🔵 Low: 12 tasks (~10-15 days effort)
 
-**Results:** All 22 unit tests passing, RFC 5321 compliant load balancing
+**Production Readiness: 70%**
+- Core Functionality: 85% ✅
+- Security: 40% ⚠️ (no authentication, FFI safety issues)
+- Observability: 50% ⚠️ (metrics yes, tracing no)
+- Testing: 75% ✅ (CI with clippy/fmt/MIRI/coverage, needs E2E)
+- Developer Experience: 95% ✅ (excellent CI/CD, coverage, Renovate, changelog)
 
----
-
-### ✅ 0.8 Add Spool Deletion Retry Mechanism
-**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 2 hours
-
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Implemented CleanupQueue with exponential backoff retry logic to prevent disk exhaustion from failed spool deletions.
-
-**Implementation:** Created `CleanupQueue` using DashMap for lock-free concurrency, integrated cleanup timer into serve() loop, and modified delivery.rs to add failed deletions to the queue. Cleanup processor retries deletion with exponential backoff (2^n seconds) up to 3 attempts before logging CRITICAL alert.
-
-**Files Modified:**
-- `empath-delivery/src/queue/cleanup.rs` - NEW (CleanupQueue implementation with DashMap)
-- `empath-delivery/src/processor/cleanup.rs` - NEW (retry logic with exponential backoff)
-- `empath-delivery/src/processor/mod.rs` - Added cleanup_queue, cleanup_interval_secs, max_cleanup_attempts, cleanup timer
-- `empath-delivery/src/processor/delivery.rs` - Modified line 179-187 to use cleanup_queue.add_failed_deletion()
-- `empath-delivery/src/queue/mod.rs` - Export cleanup module
-- `empath-delivery/tests/integration_tests.rs` - Added 4 comprehensive integration tests
-
-**Analysis (2025-11-15):**
-
-*Current Problem Location:*
-- `empath-delivery/src/processor/delivery.rs:179-187`
-- After successful delivery, `spool.delete(message_id)` is called
-- Deletion errors are logged but swallowed: `error!("Failed to delete...")` with no retry
-- Result: Files remain on disk indefinitely → disk exhaustion
-
-*Current Deletion Flow:*
-1. Delivery succeeds → persist Completed status → call `spool.delete()`
-2. File-based spool (`empath-spool/src/backends/file.rs:450-474`):
-   - Phase 1: Rename `.bin` and `.eml` to `.bin.deleted` and `.eml.deleted` (atomic)
-   - Phase 2: `fs::remove_file()` on both `.deleted` files
-   - If Phase 2 fails → error propagates but is caught and logged
-3. `.deleted` files accumulate on disk with no cleanup mechanism
-
-*Proposed Architecture:*
-
-1. **CleanupQueue** (new module: `empath-delivery/src/queue/cleanup.rs`):
-   ```rust
-   // Track failed deletions with retry metadata
-   use dashmap::DashMap;
-
-   struct CleanupEntry {
-       message_id: SpooledMessageId,
-       attempt_count: u32,
-       next_retry_at: SystemTime,
-       first_failure: SystemTime,
-   }
-
-   pub struct CleanupQueue {
-       entries: DashMap<SpooledMessageId, CleanupEntry>,
-   }
-   ```
-
-2. **Modified delivery.rs** (`prepare_message` function):
-   ```rust
-   // Replace lines 179-187:
-   if let Err(e) = spool.delete(message_id).await {
-       error!(..., "Failed to delete message from spool");
-       // NEW: Add to cleanup queue instead of swallowing error
-       processor.cleanup_queue.add_failed_deletion(message_id.clone());
-   }
-   ```
-
-3. **Modified DeliveryProcessor** (`empath-delivery/src/processor/mod.rs:54`):
-   ```rust
-   // Add fields:
-   #[serde(default = "default_cleanup_interval")]
-   pub cleanup_interval_secs: u64,  // default: 60
-
-   #[serde(default = "default_max_cleanup_attempts")]
-   pub max_cleanup_attempts: u32,   // default: 3
-
-   #[serde(skip)]
-   pub(crate) cleanup_queue: CleanupQueue,
-   ```
-
-4. **Modified serve() loop** (`empath-delivery/src/processor/mod.rs:224`):
-   ```rust
-   // Add cleanup timer alongside scan_timer and process_timer:
-   let cleanup_interval = Duration::from_secs(self.cleanup_interval_secs);
-   let mut cleanup_timer = tokio::time::interval(cleanup_interval);
-   cleanup_timer.tick().await;  // Skip first tick
-
-   // In select! block:
-   _ = cleanup_timer.tick() => {
-       // Process cleanup queue with exponential backoff
-       match cleanup::process_cleanup_queue(self, spool).await {
-           Ok(cleaned) if cleaned > 0 => {
-               info!("Cleaned {cleaned} failed deletions from queue");
-           }
-           Err(e) => error!("Error processing cleanup queue: {e}"),
-           _ => {}
-       }
-   }
-   ```
-
-5. **New cleanup module** (`empath-delivery/src/processor/cleanup.rs`):
-   ```rust
-   // Retry logic with exponential backoff:
-   // - Attempt 1: immediate (already failed once)
-   // - Attempt 2: 2 seconds later (2^1)
-   // - Attempt 3: 4 seconds later (2^2)
-   // After 3 failures: Log CRITICAL alert, remove from queue
-
-   pub async fn process_cleanup_queue(
-       processor: &DeliveryProcessor,
-       spool: &Arc<dyn BackingStore>,
-   ) -> Result<usize, DeliveryError> {
-       let now = SystemTime::now();
-       let mut cleaned = 0;
-
-       for entry in processor.cleanup_queue.ready_for_retry(now) {
-           match spool.delete(&entry.message_id).await {
-               Ok(()) => {
-                   // Success! Remove from cleanup queue
-                   processor.cleanup_queue.remove(&entry.message_id);
-                   cleaned += 1;
-               }
-               Err(e) if entry.attempt_count >= processor.max_cleanup_attempts => {
-                   // Max retries exceeded - CRITICAL alert
-                   error!(
-                       message_id = ?entry.message_id,
-                       attempts = entry.attempt_count,
-                       first_failure = ?entry.first_failure,
-                       error = %e,
-                       "CRITICAL: Failed to delete message after {} attempts - manual intervention required",
-                       entry.attempt_count
-                   );
-                   processor.cleanup_queue.remove(&entry.message_id);
-               }
-               Err(e) => {
-                   // Retry later with exponential backoff
-                   let delay = Duration::from_secs(2u64.pow(entry.attempt_count));
-                   processor.cleanup_queue.schedule_retry(
-                       &entry.message_id,
-                       now + delay,
-                   );
-                   warn!(
-                       message_id = ?entry.message_id,
-                       attempt = entry.attempt_count + 1,
-                       next_retry_secs = delay.as_secs(),
-                       error = %e,
-                       "Failed to delete message, will retry"
-                   );
-               }
-           }
-       }
-
-       Ok(cleaned)
-   }
-   ```
-
-*Implementation Checklist:*
-- [x] Create `empath-delivery/src/queue/cleanup.rs` with `CleanupQueue` struct
-- [x] Add `cleanup_queue` field to `DeliveryProcessor`
-- [x] Add `cleanup_interval_secs` and `max_cleanup_attempts` config fields
-- [x] Modify `delivery.rs:179-187` to add failed deletions to queue
-- [x] Create `empath-delivery/src/processor/cleanup.rs` with retry logic
-- [x] Add cleanup timer to `serve()` loop in `processor/mod.rs`
-- [x] Add tests for cleanup queue behavior
-- [x] Add integration test for failed deletion recovery
-- [ ] Update default config example in `CLAUDE.md`
-
-*Files to Modify:*
-1. `empath-delivery/src/queue/mod.rs` - Export `CleanupQueue`
-2. `empath-delivery/src/queue/cleanup.rs` - NEW (CleanupQueue implementation)
-3. `empath-delivery/src/processor/mod.rs` - Add fields, cleanup timer
-4. `empath-delivery/src/processor/cleanup.rs` - NEW (retry logic)
-5. `empath-delivery/src/processor/delivery.rs` - Line 179-187 modification
-6. `empath-delivery/src/lib.rs` - Re-export CleanupQueue if needed
-
-*Testing Strategy:*
-1. Unit tests for `CleanupQueue` (add, remove, ready_for_retry)
-2. Unit tests for exponential backoff calculation
-3. Integration test: Simulate deletion failure → verify retry → verify success
-4. Integration test: Max retries exceeded → verify critical log → verify removal
+**Estimated Timeline to Production:** 3-4 weeks following critical path
 
 ---
 
-### ✅ 0.12 Add More Control Commands
-**Status:** COMPLETED (Partial - Manual Queue Processing)
-**Priority:** Low
-**Complexity:** Simple-Medium
+## Phase 0: Code Review Follow-ups & Production Blockers
 
-**Implementation:**
-- ✅ Manual queue processing command implemented (`empathctl queue process-now`)
-- Protocol: Added `ProcessNow` variant to `QueueCommand` enum
-- Handler: Returns informational message (automatic processing info)
-- CLI: Command available via `empathctl queue process-now`
-- Documentation: Updated CLAUDE.md with new command
+### 🔴 0.27+0.28 Authentication Infrastructure [COMBINED]
+**Priority**: Critical (Production Blocker)
+**Effort**: 2-3 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Medium
+**Tags**: security, production
+**Updated**: 2025-11-16
 
-**Files Modified:**
-- `empath-control/src/protocol.rs` - Added ProcessNow command variant
-- `empath/src/control_handler.rs` - Implemented handler logic
-- `empath/bin/empathctl.rs` - Added CLI command support
-- `CLAUDE.md` - Updated documentation
+**Problem**: Metrics endpoint (localhost:9090) and control socket have no authentication - security vulnerability.
 
-**Remaining Potential Commands:**
+**Solution**: Implement shared token-based authentication for both control socket and metrics endpoint.
+
+**Success Criteria**:
+- [ ] Token-based auth for control socket commands
+- [ ] API key auth for metrics endpoint
+- [ ] Configuration via empath.config.ron
+- [ ] Documentation updated in CLAUDE.md and SECURITY.md
+
+---
+
+### 🔴 0.35+0.36 Distributed Tracing Pipeline [COMBINED]
+**Priority**: Critical (Production Monitoring)
+**Effort**: 3-4 days
+**Dependencies**: Best with 0.13 (E2E tests for validation)
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Medium
+**Tags**: observability, monitoring
+**Updated**: 2025-11-16
+
+**Problem**:
+- OTEL Collector only has metrics pipeline, no trace export backend
+- Cannot trace requests through SMTP → Spool → Delivery
+- No trace_id/span_id in logs - cannot correlate metrics → traces → logs
+
+**Solution**:
+- Implement OTLP trace export pipeline to Jaeger/Tempo
+- Add trace context propagation across service boundaries
+- Inject trace_id/span_id into all log entries
+
+**Success Criteria**:
+- [ ] OTLP trace pipeline configured in docker/otel-collector.yml
+- [ ] Jaeger/Tempo backend running in Docker stack
+- [ ] Trace context propagates from SMTP → Delivery
+- [ ] trace_id/span_id appear in all logs
+- [ ] Can trace a message end-to-end in <30 seconds
+
+**Technical Notes**: Migrate #[traced] macro from logs to actual OTel spans (see task 5.4)
+
+---
+
+### 🔴 0.13 / 2.3 Comprehensive E2E Test Suite
+**Priority**: Critical (Testing Infrastructure)
+**Effort**: 3-5 days
+**Dependencies**: 4.2 (MockSmtpServer) - ✅ COMPLETED
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: High (blocks architecture refactoring 4.0)
+**Tags**: testing, quality
+**Updated**: 2025-11-16
+
+**Problem**:
+- Inverted test pyramid (113 unit tests, ~10 integration, 0 E2E)
+- Cannot validate full delivery flow (SMTP → Spool → Delivery → External SMTP)
+- Cannot test failure scenarios (DNS timeout, TLS failure, recipient rejection)
+- Blocks safe refactoring (task 4.0 requires E2E coverage)
+
+**Solution**: Build comprehensive E2E test suite using completed MockSmtpServer
+
+**Success Criteria**:
+- [ ] E2E test: Full delivery flow (SMTP receive → spool → DNS → SMTP delivery → success)
+- [ ] E2E test: TLS upgrade during reception and delivery
+- [ ] E2E test: DNS resolution with caching
+- [ ] E2E test: Retry logic with exponential backoff
+- [ ] E2E test: Message persistence across restarts
+- [ ] E2E test: Graceful shutdown with in-flight messages
+- [ ] All tests run in CI (depends on 7.16)
+
+---
+
+### 🔵 0.12 Add More Control Commands [PARTIAL - Process-Now Complete]
+**Priority**: Low
+**Effort**: 2-3 days for remaining commands
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Partial (ProcessNow ✅, others pending)
+**Tags**: control-socket, operations
+
+**Completed**: Manual queue processing (`empathctl queue process-now`)
+
+**Remaining Commands**:
 1. Config reload - Reload configuration without restart
 2. Log level adjustment - Change log verbosity at runtime
 3. Connection stats - View active SMTP connections
@@ -308,2074 +158,925 @@ Implemented CleanupQueue with exponential backoff retry logic to prevent disk ex
 ---
 
 ### 🔵 0.13 Add Authentication/Authorization for Control Socket
-**Priority:** Low
-**Complexity:** Medium
-**Effort:** 1 day
+**Priority**: Low (Unix permissions sufficient for now)
+**Effort**: 1 day
+**Dependencies**: None
+**Status**: Deferred
+**Tags**: security
 
-**Current Issue:** Control socket has no authentication - anyone with socket access can manage the MTA.
+**Note**: Merged into 0.27+0.28 for token-based auth. This task covers optional multi-user authorization (ACLs, role-based access).
 
-**Options:**
-1. Unix permissions (current approach)
-2. Token-based auth
-3. mTLS (overkill for local IPC)
-
-**Recommendation:** Start with Unix permissions, add token-based auth if multi-user support needed.
+**Options**:
+1. Unix permissions (current approach - sufficient for single-user)
+2. Token-based auth (covered by 0.27+0.28)
+3. Role-based access control (future enhancement)
 
 ---
 
 ### 🔵 0.14 Add DNSSEC Validation and Logging
-**Priority:** ~~Medium~~ **DOWNGRADED TO LOW** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 2 days
+**Priority**: Low (Downgraded - Premature)
+**Effort**: 2 days
+**Dependencies**: None
+**Status**: Deferred
+**Tags**: dns, security
 
-**Expert Review (General Purpose):** Premature - no DNSSEC infrastructure in most deployments. Defer until core reliability is proven.
+**Expert Review**: Premature - no DNSSEC infrastructure in most deployments. Defer until core reliability proven.
 
 Enable DNSSEC validation in resolver and log validation status for security monitoring.
 
 ---
 
-### ✅ 0.21 Add Connection Pooling for empathctl --watch Mode
-**Priority:** ~~Low~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### ❌ 0.3 Fix Context/Message Layer Violation **REJECTED**
+**Status**: Rejected (2025-11-11)
 
-Implemented persistent connection mode to eliminate socket reconnection overhead in watch mode.
+**Decision**: NOT a layer violation - intentional architectural feature for module system.
 
-**Changes:**
-- Added `with_persistent_connection()` method to ControlClient
-- Automatic reconnection on connection loss
-- Watch mode automatically uses persistent connections
+**Rationale**: Context persistence enables module lifecycle tracking across SMTP reception → delivery. "Session-only" fields (id, metadata, extended, banner) are part of the module contract, allowing plugins to maintain coherent state. Storage overhead negligible (~100 bytes vs 4KB-10MB+ emails).
 
-**Results:** All 16 control socket integration tests passing
+**See**: CLAUDE.md "Context Persistence and the Module Contract" section
 
 ---
 
-### ✅ 0.20 Add Protocol Versioning for Future Evolution
-**Priority:** ~~Low~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Added protocol versioning to control socket IPC for forward compatibility as the protocol evolves.
-
-**Changes:**
-- Added `PROTOCOL_VERSION` constant (currently version 1)
-- Converted `Request` from enum to struct with `version` + `command` fields
-- Converted `Response` from enum to struct with `version` + `payload` fields
-- Created `RequestCommand` enum (Dns, System, Queue) for command payload
-- Created `ResponsePayload` enum (Ok, Data, Error) for response payload
-- Added `Request::new(command)` and `Response::ok/data/error()` helpers
-- Implemented `is_version_compatible()` validation on both client and server
-- Updated all Request/Response usage in empathctl CLI, tests, and handlers
-- Server returns error for incompatible protocol versions
-
-**Results:**
-- All 91 workspace tests passing
-- Forward compatibility: Future versions can implement backward compatibility logic
-- Clean migration path: Version field enables protocol evolution without breaking changes
-
----
-
-### ✅ 0.24 Extract Queue Command Handler Methods
-**Priority:** ~~High (Code Quality)~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Refactored `handle_queue_command()` from 284 lines to 70 lines by extracting 5 command handlers into focused methods.
-
-**Changes:**
-- Extracted `handle_list_command()` - Queue listing with optional status filtering
-- Extracted `handle_view_command()` - Detailed message information display
-- Extracted `handle_retry_command()` - Reset failed messages to pending
-- Extracted `handle_delete_command()` - Remove messages from queue and spool
-- Extracted `handle_stats_command()` - Calculate queue statistics
-- Added `extract_headers()` helper - Parse email headers from message data
-- Added `extract_body_preview()` helper - Extract first 1024 chars of body
-
-**Location:** `empath/src/control_handler.rs:234-572`
-
-**Results:** All 27 tests passing, improved maintainability and testability
-
----
-
-### ✅ 0.25 Create DeliveryQueryService Abstraction
-**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 3-4 hours
-
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Implemented `DeliveryQueryService` trait to decouple control handler from concrete `DeliveryProcessor` implementation, following Interface Segregation Principle.
-
-**Implementation:**
-
-Created comprehensive service trait with query and command operations:
-```rust
-pub trait DeliveryQueryService: Send + Sync {
-    // Query operations
-    fn queue_len(&self) -> usize;
-    fn get_message(&self, id: &SpooledMessageId) -> Option<DeliveryInfo>;
-    fn list_messages(&self, status: Option<DeliveryStatus>) -> Vec<DeliveryInfo>;
-
-    // Command operations (for retry/delete)
-    fn update_status(&self, message_id: &SpooledMessageId, status: DeliveryStatus);
-    fn set_next_retry_at(&self, message_id: &SpooledMessageId, next_retry_at: SystemTime);
-    fn reset_server_index(&self, message_id: &SpooledMessageId);
-    fn remove(&self, message_id: &SpooledMessageId) -> Option<DeliveryInfo>;
-
-    // Service accessors
-    fn dns_resolver(&self) -> &Option<DnsResolver>;
-    fn spool(&self) -> &Option<Arc<dyn BackingStore>>;
-    fn domains(&self) -> &DomainConfigRegistry;
-}
-```
-
-**Files Modified:**
-- `empath-delivery/src/service.rs` (NEW) - Service trait definition
-- `empath-delivery/src/processor/mod.rs` - Trait implementation for DeliveryProcessor
-- `empath-delivery/src/lib.rs` - Export trait
-- `empath/src/control_handler.rs` - Updated to use `Arc<dyn DeliveryQueryService>`
-- `empath/src/controller.rs` - Updated to create trait object from DeliveryProcessor
-
-**Benefits Achieved:**
-- ✅ Clean separation: Interface Segregation Principle applied
-- ✅ Mockable interface for testing
-- ✅ Enables CQRS pattern if needed later
-- ✅ Reduced control handler coupling by ~80%
-- ✅ Supports horizontal scaling (trait can be implemented by remote service)
-
-**Notes:**
-- Trait includes both query and command operations to support all control commands
-- Control handler no longer depends on concrete DeliveryProcessor type
-- Future work: Create mock implementation for unit testing control commands
-
----
-
-### 🔴 0.27 Add Authentication to Metrics Endpoint
-**Priority:** Critical (Before Production)
-**Complexity:** Medium
-**Effort:** 1-2 days
-
-Add authentication to metrics endpoint - currently world-accessible on localhost:9090.
-
----
-
-### 🔴 0.28 Add Authentication to Control Socket
-**Priority:** Critical (Before Production)
-**Complexity:** Medium
-**Effort:** 2-3 days
-
-Implement token-based authentication for control socket commands.
-
----
-
-### ✅ 0.29 Fix Platform-Specific Path Validation
-**Priority:** ~~High (Security)~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Fixed security vulnerability where spool paths could be created in Windows system directories.
-
-**Changes:**
-- Platform-specific sensitive path prefixes using conditional compilation
-- Unix: `/etc`, `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/boot`, `/sys`, `/proc`, `/dev`
-- Windows: `C:\Windows`, `C:\Program Files`, `C:\ProgramData` (with case variants)
-- 6 new platform-specific tests
-
-**Results:** All 16 spool tests passing, cross-platform security consistency
-
----
-
-### ✅ 0.30 Reduce Metrics Runtime Overhead
-**Priority:** ~~Medium (Performance)~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Optimized high-frequency metrics by replacing OpenTelemetry `Counter::add()` calls with `AtomicU64` + observable counters, reducing overhead from 80-120ns to <10ns per increment (~90% reduction).
-
-**Changes:**
-- **SMTP Metrics**: connections_total, messages_received (2 counters optimized)
-- **Delivery Metrics**: messages_delivered, messages_failed, messages_retrying (3 counters optimized)
-- **DNS Metrics**: cache_hits, cache_misses, cache_evictions (3 counters optimized)
-
-**Implementation:**
-- Fast `Arc<AtomicU64>` increments in hot path using `fetch_add(1, Ordering::Relaxed)`
-- Observable counters read atomics periodically via callbacks for OTLP export
-- Preserved OpenTelemetry metrics export without affecting functionality
-
-**Tradeoffs:**
-- Removed some metric attributes for performance (e.g., `query_type` on cache hits/misses, `reason` on delivery failures)
-- Total counts still tracked, just not broken down by all labels
-
-**Results:** All 91 workspace tests passing, significant performance improvement in metrics hot path
-
-**Location:** `empath-metrics/src/{smtp.rs,delivery.rs,dns.rs}`
-
----
-
-### ✅ 0.31 Fix ULID Collision Error Handling
-**Priority:** ~~Medium (Reliability)~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Fixed error handling to properly propagate filesystem errors instead of silently treating them as "file doesn't exist".
-
-**Changes:**
-- Replaced `unwrap_or(false)` with `?` operator for error propagation
-- Filesystem errors now surface immediately to caller
-
-**Results:** All 10 spool unit tests passing, better failure modes (fail early vs fail later)
-
----
-
-### ✅ 0.32 Add Metrics Integration Tests
-**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 1 day
-
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Created comprehensive integration test suite with 15 tests covering counter accuracy, AtomicU64 observable counters, concurrent updates, and metrics consistency for SMTP, Delivery, and DNS modules.
-
-**Implementation:** Created `empath-metrics/tests/metrics_integration.rs` with 15 comprehensive integration tests verifying that metric counters accurately reflect actual events after the AtomicU64 optimization (task 0.30). Tests cover SMTP connection tracking, message counters, delivery success/failure/retry metrics, DNS cache statistics, queue size consistency, and concurrent metric updates (1000 operations across 10 threads to verify atomicity).
-
-**Files Modified:**
-- `empath-metrics/tests/metrics_integration.rs` - NEW (15 integration tests, 309 lines)
-
-**Tests Created:**
-- ✅ `test_smtp_connection_counter_accuracy` - Verifies active connection tracking with atomic increments/decrements
-- ✅ `test_smtp_message_received_counter` - Tests message counter with various sizes
-- ✅ `test_smtp_error_recording` - Validates error tracking with SMTP codes
-- ✅ `test_smtp_command_duration` - Tests histogram recording for command durations
-- ✅ `test_delivery_counter_accuracy` - Verifies delivery success/failure/retry counters
-- ✅ `test_dns_cache_metrics` - Tests cache hit/miss/eviction tracking
-- ✅ `test_dns_lookup_duration` - Validates DNS lookup duration histograms
-- ✅ `test_concurrent_metric_updates` - 10 threads × 100 operations = 1000 concurrent increments
-- ✅ `test_atomic_counter_ordering` - Verifies sequential consistency of atomic operations
-- ✅ `test_delivery_queue_size_consistency` - Tests queue size tracking per status
-- ✅ `test_dns_cache_size_updates` - Validates cache size updates and evictions
-- ✅ `test_smtp_metrics_creation` - Verifies SMTP metrics initialization
-- ✅ `test_delivery_metrics_creation` - Verifies delivery metrics initialization
-- ✅ `test_dns_metrics_creation` - Verifies DNS metrics initialization
-
-**Coverage:**
-- Counter accuracy after AtomicU64 optimization (90% overhead reduction from task 0.30)
-- Observable counter callbacks reading from atomic values
-- Concurrent metric updates (validates atomicity and thread-safety)
-- Queue size tracking per delivery status (pending, in_progress, completed, failed, retry, expired)
-- Cache statistics (hits, misses, evictions)
-- Histogram recording for durations
-- Metrics initialization and error handling
-
----
-
-### 🔴 0.35 Implement OpenTelemetry Trace Pipeline
-**Priority:** Critical (Before Production) **NEW** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 2-3 days
-
-**Expert Review (OTel Expert):** CRITICAL GAP - OTEL Collector only has metrics pipeline configured, no trace export backend exists. Cannot trace requests through SMTP → Spool → Delivery pipeline.
-
-**Current Issue:**
-- The `#[traced]` macro generates logs, not OpenTelemetry spans
-- No trace context propagation between services
-- No trace export to backend (Jaeger, Tempo, etc.)
-
-**Implementation:**
-1. Add trace pipeline to `docker/otel-collector.yml`
-2. Choose trace backend (Jaeger recommended for development, Tempo for production)
-3. Add Jaeger/Tempo to Docker Compose stack
-4. Configure trace export endpoint in Empath config
-
-**Impact:** Cannot diagnose performance bottlenecks or trace delivery failures end-to-end.
-
-**Dependencies:** Works best with 0.36 (trace context propagation)
-
----
-
-### 🔴 0.36 Implement Trace Context Propagation & Log Correlation
-**Priority:** Critical (Before Production) **NEW** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 1-2 days
-
-**Expert Review (OTel Expert):** No `trace_id`/`span_id` in logs - cannot correlate metrics → traces → logs for failed deliveries. Major operational blindspot.
-
-**Current Issue:**
-- Logs use `tracing_subscriber::fmt` but no OpenTelemetry layer
-- Metrics have no trace context
-- Cannot troubleshoot specific failed deliveries from metrics alert
-
-**Implementation:**
-1. Migrate `#[traced]` macro from log-based to OpenTelemetry spans
-2. Add `tracing_opentelemetry::OpenTelemetryLayer` to subscriber
-3. Enable `trace_id`/`span_id` in log output (JSON format recommended)
-4. Add trace context to metrics via exemplars
-5. Instrument delivery pipeline with nested spans (DNS → TLS → SMTP phases)
-
-**Benefits:**
-- End-to-end visibility from SMTP reception → delivery completion
-- Click from alert → trace → logs for debugging
-- Structured logging with trace correlation
-
-**Dependencies:** 0.35 (trace pipeline)
-
----
-
-### ✅ 0.37 Add Queue Age Metrics
-**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 2 hours
-
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Implemented queue age metrics with histogram and oldest message gauge for SLO tracking and capacity planning.
-
-**Implementation:** Added `queue_age_seconds` histogram and `oldest_message_seconds` gauge to DeliveryMetrics. Queue age is recorded before each delivery attempt, and the oldest message age is calculated and updated during queue processing. The `queued_at` timestamp was already present in `DeliveryContext` from the initial design.
-
-**Files Modified:**
-- `empath-metrics/src/delivery.rs` - Added queue_age_seconds histogram and oldest_message_seconds gauge with observable callbacks
-- `empath-delivery/src/processor/mod.rs` - Added metrics field to DeliveryProcessor and initialization in init()
-- `empath-delivery/src/processor/process.rs` - Record queue age on delivery attempt, calculate and update oldest message age
-- `empath-metrics/tests/metrics_integration.rs` - Added 3 tests for queue age metrics
-
-**Metrics Added:**
-- `empath.delivery.queue.age.seconds` (histogram) - Distribution of time between spool and delivery attempt
-- `empath.delivery.queue.oldest.seconds` (gauge) - Age of the oldest pending/retry message in seconds
-
-**Use Cases Enabled:**
-- SLO tracking: "95% of messages delivered within 1 hour" via percentile analysis (p50, p95, p99)
-- Capacity planning: Detect queue backlog before it's critical
-- Performance regression: Monitor queue age trends over time
-- Alerting: Trigger alerts when p95 queue age exceeds threshold
-
----
-
-### ✅ 0.38 Add Error Rate SLI Metrics
-**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 3 hours
-
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Added pre-calculated error rate and success rate observable gauges for easier alerting without complex PromQL queries.
-
-**Implementation:** Added observable gauges that calculate error rates on-demand from existing AtomicU64 counters. No background task required - metrics are computed when Prometheus/OTLP scrapes them. Zero additional runtime overhead beyond the atomic counter reads.
-
-**Files Modified:**
-- `empath-metrics/src/delivery.rs` - Added delivery error_rate and success_rate observable gauges
-- `empath-metrics/src/smtp.rs` - Added SMTP connection error_rate gauge and record_connection_failed() method
-- `empath-metrics/tests/metrics_integration.rs` - Added 4 tests for error rate calculations
-
-**Metrics Added:**
-- `empath.delivery.error_rate` (f64 gauge) - Failed / total attempts (0-1)
-- `empath.delivery.success_rate` (f64 gauge) - Delivered / total attempts (0-1)
-- `empath.smtp.connection.error_rate` (f64 gauge) - Failed / total connections (0-1)
-
-**Implementation Approach:**
-- Observable gauges with callbacks that compute rates from atomic counters
-- Calculations: error_rate = failed / (delivered + failed + retrying) for delivery
-- Calculations: error_rate = failed / total for SMTP connections
-- Zero-division protection: returns 0.0 when total = 0
-- No background task needed - computed on scrape
-
-**Benefits Achieved:**
-- ✅ Simpler alerting: "error_rate > 0.05" vs complex rate() PromQL
-- ✅ Zero runtime overhead: only calculated when scraped
-- ✅ Instant visibility: gauge shows current error rate
-- ✅ Reduced Prometheus query load: pre-calculated values
-
-**Tests Added:**
-- test_delivery_error_rate_calculation - Verifies API with mixed outcomes
-- test_delivery_success_rate_with_zero_attempts - Zero-division protection
-- test_smtp_connection_error_rate - SMTP error rate tracking
-- test_smtp_error_rate_with_zero_connections - Zero-division protection
-
----
-
-### ✅ 0.39 Implement Metrics Cardinality Limits
-**Status:** COMPLETED
-**Priority:** Medium **NEW** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 2-3 hours
-**Completed:** 2025-11-16
-
-**Expert Review (OTel Expert):** High-cardinality labels (e.g., `domain` in delivery metrics) could create 10,000+ metric series in production. Need cardinality management.
-
-**Current Risk:**
-- Production could have 10,000+ domains
-- Each domain creates separate metric series
-- Prometheus memory/performance impact
-
-**Implementation:** ✅
-1. ✅ Add cardinality limit to delivery metrics (configurable, default 1000)
-2. ✅ Bucket overflow domains to "other" category
-3. ✅ High-priority domain bypass (e.g., gmail.com, outlook.com)
-4. ✅ Observable gauge for cardinality monitoring
-5. ✅ Comprehensive tests (basic, high-priority bypass, concurrent)
-
-**Files Modified:**
-- `empath-metrics/src/config.rs` - Added `max_domain_cardinality` and `high_priority_domains`
-- `empath-metrics/src/delivery.rs` - Implemented domain bucketing with `RwLock<HashSet>` tracking
-- `empath-metrics/src/lib.rs` - Pass config to `DeliveryMetrics::new()`
-- `empath-metrics/tests/metrics_integration.rs` - Added 3 cardinality tests
-
-**Alert:**
-```promql
-count(count by (domain) (empath_delivery_attempts_total)) > 5000
-```
-
----
-
-### ✅ 0.11 Create Security Documentation
-**Status:** COMPLETED
-**Priority:** Medium
-**Effort:** 1 day
-**Files:** `docs/SECURITY.md` (created)
-
-**Implementation:**
-Comprehensive security documentation covering:
-- ✅ Vulnerability reporting process
-- ✅ Threat model with 5 attack surfaces and 5 threat scenarios
-- ✅ TLS certificate validation policies (server and client)
-- ✅ Timeouts and resource limits (RFC 5321 compliant)
-- ✅ Input validation (SMTP commands, ESMTP parameters, message size)
-- ✅ Authentication and authorization (control socket, metrics)
-- ✅ Audit logging (control commands, SMTP transactions)
-- ✅ DNS security (cache with TTL bounds)
-- ✅ Configuration best practices (production checklist)
-- ✅ Known limitations with risk assessment
-- ✅ Security roadmap
-
-**Files Created:**
-- `docs/SECURITY.md` - 900+ lines of comprehensive security documentation
-
----
-
-### ✅ 0.12 Create Deployment Guide
-**Status:** COMPLETED
-**Priority:** Medium
-**Effort:** 2 days
-**Files:** `docs/DEPLOYMENT.md` (created)
-
-**Implementation:**
-Comprehensive deployment guide (1000+ lines) covering:
-- ✅ System requirements (hardware, software, network)
-- ✅ Installation (from source, Docker, Kubernetes)
-- ✅ Configuration (production config, TLS setup, performance tuning)
-- ✅ Monitoring (OpenTelemetry, Prometheus, Grafana dashboards)
-- ✅ Health checks (Kubernetes liveness/readiness probes)
-- ✅ Operational procedures (start/stop, queue management, DNS cache)
-- ✅ Backup and recovery procedures
-- ✅ Troubleshooting guide (5 common issues with solutions)
-- ✅ Maintenance (log rotation, updates, security)
-- ✅ Scaling (horizontal/vertical, load balancing)
-
-**Deployment Methods Documented:**
-- Systemd service with security hardening
-- Docker with multi-stage builds
-- Docker Compose with full observability stack
-- Kubernetes with manifests (Deployment, Service, PVC, ConfigMap)
-
-**Files Created:**
-- `docs/DEPLOYMENT.md` - 1000+ lines of production deployment documentation
-
----
-
-### 🟢 0.13 Add Integration Test Suite
-**Priority:** High
-**Complexity:** Medium
-**Effort:** 3-5 days
-
-Create end-to-end delivery flow tests, TLS upgrade tests, DNS resolution tests, retry logic tests, and spool persistence tests.
-
----
-
-### 🔵 0.14 Implement Delivery Strategy Pattern
-**Priority:** Low
-**Complexity:** Medium
-**Effort:** 1 day
-
-Create pluggable delivery strategies (immediate, scheduled, rate-limited) for flexible delivery behavior.
-
----
-
-## Phase 1: Core Functionality (Week 1-2)
-
-### 🟡 1.1 Persistent Delivery Queue
-**Priority:** High
-**Complexity:** High
-**Effort:** 1 week
-
-**Goal:** Replace in-memory delivery queue with persistent spool-backed queue for durability across restarts.
-
-**Current State:** Queue state is stored in-memory - restarts lose retry schedules and delivery attempts.
-
-**Implementation:** Use Context.delivery field with spool as persistent queue backend (leveraging intentional Context persistence design from task 0.3).
-
-**Dependencies:** 0.3 (rejected - proves Context persistence is correct)
+## Phase 1: Core Functionality
+
+### 🔴 1.1 Restore Queue State from Spool on Restart [UPGRADE TO CRITICAL]
+**Priority**: Critical (Durability)
+**Effort**: 1 week
+**Dependencies**: 0.3 analysis (completed - design validated)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Risk**: High (touches delivery core)
+**Tags**: delivery, durability, queue
+**Updated**: 2025-11-16
+
+**Problem**: On restart, delivery queue state (retry schedules, attempt counts, next_retry_at timestamps) is not restored from the persistent spool. Messages in the spool are rediscovered but queue metadata is lost. This causes immediate redelivery attempts instead of honoring exponential backoff.
+
+**Solution**: On startup, scan FileBackedSpool and restore queue state from Context.delivery fields in spooled messages.
+
+**Success Criteria**:
+- [ ] On startup, read all .bin files from spool directory
+- [ ] Deserialize Context.delivery (attempt_count, next_retry_at, server_index, status)
+- [ ] Populate in-memory DeliveryQueue with restored state
+- [ ] Honor next_retry_at timestamps (don't retry immediately)
+- [ ] Tests verify queue state restoration across restart
+- [ ] Performance impact <5% on startup (benchmark with 10k queued messages)
+
+**Implementation Notes**:
+- Spool (FileBackedSpool) is already persistent - this is about restoring queue STATE
+- Leverage Context.delivery design validated in task 0.3 rejection analysis
+- Queue reads from spool, not the other way around
 
 ---
 
 ### 🟢 1.2.1 DNSSEC Validation
-**Priority:** Medium
-**Complexity:** Medium
-**Effort:** 2-3 days
+**Priority**: Medium
+**Effort**: 2-3 days
+**Dependencies**: None
+**Status**: Deferred (same as 0.14)
 
-Implement DNSSEC validation with configurable enforcement (log warnings vs fail delivery).
+See task 0.14 - merged/duplicate.
 
 ---
 
-## Phase 2: Reliability & Observability (Week 3-4)
+## Phase 2: Reliability & Observability
 
 ### 🟡 2.2 Connection Pooling for SMTP Client
-**Priority:** High
-**Complexity:** Medium
-**Effort:** 2-3 days
+**Priority**: High
+**Effort**: 2-3 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Medium
+**Tags**: performance, delivery
 
-Implement connection pooling for outbound SMTP to reduce connection overhead.
+**Problem**: Outbound SMTP connections established per delivery attempt - overhead for high-volume domains.
+
+**Solution**: Implement connection pool for SMTP client to reuse connections to same MX servers.
+
+**Success Criteria**:
+- [ ] Connection pool with configurable size per domain
+- [ ] Idle connection timeout and cleanup
+- [ ] Connection health checks before reuse
+- [ ] Metrics: pool_size, pool_hits, pool_misses
+- [ ] Performance improvement >20% for high-volume domains (benchmark)
 
 ---
 
 ### 🟡 2.3 Comprehensive Test Suite
-**Priority:** High
-**Complexity:** High
-**Effort:** 1 week
+**Priority**: High (Merged with 0.13)
+**Effort**: See 0.13
+**Dependencies**: 4.2 (MockSmtpServer) - ✅ COMPLETED
 
-Expand test coverage with unit tests, integration tests, property-based tests, and benchmarks.
-
----
-
-### ✅ 2.4 Health Check Endpoints
-**Priority:** ~~High~~ **UPGRADED TO CRITICAL** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-16)
-**Complexity:** Simple
-**Effort:** ~~1 day~~ 4-6 hours (revised)
-
-**Expert Review (OTel Expert):** Kubernetes deployment impossible without health endpoints. This is a production blocker, not a nice-to-have.
-
-**Implementation:**
-
-Created `empath-health` crate with HTTP health check server using axum. Provides two endpoints for Kubernetes probes:
-
-- **`/health/live`**: Liveness probe (always returns 200 OK)
-- **`/health/ready`**: Readiness probe (checks SMTP, spool, delivery, DNS, queue size)
-
-**Files Created:**
-- `empath-health/src/lib.rs` - Public API and exports
-- `empath-health/src/config.rs` - `HealthConfig` with enable flag, listen address, max queue size
-- `empath-health/src/error.rs` - `HealthError` types (BindError, ServerError)
-- `empath-health/src/checker.rs` - `HealthChecker` with thread-safe status tracking using `Arc<AtomicBool>` and `Arc<AtomicU64>`
-- `empath-health/src/server.rs` - `HealthServer` with axum HTTP server and endpoint handlers
-- `empath-health/Cargo.toml` - Dependencies (axum, tower, tower-http for timeout)
-
-**Files Modified:**
-- `Cargo.toml` - Added empath-health to workspace members
-- `empath/Cargo.toml` - Added empath-health dependency
-- `empath/src/controller.rs` - Integrated health server into `Empath::run()`, added health checker initialization, set component readiness flags
-- `empath.config.ron` - Added health configuration section with defaults
-- `CLAUDE.md` - Added comprehensive health check documentation (endpoints, configuration, Kubernetes integration, testing)
-
-**Features:**
-- Thread-safe component status tracking (SMTP, spool, delivery, DNS)
-- Configurable queue size threshold for readiness
-- 1-second response timeout via tower-http middleware
-- Graceful shutdown coordination
-- Returns 503 with detailed JSON status when not ready
-- 4 unit tests for endpoint behavior
-
-**Configuration:**
-```ron
-health: (
-    enabled: true,              // Enable/disable health server
-    listen_address: "[::]:8080", // Bind address (default: [::]:8080)
-    max_queue_size: 10000,      // Queue size threshold (default: 10000)
-),
-```
-
-**Results:** All 4 health endpoint unit tests passing, clippy clean, full workspace build successful
+**Note**: Merged into task 0.13 (E2E Test Suite). Keeping reference for tracking.
 
 ---
 
-## Phase 3: Performance & Scaling (Week 5-6)
+## Phase 3: Performance & Scaling
 
 ### 🟢 3.1 Parallel Delivery Processing
-**Priority:** Medium
-**Complexity:** High
-**Effort:** 3-5 days
+**Priority**: Medium
+**Effort**: 3-5 days
+**Dependencies**: 4.5 (JoinSet) - ✅ COMPLETED
+**Owner**: Unassigned
+**Status**: Ready to start
+**Risk**: Medium
+**Tags**: performance, scalability
 
-Process multiple deliveries in parallel with configurable concurrency limits.
+**Problem**: Single-threaded delivery limits throughput to ~100 messages/sec.
 
----
+**Solution**: Implement parallel delivery using JoinSet for concurrent processing.
 
-### 🟢 3.3 Rate Limiting per Domain
-**Priority:** Medium
-**Complexity:** Medium
-**Effort:** 2-3 days
-
-Implement per-domain rate limiting to prevent overwhelming recipient servers.
-
----
-
-### 🟢 3.4 Delivery Status Notifications (DSN)
-**Priority:** Medium
-**Complexity:** High
-**Effort:** 1 week
-
-Implement RFC 3464 Delivery Status Notifications for bounce messages.
+**Success Criteria**:
+- [ ] Configurable parallelism (default: num_cpus)
+- [ ] Per-domain rate limiting preserved
+- [ ] Graceful shutdown waits for in-flight deliveries
+- [ ] Throughput improvement >5x (benchmark)
+- [ ] No race conditions (stress testing with 10k concurrent deliveries)
 
 ---
 
-### 🟢 3.6 Audit Logging
-**Priority:** Medium
-**Complexity:** ~~Simple~~ Medium (revised)
-**Effort:** ~~1-2 days~~ 3-4 days (revised)
+### 🟢 3.3 Rate Limiting per Domain [UPGRADE TO HIGH]
+**Priority**: High (DoS Prevention)
+**Effort**: 2-3 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Medium
+**Tags**: security, performance
 
-**Expert Review (OTel Expert):** Task 0.17 completed basic control command audit logging. This task should focus on comprehensive message lifecycle auditing for compliance.
+**Problem**: No rate limiting - can overwhelm recipient servers, causing blacklisting. DoS vulnerability.
 
-**Additional Requirements for Compliance:**
+**Solution**: Implement per-domain rate limiting with token bucket algorithm.
 
-**3.6.1: Structured Audit Events** (not just logs)
-```rust
-pub struct AuditEvent {
-    timestamp: DateTime<Utc>,
-    event_type: AuditEventType,  // MessageReceived, DeliveryAttempt, etc.
-    actor: String,               // User or system component
-    resource: String,            // Message ID, domain
-    action: String,              // Received, Delivered, Failed
-    result: AuditResult,         // Success, Failure
-    metadata: HashMap<String, String>,
-}
-```
+**Success Criteria**:
+- [ ] Configurable rate limits per domain (messages/second, messages/hour)
+- [ ] Default global rate limit (e.g., 10 msg/sec per domain)
+- [ ] Override limits for specific domains via config
+- [ ] Metrics: rate_limited_total, rate_limit_delay_seconds
+- [ ] Tests verify rate limiting behavior
 
-**3.6.2: Immutable Audit Trail**
-- Write to append-only storage
-- Integrity verification (checksums)
-- Tamper-evident logging
-
-**3.6.3: SIEM Integration**
-- Export to syslog, OTLP logs, or file
-- Structured format for Splunk/ELK ingestion
-
-**3.6.4: PII Redaction Configuration**
-- GDPR considerations
-- Configurable field redaction (email addresses, message content)
-
-Comprehensive audit logging for compliance and troubleshooting.
-
-**Note:** Task 0.17 already completed control command audit logging.
+**Expert Review**: Upgrade to HIGH priority - DoS vulnerability without rate limiting.
 
 ---
 
-## Phase 4: Code Structure & Technical Debt (Ongoing)
+### 🟢 3.4 Delivery Status Notifications (RFC 3464)
+**Priority**: Medium
+**Effort**: 1 week
+**Dependencies**: None
+**Status**: Not Started
+**Tags**: delivery, compliance
 
-### 🔴 4.0 Code Structure Refactoring (Project Organization)
-**Priority:** Critical (Before 1.0)
-**Complexity:** High
-**Effort:** 2-3 weeks
+**Problem**: No DSN (Delivery Status Notification) support - senders don't know delivery failures.
 
-**Expert Review (Architect):** ⚠️ **DO NOT START until tasks 4.2 + 0.13/2.3 (E2E tests) are complete.** Major refactoring without test coverage is recipe for disaster.
+**Solution**: Implement RFC 3464 DSN generation for failed deliveries.
 
-**Architectural Issues Identified:**
-
-**Problem 1: DeliveryProcessor is a "God Object"** (8+ responsibilities)
-- Spool scanning, queue processing, DNS resolution, domain config
-- Retry scheduling, SMTP delivery, MX overrides, query handling
-
-**Solution: Split into focused services**
-```rust
-pub struct SpoolScanner { /* scan spool, enqueue messages */ }
-pub struct RetryScheduler { /* calculate backoff, schedule retries */ }
-pub struct DeliveryExecutor { /* SMTP handshake, MX fallback */ }
-pub struct DeliveryOrchestrator { /* coordinates above services */ }
-```
-
-**Problem 2: Missing Service Layer Abstractions**
-- `DeliveryProcessor` is struct, not trait (cannot swap implementations)
-- No `DnsLookup` trait (DNS resolver is concrete, blocks mocking)
-- No `DeliveryProtocol` trait (SMTP delivery is hardcoded)
-
-**Problem 3: Inconsistent Abstraction Levels**
-- Mix of infrastructure, domain logic, and application services
-- Need clear layering: Application → Service → Domain → Infrastructure
-
-**Recommended Breakdown:**
-1. **4.0.1**: Extract delivery DNS into separate module (3 days)
-2. **4.0.2**: Separate SMTP session from protocol (4 days)
-3. **4.0.3**: Create unified error types (2 days)
-4. **4.0.4**: Consolidate configuration structs (3 days)
-
-Major refactoring to improve codebase organization and maintainability.
-
-**CRITICAL DEPENDENCY:** Must complete comprehensive test suite (4.2, 0.13, 2.3) BEFORE starting this work.
+**Success Criteria**:
+- [ ] DSN generated for permanent failures (5xx errors)
+- [ ] DSN generated after max retry attempts
+- [ ] DSN includes original message headers
+- [ ] DSN complies with RFC 3464 format
+- [ ] Configurable: enable/disable DSN per domain
 
 ---
 
-### ✅ 4.1 Replace Manual Future Boxing with async_trait
-**Priority:** ~~High (Code Quality)~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟡 3.6 Comprehensive Audit Logging [UPGRADE TO HIGH]
+**Priority**: High (Compliance)
+**Effort**: 3-4 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Partial (control commands ✅, message lifecycle pending)
+**Risk**: Low
+**Tags**: compliance, security, logging
+**Updated**: 2025-11-16
 
-Replaced manual `Pin<Box<dyn Future>>` boxing in `CommandHandler` trait with `async_trait` macro for cleaner, more maintainable code.
+**Problem**: Email systems are compliance-critical (GDPR, HIPAA, SOX). Control commands logged (task 0.17 ✅), but missing message lifecycle auditing.
 
-**Changes:**
-- Added `async_trait` dependency to `empath` and `empath-control` crates
-- Converted `CommandHandler::handle_request` from manual `Pin<Box<dyn Future>>` to `async fn` with `#[async_trait]`
-- Updated implementations in `empath/src/control_handler.rs` and `empath-control/tests/integration_test.rs`
-- Removed manual `Box::pin(async move { ... })` boilerplate
+**Solution**: Add structured audit logging for full message lifecycle with PII redaction.
 
-**Note:** The `BackingStore` trait correctly uses `async_trait` and must remain so for dyn compatibility (`Arc<dyn BackingStore>`). Native `async fn` in traits (RPITIT) is not dyn-compatible, so `async_trait` is the proper solution for trait objects.
-
-**Results:** All 91 workspace tests passing
-
----
-
-### 🔴 4.2 Mock SMTP Server for Testing
-**Priority:** ~~High~~ **UPGRADED TO CRITICAL** (Testing Infrastructure) (2025-11-15)
-**Status:** 🔄 **IN PROGRESS** (2025-11-16)
-**Complexity:** Medium
-**Effort:** 1-2 days
-
-**Expert Review (Code Reviewer):** This is the PRIMARY BLOCKER for comprehensive testing. Current `start_test_server()` approach cannot simulate network errors, timeouts, or malformed responses. Blocks all E2E delivery testing.
-
-**Current Limitations:**
-- Cannot inject network failures (connection refused, timeout)
-- Cannot test partial read/write scenarios
-- Cannot inject malformed SMTP responses
-- Flaky timing dependencies (100ms sleeps)
-
-**Recommended Implementation:**
-```rust
-MockSmtpServer::new()
-    .with_greeting(220, "Test server ready")
-    .with_mail_from_response(250, "OK")
-    .with_rcpt_to_response(550, "User unknown")  // Inject failure
-    .with_connection_delay(Duration::from_secs(5))  // Test timeouts
-    .with_network_error_after(3)  // Drop connection after 3 commands
-    .build()
-```
-
-**Test Coverage Enabled:**
-- All 7 SMTP timeout scenarios
-- 4xx/5xx error code handling
-- Connection drop recovery
-- STARTTLS negotiation failures
-
-**Impact:** Unlocks E2E delivery testing, TLS failure testing, retry logic validation.
+**Success Criteria**:
+- [ ] MessageReceived event (timestamp, sender, recipients, message_id, size)
+- [ ] DeliveryAttempt event (message_id, domain, server, attempt_count, result)
+- [ ] DeliverySuccess event (message_id, domain, server, duration)
+- [ ] DeliveryFailure event (message_id, domain, error, next_retry)
+- [ ] PII redaction configurable (email addresses, message content)
+- [ ] SIEM integration via structured JSON logs
+- [ ] Retention policy compliance (configurable retention period)
 
 ---
 
-### ✅ 4.3 Use DashMap Instead of Arc<RwLock<HashMap>>
-**Priority:** ~~Medium~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+## Phase 4: Code Structure & Technical Debt
 
-Replaced `Arc<RwLock<HashMap>>` with `DashMap` for lock-free concurrent access in:
-- `DeliveryQueue` (`empath-delivery/src/queue/mod.rs`)
-- `MemoryBackingStore` (`empath-spool/src/backends/memory.rs`)
+### 🔴 4.0 Code Structure Refactoring [BLOCKED BY 0.13]
+**Priority**: Critical (for 1.0), Deferred (until after E2E tests)
+**Effort**: 2-3 weeks
+**Dependencies**: **BLOCKED by 0.13** (requires E2E coverage), NEW-02 (unwrap audit), NEW-08 (unsafe audit)
+**Owner**: Unassigned
+**Status**: Blocked
+**Risk**: Very High (major architecture changes)
+**Tags**: architecture, refactoring
+**Updated**: 2025-11-16
 
-**Changes:**
-- Removed all `async` from DeliveryQueue methods (no longer needed)
-- Updated all callers across delivery, process, and control handler modules
-- Simplified TestBackingStore helper methods
-- All 91 library tests passing
+**Problem**: DeliveryProcessor is "God Object" with 8+ responsibilities. SMTP session tightly coupled to protocol parsing.
 
-**Benefits:**
-- Better concurrent performance through internal sharding
-- Simpler API (no `.await` needed)
-- Reduced lock contention
+**Solution**: Extract service layers, separate concerns, apply SOLID principles.
 
----
+**Breakdown**:
+- [ ] 4.0.1 - Extract delivery DNS resolution (3 days)
+- [ ] 4.0.2 - Separate SMTP session from protocol FSM (4 days)
+- [ ] 4.0.3 - Create unified error types (2 days)
+- [ ] 4.0.4 - Consolidate configuration structs (3 days)
 
-### ✅ 4.4 Domain Newtype for Type Safety
-**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 2-3 hours
+**Success Criteria**:
+- [ ] All existing tests pass unchanged
+- [ ] E2E tests validate behavior preservation
+- [ ] Clippy strict mode passes
+- [ ] No performance regression (benchmark comparison)
 
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Created Domain newtype wrapper for type safety, preventing email addresses from being passed where domains are expected.
-
-**Implementation:** Implemented zero-cost abstraction Domain newtype in `empath-common/src/domain.rs` with #[repr(transparent)] guarantee. Updated DeliveryContext and DeliveryInfo to use Domain instead of Arc<str>. Domain implements Deref<Target=str>, AsRef<str>, Display, and comprehensive From/Into conversions for ergonomic usage.
-
-**Files Modified:**
-- `empath-common/src/domain.rs` (NEW, 240 lines) - Domain newtype with traits and 13 comprehensive tests
-- `empath-common/src/lib.rs` - Export Domain type
-- `empath-common/src/context.rs` - Updated DeliveryContext::domain field to use Domain
-- `empath-delivery/src/types.rs` - Updated DeliveryInfo::recipient_domain to use Domain
-
-**Traits Implemented:**
-- `Debug, Clone, PartialEq, Eq, Hash` - Standard derivable traits
-- `Serialize, Deserialize` - Serde support with #[serde(transparent)]
-- `Display` - Format domain as string
-- `AsRef<str>` - Transparent string reference
-- `Deref<Target=str>` - Transparent deref to str methods
-- `From<String>, From<&str>, From<Arc<str>>` - Ergonomic conversions
-- `From<Domain> for Arc<str>` - Extract inner Arc
-
-**Benefits:**
-- ✅ Compile-time type safety: prevents domain/email confusion
-- ✅ Zero-cost abstraction: #[repr(transparent)] guarantees no runtime overhead
-- ✅ Ergonomic: Deref and From traits allow transparent usage
-- ✅ API clarity: Types document expected values
-- ✅ Comprehensive tests: 13 tests covering all functionality
+**⚠️ DO NOT START**: Until task 0.13 (E2E tests) complete. Refactoring without E2E coverage = disaster.
 
 ---
 
-### ✅ 4.5 Structured Concurrency with tokio::task::JoinSet
-**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 2-3 hours
+### ✅ 4.2 Mock SMTP Server for Testing **MARK AS COMPLETED**
+**Status**: ✅ COMPLETED (Implementation verified, needs integration)
+**Effort**: 1-2 days (actual: completed)
+**Owner**: Completed
+**Completed**: 2025-11-16 (verified 527-line implementation)
 
-**Status:** ✅ **COMPLETED** (2025-11-15)
+**Action Required**:
+1. Update TODO.md summary to reflect 41 completed tasks (not 40)
+2. Integrate MockSmtpServer into E2E test suite (task 0.13)
+3. Move full details to docs/COMPLETED.md
 
-Replaced Vec<JoinHandle> with tokio::task::JoinSet for proper structured concurrency in Listener, enabling automatic panic detection and graceful task cleanup.
-
-**Implementation:** Replaced `Vec<JoinHandle>` with `JoinSet` in `Listener::serve()` and added `join_next()` to the tokio::select! loop. This enables continuous monitoring of completed sessions, automatic panic detection, and proper task cleanup on shutdown via `abort_all()`.
-
-**Files Modified:**
-- `empath-common/src/listener.rs` - Replaced Vec<JoinHandle> with JoinSet, added join_next() handling
-
-**Changes:**
-- Replaced `let mut sessions = Vec::default()` with `let mut sessions = JoinSet::new()`
-- Removed `join_all(sessions).await` in favor of `sessions.abort_all()` for instant shutdown
-- Added `Some(result) = sessions.join_next()` branch in tokio::select! to handle completed sessions
-- Implemented panic detection: `if e.is_panic()` logs ERROR and continues serving
-- Implemented cancellation detection: `if e.is_cancelled()` for graceful shutdown tracking
-- Changed `sessions.push(tokio::spawn(...))` to `sessions.spawn(...)`
-
-**Benefits Achieved:**
-- ✅ **Automatic cleanup**: Tasks are automatically cleaned up when JoinSet is dropped
-- ✅ **Panic detection**: Panicked tasks are detected and logged without crashing the listener
-- ✅ **Graceful shutdown**: `abort_all()` provides instant shutdown vs waiting for all tasks with join_all()
-- ✅ **No task leakage**: Early returns no longer leak running tasks
-- ✅ **Continuous monitoring**: Completed sessions are immediately detected and logged
-- ✅ **Foundation for parallel delivery**: Enables task 3.1 (Parallel Delivery) implementation
-
-**Error Handling:**
-- Panicked sessions: Logged at ERROR level with panic details, listener continues serving
-- Cancelled sessions: Logged at DEBUG level (expected during shutdown)
-- Normal completion: Logged at DEBUG level
-- Other join errors: Logged at ERROR level
-
-**Shutdown Behavior:**
-- Old: `join_all(sessions).await` - waits for all sessions to complete gracefully
-- New: `sessions.abort_all()` - immediately aborts all sessions and returns
-- Sessions counter logged: "aborting N active sessions"
+**Verification**: Comprehensive MockSmtpServer exists at `/home/user/empath/empath-delivery/tests/mock_smtp.rs` (527 lines)
 
 ---
 
-### ✅ 4.6 Replace u64 Timestamps with SystemTime
-**Priority:** ~~Medium (Correctness)~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+## Phase 5: Production Readiness
 
-Replaced raw `u64` Unix epoch timestamps with `SystemTime` for better type safety and clarity.
+### 🟢 5.1 Circuit Breakers per Domain [UPGRADE TO HIGH]
+**Priority**: High
+**Effort**: 2-3 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Medium
+**Tags**: reliability, delivery
 
-**Changes:**
-- Updated `DeliveryAttempt.timestamp` from `u64` to `SystemTime` in `empath-common/src/context.rs`
-- Updated `DeliveryContext.queued_at` and `next_retry_at` to use `SystemTime`
-- Updated `DeliveryInfo` in `empath-delivery/src/types.rs` to use `SystemTime`
-- Changed `calculate_next_retry_time()` to return `SystemTime` instead of `u64`
-- Updated all time comparisons to use `duration_since()` instead of epoch arithmetic
-- Added `default_system_time()` helper for serde defaults
-- Updated control handler to convert `SystemTime` to `u64` for protocol compatibility
+**Problem**: Retry storms to failing domains waste resources and delay queue processing.
 
-**Files Modified:**
-- `empath-common/src/context.rs` (DeliveryAttempt, DeliveryContext)
-- `empath-delivery/src/types.rs` (DeliveryInfo)
-- `empath-delivery/src/queue/mod.rs` (set_next_retry_at signature)
-- `empath-delivery/src/queue/retry.rs` (calculate_next_retry_time)
-- `empath-delivery/src/processor/process.rs` (time comparisons)
-- `empath-delivery/src/processor/delivery.rs` (timestamp recording)
-- `empath-ffi/src/modules/metrics.rs` (duration calculations)
-- `empath/src/control_handler.rs` (SystemTime to u64 conversions)
-- `empath-delivery/tests/integration_tests.rs` (test updates)
+**Solution**: Implement circuit breaker pattern per destination domain.
 
-**Note:** This is a **breaking change** - serialization format changed. Existing spooled messages with `u64` timestamps will not deserialize.
+**Success Criteria**:
+- [ ] Circuit states: Closed, Open, Half-Open
+- [ ] Configurable failure threshold (e.g., 5 failures in 1 minute)
+- [ ] Configurable timeout (e.g., 5 minutes open state)
+- [ ] Metrics: circuit_breaker_state{domain}, circuit_breaker_trips_total
+- [ ] Tests verify state transitions
 
-**Results:** All 91 workspace tests passing
-
----
-
-## Phase 5: Production Readiness (Week 7-8)
-
-### 🟢 5.1 Circuit Breakers per Domain
-**Priority:** Medium
-**Complexity:** Medium
-**Effort:** 2-3 days
-
-Implement circuit breaker pattern to stop retrying failing domains temporarily.
+**Expert Review**: Upgrade to HIGH - prevents thundering herd to failing domains.
 
 ---
 
 ### 🟢 5.2 Configuration Hot Reload
-**Priority:** Medium
-**Complexity:** Medium
-**Effort:** 2-3 days
+**Priority**: Medium
+**Effort**: 2-3 days
+**Dependencies**: None
+**Status**: Not Started
+**Tags**: operations, configuration
 
-Support configuration reload without restart via SIGHUP or control command.
+**Problem**: Configuration changes require full restart - downtime and queue state loss.
+
+**Solution**: Implement configuration hot reload via control socket or file watcher.
+
+**Success Criteria**:
+- [ ] Reload via `empathctl config reload`
+- [ ] Validate config before applying (rollback on error)
+- [ ] Log all config changes with diff
+- [ ] Tests verify reload without service disruption
 
 ---
 
 ### 🟢 5.3 TLS Policy Enforcement
-**Priority:** Medium
-**Complexity:** Medium
-**Effort:** 2-3 days
+**Priority**: Medium
+**Effort**: 2-3 days
+**Dependencies**: None
+**Status**: Not Started
+**Tags**: security, delivery
 
-Add configurable TLS policy (require, prefer, none) per domain.
+**Problem**: No TLS policy enforcement - can deliver via plaintext to sensitive domains.
+
+**Solution**: Implement configurable TLS policies per domain (Opportunistic, Required, Disabled).
+
+**Success Criteria**:
+- [ ] TLS policy: Opportunistic (try TLS, fall back to plaintext)
+- [ ] TLS policy: Required (fail if TLS unavailable)
+- [ ] TLS policy: Disabled (never use TLS - testing only)
+- [ ] Per-domain policy overrides
+- [ ] Metrics: tls_handshake_failures_total{domain,policy}
 
 ---
 
-### 🟢 5.4 Enhanced Tracing with Spans
-**Priority:** Medium
-**Complexity:** ~~Simple~~ Medium (revised)
-**Effort:** ~~1 day~~ 2-3 days (revised)
+### 🟡 5.4 Enhanced Tracing with Spans
+**Priority**: Medium
+**Effort**: 2-3 days
+**Dependencies**: 0.35+0.36 (trace pipeline must exist first)
+**Owner**: Unassigned
+**Status**: Blocked
+**Tags**: observability, tracing
 
-**Expert Review (OTel Expert):** Task scope was unclear. The `#[traced]` macro already exists but generates logs, not OTel spans. This task needs detailed breakdown.
+**Problem**: `#[traced]` macro generates logs, not OpenTelemetry spans. Cannot see delivery pipeline phases in traces.
 
-**Actual Requirements:**
+**Solution**: Migrate #[traced] macro from logs to actual OTel span instrumentation.
 
-**5.4.1: Migrate `#[traced]` macro to generate OTel spans** (not logs)
-- Replace log-based tracing with real span creation
-- Location: `empath-tracing` crate
-
-**5.4.2: Add span events for SMTP commands**
-```rust
-span.add_event("mail_from_validated", attributes![
-    "sender" => sender.to_string(),
-    "size" => size_limit
-]);
-```
-
-**5.4.3: Instrument delivery pipeline with nested spans**
-- Span per delivery attempt with DNS, TLS, SMTP protocol phases
-- Track: `smtp.connect → starttls → mail_from → rcpt_to → data → quit`
-
-**5.4.4: Add baggage for message metadata propagation**
-```rust
-baggage.set("client_ip", client_addr.ip());
-baggage.set("message_priority", priority);
-```
-
-**Dependencies:** 0.35 (trace pipeline), 0.36 (trace context propagation)
+**Success Criteria**:
+- [ ] Span hierarchy: SMTP session → Data command → Spool → Delivery → DNS → TLS → SMTP handshake
+- [ ] Span attributes: message_id, sender, recipient, domain, server
+- [ ] Span events: Command received, FSM transition, Module validation
+- [ ] Flamegraph visualization in Jaeger shows full pipeline
+- [ ] #[traced] macro generates both spans and logs
 
 ---
 
 ## Phase 6: Advanced Features (Future)
 
-### 🔵 6.1 Message Data Streaming for Large Messages
-**Priority:** Low
-**Complexity:** High
-**Effort:** 1 week
+### 🔵 6.1 Message Data Streaming
+**Priority**: Low
+**Effort**: 1 week
+**Status**: Deferred to post-1.0
 
-Stream large messages instead of loading into memory.
+Stream large message bodies instead of loading into memory. Reduces memory pressure for large attachments.
 
 ---
 
 ### 🔵 6.2 DKIM Signing Support
-**Priority:** Low
-**Complexity:** High
-**Effort:** 1-2 weeks
+**Priority**: Low
+**Effort**: 1 week
+**Status**: Deferred to post-1.0
 
-Implement DKIM signing for outbound messages.
+Implement DKIM signing for outbound messages to improve deliverability.
 
 ---
 
 ### 🔵 6.3 Priority Queuing
-**Priority:** Low
-**Complexity:** Medium
-**Effort:** 2-3 days
+**Priority**: Low
+**Effort**: 3-5 days
+**Status**: Deferred to post-1.0
 
-Support message prioritization in delivery queue.
+Implement message priority levels for expedited delivery of high-priority messages.
 
 ---
 
 ### 🔵 6.4 Batch Processing and SMTP Pipelining
-**Priority:** Low
-**Complexity:** High
-**Effort:** 1 week
+**Priority**: Low
+**Effort**: 1 week
+**Status**: Deferred to post-1.0
 
-Implement SMTP pipelining (RFC 2920) for efficiency.
-
----
-
-### 🔵 6.5 Delivery Strategy Pattern
-**Priority:** Low
-**Complexity:** Medium
-**Effort:** 3-5 days
-
-Pluggable strategies for different delivery behaviors.
-
----
-
-### 🔵 6.6 Message Deduplication
-**Priority:** Low
-**Complexity:** Medium
-**Effort:** 2-3 days
-
-Detect and prevent duplicate message delivery.
+Implement SMTP pipelining (RFC 2920) for improved throughput to supporting servers.
 
 ---
 
 ### 🔵 6.7 Property-Based Testing with proptest
-**Priority:** Low
-**Complexity:** Medium
-**Effort:** 3-5 days
+**Priority**: Low
+**Effort**: 2-3 days
+**Status**: Deferred
 
-Add property-based tests for protocol state machines.
-
----
-
-### 🔵 6.8 Load Testing Framework
-**Priority:** Low
-**Complexity:** Medium
-**Effort:** 2-3 days
-
-Create framework for load testing and performance regression detection.
+See NEW-13 (merged duplicate, expanded scope).
 
 ---
 
-## Phase 7: Developer Experience (Ongoing)
+## Phase 7: Developer Experience
 
-### ✅ 7.2 Improve README.md
-**Priority:** ~~High~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### ✅ 7.16 CI/CD Pipeline **ALREADY EXISTS**
+**Status**: ✅ **COMPLETED** (Gitea CI in `.gitea/workflows/`)
+**Infrastructure**: Comprehensive CI pipeline already deployed
 
-Created comprehensive README with better examples, architecture overview, and quick start guide.
+**Existing Workflows**:
+- ✅ `test.yml` - clippy, fmt, MIRI tests, nextest, doc tests
+- ✅ `coverage.yml` - cargo-tarpaulin coverage generation
+- ✅ `release.yml` - Docker image building and registry push
+- ✅ `changelog.yml` - git-cliff changelog automation
+- ✅ `commit.yml` - commit validation
+- ✅ Renovate - Dependency updates (configured externally)
 
-**Changes:**
-- Added project description with feature highlights
-- Created quick start guide with installation and basic configuration
-- Added architecture overview with crate descriptions and diagrams
-- Documented runtime control via empathctl CLI
-- Added development guide with common commands
-- Included plugin development example
-- Added Docker development environment instructions
-- Documented security features and testing
-- Added contributing guidelines and code quality requirements
-- Improved overall readability and accessibility for new users
+**Location**: `.gitea/workflows/` (Gitea Actions, not GitHub Actions)
 
-**Results:** README expanded from 6 lines to 347 lines with comprehensive coverage
+**Note**: CI infrastructure is excellent. See NEW-03a for coverage badge publishing.
 
 ---
 
-### ✅ 7.3 Add Cargo Aliases
-**Priority:** ~~Medium~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟡 7.17 Fix Onboarding Documentation Flow
+**Priority**: Medium (downgraded from Critical)
+**Effort**: 2-3 hours
+**Dependencies**: None
+**Status**: Mostly addressed by 7.2, 7.18, 7.19
+**Tags**: documentation, dx
 
-Added comprehensive cargo aliases to `.cargo/config.toml` for common development workflows.
+**Problem**: No single "5-minute setup" guide. New developers spend 4-6 hours on setup.
 
-**Aliases Added:**
-- **Development**: `dev`, `ci` (full check + lint + test pipelines)
-- **Testing**: `t`, `tq`, `tw`, `tl`, `nextest`, `nt`
-- **Building**: `b`, `br`, `ba`, `bw`
-- **Clippy/Formatting**: `c`, `cw`, `fmt-check`, `f`
-- **Documentation**: `d`, `da`
-- **Benchmarking**: `bench-all`, `bench-smtp`, `bench-spool`
-- **Dependencies**: `outdated`, `tree`, `dup`
-- **Binary Execution**: `r`, `rr`
-- **Queue Management**: `queue-list`, `queue-stats`, `queue-watch`
-- **Control Commands**: `status`, `ping`
+**Solution**: Create QUICKSTART.md with minimal setup path.
 
-**Examples:**
-```bash
-cargo dev           # Run full dev workflow
-cargo ci            # Run CI checks locally
-cargo tw            # Watch mode for tests
-cargo queue-watch   # Live queue statistics
-cargo c             # Run clippy
-```
-
-**Benefits:** Faster development with shorter, memorable commands
+**Success Criteria**:
+- [ ] QUICKSTART.md created
+- [ ] Setup time <5 minutes for experienced developers
+- [ ] Links to ONBOARDING.md for deeper dive
+- [ ] Covers: clone, install Rust nightly, `just setup`, `just dev`
 
 ---
 
-### ✅ 7.4 Add .editorconfig
-**Priority:** ~~Medium~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🔵 7.13 sccache for Distributed Build Caching
+**Priority**: Low
+**Effort**: 1 hour
+**Dependencies**: 7.16 (CI/CD pipeline)
+**Status**: Not Started
+**Tags**: dx, performance
 
-Added `.editorconfig` file for consistent editor settings across all contributors.
+**Problem**: CI builds compile from scratch - slow and wasteful.
 
-**Configuration:**
-- UTF-8 encoding, LF line endings, final newlines, trim trailing whitespace
-- Rust files: 4 spaces, 100 char line length
-- TOML/YAML/JSON: 2 spaces
-- RON config: 4 spaces
-- Markdown: No trailing whitespace trimming (intentional double-space line breaks)
-- Shell scripts: 2 spaces
-- Makefiles/Justfiles: Tab indentation
-- C files (FFI examples): 4 spaces
+**Solution**: Implement sccache for distributed build caching in CI.
 
-**Benefits:** Automatic formatting consistency across different editors and IDEs
+**Success Criteria**:
+- [ ] sccache configured in GitHub Actions
+- [ ] CI build time reduced >50% on cache hit
+- [ ] Local sccache setup documented in CONTRIBUTING.md
 
 ---
 
-### ✅ 7.5 Enable mold Linker
-**Priority:** ~~High~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🔵 7.14 Documentation Tests
+**Priority**: Low
+**Effort**: 1-2 days
+**Status**: Not Started
+**Tags**: documentation, testing
 
-Enabled mold linker for significantly faster builds (40-60% faster incremental compilation) on **Linux**.
+**Problem**: Code examples in documentation may be outdated/broken.
 
-**Changes:**
-- **Installed mold** on Linux via apt-get (version 2.30.0)
-  - Location: `/usr/bin/mold`
-  - Platform: Linux x86_64 (Ubuntu Noble)
-- **Configured Linux target** in `.cargo/config.toml`
-  - Target: `x86_64-unknown-linux-gnu`
+**Solution**: Enable `#![doc = include_str!("../README.md")]` and documentation tests.
 
-**Configuration:**
-```toml
-# Use mold linker for faster builds (40-60% faster incremental builds)
-# Installed via apt-get install mold (version 2.30.0)
-# Note: mold dropped Mach-O support, so this is Linux-only
-# macOS users should use lld or zld as alternatives
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-```
-
-**Testing:**
-- Built `empathctl` binary successfully with mold
-- Build completed in ~40-52 seconds with no linker errors
-- Verified mold is being used as linker
-
-**Impact:**
-- 40-60% faster incremental builds compared to default ld linker
-- Significant DX improvement for local development on Linux
-- Reduces wait time between code changes and test runs
-
-**Platform Notes:**
-- **Linux**: Full mold support ✅
-- **macOS**: mold dropped Mach-O format support (no longer compatible)
-  - Alternative fast linkers for macOS:
-    - **lld**: `rustflags = ["-C", "link-arg=-fuse-ld=lld"]`
-    - **zld**: `rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/zld"]`
-
-**Installation:**
-- **Linux**: `apt-get install mold` (or equivalent package manager)
-
-**Results:** mold linker enabled and tested successfully on Linux, builds are now 40-60% faster
+**Success Criteria**:
+- [ ] All code examples in docs tested via `cargo test --doc`
+- [ ] CI runs documentation tests
+- [ ] Examples in CLAUDE.md, README.md, CONTRIBUTING.md tested
 
 ---
 
-### ✅ 7.6 Add rust-analyzer Configuration
-**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟢 7.24 Performance Profiling Guide
+**Priority**: Medium (upgrade from Low)
+**Effort**: 1-2 hours
+**Dependencies**: None
+**Status**: Not Started
+**Tags**: dx, performance
 
-Added comprehensive rust-analyzer configuration for optimal IDE experience across all editors.
+**Problem**: No documentation on how to profile and optimize. Performance claims (90% reduction) not reproducible by contributors.
 
-**Changes:**
-- Created `.rust-analyzer.toml` with project-specific settings
-- **Check Configuration**: Uses clippy for linting (matches strict project standards)
-- **Cargo Configuration**: Checks all targets (lib, bins, tests, benches, examples)
-- **Feature Support**: Enables all features when checking
-- **Proc Macro Support**: Full support for empath-tracing and other proc macros
-- **Diagnostics**: Experimental diagnostics enabled
-- **Inlay Hints**: Type hints, parameter hints, closure hints, chaining hints
-- **Completion**: Postfix completions and auto-import enabled
-- **Code Lenses**: Run/debug buttons, implementations, references
-- **Performance**: Excludes target/, .git/, spool/ directories from analysis
+**Solution**: Create docs/PROFILING.md with comprehensive profiling guide.
 
-**Configuration Highlights:**
-- Matches project's strict clippy lints (all + pedantic + nursery)
-- Works with nightly toolchain requirement
-- Optimized for 7-crate workspace
-- Compatible with VS Code, Neovim, Emacs, and other editors
-
-**File:** `.rust-analyzer.toml` (comprehensive configuration with inline documentation)
-
-**Impact:**
-- Better autocomplete and type inference
-- Inline error diagnostics matching clippy
-- Faster development with code lenses and inlay hints
-- Consistent experience across all rust-analyzer compatible editors
-
-**Results:** Production-ready rust-analyzer configuration
+**Success Criteria**:
+- [ ] CPU profiling with flamegraph (cargo flamegraph)
+- [ ] Memory profiling with dhat
+- [ ] Benchmark baseline comparison workflow
+- [ ] Common hot paths documented
+- [ ] justfile commands added (profile-cpu, profile-mem)
 
 ---
 
-### ✅ 7.7 Add Git Pre-commit Hook
-**Priority:** ~~Medium~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🔵 7.25 Changelog Automation
+**Priority**: Low
+**Effort**: 1-2 hours
+**Dependencies**: 7.16 (CI/CD)
+**Status**: Not Started
+**Tags**: dx, releases
 
-Created Git pre-commit hook infrastructure to prevent broken commits and reduce CI failures.
+**Problem**: No CHANGELOG.md - manual release notes are error-prone.
 
-**Changes:**
-- Created `scripts/install-hooks.sh` installation script
-  - Automatically creates and installs pre-commit hook
-  - Makes hook executable
-  - Provides user feedback with colored output
-  - Handles repository detection
-- Created pre-commit hook that runs:
-  - **Check 1**: Code formatting (`cargo fmt --check`)
-  - **Check 2**: Linting (`cargo clippy --all-targets --all-features -- -D warnings`)
-- Made scripts executable with proper permissions
+**Solution**: Use git-cliff for automated changelog generation from conventional commits.
 
-**Hook Features:**
-- Runs automatically on every `git commit`
-- Clear, colored output showing check progress
-- Helpful error messages with fix instructions
-- Exit codes properly propagated
-- Can be bypassed with `git commit --no-verify` (emergency only)
-
-**Installation:**
-```bash
-# Install the hook (already in justfile via `just setup`)
-./scripts/install-hooks.sh
-
-# Or use just
-just setup
-```
-
-**Usage:**
-- Hook runs automatically before each commit
-- If checks fail, commit is blocked with clear error message
-- Fix issues and try committing again
-- Emergency bypass: `git commit --no-verify` (not recommended)
-
-**Benefits:**
-- Prevents broken commits from being pushed
-- Reduces CI failures by 40%+ (catches issues early)
-- Faster feedback loop for developers
-- Enforces code quality standards automatically
-- Complements CI/CD pipeline (first line of defense)
-
-**Results:** Pre-commit hook working and tested successfully
+**Success Criteria**:
+- [ ] .cliff.toml configuration
+- [ ] `just changelog` generates CHANGELOG.md
+- [ ] CI creates GitHub releases with changelogs
+- [ ] Conventional commits enforced in CI
 
 ---
 
-### ✅ 7.8 Add cargo-nextest Configuration
-**Priority:** ~~Medium~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+## NEW TASKS (Identified by Expert Review)
 
-Added comprehensive cargo-nextest configuration for faster test execution and better test output.
+### 🔴 NEW-01 FFI Safety Hardening (Null Byte Validation)
+**Priority**: Critical (Production Blocker)
+**Effort**: 1-2 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Very High (memory safety, security)
+**Tags**: ffi, security, rust
+**Added**: 2025-11-16 (Rust Expert Review)
 
-**Changes:**
-- Created `.config/nextest.toml` with default and CI profiles
-- Default profile: 0 retries, uses all CPU cores, 60s timeout
-- CI profile: 2 retries for flaky tests, fail-fast disabled for complete test coverage
-- Test groups configuration for integration tests (max 4 threads)
-- Fixed recursive cargo alias for nextest command
+**Problem**: FFI code in `empath-ffi/src/string.rs` (lines 48, 64, 74) uses `.expect("Invalid CString")` which **panics** if input contains null bytes. Malicious modules can crash MTA.
 
-**Configuration Features:**
-- 3-5x faster test runs than cargo test
-- Better output formatting with immediate-final failure output
-- Retry flaky tests automatically in CI (2 retries)
-- Timeout protection for slow tests
-- Parallel execution using all CPU cores
+**Solution**: Replace panic with null byte sanitization (remove or replace with empty string).
 
-**Additional Fixes:**
-- Removed recursive `nextest` alias from `.cargo/config.toml` (was shadowing cargo-nextest plugin)
-- Temporarily disabled mold linker configuration (not installed on system, see task 7.5)
+**Success Criteria**:
+- [ ] All `CString::new().expect()` replaced with sanitization
+- [ ] Tests verify null byte handling (no panics)
+- [ ] Documentation updated on sanitization behavior
+- [ ] Security audit sign-off
 
-**Results:** All 91 library tests running successfully with nextest, no configuration warnings
-
----
-
-### ✅ 7.9 Add cargo-deny Configuration
-**Priority:** ~~Medium~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
-
-Added comprehensive cargo-deny configuration for supply chain security and license compliance.
-
-**Changes:**
-- Created `deny.toml` with complete configuration for all checks
-- **Advisories**: Database configured, yanked crates denied
-- **Licenses**: Allowed permissive licenses (MIT, Apache-2.0, BSD, ISC, Unicode, etc.)
-  - Added MPL-2.0 for cbindgen (build dependency)
-  - Added OpenSSL for aws-lc-sys (cryptography)
-  - Added Unicode-3.0 for ICU crates (internationalization)
-  - Configured clarify for workspace crates without explicit license
-  - Private workspace crates ignored
-- **Bans**: Warns on duplicate versions, denies wildcard dependencies
-- **Sources**: Only allows crates.io registry, warns on git dependencies
-
-**Configuration Features:**
-- License compliance with 13 explicitly allowed licenses
-- Security vulnerability detection via RustSec advisory database
-- Duplicate version detection (warns but doesn't fail)
-- Registry restriction to trusted sources only
-- Special handling for cryptography and Unicode crates
-
-**Testing Results:**
-- ✅ Licenses check: PASS (with workspace crate clarifications)
-- ✅ Bans check: PASS (warnings for duplicate versions as expected)
-- ✅ Sources check: PASS (all from crates.io)
-- ⚠️  Advisories check: Network issue (expected in sandboxed environment)
-
-**Integration:**
-- Works with `just deps-deny` command (already in justfile)
-- Ready for CI/CD integration (task 7.16)
-- Prevents supply chain attacks and license violations
-
-**Results:** Production-ready dependency checking configuration
+**Files to Modify**:
+- `empath-ffi/src/string.rs` (lines 46-90)
+- Add validation tests for null bytes in FFI strings
+- Document sanitization behavior in CLAUDE.md FFI section
 
 ---
 
-### ✅ 7.10 Add Examples Directory
-**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🔴 NEW-02 Production Unwrap/Expect Audit
+**Priority**: Critical (Production Blocker)
+**Effort**: 3-5 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: High (production panics)
+**Tags**: rust, safety, refactoring
+**Added**: 2025-11-16 (Rust Expert Review)
 
-Created comprehensive examples directory with practical code samples and configuration templates.
+**Problem**: 294 `.unwrap()/.expect()` calls across codebase. Production unwraps can cause panics in edge cases (OOM, malformed input).
 
-**Changes:**
-- Created `examples/` directory with complete structure:
-  - **SMTP Client Examples** (`smtp-client/`):
-    - `send_email.sh` - Bash script demonstrating basic SMTP transaction
-    - Executable and ready to use
-  - **Configuration Examples** (`config/`):
-    - `minimal.ron` - Bare minimum for quick testing
-    - `development.ron` - Full-featured with modules and test domains
-    - `production.ron` - Production-ready with security hardening
-    - `README.md` - Comprehensive configuration guide (~400 lines)
-  - **Module Examples** (`modules/`):
-    - `README.md` - Complete module development guide (~500 lines)
-    - References existing examples in `empath-ffi/examples/`
-    - Advanced examples (spam filter, rate limiter)
-    - API reference and best practices
-  - **Main README** (`examples/README.md`):
-    - Quick start guide
-    - Example scenarios (local dev, Docker, custom modules)
-    - Testing instructions
-    - Links to all sub-examples
+**Solution**: Audit all unwraps, categorize, replace production unwraps with proper error handling.
 
-**Example Highlights:**
+**Success Criteria**:
+- [ ] Audit report: `docs/AUDIT_UNWRAP.md` with categorization
+- [ ] All production unwraps replaced with `?` or proper error handling
+- [ ] Test-only unwraps documented as acceptable
+- [ ] Proven invariant unwraps documented with safety comments
+- [ ] CI check: `cargo clippy -- -D clippy::unwrap_used` (deny in lib code)
 
-1. **SMTP Client:** Ready-to-run bash script for testing
-2. **Configs:** Three deployment scenarios with detailed comments
-3. **Modules:** Complete C module development guide with working examples
-
-**Files Created:**
-- `examples/README.md` - Main examples guide
-- `examples/smtp-client/send_email.sh` - SMTP client script
-- `examples/config/minimal.ron` - Minimal configuration
-- `examples/config/development.ron` - Development configuration
-- `examples/config/production.ron` - Production configuration
-- `examples/config/README.md` - Configuration guide
-- `examples/modules/README.md` - Module development guide
-
-**Impact:**
-- Reduces "how do I use this?" questions
-- Provides copy-paste ready configurations
-- Complete module development workflow
-- Complements documentation suite for practical learning
-
-**Results:** Production-ready examples for all common use cases
+**High-Risk Areas**:
+- `empath-smtp/src/session/mod.rs` (17 unwraps)
+- `empath-spool/src/backends/memory.rs` (13 unwraps)
 
 ---
 
-### ✅ 7.11 Add Benchmark Baseline Tracking
-**Priority:** ~~Medium~~ **UPGRADED TO HIGH** **COMPLETED** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟢 NEW-03a Publish Coverage Reports and Badge
+**Priority**: Medium (Visibility)
+**Effort**: 2-3 hours
+**Dependencies**: None (coverage generation exists in `.gitea/workflows/coverage.yml`)
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Low
+**Tags**: testing, ci-cd, dx
+**Added**: 2025-11-16 (DX Expert Review)
+**Updated**: 2025-11-16 (Corrected - coverage already runs via cargo-tarpaulin)
 
-Implemented comprehensive benchmark baseline tracking infrastructure for performance regression detection.
+**Problem**: Coverage is generated by CI (`.gitea/workflows/coverage.yml` with cargo-tarpaulin) but not published or displayed anywhere.
 
-**Changes:**
-- Added 5 new justfile commands for baseline management:
-  - `bench-baseline-save [NAME]` - Save benchmarks as baseline (default: "main")
-  - `bench-baseline-compare [NAME]` - Compare against saved baseline
-  - `bench-baseline-list` - List all saved baselines
-  - `bench-baseline-delete NAME` - Delete a baseline
-  - `bench-ci` - CI workflow for automated regression detection
-- Enhanced CLAUDE.md benchmarking section with comprehensive workflow documentation
-- Added baseline workflow guide with step-by-step examples
-- Documented integration with recent performance optimizations (tasks 0.30, 4.3)
+**Solution**: Publish coverage reports and add badge to README.
 
-**Baseline Workflow:**
-```bash
-# Save baseline on main branch
-just bench-baseline-save main
+**Success Criteria**:
+- [ ] Coverage report uploaded to Codecov/Coveralls from CI
+- [ ] Coverage badge in README.md
+- [ ] PR comments show coverage diff (optional)
 
-# On feature branch, compare against main
-just bench-baseline-compare main
-
-# CI integration
-just bench-ci
-```
-
-**Benefits:**
-- Automated performance validation
-- Catch regressions before merge
-- Validate optimization claims (e.g., 90% reduction from task 0.30)
-- Easy-to-use justfile commands for developers
-
-**Results:** Production-ready baseline tracking infrastructure for regression detection
+**Note**: Coverage generation already works via `cargo +nightly tarpaulin` in CI.
 
 ---
 
-### ✅ 7.12 Add CONTRIBUTING.md
-**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🔴 NEW-04 Local E2E Test Harness
+**Priority**: Critical (Testing Infrastructure)
+**Effort**: 1-2 days
+**Dependencies**: 4.2 (MockSmtpServer) - ✅ COMPLETED
+**Owner**: Unassigned
+**Status**: Ready to start
+**Risk**: High
+**Tags**: testing, e2e
+**Added**: 2025-11-16 (DX Expert Review)
 
-Created comprehensive contribution guidelines covering all aspects of the contribution process.
+**Problem**: E2E tests require manual Docker setup. No programmatic E2E test suite.
 
-**Changes:**
-- Created `CONTRIBUTING.md` (~591 lines) with complete contribution documentation
-- **Getting Started**: Links to ONBOARDING.md, setup instructions, environment verification
-- **How to Contribute**: 5 types of contributions (code, docs, testing, design, community)
-- **Code Style and Standards**:
-  - Clippy requirements (all + pedantic + nursery)
-  - Formatting standards
-  - Naming conventions
-  - Documentation requirements with examples
-- **Testing Requirements**:
-  - Unit, integration, and benchmark tests
-  - Coverage requirements (100% for new features)
-  - Test examples and patterns
-- **Pull Request Process**:
-  - 6-step workflow (branch → changes → commit → push → PR → review)
-  - Branch naming conventions
-  - PR template
-- **Commit Message Guidelines**:
-  - Conventional Commits specification
-  - Types, scopes, and examples
-  - Breaking change format
-- **Code Review Process**:
-  - Guidelines for contributors and reviewers
-  - Review types and best practices
-- **Community Guidelines**:
-  - Code of conduct
-  - Communication channels
-  - Bug report and feature request templates
-- **Getting Help**: Troubleshooting resources and where to ask questions
-- **Quick Reference**: Common commands and workflows
+**Solution**: Create `/home/user/empath/tests/e2e/` directory with full message flow tests.
 
-**File:** `CONTRIBUTING.md` (comprehensive guide, ~591 lines)
-
-**Impact:**
-- Clear contribution process for all experience levels
-- Reduces PR iteration cycles through clear expectations
-- Improves code quality with documented standards
-- Complements ONBOARDING.md and TROUBLESHOOTING.md
-- Complete documentation trilogy for contributors
-
-**Results:** Production-ready contribution guidelines
+**Success Criteria**:
+- [ ] `tests/e2e/full_delivery_flow.rs` - SMTP receive → spool → deliver
+- [ ] Harness starts Empath with temp config automatically
+- [ ] MockSmtpServer integrated for delivery target
+- [ ] Tests verify message content matches end-to-end
+- [ ] Tests run in CI without Docker (self-contained)
 
 ---
 
-### 🔵 7.13 Add sccache for Distributed Build Caching
-**Priority:** Low
-**Complexity:** Simple
-**Effort:** 1 hour
+### 🔵 NEW-05 Example Alerting Configurations
+**Priority**: Low (User-Configurable)
+**Effort**: 4-6 hours
+**Dependencies**: None (metrics exist)
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Low
+**Tags**: observability, alerting, documentation, examples
+**Added**: 2025-11-16 (OTel Expert Review)
+**Updated**: 2025-11-16 (Downgraded - alerting is user responsibility)
 
-Configure `sccache` for faster builds in CI.
+**Problem**: Users need guidance on setting up alerting for their deployments.
 
----
+**Solution**: Provide example Prometheus alerting rule configurations that users can adapt.
 
-### 🔵 7.14 Add Documentation Tests
-**Priority:** Low
-**Complexity:** Simple
-**Effort:** 1-2 days
+**Success Criteria**:
+- [ ] `docs/examples/prometheus-alerts.yml` with example rules:
+  - QueueBacklogCritical (example: >10k messages)
+  - DeliveryErrorRateHigh (example: >10%)
+  - QueueAgeSLOViolation (example: p95 >1hr)
+  - DnsCacheHitRateLow (example: <80%)
+  - SpoolDiskSpaceLow (example: <10%)
+- [ ] Documentation explaining how to customize thresholds
+- [ ] Example AlertManager configuration
+- [ ] Note in docs that alerting is user-configurable, not baked into MTA
 
-Ensure all code examples in documentation compile and run.
-
----
-
-### ✅ 7.15 Add Docker Development Environment
-**Priority:** ~~Low~~ **COMPLETED** (Marked 2025-11-15)
-**Status:** ✅ **ALREADY EXISTS**
-
-**Expert Review (DX Optimizer):** Docker development environment already exists in `docker/` directory with full observability stack.
-
-**Existing Setup:**
-- ✅ Docker Compose configuration (`docker/compose.dev.yml`)
-- ✅ Full stack: Empath + OTEL Collector + Prometheus + Grafana
-- ✅ Pre-built FFI example modules
-- ✅ Comprehensive documentation (`docker/README.md`)
-- ✅ Justfile integration (`just docker-up`, `just docker-logs`, etc.)
-
-**Available Commands:**
-```bash
-just docker-up         # Start full stack
-just docker-logs       # View logs
-just docker-grafana    # Open Grafana (admin/admin)
-just docker-test-email # Send test email
-just docker-down       # Stop stack
-```
-
-**Services:**
-- Empath SMTP: `localhost:1025`
-- Grafana: `http://localhost:3000`
-- Prometheus: `http://localhost:9090`
-- OTEL Collector: `http://localhost:4318`
-
-Complete Docker setup for local development with all dependencies.
+**Philosophy**: MTA provides metrics; users configure alerting to their SLA requirements.
 
 ---
 
-### 🔴 7.16 Set Up CI/CD Pipeline
-**Priority:** Critical (Before Production) **NEW** (2025-11-15)
-**Complexity:** Medium
-**Effort:** 4-6 hours
+### 🔴 NEW-06 Structured JSON Logging with Trace Correlation
+**Priority**: Critical (Before Production)
+**Effort**: 1-2 days
+**Dependencies**: 0.35+0.36 (trace context propagation)
+**Owner**: Unassigned
+**Status**: Blocked
+**Risk**: Low
+**Tags**: observability, logging
+**Added**: 2025-11-16 (OTel Expert Review)
 
-**Expert Review (DX Optimizer):** No `.github/workflows/` directory exists - all testing is manual. This is a production blocker and foundation for automation.
+**Problem**: Text logs via `tracing_subscriber::fmt` - cannot search by message_id, trace_id. No structured logging for machine parsing.
 
-**Current Issue:**
-- No automated testing on PR/push
-- No benchmark regression detection
-- No quality gates (clippy, fmt check)
-- Manual workflow increases CI failure rate by 40%+
+**Solution**: Replace text logs with JSON formatter, inject trace context.
 
-**Implementation:**
+**Success Criteria**:
+- [ ] JSON structured logging (tracing_subscriber::fmt::json)
+- [ ] trace_id/span_id in all log entries (via tracing-opentelemetry layer)
+- [ ] Fields: message_id, sender, recipient, domain, smtp_code, delivery_attempt
+- [ ] LogQL queries work: `{service="empath"} | json | message_id="abc123"`
 
-**Workflow:** `.github/workflows/ci.yml` (or `.gitea/workflows/` if using Gitea)
-```yaml
-name: CI
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --verbose
-      - run: cargo test --verbose
-      - run: cargo clippy -- -D warnings
-      - run: cargo fmt -- --check
-
-  benchmark:
-    runs-on: ubuntu-latest
-    steps:
-      - run: cargo bench -- --save-baseline pr-${{ github.event.number }}
-      - run: cargo bench -- --baseline main
-```
-
-**Platform Matrix:** Linux, macOS (test on both)
-
-**Benefits:**
-- Prevents broken master
-- Automates quality gates
-- Enables tasks 7.11 (baseline tracking), 7.13 (sccache)
-- Reduces maintainer burden
-
-**Dependencies:** None (foundation for other automation)
+**Impact**: 90% reduction in log investigation time.
 
 ---
 
-### 🔴 7.17 Fix Onboarding Documentation Flow
-**Priority:** Critical (DX) **NEW** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 2-3 hours
+### 🔴 NEW-07 Log Aggregation Pipeline (Loki Integration)
+**Priority**: Critical (Before Production)
+**Effort**: 1-2 days
+**Dependencies**: NEW-06 (JSON logging)
+**Owner**: Unassigned
+**Status**: Blocked
+**Risk**: Medium
+**Tags**: observability, logging
+**Added**: 2025-11-16 (OTel Expert Review)
 
-**Expert Review (DX Optimizer):** CRITICAL DX GAP - No clear onboarding path. New developers spend 4-6 hours figuring out setup instead of 30 minutes with proper docs.
+**Problem**: Production deployments have multiple instances - cannot SSH to containers to tail logs. No centralized log search.
 
-**Current Issues:**
-1. README.md is dismissive (actively repels contributors)
-2. CLAUDE.md is comprehensive but AI-focused, not human-friendly intro
-3. No "Getting Started in 5 Minutes" path
-4. Missing architecture overview visual
+**Solution**: Add Loki to Docker Compose stack for log aggregation.
 
-**Recommended Files:**
-
-**1. Rewrite README.md** (covered in task 7.2, but ensure includes):
-- Marketing section (what is Empath, why use it)
-- Quick Start (5-minute setup: clone → build → run → test)
-- Architecture overview (ASCII diagram or link)
-- Project status (what's done, what's planned)
-- Links to deep docs
-
-**2. Create QUICKSTART.md:**
-```markdown
-# 5-Minute Quickstart
-1. `rustup toolchain install nightly`
-2. `git clone ... && cd empath`
-3. `cargo run` (starts SMTP on :1025)
-4. `echo -e "EHLO test\nQUIT" | nc localhost 1025`
-```
-
-**3. Create docs/ONBOARDING.md** (see task 7.18)
-
-**Impact:** Reduces onboarding from 4-6 hours → <30 minutes
+**Success Criteria**:
+- [ ] Loki service in `docker/compose.dev.yml`
+- [ ] Promtail ships logs from containers
+- [ ] Loki datasource in Grafana
+- [ ] 7-day retention with compression
+- [ ] Log exploration dashboard in Grafana
 
 ---
 
-### ✅ 7.18 Create Developer Onboarding Checklist
-**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟡 NEW-08 Unsafe Code Documentation Audit
+**Priority**: High (Before Production)
+**Effort**: 1-2 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Partial (MIRI testing exists in CI)
+**Risk**: High (memory safety)
+**Tags**: rust, safety, ffi
+**Added**: 2025-11-16 (Rust Expert Review)
+**Updated**: 2025-11-16 (MIRI testing already runs in `.gitea/workflows/test.yml`)
 
-Created comprehensive developer onboarding guide that reduces onboarding time from 4-6 hours to under 30 minutes.
+**Problem**: 12 files contain `unsafe` blocks. While MIRI tests run in CI (`.gitea/workflows/test.yml:88`), each unsafe block needs formal SAFETY documentation per Rust RFC 1122.
 
-**Changes:**
-- Created `docs/ONBOARDING.md` with complete new developer guide
-- **Setup Checklist** (15 min):
-  - Prerequisites (Rust nightly, just, clone repo)
-  - Development tools setup (automated via `just setup`)
-  - Build and test verification
-  - Try it out (start MTA, Docker stack, send test email)
-  - Editor setup (VS Code configuration, EditorConfig)
-- **Understanding the Codebase** (30 min):
-  - Architecture overview (7-crate workspace, data flow, key patterns)
-  - Essential reading guide (README.md, CLAUDE.md with focus areas)
-  - Hands-on exploration (stats, benchmarks, queue management)
-- **Your First Contribution**:
-  - 3 starter task options (add test, simple TODO task, documentation)
-  - Complete contribution workflow (branch → code → test → commit → PR)
-  - Conventional commits guidance
-- **Common Commands Reference**:
-  - Daily development commands
-  - Code quality commands
-  - Running and benchmarking
-  - Help resources
-- **Success Checklist**: Clear criteria for "ready to contribute"
+**Solution**: Document all unsafe blocks with safety invariants.
 
-**File:** `docs/ONBOARDING.md` (comprehensive guide, ~250 lines)
+**Success Criteria**:
+- [ ] All unsafe blocks documented with SAFETY comments (invariants, assumptions, testing)
+- [ ] `docs/UNSAFE_AUDIT.md` formal audit document
+- [ ] Security reviewer sign-off
 
-**Impact:**
-- Self-service onboarding without maintainer handholding
-- Reduces onboarding time from 4-6 hours → <30 minutes
-- Clear success criteria and next steps
-- Lowers barrier to first contribution
+**Files to Audit**:
+- `empath-ffi/src/lib.rs` (10 unsafe blocks)
+- `empath-ffi/src/string.rs` (4 unsafe blocks)
+- All other files with `unsafe`
 
-**Results:** Production-ready onboarding guide for new contributors
+**Note**: MIRI testing already runs in CI via `MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run`. This task is about documentation, not testing.
 
 ---
 
-### ✅ 7.19 Add Troubleshooting Guide
-**Priority:** ~~High~~ **COMPLETED** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟡 NEW-09 Newtype Pattern Extension for Type Safety
+**Priority**: Medium
+**Effort**: 2-3 days
+**Dependencies**: 4.4 (Domain newtype) - ✅ COMPLETED
+**Owner**: Unassigned
+**Status**: Ready to start
+**Risk**: Low
+**Tags**: rust, type-safety, refactoring
+**Added**: 2025-11-16 (Rust Expert Review)
 
-Created comprehensive troubleshooting guide for self-service debugging and problem resolution.
+**Problem**: Task 4.4 created `Domain` newtype - excellent! But other string types lack compile-time safety: EmailAddress, ServerId, BannerHostname.
 
-**Changes:**
-- Created `docs/TROUBLESHOOTING.md` (~655 lines) with complete troubleshooting documentation
-- **Build Issues Section:**
-  - FFI linking errors (cannot find -lempath)
-  - Slow build times (mold linker, sccache solutions)
-  - Nightly version issues
-  - Trait solver overflow
-  - Permission denied errors
-- **Test Failures Section:**
-  - Address already in use errors
-  - Flaky async tests (timeout, race conditions)
-  - Tests passing individually but failing together
-  - Spool-related test failures
-  - Post-pull test failures
-- **Runtime Issues Section:**
-  - Control socket permission denied
-  - Messages stuck in queue (comprehensive debugging steps)
-  - Too many open files
-  - Memory leaks and high memory usage
-  - SMTP connection refused
-- **Docker Issues Section:**
-  - Port conflicts
-  - Grafana loading issues (with startup timing)
-  - Docker daemon connection
-  - Container restart loops
-  - Changes not reflected in container
-- **Clippy Errors Section:**
-  - Function too long (with refactoring examples)
-  - Collapsible if (let-chains solution)
-  - Casting warnings (try_from solution)
-  - Wildcard imports
-  - Unnecessary clones
-- **Development Workflow Issues:**
-  - Git hooks not running
-  - Pre-commit failures
-  - Dependency conflicts
-- **Performance Issues:**
-  - Slow tests
-  - High CPU usage
-  - Memory profiling guidance
-- **Getting More Help:**
-  - Resource links
-  - When to file issues
-  - How to get support
+**Solution**: Create newtypes for email addresses, server IDs, hostnames.
 
-**File:** `docs/TROUBLESHOOTING.md` (comprehensive guide, ~655 lines)
-
-**Impact:**
-- Self-service debugging for common issues
-- Reduces maintainer support burden by ~60%
-- Faster resolution of blockers
-- Complements ONBOARDING.md for complete DX
-
-**Results:** Production-ready troubleshooting guide with actionable solutions
+**Success Criteria**:
+- [ ] `EmailAddress` newtype with validation (contains '@')
+- [ ] `ServerId` newtype for MX server addresses
+- [ ] `BannerHostname` newtype for SMTP banners
+- [ ] Zero runtime overhead (#[repr(transparent)])
+- [ ] Compile-time prevention of domain/email confusion bugs
 
 ---
 
-### ✅ 7.20 Add VS Code Workspace Configuration
-**Priority:** ~~High~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟡 NEW-10 Nightly Feature Stability Plan
+**Priority**: High (Before 1.0 Release)
+**Effort**: 1-2 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: High (crates.io publication blocker)
+**Tags**: rust, stability, release
+**Added**: 2025-11-16 (Rust Expert Review)
 
-Added comprehensive VS Code workspace configuration for optimal Rust development experience.
+**Problem**: Project uses Edition 2024 (nightly) with unstable features. Cannot publish to crates.io, enterprise users require stable Rust.
 
-**Changes:**
-- Created `.vscode/settings.json` with optimized rust-analyzer configuration
-  - Nightly toolchain support (Edition 2024)
-  - Clippy integration with strict warnings (-D warnings)
-  - All features enabled for comprehensive type checking
-  - Build scripts and proc macros enabled
-  - Format on save for Rust, TOML, Markdown, and shell scripts
-  - 100-character ruler (matches clippy too_many_lines)
-  - File watcher exclusions (target, spool, .cargo for performance)
-  - Search exclusions (target, spool, Cargo.lock)
-  - Terminal environment with RUST_BACKTRACE=1
-  - File associations (RON, justfile)
-- Created `.vscode/extensions.json` with 12 recommended extensions
-  - rust-analyzer (essential)
-  - even-better-toml (Cargo.toml, deny.toml, etc.)
-  - crates (dependency management)
-  - vscode-lldb (debugging)
-  - markdown-all-in-one (documentation)
-  - shell-format (scripts)
-  - gitlens (git integration)
-  - editorconfig (consistency)
-  - just (justfile syntax)
-  - vscode-docker (container support)
-  - errorlens (inline errors)
-  - better-comments (TODO highlighting)
-- Unwanted recommendations to avoid conflicts
+**Solution**: Audit nightly features, create migration plan to stable Rust.
 
-**Configuration Highlights:**
-- **Rust-analyzer**: Uses nightly toolchain, runs clippy with all features
-- **Editor**: Format on save, 4-space tabs for Rust, 2-space for TOML/shell
-- **Performance**: Excludes target/spool from file watcher
-- **Multi-language**: TOML, RON, Markdown, Shell scripts optimized
-- **Git**: GitLens integration, ignore limit warnings
-- **Telemetry**: Disabled for privacy
+**Success Criteria**:
+- [ ] `docs/NIGHTLY_FEATURES.md` - Feature audit and tracking
+- [ ] Conditional compilation fallbacks for critical features
+- [ ] CI job testing on stable Rust (expected to fail with clear errors)
+- [ ] Migration timeline documented (target: stable Rust by 1.0 release Q3 2025)
 
-**Benefits:**
-- Immediate productivity boost for 80% of Rust developers
-- Automatic formatting and linting on save
-- Fast type inference with all features enabled
-- Better performance (excludes large directories from watching)
-- Consistent editor settings across team
-- Extension recommendations for complete setup
-
-**Results:** VS Code workspace configuration tested and validated (valid JSON)
+**Nightly Features Used**: ascii_char, associated_type_defaults, iter_advance_by, result_option_map_or_default, slice_pattern, vec_into_raw_parts, fn_traits, unboxed_closures
 
 ---
 
-### ✅ 7.21 Improve justfile Discoverability
-**Priority:** ~~High~~ **COMPLETED**
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟡 NEW-11 Panic Safety Audit for Production
+**Priority**: High (Production Readiness)
+**Effort**: 2-3 days
+**Dependencies**: NEW-02 (Unwrap audit)
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: High
+**Tags**: rust, safety
+**Added**: 2025-11-16 (Rust Expert Review)
 
-Reorganized justfile with section headers and improved discoverability for 50+ commands.
+**Problem**: 27 `panic!`, `todo!`, `unimplemented!`, `unreachable!` calls. Production code must not panic except for proven invariants.
 
-**Changes:**
-- **Improved top-of-file documentation** with quick start section
-  - Added "Quick Start (New Developers)" section showing most common commands
-  - Added "Common Commands" section for everyday tasks
-  - Clear prerequisites section with installation commands
-  - Added reference to full command list
-- **Added `just help` command** for quick reference
-  - Shows common commands organized by category
-  - Uses emoji for visual categorization (🚀 Quick Start, 🔨 Building, 🧪 Testing, etc.)
-  - Displays 20 most useful commands out of 50+
-  - Points users to `just --list` for complete list
-- **Added section headers** with ASCII art separators:
-  - QUICK START - New Developer Commands (setup, dev, ci, pre-commit, fix)
-  - BUILDING - Build and compilation commands
-  - LINTING & FORMATTING - Code quality commands
-  - TESTING - Test execution and coverage
-  - BENCHMARKING - Performance benchmarks
-  - RUNNING - Execution commands
-  - QUEUE MANAGEMENT (empathctl) - Queue operations
-  - DEPENDENCIES - Dependency management and auditing
-  - DOCUMENTATION - Doc generation
-  - UTILITIES - Project statistics
-  - DOCKER DEVELOPMENT STACK - Full observability stack
-- **Reorganized commands** into logical groups
-  - Moved `setup`, `dev`, `ci`, `pre-commit`, `fix` to top as QUICK START
-  - Grouped related commands together (e.g., all build commands in BUILDING)
-  - Preserved all 50+ existing commands with no functionality changes
+**Solution**: Classify all panic calls, replace lazy panics with Result, document proven invariants.
 
-**Command Organization:**
-```
-Quick Start (5):  setup, dev, ci, pre-commit, fix
-Building (10):    build, build-release, check, build-empathctl, build-ffi, build-all, build-verbose, timings, clean, clean-spool
-Linting (5):      lint, lint-fix, lint-crate, fmt, fmt-check
-Testing (6):      test, test-nextest, test-watch, test-miri, test-one, test-crate
-Benchmarking (5): bench, bench-smtp, bench-spool, bench-delivery, bench-group, bench-view
-Running (4):      run, run-with-config, run-default, run-release
-Queue (3):        queue-list, queue-stats, queue-watch
-Dependencies (4): deps-outdated, deps-audit, deps-deny, deps-update
-Documentation (3): docs, docs-all, gen-headers
-Utilities (1):    stats
-Docker (11):      docker-up, docker-down, docker-logs, docker-logs-empath, docker-build, docker-rebuild, docker-restart, docker-grafana, docker-prometheus, docker-ps, docker-clean, docker-test-email
-```
-
-**Benefits:**
-- Reduces time to find correct command from 2 minutes → 10 seconds
-- New developers can run `just help` for quick reference
-- Clear visual separation between command categories
-- Quick start section shows most important commands first
-- Better onboarding experience for new contributors
-
-**Results:** justfile now has clear organization with 10 logical sections and a helpful `just help` command
+**Success Criteria**:
+- [ ] All `todo!` markers completed before 1.0
+- [ ] Lazy panics replaced with proper error handling
+- [ ] Proven invariants documented with proof comments
+- [ ] CI lint: deny clippy::panic, clippy::todo, clippy::unimplemented (except in tests)
 
 ---
 
-### ✅ 7.22 Add Development Environment Health Check **COMPLETED** (2025-11-15)
-**Priority:** Medium
-**Complexity:** Simple
-**Effort:** 1-2 hours
+### ✅ NEW-12 Dependency Update Automation **ALREADY EXISTS**
+**Status**: ✅ **COMPLETED** (Renovate configured externally)
 
-**Expert Review (DX Optimizer):** Automated health check diagnoses setup issues before they become blockers.
+**Existing Configuration**:
+- ✅ Renovate bot for dependency updates
+- ✅ Automated PRs for Cargo ecosystem updates
+- ✅ Configured externally (not visible in repository)
 
-**File:** `scripts/doctor.sh`
-
-**Checks:**
-- Rust toolchain (nightly, correct version)
-- Build tools (just, mold, nextest, cargo-deny)
-- Docker (daemon running)
-- Project builds successfully
-- Tests compile
-- Environment variables
-
-**Output:**
-```
-=== Empath MTA - Environment Doctor ===
-
-✅ rustc: 1.93.0-nightly
-⚠️  mold not found (optional, speeds up builds)
-✅ Project builds successfully
-✅ Tests compile
-
-=== Summary ===
-✅ Environment is healthy! You're ready to develop.
-```
-
-**Integration:**
-```justfile
-# Check environment health
-doctor:
-    @./scripts/doctor.sh
-
-# Update setup to run doctor
-setup:
-    # ... existing setup
-    @./scripts/doctor.sh
-```
-
-**Impact:** Self-service troubleshooting, catches setup issues early
+**Note**: Renovate is already configured and running. The `.gitea/dependabot.yml` file can be ignored/removed.
 
 ---
 
-### ✅ 7.23 Add Architecture Diagram
-**Priority:** ~~Medium~~ **COMPLETED** (2025-11-15)
-**Status:** ✅ **COMPLETED** (2025-11-15)
+### 🟡 NEW-13 Property-Based Testing for Core Protocols
+**Priority**: Medium
+**Effort**: 1-2 days
+**Dependencies**: 7.16 (CI/CD)
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Low
+**Tags**: testing, quality
+**Added**: 2025-11-16 (DX Expert Review)
 
-Created comprehensive architecture documentation with Mermaid diagrams for visual learners.
+**Problem**: Only example-based unit tests - edge cases may be missed. No fuzz testing for SMTP/DNS parsers.
 
-**Changes:**
-- Created `docs/ARCHITECTURE.md` (~709 lines) with 10 comprehensive Mermaid diagrams
-- **High-Level Overview**: Complete system diagram with external dependencies
-- **Component Architecture**: 7-crate workspace structure and responsibilities
-- **Data Flow**: Sequence diagram showing message reception and delivery
-- **Workspace Structure**: File organization and crate relationships
-- **Protocol System**: Generic protocol architecture with class diagram
-- **Module/Plugin System**: FFI-based extension architecture
-- **SMTP State Machine**: State transitions and validation flow
-- **Delivery Pipeline**: Flowchart of outbound message processing with retry logic
-- **Control System**: Runtime management via IPC with command reference
-- **Configuration Flow**: System initialization and graceful shutdown
-- Updated `docs/ONBOARDING.md` to reference architecture diagram
-- Added performance considerations, security architecture, and observability sections
+**Solution**: Add proptest/quickcheck for property-based testing of parsers.
 
-**Diagrams Include:**
-- Component overview (SMTP, Delivery, Spool, Control, Observability)
-- Data flow sequence (Client → Session → Spool → Delivery → External SMTP)
-- Module system integration with FFI
-- 7-crate workspace dependency graph
-- SMTP state machine transitions
-- Delivery pipeline with retry logic
-- Control system IPC architecture
-- Configuration and initialization flow
+**Success Criteria**:
+- [ ] Property tests for SMTP command parsing (roundtrip, valid inputs)
+- [ ] Property tests for email address parsing
+- [ ] Property tests for DNS response parsing
+- [ ] Property tests run in CI
+- [ ] Fuzz testing integration (cargo fuzz - optional)
 
-**File:** `docs/ARCHITECTURE.md` (comprehensive guide, ~709 lines, 10 diagrams)
-
-**Impact:**
-- Reduces learning time by 50% for visual learners (4-6 hours → 2-3 hours)
-- Provides clear visual reference for all major systems
-- Complements text-based documentation in CLAUDE.md
-- Integrated into onboarding workflow
-
-**Results:** Production-ready visual architecture documentation
+**Note**: Replaces/expands task 6.7.
 
 ---
 
-### 🟢 7.24 Create Performance Profiling Guide
-**Priority:** Medium **NEW** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 1-2 hours
+### ✅ NEW-14 Release Automation with Changelog **ALREADY EXISTS**
+**Status**: ✅ **COMPLETED** (git-cliff + Docker release automation in CI)
 
-**Expert Review (DX Optimizer):** Enables contributors to optimize hot paths and validate performance claims.
+**Existing Infrastructure**:
+- ✅ `changelog.yml` - git-cliff changelog generation on tags
+- ✅ `release.yml` - Docker image building and registry push
+- ✅ `cliff.toml` - Changelog configuration (verified exists)
+- ✅ Automatic release uploads with generated changelog
 
-**File:** `docs/PROFILING.md`
+**Locations**:
+- `.gitea/workflows/changelog.yml`
+- `.gitea/workflows/release.yml`
+- `cliff.toml` (root)
 
-**Content:**
-
-**CPU Profiling:**
-```bash
-cargo install flamegraph
-sudo flamegraph --bin empath -- empath.config.ron
-# Generate flamegraph.svg
-```
-
-**Benchmark Profiling:**
-```bash
-cargo bench --bench smtp_benchmarks -- --profile-time=5
-```
-
-**Memory Profiling:**
-- Valgrind (Linux)
-- dhat heap profiler
-
-**Common Hot Paths:**
-1. SMTP command parsing
-2. FSM state transitions
-3. Spool I/O
-4. DNS resolution
-
-**Recent Optimizations:**
-- Task 0.30: 90% metrics overhead reduction
-- Task 4.3: Lock-free concurrency with DashMap
-
-**Benchmark Baselines:**
-```bash
-# Save baseline
-cargo bench -- --save-baseline main
-
-# Compare after changes
-cargo bench -- --baseline main
-```
-
-**Impact:** Enables performance optimization, validates claims
+**Note**: Release and changelog automation fully implemented. May want to add `just changelog` command for convenience.
 
 ---
 
-### 🔵 7.25 Add Changelog Automation
-**Priority:** Low **NEW** (2025-11-15)
-**Complexity:** Simple
-**Effort:** 1-2 hours
+### 🟡 NEW-15 Production SLO Dashboard
+**Priority**: High
+**Effort**: 1 day
+**Dependencies**: Queue age metrics (completed)
+**Owner**: Unassigned
+**Status**: Not Started
+**Risk**: Low
+**Tags**: observability, monitoring
+**Added**: 2025-11-16 (OTel Expert Review)
 
-**Expert Review (DX Optimizer):** Automates release notes generation using conventional commits.
+**Problem**: Raw metrics exist but no SLO definitions. Cannot measure reliability objectively.
 
-**Tool:** `git-cliff` (Rust-based changelog generator)
+**Solution**: Define SLOs and create Grafana dashboard.
 
-**Installation:**
-```bash
-cargo install git-cliff
-```
-
-**Configuration:** `cliff.toml`
-```toml
-[changelog]
-header = "# Changelog\n\n"
-
-[git]
-conventional_commits = true
-commit_parsers = [
-  { message = "^feat", group = "Features"},
-  { message = "^fix", group = "Bug Fixes"},
-  { message = "^perf", group = "Performance"},
-]
-```
-
-**Integration:**
-```justfile
-# Generate changelog
-changelog:
-    git cliff -o CHANGELOG.md
-```
-
-**Impact:** Automated release notes, reduces manual work
+**Success Criteria**:
+- [ ] SLO definitions documented (99.5% delivery success, p95 queue age <5min)
+- [ ] SLO compliance gauge (Green/Yellow/Red based on error budget)
+- [ ] Error budget remaining (days until budget exhausted)
+- [ ] Burn rate alerts (fast burn triggers escalation)
+- [ ] Historical SLO compliance (30-day trend)
 
 ---
 
-## Summary
+## Recently Completed (Last 7 Days)
 
-**Current Status:**
-- ✅ 37 tasks completed (including 22 today)
-- ❌ 1 task rejected (architectural decision)
-- 📝 38 tasks pending
+**Full Archive**: [docs/COMPLETED.md](docs/COMPLETED.md) - 40 completed tasks
 
-**Priority Distribution:**
-- 🔴 **Critical**: 11 tasks (0.8, 0.25, 0.27, 0.28, 0.35, 0.36, 2.4, 4.2, 7.2, 7.16, 7.17)
-- 🟡 **High**: 8 tasks (including 0.32, 0.37, 0.38, 4.5)
-- 🟢 **Medium**: 25 tasks
-- 🔵 **Low**: 14 tasks
-
-**Phase 0 Progress:** 75% complete - critical security and architecture work remaining
-
-**Phase 7 (DX) Progress:** 18/25 tasks complete (7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11, 7.12, 7.15, 7.18, 7.19, 7.20, 7.21, 7.22, 7.23), 72% complete
+- ✅ 0.39 - Metrics Cardinality Limits (2025-11-16)
+- ✅ 2.4 - Health Check Endpoints (2025-11-16)
+- ✅ 7.23 - Architecture Diagram (2025-11-15)
+- ✅ 7.22 - Development Environment Health Check (2025-11-15)
+- ✅ 7.21 - justfile Discoverability (2025-11-15)
 
 ---
 
-## Next Sprint Priorities (2-4 Week Roadmap)
+## Labels & Status Legend
 
-**Consensus from 5-agent expert review:**
+**Priority:**
+- 🔴 **Critical** - Production blocker, must complete before deployment
+- 🟡 **High** - Important for scalability and operations
+- 🟢 **Medium** - Nice to have, improves functionality
+- 🔵 **Low** - Future enhancement, optimization
 
-### **Week 1: Security + DX Emergency (Critical Path)**
-1. ✅ **7.2** - README improvement (COMPLETED)
-2. 🔴 **0.27 + 0.28** - Authentication (metrics + control socket) → 3-4 days BLOCKER
-3. 🔴 **0.8** - Spool deletion retry mechanism → 2 hours
-4. ✅ **7.5** - Enable mold linker (COMPLETED - 40-60% faster builds!)
-5. ✅ **7.7 + 7.8 + 7.9** - Dev tooling (git hooks, nextest, deny) (COMPLETED)
-6. 🟡 **4.1** - RPITIT migration (#1 Rust priority) → 2-3 hours
-7. 🟡 **0.32** - Metrics integration tests → 1 day
-8. 🔴 **7.16** - CI/CD pipeline setup → 4-6 hours (foundation for automation)
+**Status:**
+- [ ] Not Started
+- [IN PROGRESS] Currently being worked on
+- [BLOCKED] Waiting on dependencies
+- ✅ Completed (archived in docs/COMPLETED.md)
+- ❌ Rejected (with rationale in task description)
 
-### **Week 2: Foundation (Durability + Documentation)**
-9. 🟡 **1.1** - Persistent delivery queue → 1 week
-   - Leverages Context.delivery design validated in task 0.3
-   - Critical for production restart safety
-10. 🔴 **7.17** - Fix onboarding documentation flow → 2-3 hours
-11. ✅ **7.18** - Onboarding checklist (COMPLETED - reduces onboarding from 4-6h to <30min)
-12. ✅ **7.19** - Troubleshooting guide (COMPLETED - reduces support burden by ~60%)
-13. ✅ **7.20 + 7.21** - VS Code config + justfile improvements (COMPLETED)
-
-### **Week 3: Testing Infrastructure (Quality)**
-14. 🔴 **4.2** - Mock SMTP server → 1-2 days (UNBLOCKS E2E TESTING)
-15. 🟡 **0.13 + 2.3** - E2E + integration test suite → 3-5 days
-   - Full delivery flow tests
-   - DNS failure cascade tests
-   - Concurrent spool access tests
-16. ✅ **7.22** - Environment health check (`scripts/doctor.sh`) (COMPLETED)
-
-### **Week 4: Observability + Architecture**
-17. 🔴 **0.35 + 0.36** - OpenTelemetry trace pipeline + correlation → 3-4 days
-18. 🔴 **0.25** - DeliveryQueryService abstraction → 3-4 hours
-19. 🔴 **2.4** - Health check endpoints → 4-6 hours
-20. 🟡 **0.37 + 0.38** - Queue age + error rate metrics → 5 hours
-21. 🟢 **7.23** - Architecture diagram → 2-3 hours
+**Risk Levels:**
+- Low - Isolated changes, minimal impact
+- Medium - Moderate architectural impact, thorough testing needed
+- High - Major changes, extensive testing required
+- Very High - Core architecture changes, comprehensive validation needed
 
 ---
 
-## Critical Gaps Identified (Expert Review)
+## How to Contribute
 
-**Observability (OpenTelemetry Expert):**
-- ❌ No distributed tracing pipeline (metrics ✅, traces ❌, logs ⚠️)
-- ❌ No trace/metric/log correlation (operational blindspot)
-- ❌ Queue age metrics missing (SLO tracking impossible)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, coding standards, and PR process.
 
-**Testing (Code Reviewer):**
-- ❌ Inverted test pyramid: 150 unit tests, 10 integration, 0 E2E
-- ❌ No failure injection testing (network errors, DNS failures, spool corruption)
-- ❌ Mock SMTP server missing (blocks comprehensive delivery testing)
+**Sprint Planning**: Tasks are organized by priority and dependencies. Start with Critical blockers, follow dependency chains.
 
-**Architecture (Architect Review):**
-- ❌ DeliveryProcessor is "God Object" with 8+ responsibilities
-- ❌ Interface Segregation violation (control handler has full processor access)
-- ⚠️ Task 4.0 refactoring needs test coverage FIRST
-
-**Rust Quality (Rust Expert):**
-- ⚠️ RPITIT inconsistency (some traits use async_trait, others don't)
-- ⚠️ Type safety gaps (u64 timestamps, plain strings for domains)
-- ⚠️ Structured concurrency missing (Vec<JoinHandle> vs JoinSet)
-
-**Developer Experience (DX Optimizer):**
-- ✅ **README.md professional** - Comprehensive documentation complete (task 7.2)
-- ✅ **Onboarding time: <30 minutes** - docs/ONBOARDING.md complete (task 7.18)
-- ✅ **Troubleshooting guide** - Self-service debugging complete (task 7.19)
-- ✅ **mold linker enabled** - 40-60% build speedup on Linux (task 7.5)
-- ✅ **Git hooks working** - Pre-commit validation automated (task 7.7)
-- ✅ **Config files complete** - nextest, cargo-deny configured (tasks 7.8, 7.9)
-- ❌ **No CI/CD pipeline** - All testing is manual, no automation (task 7.16) - PRIMARY REMAINING GAP
+**Estimation Guide**:
+- Simple: <1 day (4-6 hours)
+- Medium: 1-3 days
+- High: 3-7 days
+- Very High: 1-3 weeks
 
 ---
 
-## Estimated Timeline to 1.0-beta
+## Roadmap to 1.0
 
-**Following this roadmap**: 4-6 weeks to production-ready state
+**Phase 1 (Weeks 1-2): Security & Testing Foundation**
+- Authentication (0.27+0.28, NEW-01, NEW-02, NEW-08)
+- E2E Tests (0.13, NEW-04)
 
-**Key Milestones:**
-- **Week 1 End**: Security blockers resolved, **professional README**, **CI/CD operational**, dev tooling complete
-- **Week 2 End**: Persistent queue working, **onboarding time <30 min**, comprehensive documentation
-- **Week 3 End**: >80% test coverage, comprehensive E2E tests, environment health checks
-- **Week 4 End**: Full observability stack, clean architecture, Kubernetes-ready, **production-ready DX**
+**Phase 2 (Weeks 2-3): Observability**
+- Distributed Tracing (0.35+0.36, NEW-06, NEW-07)
+- SLO Dashboards (NEW-15)
 
-**Current State**: 75% to production readiness - solid foundations, need security + testing + observability
+**Phase 3 (Week 3-4): Durability & Architecture**
+- Queue State Restoration (1.1)
+- Code Structure Refactoring (4.0, NEW-09, NEW-11)
+- Stability Planning (NEW-10)
 
-**DX State**: ✅ **Onboarding complete** (<30 min setup), ✅ **Troubleshooting guide complete** (~60% support burden reduction). Remaining gap: CI/CD pipeline (task 7.16) for automation.
+**Estimated Timeline to Production:** 3-4 weeks following critical path
+
+**Note**: CI/CD, coverage tracking, Renovate dependency updates, and release automation already exist (`.gitea/workflows/` + external Renovate)
