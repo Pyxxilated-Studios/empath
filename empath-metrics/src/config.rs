@@ -22,6 +22,43 @@ pub struct MetricsConfig {
     /// - `http://otel-collector.monitoring.svc.cluster.local:4318` (Kubernetes)
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
+
+    /// Maximum number of unique domains to track in metrics
+    ///
+    /// High-cardinality labels (like domain names) can create thousands of metric series
+    /// which impacts Prometheus memory and query performance. This limit caps the number
+    /// of unique domains that will be tracked individually.
+    ///
+    /// Once the limit is reached, additional domains are bucketed into an "other" category.
+    /// This prevents metric explosion while still tracking the most common domains.
+    ///
+    /// Recommended values:
+    /// - Small deployments (< 100 domains): 100
+    /// - Medium deployments (100-1000 domains): 500
+    /// - Large deployments (1000+ domains): 1000
+    ///
+    /// Default: 1000
+    #[serde(default = "default_max_domain_cardinality")]
+    pub max_domain_cardinality: usize,
+
+    /// Domains that should always be tracked individually
+    ///
+    /// These domains bypass the cardinality limit and are always tracked with their
+    /// full domain name. Useful for prioritizing metrics for your own domains or
+    /// major email providers.
+    ///
+    /// Example:
+    /// ```ron
+    /// high_priority_domains: [
+    ///     "gmail.com",
+    ///     "outlook.com",
+    ///     "company.com",
+    /// ]
+    /// ```
+    ///
+    /// Default: empty list
+    #[serde(default)]
+    pub high_priority_domains: Vec<String>,
 }
 
 const fn default_enabled() -> bool {
@@ -32,11 +69,17 @@ fn default_endpoint() -> String {
     "http://localhost:4318/v1/metrics".to_string()
 }
 
+const fn default_max_domain_cardinality() -> usize {
+    1000
+}
+
 impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
             endpoint: default_endpoint(),
+            max_domain_cardinality: default_max_domain_cardinality(),
+            high_priority_domains: Vec::new(),
         }
     }
 }

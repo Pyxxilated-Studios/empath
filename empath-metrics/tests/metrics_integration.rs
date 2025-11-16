@@ -94,7 +94,7 @@ fn test_smtp_command_duration() {
 
 #[test]
 fn test_delivery_counter_accuracy() {
-    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
     // Record successful deliveries
     for _ in 0..5 {
@@ -246,7 +246,7 @@ fn test_atomic_counter_ordering() {
 
 #[test]
 fn test_delivery_queue_size_consistency() {
-    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
     // Simulate queue operations for pending status
     metrics.set_queue_size("pending", 0);
@@ -296,7 +296,7 @@ fn test_smtp_metrics_creation() {
 #[test]
 fn test_delivery_metrics_creation() {
     // Verify metrics can be created without panicking
-    let result = DeliveryMetrics::new();
+    let result = DeliveryMetrics::new(1000, vec![]);
     assert!(
         result.is_ok(),
         "Delivery metrics creation should succeed: {:?}",
@@ -319,7 +319,7 @@ fn test_dns_metrics_creation() {
 fn test_queue_age_recording() {
     use std::time::{Duration, SystemTime};
 
-    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
     // Simulate messages queued at different times
     let now = SystemTime::now();
@@ -338,7 +338,7 @@ fn test_queue_age_recording() {
 
 #[test]
 fn test_oldest_message_age_update() {
-    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
     // Simulate queue with varying message ages
     metrics.update_oldest_message_age(0); // Empty queue
@@ -353,7 +353,7 @@ fn test_oldest_message_age_update() {
 
 #[test]
 fn test_queue_age_with_system_time_edge_cases() {
-    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
     // Test with current time (age = 0)
     let now = SystemTime::now();
@@ -367,7 +367,7 @@ fn test_queue_age_with_system_time_edge_cases() {
 
 #[test]
 fn test_delivery_error_rate_calculation() {
-    let metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
     // Record various delivery outcomes
     metrics.record_delivery_success("example.com", 1.0, 0);
@@ -386,7 +386,7 @@ fn test_delivery_error_rate_calculation() {
 
 #[test]
 fn test_delivery_success_rate_with_zero_attempts() {
-    let _metrics = DeliveryMetrics::new().expect("Failed to create delivery metrics");
+    let _metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
     // With zero attempts, success rate should be 0.0 (not NaN or panic)
     // Observable gauge will calculate this when scraped
@@ -418,4 +418,87 @@ fn test_smtp_error_rate_with_zero_connections() {
     // With zero connections, error rate should be 0.0 (not NaN or panic)
     // Observable gauge will calculate this when scraped
     // This test verifies initialization doesn't panic
+}
+
+#[test]
+fn test_delivery_domain_cardinality_limiting() {
+    // Initialize metrics system
+    // Initialize OpenTelemetry (happens once per test process)
+
+    // Create metrics with low cardinality limit for testing
+    let high_priority = vec!["gmail.com".to_string(), "outlook.com".to_string()];
+    let metrics = DeliveryMetrics::new(3, high_priority).expect("Failed to create delivery metrics");
+
+    // Record deliveries to 3 domains (should all be tracked)
+    metrics.record_attempt("success", "example1.com");
+    metrics.record_attempt("success", "example2.com");
+    metrics.record_attempt("success", "example3.com");
+
+    // Record to 4th domain (should be bucketed to "other")
+    metrics.record_attempt("success", "example4.com");
+
+    // High-priority domains should always bypass the limit
+    metrics.record_attempt("success", "gmail.com");
+    metrics.record_attempt("success", "outlook.com");
+
+    // Record more attempts to already-bucketed domain
+    metrics.record_attempt("failed", "example4.com");
+    metrics.record_attempt("retry", "example5.com");  // 5th domain, also bucketed
+
+    // Verify bucketed counter increased
+    assert!(metrics.bucketed_domains_count() >= 2);
+}
+
+#[test]
+fn test_delivery_domain_high_priority_bypass() {
+    // Initialize OpenTelemetry (happens once per test process)
+
+    // Create metrics with cardinality limit of 1
+    let high_priority = vec!["important.com".to_string()];
+    let metrics = DeliveryMetrics::new(1, high_priority).expect("Failed to create delivery metrics");
+
+    // Fill the single tracked slot
+    metrics.record_attempt("success", "example1.com");
+
+    // High-priority domain should still be tracked individually
+    metrics.record_delivery_success("important.com", 1.5, 0);
+
+    // Regular domain should be bucketed to "other"
+    metrics.record_attempt("success", "example2.com");
+
+    // Verify high-priority domain bypassed the limit
+    let bucketed = metrics.bucketed_domains_count();
+    assert!(bucketed >= 1, "Expected at least 1 bucketed domain, got {bucketed}");
+}
+
+#[test]
+fn test_delivery_domain_cardinality_concurrent() {
+    use std::sync::Arc;
+    use std::thread;
+
+    // Initialize OpenTelemetry (happens once per test process)
+
+    let metrics = Arc::new(
+        DeliveryMetrics::new(10, vec![]).expect("Failed to create delivery metrics")
+    );
+
+    // Spawn multiple threads recording to different domains concurrently
+    let handles: Vec<_> = (0..20)
+        .map(|i| {
+            let metrics_clone = Arc::clone(&metrics);
+            thread::spawn(move || {
+                let domain = format!("example{i}.com");
+                metrics_clone.record_attempt("success", &domain);
+            })
+        })
+        .collect();
+
+    // Wait for all threads
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Verify some domains were bucketed (limit is 10, we tried 20)
+    let bucketed = metrics.bucketed_domains_count();
+    assert!(bucketed >= 10, "Expected at least 10 bucketed domains in concurrent test, got {bucketed}");
 }

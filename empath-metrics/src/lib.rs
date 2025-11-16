@@ -28,6 +28,8 @@
 //! let config = MetricsConfig {
 //!     enabled: true,
 //!     endpoint: "http://localhost:4318".to_string(),
+//!     max_domain_cardinality: 1000,
+//!     high_priority_domains: vec!["gmail.com".to_string(), "outlook.com".to_string()],
 //! };
 //!
 //! init_metrics(&config)?;
@@ -83,6 +85,8 @@ pub struct Metrics {
 /// let config = MetricsConfig {
 ///     enabled: true,
 ///     endpoint: "http://localhost:4318".to_string(),
+///     max_domain_cardinality: 1000,
+///     high_priority_domains: vec!["gmail.com".to_string(), "outlook.com".to_string()],
 /// };
 ///
 /// init_metrics(&config)?;
@@ -108,7 +112,10 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
 
     // Create metric instruments
     let smtp = SmtpMetrics::new()?;
-    let delivery = DeliveryMetrics::new()?;
+    let delivery = DeliveryMetrics::new(
+        config.max_domain_cardinality,
+        config.high_priority_domains.clone(),
+    )?;
     let dns = DnsMetrics::new()?;
 
     let metrics = Metrics {

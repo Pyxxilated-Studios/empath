@@ -6,9 +6,11 @@
 //! - Queue sizes by status
 //! - Active SMTP client connections
 
+use std::collections::HashSet;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
+    RwLock,
 };
 
 use opentelemetry::{
@@ -52,16 +54,31 @@ pub struct DeliveryMetrics {
     queue_retry: Arc<AtomicU64>,
     queue_expired: Arc<AtomicU64>,
     active_conn_count: AtomicU64,
+
+    // Cardinality limiting for domain labels
+    /// Maximum number of unique domains to track
+    max_domains: usize,
+    /// Domains that always bypass the cardinality limit
+    high_priority_domains: HashSet<String>,
+    /// Currently tracked domains (up to max_domains)
+    tracked_domains: RwLock<HashSet<String>>,
+    /// Counter for domains bucketed into "other"
+    bucketed_domains_count: Arc<AtomicU64>,
 }
 
 impl DeliveryMetrics {
     /// Create a new delivery metrics collector
     ///
+    /// # Arguments
+    ///
+    /// * `max_domains` - Maximum number of unique domains to track before bucketing
+    /// * `high_priority_domains` - Domains that always bypass the cardinality limit
+    ///
     /// # Errors
     ///
     /// Returns an error if metric instruments cannot be created.
     #[allow(clippy::too_many_lines)]
-    pub fn new() -> Result<Self, MetricsError> {
+    pub fn new(max_domains: usize, high_priority_domains: Vec<String>) -> Result<Self, MetricsError> {
         let meter = meter();
 
         let attempts_total = meter
@@ -243,6 +260,23 @@ impl DeliveryMetrics {
             })
             .build();
 
+        // Cardinality limiting
+        let bucketed_domains_ref = Arc::new(AtomicU64::new(0));
+        let high_priority_set: HashSet<String> = high_priority_domains.into_iter().collect();
+
+        // Observable gauge for domain cardinality tracking
+        let bucketed_clone = bucketed_domains_ref.clone();
+        meter
+            .u64_observable_gauge("empath.delivery.domain.cardinality")
+            .with_description("Number of unique domains currently tracked in metrics")
+            .with_callback(move |observer| {
+                observer.observe(
+                    bucketed_clone.load(Ordering::Relaxed),
+                    &[KeyValue::new("type", "bucketed")],
+                );
+            })
+            .build();
+
         Ok(Self {
             attempts_total,
             duration_seconds,
@@ -260,21 +294,79 @@ impl DeliveryMetrics {
             queue_retry: queue_retry_ref,
             queue_expired: queue_expired_ref,
             active_conn_count: AtomicU64::new(0),
+            max_domains,
+            high_priority_domains: high_priority_set,
+            tracked_domains: RwLock::new(HashSet::new()),
+            bucketed_domains_count: bucketed_domains_ref,
         })
+    }
+
+    /// Bucket a domain name to limit cardinality
+    ///
+    /// High-cardinality domain labels can create thousands of metric series which impacts
+    /// Prometheus memory and query performance. This method implements cardinality limiting
+    /// by bucketing domains into an "other" category once the limit is reached.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. If domain is in `high_priority_domains`, always return it (bypass limit)
+    /// 2. If domain is already being tracked, return it
+    /// 3. If we haven't reached `max_domains` yet, start tracking this domain
+    /// 4. Otherwise, return "other" and increment bucketed counter
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain name to potentially bucket
+    ///
+    /// # Returns
+    ///
+    /// Either the original domain name or "other" if the cardinality limit is reached
+    fn bucket_domain(&self, domain: &str) -> String {
+        // High-priority domains always bypass the limit
+        if self.high_priority_domains.contains(domain) {
+            return domain.to_string();
+        }
+
+        // Check if we're already tracking this domain (read lock first for fast path)
+        {
+            let tracked = self.tracked_domains.read().unwrap();
+            if tracked.contains(domain) {
+                return domain.to_string();
+            }
+        }
+
+        // Try to add this domain if we haven't reached the limit (write lock)
+        let mut tracked = self.tracked_domains.write().unwrap();
+
+        // Double-check after acquiring write lock (another thread might have added it)
+        if tracked.contains(domain) {
+            return domain.to_string();
+        }
+
+        if tracked.len() < self.max_domains {
+            tracked.insert(domain.to_string());
+            domain.to_string()
+        } else {
+            // Cardinality limit reached - bucket into "other"
+            self.bucketed_domains_count.fetch_add(1, Ordering::Relaxed);
+            "other".to_string()
+        }
     }
 
     /// Record a delivery attempt
     pub fn record_attempt(&self, status: &str, domain: &str) {
+        let bucketed_domain = self.bucket_domain(domain);
         let attributes = [
             KeyValue::new("status", status.to_string()),
-            KeyValue::new("domain", domain.to_string()),
+            KeyValue::new("domain", bucketed_domain),
         ];
         self.attempts_total.add(1, &attributes);
     }
 
     /// Record a successful delivery
     pub fn record_delivery_success(&self, domain: &str, duration_secs: f64, retry_count: u64) {
-        let attributes = [KeyValue::new("domain", domain.to_string())];
+        let bucketed_domain = self.bucket_domain(domain);
+        let attributes = [KeyValue::new("domain", bucketed_domain)];
         self.duration_seconds.record(duration_secs, &attributes);
         // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
         self.messages_delivered_count
@@ -396,6 +488,23 @@ impl DeliveryMetrics {
     pub fn update_oldest_message_age(&self, oldest_age_secs: u64) {
         self.oldest_message_seconds
             .store(oldest_age_secs, Ordering::Relaxed);
+    }
+
+    /// Get the number of domains that have been bucketed into "other"
+    ///
+    /// This counter increments each time a delivery attempt is made to a domain
+    /// that exceeds the cardinality limit. Use this to monitor cardinality pressure.
+    #[must_use]
+    pub fn bucketed_domains_count(&self) -> u64 {
+        self.bucketed_domains_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of domains currently being tracked
+    ///
+    /// This does not include high-priority domains that bypass the limit.
+    #[must_use]
+    pub fn tracked_domains_count(&self) -> usize {
+        self.tracked_domains.read().unwrap().len()
     }
 }
 
