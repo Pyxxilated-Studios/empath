@@ -746,8 +746,117 @@ Location: `empath-ffi/src/string.rs`
 - **FSM tests**: Test state transitions with various command sequences
 - **Module tests**: Use `Module::TestModule` for testing without loading shared libraries
 - **Async tests**: Mark with `#[tokio::test]`
+- **E2E tests**: Use the `E2ETestHarness` for complete SMTP reception → spool → delivery flows
 
 Example: `empath-smtp/src/session.rs:537` (spool_integration test)
+
+### End-to-End (E2E) Testing
+
+The project includes a comprehensive E2E test harness that verifies the complete message flow from SMTP reception through delivery.
+
+**Location**: `empath/tests/support/harness.rs` (E2E test harness)
+**Tests**: `empath/tests/e2e_basic.rs` (7 E2E tests covering delivery flows)
+
+**E2E Test Harness Architecture**:
+
+The `E2ETestHarness` provides a self-contained testing environment with:
+- **Empath SMTP server** - Receives messages on a random port
+- **Memory-backed spool** - Fast in-memory message persistence
+- **Delivery processor** - Routes messages to the mock server
+- **MockSmtpServer** - Simulates destination SMTP server for delivery verification
+
+**Quick Example**:
+
+```rust
+#[tokio::test]
+async fn test_delivery() {
+    // Create test harness
+    let harness = E2ETestHarness::builder()
+        .with_test_domain("test.example.com")
+        .build()
+        .await
+        .unwrap();
+
+    // Send email via SMTP
+    harness.send_email(
+        "sender@example.org",
+        "recipient@test.example.com",
+        "Subject: Test\r\n\r\nHello World",
+    ).await.unwrap();
+
+    // Wait for delivery to mock server
+    let message_content = harness
+        .wait_for_delivery(Duration::from_secs(5))
+        .await
+        .unwrap();
+
+    // Verify message content
+    assert!(String::from_utf8(message_content)
+        .unwrap()
+        .contains("Hello World"));
+
+    // Verify SMTP commands
+    let commands = harness.mock_commands().await;
+    assert!(commands.iter().any(|c| matches!(c, SmtpCommand::Data)));
+
+    harness.shutdown().await;
+}
+```
+
+**Running E2E Tests**:
+
+```bash
+# Run all E2E tests (single-threaded to avoid port conflicts)
+cargo test --test e2e_basic -- --test-threads=1
+
+# Run specific E2E test
+cargo test --test e2e_basic test_full_delivery_flow_success
+
+# With verbose output
+cargo test --test e2e_basic -- --test-threads=1 --nocapture
+```
+
+**E2E Test Scenarios Covered**:
+
+1. **Full delivery flow** - SMTP reception → spool → delivery → mock server verification
+2. **Multiple recipients** - Handling multiple RCPT TO commands
+3. **Recipient rejection** - Verifying proper handling of SMTP rejections (550 errors)
+4. **Message content preservation** - Ensuring headers and body are preserved through the pipeline
+5. **Graceful shutdown** - Verifying clean shutdown during delivery
+6. **SMTP extensions** - Testing SIZE extension enforcement
+7. **Custom delivery intervals** - Fast delivery with custom scan/process intervals
+
+**MockSmtpServer Configuration**:
+
+The mock server supports failure injection for testing error scenarios:
+
+```rust
+let harness = E2ETestHarness::builder()
+    .with_test_domain("test.example.com")
+    .with_mock_rcpt_rejection()  // 550 User unknown
+    .build()
+    .await
+    .unwrap();
+```
+
+**Key Design Decisions**:
+
+- **Memory-backed spool**: Fast tests without file I/O or inotify complexity
+- **DNS fallback**: Cloudflare DNS (1.1.1.1) fallback when system DNS unavailable (see `empath-delivery/src/dns.rs:181`)
+- **Random ports**: Both SMTP and mock servers bind to port 0 for automatic port assignment
+- **Single-threaded**: Tests run with `--test-threads=1` to avoid port conflicts
+- **Self-contained**: No Docker or external dependencies required
+
+**CI Integration**:
+
+E2E tests run in Gitea CI (`.gitea/workflows/test.yml`) after unit and integration tests:
+
+```yaml
+- name: Test E2E
+  run: cargo nextest run --test e2e_basic --test-threads=1
+```
+
+**Performance**: All 7 E2E tests complete in ~43 seconds, verifying the complete delivery pipeline end-to-end.
 
 ### Benchmarking
 

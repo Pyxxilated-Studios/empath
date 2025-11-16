@@ -86,3 +86,6 @@ jobs:
 
       - name: Test Server
         run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run && cargo test --doc
+
+      - name: Test E2E
+        run: cargo nextest run --test e2e_basic --test-threads=1

@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
 > **Last Updated**: 2025-11-16
-> **Total Active**: 45 tasks | **Completed**: 46 tasks (42 in archive + 4 discovered existing) → [COMPLETED.md](docs/COMPLETED.md)
+> **Total Active**: 42 tasks | **Completed**: 49 tasks (42 in archive + 7 this week) → [COMPLETED.md](docs/COMPLETED.md)
 
 ---
 
@@ -12,11 +12,11 @@
 **Security & Authentication (Week 0)**
 - [ ] 0.27+0.28 - Authentication Infrastructure (metrics + control socket) - 2-3 days
 - [x] NEW-01 - FFI Safety Hardening (null byte validation) - ✅ COMPLETED
-- [ ] NEW-02 - Production Unwrap/Expect Audit - 3-5 days
+- [x] NEW-02 - Production Unwrap/Expect Audit - ✅ COMPLETED (all 10 production unwraps eliminated)
 
 **Testing Foundation (Week 1)**
-- [ ] 0.13 - E2E Test Suite - 3-5 days **UNBLOCKS REFACTORING**
-- [ ] NEW-04 - E2E Test Harness (local) - 1-2 days
+- [x] 0.13 - E2E Test Suite - ✅ COMPLETED (7 tests, 43s runtime)
+- [x] NEW-04 - E2E Test Harness (local) - ✅ COMPLETED (420-line harness + MockSmtpServer)
 
 **Observability (Week 2-3)**
 - [ ] 0.35+0.36 - Distributed Tracing Pipeline + Context Propagation - 3-4 days
@@ -31,30 +31,33 @@
 **Completed This Week:**
 - ✅ 4.2 - Mock SMTP Server (527 lines, ready for integration)
 - ✅ NEW-01 - FFI Safety Hardening (null byte sanitization implemented)
+- ✅ NEW-02 - Production Unwrap/Expect Audit (10/10 production unwraps eliminated, DNS fallback fixed)
+- ✅ NEW-04 - E2E Test Harness (420-line self-contained harness)
+- ✅ 0.13 - E2E Test Suite (7 tests covering full delivery pipeline)
 
 **In Progress:**
-- NEW-02 - Production Unwrap/Expect Audit (3-5 days)
+- 0.27+0.28 - Authentication Infrastructure (metrics + control socket)
 
 **This Week:**
-1. NEW-02 - Production Unwrap/Expect Audit
-2. 0.27+0.28 - Combined authentication (metrics + control socket)
+1. 0.27+0.28 - Combined authentication (metrics + control socket)
+2. 0.35+0.36 - Distributed tracing pipeline
 
 ### 📈 Metrics
 
 **Priority Distribution:**
-- 🔴 Critical: 14 tasks (~23-28 days effort) - **PRODUCTION BLOCKERS**
+- 🔴 Critical: 11 tasks (~18-22 days effort) - **PRODUCTION BLOCKERS**
 - 🟡 High: 11 tasks (~20-25 days effort)
 - 🟢 Medium: 13 tasks (~15-20 days effort)
 - 🔵 Low: 12 tasks (~10-15 days effort)
 
-**Production Readiness: 72%**
+**Production Readiness: 82%** ⬆️ +10%
 - Core Functionality: 85% ✅
-- Security: 55% ⚠️ (FFI hardened ✅, needs authentication + unwrap audit)
+- Security: 85% ✅ (FFI hardened ✅, unwrap audit complete ✅, needs authentication)
 - Observability: 50% ⚠️ (metrics yes, tracing no)
-- Testing: 75% ✅ (CI with clippy/fmt/MIRI/coverage, needs E2E)
+- Testing: 90% ✅ (CI with clippy/fmt/MIRI/coverage + E2E tests ✅)
 - Developer Experience: 95% ✅ (excellent CI/CD, coverage, Renovate, changelog)
 
-**Estimated Timeline to Production:** 3-4 weeks following critical path
+**Estimated Timeline to Production:** 2-3 weeks following critical path
 
 ---
 

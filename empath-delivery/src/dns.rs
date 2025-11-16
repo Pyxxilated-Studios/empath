@@ -182,9 +182,27 @@ impl DnsResolver {
         let mut opts = ResolverOpts::default();
         opts.timeout = Duration::from_secs(dns_config.timeout_secs);
 
-        let resolver = TokioResolver::builder(TokioConnectionProvider::default())?
-            .with_options(opts)
-            .build();
+        // Try system DNS configuration first
+        let resolver_result = TokioResolver::builder(TokioConnectionProvider::default())
+            .and_then(|builder| Ok(builder.with_options(opts.clone()).build()));
+
+        let resolver = match resolver_result {
+            Ok(r) => r,
+            Err(e) => {
+                // System DNS failed, use Cloudflare fallback (1.1.1.1, 1.0.0.1)
+                warn!(
+                    error = %e,
+                    "System DNS configuration failed, using Cloudflare fallback (1.1.1.1)"
+                );
+
+                TokioResolver::builder_with_config(
+                    ResolverConfig::cloudflare(),
+                    TokioConnectionProvider::default(),
+                )
+                .with_options(opts)
+                .build()
+            }
+        };
 
         let cache = Arc::new(DashMap::new());
 
