@@ -1,18 +1,19 @@
 //! Health check HTTP server
 
-use crate::{HealthChecker, HealthConfig, HealthError};
+use std::{sync::Arc, time::Duration};
+
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use empath_common::Signal;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::net::TcpListener;
 use tower_http::timeout::TimeoutLayer;
+
+use crate::{HealthChecker, HealthConfig, HealthError};
 
 /// Health check HTTP server
 ///
@@ -83,9 +84,7 @@ impl HealthServer {
 ///
 /// Returns 200 OK if the application is alive (can respond to requests).
 /// Kubernetes will restart the container if this probe fails.
-async fn liveness_handler(
-    State(health_checker): State<Arc<HealthChecker>>,
-) -> Response {
+async fn liveness_handler(State(health_checker): State<Arc<HealthChecker>>) -> Response {
     if health_checker.is_alive() {
         (StatusCode::OK, "OK").into_response()
     } else {
@@ -97,9 +96,7 @@ async fn liveness_handler(
 ///
 /// Returns 200 OK if the application is ready to accept traffic.
 /// Kubernetes will remove the pod from service endpoints if this probe fails.
-async fn readiness_handler(
-    State(health_checker): State<Arc<HealthChecker>>,
-) -> Response {
+async fn readiness_handler(State(health_checker): State<Arc<HealthChecker>>) -> Response {
     if health_checker.is_ready() {
         (StatusCode::OK, "OK").into_response()
     } else {

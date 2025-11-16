@@ -30,12 +30,12 @@
 //! # }
 //! ```
 
+mod checker;
 mod config;
 mod error;
 mod server;
-mod checker;
 
+pub use checker::HealthChecker;
 pub use config::HealthConfig;
 pub use error::HealthError;
 pub use server::HealthServer;
-pub use checker::HealthChecker;

@@ -82,7 +82,6 @@ async fn test_ehlo() {
 
     assert!(result.is_ok());
     let responses = result.unwrap();
-    eprintln!("{responses:?}");
 
     // Should have greeting + EHLO response
     assert!(responses.len() >= 2);
@@ -105,7 +104,6 @@ async fn test_helo() {
     assert!(result.is_ok());
     let responses = result.unwrap();
 
-    eprintln!("{responses:?}");
     assert!(responses.len() >= 2);
     assert_eq!(responses[0].code, 220); // Greeting
     assert_eq!(responses[1].code, 250); // HELO response

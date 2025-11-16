@@ -6,11 +6,12 @@
 //! - Queue sizes by status
 //! - Active SMTP client connections
 
-use std::collections::HashSet;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-    RwLock,
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use opentelemetry::{
@@ -60,7 +61,7 @@ pub struct DeliveryMetrics {
     max_domains: usize,
     /// Domains that always bypass the cardinality limit
     high_priority_domains: HashSet<String>,
-    /// Currently tracked domains (up to max_domains)
+    /// Currently tracked domains (up to `max_domains`)
     tracked_domains: RwLock<HashSet<String>>,
     /// Counter for domains bucketed into "other"
     bucketed_domains_count: Arc<AtomicU64>,
@@ -78,7 +79,10 @@ impl DeliveryMetrics {
     ///
     /// Returns an error if metric instruments cannot be created.
     #[allow(clippy::too_many_lines)]
-    pub fn new(max_domains: usize, high_priority_domains: Vec<String>) -> Result<Self, MetricsError> {
+    pub fn new(
+        max_domains: usize,
+        high_priority_domains: Vec<String>,
+    ) -> Result<Self, MetricsError> {
         let meter = meter();
 
         let attempts_total = meter
@@ -345,6 +349,7 @@ impl DeliveryMetrics {
 
         if tracked.len() < self.max_domains {
             tracked.insert(domain.to_string());
+            drop(tracked);
             domain.to_string()
         } else {
             // Cardinality limit reached - bucket into "other"
@@ -504,7 +509,9 @@ impl DeliveryMetrics {
     /// This does not include high-priority domains that bypass the limit.
     #[must_use]
     pub fn tracked_domains_count(&self) -> usize {
-        self.tracked_domains.read().unwrap().len()
+        self.tracked_domains
+            .read()
+            .map_or(0, |domains| domains.len())
     }
 }
 

@@ -1,7 +1,7 @@
 //! Mock SMTP server for testing delivery scenarios
 //!
 //! This module provides a configurable mock SMTP server that can:
-#![allow(dead_code)]  // Test utility module - not all methods used in every test
+#![allow(dead_code)] // Test utility module - not all methods used in every test
 //! - Simulate various SMTP responses (success, failure, temporary errors)
 //! - Inject network failures (timeouts, connection drops)
 //! - Track received commands for verification
@@ -31,13 +31,15 @@
 //! ```
 
 use std::{
+    fmt::Write,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
+
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -123,9 +125,9 @@ impl EhloResponse {
 
         for (i, cap) in self.capabilities.iter().enumerate() {
             if i < cap_count - 1 {
-                response.push_str(&format!("{}-{}\r\n", self.code, cap));
+                let _ = write!(&mut response, "{}-{}\r\n", self.code, cap);
             } else {
-                response.push_str(&format!("{} {}\r\n", self.code, cap));
+                let _ = write!(&mut response, "{} {}\r\n", self.code, cap);
             }
         }
 
@@ -174,7 +176,7 @@ impl MockSmtpServer {
 
     /// Get the address the server is listening on
     #[must_use]
-    pub fn addr(&self) -> SocketAddr {
+    pub const fn addr(&self) -> SocketAddr {
         self.addr
     }
 
@@ -190,11 +192,12 @@ impl MockSmtpServer {
     }
 
     /// Shutdown the server
-    pub async fn shutdown(&self) {
+    pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
     }
 
     /// Handle a single client connection
+    #[allow(clippy::too_many_lines)]
     async fn handle_client(
         mut stream: TcpStream,
         config: Arc<MockServerConfig>,
@@ -219,20 +222,20 @@ impl MockSmtpServer {
             line.clear();
 
             // Check if we should drop the connection
-            if let Some(drop_after) = config.drop_after_commands {
-                if local_command_count >= drop_after {
-                    // Silently close connection
-                    return Ok(());
-                }
+            if let Some(drop_after) = config.drop_after_commands
+                && local_command_count >= drop_after
+            {
+                // Silently close connection
+                return Ok(());
             }
 
             // Check if we should timeout on this command
-            if let Some(timeout_on) = config.timeout_on_command {
-                if local_command_count == timeout_on {
-                    // Sleep indefinitely to simulate timeout
-                    tokio::time::sleep(Duration::from_secs(3600)).await;
-                    return Ok(());
-                }
+            if let Some(timeout_on) = config.timeout_on_command
+                && local_command_count == timeout_on
+            {
+                // Sleep indefinitely to simulate timeout
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                return Ok(());
             }
 
             // Read command with timeout (10 seconds)
@@ -263,11 +266,10 @@ impl MockSmtpServer {
                 "EHLO" => {
                     let hostname = parts.get(1).unwrap_or(&"").to_string();
                     let cmd = SmtpCommand::Ehlo(hostname);
-                    let resp = if let Some(ref ehlo) = config.ehlo_response {
-                        ehlo.to_bytes()
-                    } else {
-                        config.helo_response.to_bytes()
-                    };
+                    let resp = config
+                        .ehlo_response
+                        .as_ref()
+                        .map_or_else(|| config.helo_response.to_bytes(), EhloResponse::to_bytes);
                     (resp, cmd)
                 }
                 "HELO" => {
@@ -276,15 +278,16 @@ impl MockSmtpServer {
                 }
                 "MAIL" => {
                     let from = parts.get(1).unwrap_or(&"").to_string();
-                    (config.mail_from_response.to_bytes(), SmtpCommand::MailFrom(from))
+                    (
+                        config.mail_from_response.to_bytes(),
+                        SmtpCommand::MailFrom(from),
+                    )
                 }
                 "RCPT" => {
                     let to = parts.get(1).unwrap_or(&"").to_string();
                     (config.rcpt_to_response.to_bytes(), SmtpCommand::RcptTo(to))
                 }
-                "DATA" => {
-                    (config.data_response.to_bytes(), SmtpCommand::Data)
-                }
+                "DATA" => (config.data_response.to_bytes(), SmtpCommand::Data),
                 "QUIT" => {
                     let resp = config.quit_response.to_bytes();
                     commands.write().await.push(SmtpCommand::Quit);
@@ -292,17 +295,19 @@ impl MockSmtpServer {
                     writer.flush().await?;
                     return Ok(());
                 }
-                "STARTTLS" => {
-                    if let Some(ref starttls_resp) = config.starttls_response {
-                        (starttls_resp.to_bytes(), SmtpCommand::StartTls)
-                    } else {
-                        // STARTTLS not supported
-                        (SmtpResponse::new(502, "Command not implemented").to_bytes(), SmtpCommand::StartTls)
-                    }
-                }
-                _ => {
-                    (SmtpResponse::new(500, "Unknown command").to_bytes(), SmtpCommand::Other(cmd_line.to_string()))
-                }
+                "STARTTLS" => config.starttls_response.as_ref().map_or_else(
+                    || {
+                        (
+                            SmtpResponse::new(502, "Command not implemented").to_bytes(),
+                            SmtpCommand::StartTls,
+                        )
+                    },
+                    |starttls_resp| (starttls_resp.to_bytes(), SmtpCommand::StartTls),
+                ),
+                _ => (
+                    SmtpResponse::new(500, "Unknown command").to_bytes(),
+                    SmtpCommand::Other(cmd_line.to_string()),
+                ),
             };
 
             // Store command
@@ -310,6 +315,11 @@ impl MockSmtpServer {
 
             // Handle DATA content if we just sent DATA response
             if matches!(smtp_cmd, SmtpCommand::Data) && config.data_response.code == 354 {
+                writer.write_all(&response).await?;
+                writer.flush().await?;
+
+                command_count.fetch_add(1, Ordering::Relaxed);
+
                 // Read message content until we see <CRLF>.<CRLF>
                 let mut message_content = Vec::new();
                 let mut data_line = String::new();
@@ -323,13 +333,18 @@ impl MockSmtpServer {
 
                     if data_line.trim() == "." {
                         // End of message
-                        commands.write().await.push(SmtpCommand::MessageContent(message_content.clone()));
+                        commands
+                            .write()
+                            .await
+                            .push(SmtpCommand::MessageContent(message_content.clone()));
 
                         // Send data end response
                         if let Some(delay) = config.response_delay {
                             tokio::time::sleep(delay).await;
                         }
-                        writer.write_all(&config.data_end_response.to_bytes()).await?;
+                        writer
+                            .write_all(&config.data_end_response.to_bytes())
+                            .await?;
                         writer.flush().await?;
                         break;
                     }
@@ -428,28 +443,28 @@ impl MockSmtpServerBuilder {
 
     /// Add a delay before accepting connections
     #[must_use]
-    pub fn with_connection_delay(mut self, delay: Duration) -> Self {
+    pub const fn with_connection_delay(mut self, delay: Duration) -> Self {
         self.config.connection_delay = Some(delay);
         self
     }
 
     /// Add a delay before sending each response
     #[must_use]
-    pub fn with_response_delay(mut self, delay: Duration) -> Self {
+    pub const fn with_response_delay(mut self, delay: Duration) -> Self {
         self.config.response_delay = Some(delay);
         self
     }
 
     /// Drop the connection after N commands
     #[must_use]
-    pub fn with_network_error_after_commands(mut self, count: usize) -> Self {
+    pub const fn with_network_error_after_commands(mut self, count: usize) -> Self {
         self.config.drop_after_commands = Some(count);
         self
     }
 
     /// Timeout (hang) on the Nth command (0-indexed)
     #[must_use]
-    pub fn with_timeout_on_command(mut self, command_index: usize) -> Self {
+    pub const fn with_timeout_on_command(mut self, command_index: usize) -> Self {
         self.config.timeout_on_command = Some(command_index);
         self
     }
@@ -490,7 +505,10 @@ impl MockSmtpServerBuilder {
                     let command_count = Arc::clone(&command_count_clone);
 
                     tokio::spawn(async move {
-                        if let Err(e) = MockSmtpServer::handle_client(stream, config, commands, command_count).await {
+                        if let Err(e) =
+                            MockSmtpServer::handle_client(stream, config, commands, command_count)
+                                .await
+                        {
                             tracing::debug!("Mock server client error: {}", e);
                         }
                     });

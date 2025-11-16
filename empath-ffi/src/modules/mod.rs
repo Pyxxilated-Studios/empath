@@ -245,7 +245,6 @@ pub mod test {
 
     pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
         if let Module::TestModule(mute) = module {
-            eprintln!("{mute:?}");
             let mut inner = mute.write().expect("Poisoned Lock");
             match event {
                 Event::Validate(ev) => inner.validators_called.push(ev),

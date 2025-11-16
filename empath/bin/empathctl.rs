@@ -437,9 +437,7 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                 Request::new(RequestCommand::Queue(QueueCommand::Stats))
             }
         }
-        QueueAction::ProcessNow => {
-            Request::new(RequestCommand::Queue(QueueCommand::ProcessNow))
-        }
+        QueueAction::ProcessNow => Request::new(RequestCommand::Queue(QueueCommand::ProcessNow)),
     };
 
     let response = client.send_request(request).await?;

@@ -220,7 +220,7 @@ impl DeliveryProcessor {
         );
 
         // Initialize delivery metrics
-        match empath_metrics::DeliveryMetrics::new() {
+        match empath_metrics::DeliveryMetrics::new(10, Vec::default()) {
             Ok(metrics) => {
                 self.metrics = Some(metrics);
                 internal!("Delivery metrics initialized");

@@ -1,7 +1,9 @@
 //! Health check logic
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
 
 /// Health checker that tracks system component status
 ///
@@ -128,7 +130,10 @@ impl HealthChecker {
 
 /// Detailed health status information
 #[derive(Debug, Clone, serde::Serialize)]
-#[allow(clippy::struct_excessive_bools, reason = "Status struct intentionally has multiple boolean fields for clarity")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "Status struct intentionally has multiple boolean fields for clarity"
+)]
 pub struct HealthStatus {
     /// Whether the application is alive
     pub alive: bool,

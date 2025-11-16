@@ -427,7 +427,8 @@ fn test_delivery_domain_cardinality_limiting() {
 
     // Create metrics with low cardinality limit for testing
     let high_priority = vec!["gmail.com".to_string(), "outlook.com".to_string()];
-    let metrics = DeliveryMetrics::new(3, high_priority).expect("Failed to create delivery metrics");
+    let metrics =
+        DeliveryMetrics::new(3, high_priority).expect("Failed to create delivery metrics");
 
     // Record deliveries to 3 domains (should all be tracked)
     metrics.record_attempt("success", "example1.com");
@@ -443,7 +444,7 @@ fn test_delivery_domain_cardinality_limiting() {
 
     // Record more attempts to already-bucketed domain
     metrics.record_attempt("failed", "example4.com");
-    metrics.record_attempt("retry", "example5.com");  // 5th domain, also bucketed
+    metrics.record_attempt("retry", "example5.com"); // 5th domain, also bucketed
 
     // Verify bucketed counter increased
     assert!(metrics.bucketed_domains_count() >= 2);
@@ -455,7 +456,8 @@ fn test_delivery_domain_high_priority_bypass() {
 
     // Create metrics with cardinality limit of 1
     let high_priority = vec!["important.com".to_string()];
-    let metrics = DeliveryMetrics::new(1, high_priority).expect("Failed to create delivery metrics");
+    let metrics =
+        DeliveryMetrics::new(1, high_priority).expect("Failed to create delivery metrics");
 
     // Fill the single tracked slot
     metrics.record_attempt("success", "example1.com");
@@ -468,19 +470,20 @@ fn test_delivery_domain_high_priority_bypass() {
 
     // Verify high-priority domain bypassed the limit
     let bucketed = metrics.bucketed_domains_count();
-    assert!(bucketed >= 1, "Expected at least 1 bucketed domain, got {bucketed}");
+    assert!(
+        bucketed >= 1,
+        "Expected at least 1 bucketed domain, got {bucketed}"
+    );
 }
 
 #[test]
 fn test_delivery_domain_cardinality_concurrent() {
-    use std::sync::Arc;
-    use std::thread;
+    use std::{sync::Arc, thread};
 
     // Initialize OpenTelemetry (happens once per test process)
 
-    let metrics = Arc::new(
-        DeliveryMetrics::new(10, vec![]).expect("Failed to create delivery metrics")
-    );
+    let metrics =
+        Arc::new(DeliveryMetrics::new(10, vec![]).expect("Failed to create delivery metrics"));
 
     // Spawn multiple threads recording to different domains concurrently
     let handles: Vec<_> = (0..20)
@@ -500,5 +503,8 @@ fn test_delivery_domain_cardinality_concurrent() {
 
     // Verify some domains were bucketed (limit is 10, we tried 20)
     let bucketed = metrics.bucketed_domains_count();
-    assert!(bucketed >= 10, "Expected at least 10 bucketed domains in concurrent test, got {bucketed}");
+    assert!(
+        bucketed >= 10,
+        "Expected at least 10 bucketed domains in concurrent test, got {bucketed}"
+    );
 }

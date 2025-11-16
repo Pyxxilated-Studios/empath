@@ -467,17 +467,22 @@ async fn test_cleanup_queue_exponential_backoff() {
     }
 }
 
-
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn test_mock_smtp_server_basic() {
     use support::mock_server::{MockSmtpServer, SmtpCommand};
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::TcpStream;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpStream,
+    };
 
     // Create a mock server with default configuration
     let server = MockSmtpServer::builder()
         .with_greeting(220, "Test server ready")
-        .with_ehlo_response(250, vec!["test.local".to_string(), "SIZE 10000".to_string()])
+        .with_ehlo_response(
+            250,
+            vec!["test.local".to_string(), "SIZE 10000".to_string()],
+        )
         .with_mail_from_response(250, "Sender OK")
         .with_rcpt_to_response(250, "Recipient OK")
         .with_data_response(354, "Start mail input")
@@ -496,65 +501,116 @@ async fn test_mock_smtp_server_basic() {
     let mut line = String::new();
 
     // Read greeting
-    reader.read_line(&mut line).await.expect("Failed to read greeting");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read greeting");
     assert!(line.starts_with("220"));
     line.clear();
 
     // Send EHLO
-    writer.write_all(b"EHLO client.local\r\n").await.expect("Failed to write EHLO");
+    writer
+        .write_all(b"EHLO client.local\r\n")
+        .await
+        .expect("Failed to write EHLO");
     writer.flush().await.expect("Failed to flush");
 
     // Read EHLO response (multi-line)
-    reader.read_line(&mut line).await.expect("Failed to read EHLO response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read EHLO response");
     assert!(line.starts_with("250"));
     line.clear();
-    reader.read_line(&mut line).await.expect("Failed to read EHLO capabilities");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read EHLO capabilities");
     assert!(line.starts_with("250"));
     line.clear();
 
     // Send MAIL FROM
-    writer.write_all(b"MAIL FROM:<sender@example.com>\r\n").await.expect("Failed to write MAIL FROM");
+    writer
+        .write_all(b"MAIL FROM:<sender@example.com>\r\n")
+        .await
+        .expect("Failed to write MAIL FROM");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read MAIL FROM response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read MAIL FROM response");
     assert!(line.starts_with("250"));
     assert!(line.contains("Sender OK"));
     line.clear();
 
     // Send RCPT TO
-    writer.write_all(b"RCPT TO:<recipient@example.com>\r\n").await.expect("Failed to write RCPT TO");
+    writer
+        .write_all(b"RCPT TO:<recipient@example.com>\r\n")
+        .await
+        .expect("Failed to write RCPT TO");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read RCPT TO response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read RCPT TO response");
     assert!(line.starts_with("250"));
     assert!(line.contains("Recipient OK"));
     line.clear();
 
     // Send DATA
-    writer.write_all(b"DATA\r\n").await.expect("Failed to write DATA");
+    writer
+        .write_all(b"DATA\r\n")
+        .await
+        .expect("Failed to write DATA");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read DATA response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read DATA response");
     assert!(line.starts_with("354"));
     line.clear();
 
     // Send message content
-    writer.write_all(b"Subject: Test\r\n").await.expect("Failed to write subject");
-    writer.write_all(b"\r\n").await.expect("Failed to write blank line");
-    writer.write_all(b"Test message body\r\n").await.expect("Failed to write body");
-    writer.write_all(b".\r\n").await.expect("Failed to write terminator");
+    writer
+        .write_all(b"Subject: Test\r\n")
+        .await
+        .expect("Failed to write subject");
+    writer
+        .write_all(b"\r\n")
+        .await
+        .expect("Failed to write blank line");
+    writer
+        .write_all(b"Test message body\r\n")
+        .await
+        .expect("Failed to write body");
+    writer
+        .write_all(b".\r\n")
+        .await
+        .expect("Failed to write terminator");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read end response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read end response");
     assert!(line.starts_with("250"));
     assert!(line.contains("Message accepted"));
     line.clear();
 
     // Send QUIT
-    writer.write_all(b"QUIT\r\n").await.expect("Failed to write QUIT");
+    writer
+        .write_all(b"QUIT\r\n")
+        .await
+        .expect("Failed to write QUIT");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read QUIT response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read QUIT response");
     assert!(line.starts_with("221"));
 
     // Verify commands were tracked
     let commands = server.commands().await;
-    assert!(!commands.is_empty());
+    assert_eq!(server.command_count(), 6);
     assert!(matches!(commands[0], SmtpCommand::Ehlo(_)));
     assert!(matches!(commands[1], SmtpCommand::MailFrom(_)));
     assert!(matches!(commands[2], SmtpCommand::RcptTo(_)));
@@ -562,23 +618,23 @@ async fn test_mock_smtp_server_basic() {
     assert!(matches!(commands[4], SmtpCommand::MessageContent(_)));
     assert!(matches!(commands[5], SmtpCommand::Quit));
 
-    assert_eq!(server.command_count(), 6);
-
-    server.shutdown().await;
+    server.shutdown();
 }
 
 #[tokio::test]
 async fn test_mock_smtp_server_with_errors() {
     use support::mock_server::MockSmtpServer;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::TcpStream;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpStream,
+    };
 
     // Create a mock server that rejects RCPT TO
     let server = MockSmtpServer::builder()
         .with_greeting(220, "Test server")
         .with_ehlo_response(250, vec!["test.local".to_string()])
         .with_mail_from_response(250, "OK")
-        .with_rcpt_to_response(550, "User unknown")  // Reject recipient
+        .with_rcpt_to_response(550, "User unknown") // Reject recipient
         .build()
         .await
         .expect("Failed to start mock server");
@@ -590,44 +646,67 @@ async fn test_mock_smtp_server_with_errors() {
     let mut line = String::new();
 
     // Read greeting
-    reader.read_line(&mut line).await.expect("Failed to read greeting");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read greeting");
     line.clear();
 
     // Send EHLO
-    writer.write_all(b"EHLO client.local\r\n").await.expect("Failed to write EHLO");
+    writer
+        .write_all(b"EHLO client.local\r\n")
+        .await
+        .expect("Failed to write EHLO");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read EHLO");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read EHLO");
     line.clear();
 
     // Send MAIL FROM
-    writer.write_all(b"MAIL FROM:<sender@example.com>\r\n").await.expect("Failed to write MAIL FROM");
+    writer
+        .write_all(b"MAIL FROM:<sender@example.com>\r\n")
+        .await
+        .expect("Failed to write MAIL FROM");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read MAIL FROM response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read MAIL FROM response");
     assert!(line.starts_with("250"));
     line.clear();
 
     // Send RCPT TO - should be rejected
-    writer.write_all(b"RCPT TO:<recipient@example.com>\r\n").await.expect("Failed to write RCPT TO");
+    writer
+        .write_all(b"RCPT TO:<recipient@example.com>\r\n")
+        .await
+        .expect("Failed to write RCPT TO");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read RCPT TO response");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read RCPT TO response");
     assert!(line.starts_with("550"));
     assert!(line.contains("User unknown"));
 
-    server.shutdown().await;
+    server.shutdown();
 }
 
 #[tokio::test]
 async fn test_mock_smtp_server_connection_drop() {
     use support::mock_server::MockSmtpServer;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::TcpStream;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpStream,
+    };
 
     // Create a mock server that drops connection after 3 commands
     let server = MockSmtpServer::builder()
         .with_greeting(220, "Test server")
         .with_ehlo_response(250, vec!["test.local".to_string()])
         .with_mail_from_response(250, "OK")
-        .with_network_error_after_commands(3)  // Drop after EHLO, MAIL FROM, RCPT TO
+        .with_network_error_after_commands(3) // Drop after EHLO, MAIL FROM, RCPT TO
         .build()
         .await
         .expect("Failed to start mock server");
@@ -639,35 +718,61 @@ async fn test_mock_smtp_server_connection_drop() {
     let mut line = String::new();
 
     // Read greeting
-    reader.read_line(&mut line).await.expect("Failed to read greeting");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read greeting");
     line.clear();
 
     // Send EHLO (command 1)
-    writer.write_all(b"EHLO client.local\r\n").await.expect("Failed to write EHLO");
+    writer
+        .write_all(b"EHLO client.local\r\n")
+        .await
+        .expect("Failed to write EHLO");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read EHLO");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read EHLO");
     line.clear();
 
     // Send MAIL FROM (command 2)
-    writer.write_all(b"MAIL FROM:<sender@example.com>\r\n").await.expect("Failed to write MAIL FROM");
+    writer
+        .write_all(b"MAIL FROM:<sender@example.com>\r\n")
+        .await
+        .expect("Failed to write MAIL FROM");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read MAIL FROM");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read MAIL FROM");
     line.clear();
 
     // Send RCPT TO (command 3)
-    writer.write_all(b"RCPT TO:<recipient@example.com>\r\n").await.expect("Failed to write RCPT TO");
+    writer
+        .write_all(b"RCPT TO:<recipient@example.com>\r\n")
+        .await
+        .expect("Failed to write RCPT TO");
     writer.flush().await.expect("Failed to flush");
-    reader.read_line(&mut line).await.expect("Failed to read RCPT TO");
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read RCPT TO");
     line.clear();
 
     // Try to send DATA (command 4) - should fail because connection is dropped
-    writer.write_all(b"DATA\r\n").await.expect("Failed to write DATA");
+    writer
+        .write_all(b"DATA\r\n")
+        .await
+        .expect("Failed to write DATA");
     writer.flush().await.expect("Failed to flush");
-    
+
     // Connection should be closed, so reading should fail or return 0 bytes
     let result = reader.read_line(&mut line).await;
-    assert!(result.is_err() || result.unwrap() == 0, "Expected connection to be closed");
+    assert!(
+        result.is_err() || result.unwrap() == 0,
+        "Expected connection to be closed"
+    );
 
-    server.shutdown().await;
+    server.shutdown();
 }
-
