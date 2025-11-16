@@ -712,6 +712,7 @@ dependencies = [
 name = "empath-metrics"
 version = "0.0.1"
 dependencies = [
+ "dashmap",
  "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",

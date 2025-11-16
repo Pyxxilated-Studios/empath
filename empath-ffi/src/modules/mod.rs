@@ -245,7 +245,8 @@ pub mod test {
 
     pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
         if let Module::TestModule(mute) = module {
-            let mut inner = mute.write().expect("Poisoned Lock");
+            // Use poisoned data if lock is poisoned (test module only exists in debug builds)
+            let mut inner = mute.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             match event {
                 Event::Validate(ev) => inner.validators_called.push(ev),
                 Event::Event(ev) => inner.events_called.push(ev),

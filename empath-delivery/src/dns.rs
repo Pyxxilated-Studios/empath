@@ -588,7 +588,21 @@ pub struct CacheStats {
 
 impl Default for DnsResolver {
     fn default() -> Self {
-        Self::new().expect("Failed to create default DNS resolver")
+        // Try system DNS configuration first
+        Self::new().unwrap_or_else(|e| {
+            // System DNS failed, use Cloudflare fallback (1.1.1.1, 1.0.0.1)
+            warn!(
+                error = %e,
+                "System DNS configuration failed, using Cloudflare fallback (1.1.1.1)"
+            );
+
+            Self::with_resolver_config(
+                ResolverConfig::cloudflare(),
+                ResolverOpts::default(),
+                DnsConfig::default(),
+            )
+            .expect("Fallback DNS resolver failed - this should never happen with hardcoded config")
+        })
     }
 }
 

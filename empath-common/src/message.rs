@@ -184,8 +184,10 @@ impl<'a> Headers<'a> {
 
         while parser.peek().is_some() {
             if parser.peek_n::<END_OF_HEADER_LENGTH>() == Some(END_OF_HEADER) {
-                // SAFETY: Just checked there were enough elements left
-                unsafe { parser.advance_by(END_OF_HEADER_LENGTH).unwrap_unchecked() };
+                // SAFETY: peek_n() guarantees sufficient elements exist
+                parser
+                    .advance_by(END_OF_HEADER_LENGTH)
+                    .expect("peek_n guarantees sufficient elements");
                 break;
             }
 
@@ -209,8 +211,10 @@ impl<'a> Headers<'a> {
 
             headers.push(Header { name, value });
             if parser.peek_n::<END_OF_HEADER_LENGTH>() == Some(END_OF_HEADER) {
-                // SAFETY: Just checked there were enough elements left
-                unsafe { parser.advance_by(END_OF_HEADER_LENGTH).unwrap_unchecked() };
+                // SAFETY: peek_n() guarantees sufficient elements exist
+                parser
+                    .advance_by(END_OF_HEADER_LENGTH)
+                    .expect("peek_n guarantees sufficient elements");
             }
         }
 

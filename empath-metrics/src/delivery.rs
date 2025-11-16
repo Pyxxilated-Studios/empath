@@ -9,11 +9,12 @@
 use std::{
     collections::HashSet,
     sync::{
-        Arc, RwLock,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
 
+use dashmap::DashMap;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter, UpDownCounter},
@@ -62,7 +63,8 @@ pub struct DeliveryMetrics {
     /// Domains that always bypass the cardinality limit
     high_priority_domains: HashSet<String>,
     /// Currently tracked domains (up to `max_domains`)
-    tracked_domains: RwLock<HashSet<String>>,
+    /// Lock-free concurrent map prevents panic on lock poisoning
+    tracked_domains: Arc<DashMap<String, ()>>,
     /// Counter for domains bucketed into "other"
     bucketed_domains_count: Arc<AtomicU64>,
 }
@@ -300,7 +302,7 @@ impl DeliveryMetrics {
             active_conn_count: AtomicU64::new(0),
             max_domains,
             high_priority_domains: high_priority_set,
-            tracked_domains: RwLock::new(HashSet::new()),
+            tracked_domains: Arc::new(DashMap::new()),
             bucketed_domains_count: bucketed_domains_ref,
         })
     }
@@ -331,25 +333,17 @@ impl DeliveryMetrics {
             return domain.to_string();
         }
 
-        // Check if we're already tracking this domain (read lock first for fast path)
-        {
-            let tracked = self.tracked_domains.read().unwrap();
-            if tracked.contains(domain) {
-                return domain.to_string();
-            }
-        }
-
-        // Try to add this domain if we haven't reached the limit (write lock)
-        let mut tracked = self.tracked_domains.write().unwrap();
-
-        // Double-check after acquiring write lock (another thread might have added it)
-        if tracked.contains(domain) {
+        // Lock-free check if we're already tracking this domain
+        if self.tracked_domains.contains_key(domain) {
             return domain.to_string();
         }
 
-        if tracked.len() < self.max_domains {
-            tracked.insert(domain.to_string());
-            drop(tracked);
+        // Try to add this domain if we haven't reached the limit
+        // DashMap::insert is lock-free and thread-safe
+        if self.tracked_domains.len() < self.max_domains {
+            // Use insert which returns None if key didn't exist, or Some(old_value) if it did
+            // This handles the race where another thread added it between contains_key and insert
+            self.tracked_domains.insert(domain.to_string(), ());
             domain.to_string()
         } else {
             // Cardinality limit reached - bucket into "other"
@@ -509,9 +503,7 @@ impl DeliveryMetrics {
     /// This does not include high-priority domains that bypass the limit.
     #[must_use]
     pub fn tracked_domains_count(&self) -> usize {
-        self.tracked_domains
-            .read()
-            .map_or(0, |domains| domains.len())
+        self.tracked_domains.len()
     }
 }
 

@@ -54,6 +54,10 @@ pub enum TlsError {
     #[error("TLS upgrade failed: {0}")]
     UpgradeFailed(String),
 
+    /// TLS protocol information missing after handshake.
+    #[error("TLS protocol information missing: {0}")]
+    ProtocolInfoMissing(String),
+
     /// Rustls library error.
     #[error("TLS error: {0}")]
     Rustls(String),

@@ -23,11 +23,15 @@ pub struct TlsInfo {
 }
 
 impl TlsInfo {
-    fn of(conn: &ServerConnection) -> Self {
-        Self {
-            version: conn.protocol_version().unwrap(),
-            ciphers: conn.negotiated_cipher_suite().unwrap(),
-        }
+    fn of(conn: &ServerConnection) -> TlsResult<Self> {
+        Ok(Self {
+            version: conn
+                .protocol_version()
+                .ok_or_else(|| TlsError::ProtocolInfoMissing("protocol version".to_string()))?,
+            ciphers: conn
+                .negotiated_cipher_suite()
+                .ok_or_else(|| TlsError::ProtocolInfoMissing("cipher suite".to_string()))?,
+        })
     }
 
     pub fn proto(&self) -> String {
@@ -137,7 +141,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                 read_len,
             } => {
                 let stream = acceptor.accept(stream).await?;
-                let info = TlsInfo::of(stream.get_ref().1);
+                let info = TlsInfo::of(stream.get_ref().1)?;
 
                 (
                     Self::Tls {
@@ -164,7 +168,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                         read_pos,
                         read_len,
                     },
-                    TlsInfo::of(&connection),
+                    TlsInfo::of(&connection)?,
                 )
             }
         })

@@ -139,6 +139,16 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
 /// # Panics
 ///
 /// Panics if metrics have not been initialized via `init_metrics()`.
+///
+/// # Recommended Usage
+///
+/// Prefer checking `is_enabled()` before calling this function, or use `try_metrics()` for safer access:
+///
+/// ```ignore
+/// if let Some(m) = try_metrics() {
+///     m.smtp_connections.record(1);
+/// }
+/// ```
 #[must_use]
 pub fn metrics() -> &'static Metrics {
     METRICS_INSTANCE
@@ -146,7 +156,25 @@ pub fn metrics() -> &'static Metrics {
         .expect("Metrics not initialized. Call init_metrics() first.")
 }
 
+/// Try to get a reference to the global metrics instance
+///
+/// Returns `None` if metrics have not been initialized. This is the safe alternative to `metrics()`.
+///
+/// # Example
+///
+/// ```ignore
+/// if let Some(m) = try_metrics() {
+///     m.smtp_connections.record(1);
+/// }
+/// ```
+#[must_use]
+pub fn try_metrics() -> Option<&'static Metrics> {
+    METRICS_INSTANCE.get()
+}
+
 /// Check if metrics are enabled
+///
+/// Returns `true` if `init_metrics()` has been called successfully.
 #[must_use]
 pub fn is_enabled() -> bool {
     METRICS_INSTANCE.get().is_some()
