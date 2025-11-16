@@ -978,6 +978,227 @@ avg by (fields_domain) (
 - **Slow delivery**: Expected behavior - rate limiting trades speed for reliability
 - **No rate limiting observed**: Check configuration loaded, verify domain name matches
 
+### Circuit Breakers
+
+Empath implements per-domain circuit breakers to prevent retry storms when destination SMTP servers are experiencing prolonged outages or degradation.
+
+**Why Circuit Breakers?**
+
+Without circuit breakers, retry storms can:
+- **Waste resources** on deliveries destined to fail
+- **Delay queue processing** for other domains
+- **Overwhelm failing servers** preventing recovery
+- **Trigger cascading failures** across the email infrastructure
+
+**Circuit Breaker Pattern:**
+
+The circuit breaker has three states:
+
+```text
+┌─────────┐  Failure threshold exceeded  ┌──────┐
+│ Closed  │ ──────────────────────────>  │ Open │
+└─────────┘                               └──────┘
+    ^                                        │
+    │                                        │ Timeout elapsed
+    │                                        v
+    │  Success              ┌───────────────┐
+    └───────────────────────│  Half-Open    │
+                            └───────────────┘
+                                    │
+                                    │ Failure
+                                    v
+                              ┌──────┐
+                              │ Open │
+                              └──────┘
+```
+
+- **Closed**: Normal operation, all deliveries allowed
+- **Open**: Circuit tripped, deliveries rejected immediately (no wasted attempts)
+- **Half-Open**: Testing recovery, limited deliveries allowed to probe server health
+
+**Configuration:**
+
+```ron
+circuit_breaker: (
+    // Number of failures required to open the circuit
+    failure_threshold: 5,
+
+    // Time window for counting failures (seconds)
+    failure_window_secs: 60,
+
+    // How long the circuit stays open before testing recovery (seconds)
+    timeout_secs: 300,  // 5 minutes
+
+    // Number of consecutive successes needed to close circuit from half-open
+    success_threshold: 1,
+
+    // Per-domain circuit breaker overrides
+    domain_overrides: {
+        "flaky-domain.com": (
+            failure_threshold: 3,       // More aggressive
+            failure_window_secs: 30,
+            timeout_secs: 120,          // Shorter recovery test
+            success_threshold: 2,       // Require more successes
+        ),
+    },
+),
+```
+
+**How It Works:**
+
+1. **Tracking Failures**: Circuit breaker tracks **temporary failures** per domain (connection timeouts, server busy, DNS failures)
+2. **Permanent Failures Ignored**: 5xx SMTP errors like "Invalid recipient" don't trip the circuit (those are recipient issues, not server health)
+3. **Threshold Check**: After `failure_threshold` temporary failures in `failure_window_secs`, circuit opens
+4. **Open State**: All delivery attempts are rejected immediately, preserving resources
+5. **Recovery Test**: After `timeout_secs`, circuit enters **Half-Open** state and allows one test delivery
+6. **Recovery**: If test succeeds `success_threshold` times, circuit closes and normal operation resumes
+7. **Re-trip**: If test fails, circuit reopens immediately
+
+**Example Flow:**
+
+```text
+Threshold: 5 failures in 60 seconds
+Timeout: 5 minutes
+
+t=0s:   Closed (normal operation)
+t=10s:  Connection timeout → failure 1
+t=15s:  Connection timeout → failure 2
+t=20s:  Connection timeout → failure 3
+t=25s:  Connection timeout → failure 4
+t=30s:  Connection timeout → failure 5 → OPEN
+
+t=30s-330s: All deliveries rejected immediately (no wasted retries)
+            Messages rescheduled for retry after circuit timeout
+
+t=330s: Half-Open (test delivery allowed)
+t=335s: Test delivery succeeds → CLOSED (normal operation resumes)
+```
+
+**Metrics:**
+
+```promql
+# Total circuit breaker trips by domain
+empath_delivery_circuit_breaker_trips_total{domain="example.com"}
+
+# Total circuit breaker recoveries by domain
+empath_delivery_circuit_breaker_recoveries_total{domain="example.com"}
+
+# Current circuit breaker state by domain (0=Closed, 1=Open, 2=HalfOpen)
+empath_delivery_circuit_breaker_state{domain="example.com"}
+
+# Circuit breaker trip rate (trips per hour)
+rate(empath_delivery_circuit_breaker_trips_total[1h])
+```
+
+**Monitoring Circuit Breakers:**
+
+```logql
+# Find circuit breaker trips
+{service="empath"} | json | fields.message=~"Circuit breaker OPENED"
+
+# Find circuit breaker recoveries
+{service="empath"} | json | fields.message=~"Circuit breaker CLOSED"
+
+# Find rejected deliveries due to open circuit
+{service="empath"} | json | fields.message=~"Circuit breaker is OPEN"
+
+# Count circuit trips by domain (last hour)
+sum by (fields_domain) (
+  count_over_time(
+    {service="empath"} | json | fields.message=~"Circuit breaker OPENED" [1h]
+  )
+)
+```
+
+**Example Logs:**
+
+```json
+{
+  "timestamp": "2025-11-16T10:30:45.123456+00:00",
+  "level": "WARN",
+  "fields": {
+    "message": "Circuit breaker OPENED - rejecting deliveries to protect against retry storm",
+    "domain": "example.com",
+    "failure_count": 5,
+    "threshold": 5,
+    "timeout_secs": 300
+  },
+  "target": "empath_delivery::circuit_breaker"
+}
+```
+
+```json
+{
+  "timestamp": "2025-11-16T10:30:45.123456+00:00",
+  "level": "WARN",
+  "fields": {
+    "message": "Circuit breaker is OPEN - rejecting delivery attempt to prevent retry storm",
+    "message_id": "01JCXYZ123ABC",
+    "domain": "example.com"
+  },
+  "target": "empath_delivery::processor::process"
+}
+```
+
+```json
+{
+  "timestamp": "2025-11-16T10:35:45.123456+00:00",
+  "level": "INFO",
+  "fields": {
+    "message": "Circuit breaker CLOSED - normal operation resumed",
+    "domain": "example.com"
+  },
+  "target": "empath_delivery::circuit_breaker"
+}
+```
+
+**Implementation Details:**
+
+- **Location**: `empath-delivery/src/circuit_breaker.rs`
+- **Concurrency**: `DashMap` for lock-free domain lookup
+- **Synchronization**: `parking_lot::Mutex` for per-domain circuit state
+- **Failure Window**: Sliding time window for failure counting
+- **State Persistence**: Circuit state is in-memory only (resets on restart)
+
+**Best Practices:**
+
+1. **Start with defaults**: 5 failures in 60 seconds is reasonable for most domains
+2. **Tune per-domain**: High-volume domains may need higher thresholds
+3. **Monitor trips**: Frequent circuit trips indicate underlying server issues
+4. **Coordinate with alerts**: Circuit trips should trigger investigation
+5. **Balance threshold vs timeout**: Lower threshold = faster protection, but more false positives
+6. **Test recovery time**: Longer timeout = less load on failing server during recovery
+
+**Interaction with Rate Limiting:**
+
+Circuit breakers and rate limiting work together:
+- **Rate limiting**: Prevents overwhelming **healthy** servers
+- **Circuit breakers**: Prevent retry storms to **unhealthy** servers
+
+When a circuit is open:
+1. Delivery attempts are rejected **before** rate limiting check
+2. No rate limiter tokens are consumed
+3. Messages are rescheduled for retry after circuit timeout
+
+**Troubleshooting:**
+
+- **Frequent circuit trips**: Server experiencing actual outages - investigate with provider
+- **Circuit stuck open**: Timeout too short for server recovery - increase `timeout_secs`
+- **False positives**: Threshold too low - increase `failure_threshold` or `failure_window_secs`
+- **Slow recovery**: Success threshold too high - reduce `success_threshold` to 1
+- **No circuit trips**: Threshold too high or servers very reliable - expected behavior
+
+**Circuit Breaker vs Retry Logic:**
+
+| Feature | Retry Logic | Circuit Breaker |
+|---------|-------------|-----------------|
+| Purpose | Handle transient failures | Prevent retry storms |
+| Scope | Per-message | Per-domain |
+| Activation | After every failure | After threshold failures |
+| Behavior | Exponential backoff | Immediate rejection |
+| Resource Impact | Moderate (retries consume resources) | Low (failures rejected quickly) |
+| Recovery | Automatic after delay | Active testing (half-open state) |
+
 ### JSON Structured Logging
 
 Empath uses JSON structured logging for production observability, enabling powerful log aggregation and querying with tools like Loki, Grafana, and LogQL.

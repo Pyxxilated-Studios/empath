@@ -249,6 +249,17 @@ pub async fn prepare_message(
             });
             modules::dispatch(Event::Event(Ev::DeliverySuccess), &mut context);
 
+            // Record circuit breaker success
+            if let Some(circuit_breaker) = &processor.circuit_breaker_instance {
+                let recovered = circuit_breaker.record_success(&info.recipient_domain);
+                if recovered {
+                    // Circuit breaker recovered (transitioned to Closed)
+                    if let Some(metrics) = &processor.metrics {
+                        metrics.record_circuit_breaker_recovery(info.recipient_domain.as_str());
+                    }
+                }
+            }
+
             Ok(())
         }
         Err(e) => {
@@ -401,6 +412,20 @@ pub async fn handle_delivery_error(
     });
 
     modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
+
+    // Record circuit breaker failure (only for temporary failures)
+    // Permanent failures are recipient/config issues, not server health problems
+    if is_temporary_failure {
+        if let Some(circuit_breaker) = &processor.circuit_breaker_instance {
+            let tripped = circuit_breaker.record_failure(&updated_info.recipient_domain);
+            if tripped {
+                // Circuit breaker tripped (transitioned to Open)
+                if let Some(metrics) = &processor.metrics {
+                    metrics.record_circuit_breaker_trip(updated_info.recipient_domain.as_str());
+                }
+            }
+        }
+    }
 
     // Generate DSN if appropriate
     if processor.dsn.enabled && crate::dsn::should_generate_dsn(context, &updated_info, &error) {

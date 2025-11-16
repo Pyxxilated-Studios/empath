@@ -7,7 +7,9 @@
 //! - DNS MX record resolution for recipient domains
 //! - Generate Delivery Status Notifications (DSNs) for failed deliveries
 //! - Per-domain rate limiting to prevent overwhelming recipients
+//! - Circuit breakers to prevent retry storms to failing domains
 
+mod circuit_breaker;
 mod dns;
 mod domain_config;
 mod dsn;
@@ -19,6 +21,8 @@ mod service;
 mod smtp_transaction;
 mod types;
 
+// Re-export circuit breaker types
+pub use circuit_breaker::{CircuitBreakerConfig, CircuitBreakerStats, CircuitState, DomainCircuitBreakerConfig};
 // Re-export DNS types
 pub use dns::{CacheStats, DnsConfig, DnsError, DnsResolver, MailServer};
 // Re-export domain configuration types

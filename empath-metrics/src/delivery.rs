@@ -49,10 +49,19 @@ pub struct DeliveryMetrics {
     /// Distribution of rate limit delay durations
     rate_limit_delay_seconds: Histogram<f64>,
 
+    /// Total number of circuit breaker trips (Open state entered)
+    circuit_breaker_trips_total: Counter<u64>,
+
+    /// Total number of circuit breaker recoveries (Closed state resumed)
+    circuit_breaker_recoveries_total: Counter<u64>,
+
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     messages_delivered_count: Arc<AtomicU64>,
     messages_failed_count: Arc<AtomicU64>,
     messages_retrying_count: Arc<AtomicU64>,
+
+    // Per-domain circuit breaker state (0=Closed, 1=Open, 2=HalfOpen)
+    circuit_breaker_states: Arc<DashMap<String, Arc<AtomicU64>>>,
 
     // Local counters for queue size tracking (shared with observable gauge callback)
     queue_pending: Arc<AtomicU64>,
@@ -215,6 +224,33 @@ impl DeliveryMetrics {
             .with_description("Distribution of rate limit delay durations")
             .build();
 
+        let circuit_breaker_trips_total = meter
+            .u64_counter("empath.delivery.circuit_breaker.trips.total")
+            .with_description("Total number of circuit breaker trips (Open state entered) by domain")
+            .build();
+
+        let circuit_breaker_recoveries_total = meter
+            .u64_counter("empath.delivery.circuit_breaker.recoveries.total")
+            .with_description("Total number of circuit breaker recoveries (Closed state resumed) by domain")
+            .build();
+
+        // Create atomic map for per-domain circuit breaker state tracking
+        let circuit_states_ref = Arc::new(DashMap::<String, Arc<AtomicU64>>::new());
+
+        // Observable gauge for circuit breaker state by domain (0=Closed, 1=Open, 2=HalfOpen)
+        let circuit_states_clone = circuit_states_ref.clone();
+        meter
+            .u64_observable_gauge("empath.delivery.circuit_breaker.state")
+            .with_description("Current circuit breaker state by domain (0=Closed, 1=Open, 2=HalfOpen)")
+            .with_callback(move |observer| {
+                for entry in circuit_states_clone.iter() {
+                    let domain = entry.key();
+                    let state = entry.value().load(Ordering::Relaxed);
+                    observer.observe(state, &[KeyValue::new("domain", domain.clone())]);
+                }
+            })
+            .build();
+
         // Create atomic counter for oldest message tracking
         let oldest_message_ref = Arc::new(AtomicU64::new(0));
 
@@ -308,9 +344,12 @@ impl DeliveryMetrics {
             oldest_message_seconds: oldest_message_ref,
             rate_limited_total,
             rate_limit_delay_seconds,
+            circuit_breaker_trips_total,
+            circuit_breaker_recoveries_total,
             messages_delivered_count: messages_delivered_ref,
             messages_failed_count: messages_failed_ref,
             messages_retrying_count: messages_retrying_ref,
+            circuit_breaker_states: circuit_states_ref,
             queue_pending: queue_pending_ref,
             queue_in_progress: queue_in_progress_ref,
             queue_completed: queue_completed_ref,
@@ -535,6 +574,54 @@ impl DeliveryMetrics {
         let attributes = [KeyValue::new("domain", bucketed_domain)];
         self.rate_limited_total.add(1, &attributes);
         self.rate_limit_delay_seconds.record(delay_secs, &attributes);
+    }
+
+    /// Record a circuit breaker trip (Open state entered)
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain whose circuit breaker tripped
+    pub fn record_circuit_breaker_trip(&self, domain: &str) {
+        let bucketed_domain = self.bucket_domain(domain);
+        let attributes = [KeyValue::new("domain", bucketed_domain.clone())];
+        self.circuit_breaker_trips_total.add(1, &attributes);
+
+        // Update circuit state to Open (1)
+        self.circuit_breaker_states
+            .entry(bucketed_domain)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .store(1, Ordering::Relaxed);
+    }
+
+    /// Record a circuit breaker recovery (Closed state resumed)
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain whose circuit breaker recovered
+    pub fn record_circuit_breaker_recovery(&self, domain: &str) {
+        let bucketed_domain = self.bucket_domain(domain);
+        let attributes = [KeyValue::new("domain", bucketed_domain.clone())];
+        self.circuit_breaker_recoveries_total.add(1, &attributes);
+
+        // Update circuit state to Closed (0)
+        self.circuit_breaker_states
+            .entry(bucketed_domain)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .store(0, Ordering::Relaxed);
+    }
+
+    /// Update circuit breaker state
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain whose circuit breaker state changed
+    /// * `state` - The new state (0=Closed, 1=Open, 2=HalfOpen)
+    pub fn update_circuit_breaker_state(&self, domain: &str, state: u64) {
+        let bucketed_domain = self.bucket_domain(domain);
+        self.circuit_breaker_states
+            .entry(bucketed_domain)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .store(state, Ordering::Relaxed);
     }
 }
 

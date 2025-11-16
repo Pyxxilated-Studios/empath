@@ -464,27 +464,48 @@ See task 0.14 - merged/duplicate.
 
 ## Phase 5: Production Readiness
 
-### 🟢 5.1 Circuit Breakers per Domain [UPGRADE TO HIGH]
+### ✅ 5.1 Circuit Breakers per Domain **COMPLETED**
 **Priority**: High
-**Effort**: 2-3 days
+**Effort**: 2-3 days (actual: 1 day)
 **Dependencies**: None
-**Owner**: Unassigned
-**Status**: Not Started
+**Status**: ✅ COMPLETED
+**Completed**: 2025-11-16
 **Risk**: Medium
 **Tags**: reliability, delivery
 
 **Problem**: Retry storms to failing domains waste resources and delay queue processing.
 
-**Solution**: Implement circuit breaker pattern per destination domain.
+**Solution**: Implemented circuit breaker pattern per destination domain.
 
 **Success Criteria**:
-- [ ] Circuit states: Closed, Open, Half-Open
-- [ ] Configurable failure threshold (e.g., 5 failures in 1 minute)
-- [ ] Configurable timeout (e.g., 5 minutes open state)
-- [ ] Metrics: circuit_breaker_state{domain}, circuit_breaker_trips_total
-- [ ] Tests verify state transitions
+- [x] Circuit states: Closed, Open, Half-Open
+- [x] Configurable failure threshold (default: 5 failures in 60 seconds)
+- [x] Configurable timeout (default: 5 minutes open state)
+- [x] Configurable success threshold for recovery (default: 1)
+- [x] Per-domain configuration overrides
+- [x] Metrics: circuit_breaker_state{domain}, circuit_breaker_trips_total, circuit_breaker_recoveries_total
+- [x] Tests verify state transitions (6 tests passing)
+- [x] Only temporary failures trip circuit (permanent failures ignored)
+- [x] Comprehensive documentation in CLAUDE.md
 
-**Expert Review**: Upgrade to HIGH - prevents thundering herd to failing domains.
+**Implementation**:
+- `empath-delivery/src/circuit_breaker.rs`: 400-line circuit breaker with FSM
+- `empath-metrics/src/delivery.rs`: Circuit breaker metrics (state gauge, trips counter, recoveries counter)
+- `empath-delivery/src/processor/mod.rs`: Circuit breaker initialization
+- `empath-delivery/src/processor/process.rs`: Circuit check before delivery attempt
+- `empath-delivery/src/processor/delivery.rs`: Success/failure recording with metrics
+
+**Metrics**:
+- `empath.delivery.circuit_breaker.state` - Current state by domain (0=Closed, 1=Open, 2=HalfOpen)
+- `empath.delivery.circuit_breaker.trips.total` - Total circuit trips by domain
+- `empath.delivery.circuit_breaker.recoveries.total` - Total recoveries by domain
+
+**Key Features**:
+- DashMap for lock-free domain lookup
+- Sliding failure window with automatic expiration
+- Half-open state for recovery testing
+- Integration with existing metrics infrastructure
+- Rejected deliveries don't consume rate limiter tokens
 
 ---
 

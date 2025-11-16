@@ -12,6 +12,7 @@ use empath_tracing::traced;
 use serde::Deserialize;
 
 use crate::{
+    circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
     dns::{DnsConfig, DnsResolver},
     domain_config::DomainConfigRegistry,
     dsn::DsnConfig,
@@ -165,6 +166,17 @@ pub struct DeliveryProcessor {
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
 
+    /// Circuit breaker configuration
+    ///
+    /// Controls per-domain circuit breakers to prevent retry storms when destination
+    /// servers are experiencing prolonged outages. Automatically opens the circuit
+    /// after a threshold of failures, rejecting delivery attempts immediately to
+    /// preserve resources.
+    ///
+    /// Default: 5 failures in 60 seconds triggers 5-minute circuit open
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+
     /// How often to process the cleanup queue for failed deletions (in seconds)
     ///
     /// When spool deletion fails after successful delivery, messages are added
@@ -206,6 +218,10 @@ pub struct DeliveryProcessor {
     /// Rate limiter for per-domain throttling (initialized in `init()`)
     #[serde(skip)]
     pub(crate) rate_limiter: Option<RateLimiter>,
+
+    /// Circuit breaker for per-domain failure protection (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) circuit_breaker_instance: Option<CircuitBreaker>,
 }
 
 impl Default for DeliveryProcessor {
@@ -225,6 +241,7 @@ impl Default for DeliveryProcessor {
             smtp_timeouts: SmtpTimeouts::default(),
             dsn: DsnConfig::default(),
             rate_limit: RateLimitConfig::default(),
+            circuit_breaker: CircuitBreakerConfig::default(),
             cleanup_interval_secs: default_cleanup_interval(),
             max_cleanup_attempts: default_max_cleanup_attempts(),
             spool: None,
@@ -233,6 +250,7 @@ impl Default for DeliveryProcessor {
             cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
             metrics: None,
             rate_limiter: None,
+            circuit_breaker_instance: None,
         }
     }
 }
@@ -279,6 +297,15 @@ impl DeliveryProcessor {
             "Rate limiter initialized (default: {} msg/sec, burst: {})",
             self.rate_limit.messages_per_second,
             self.rate_limit.burst_size
+        );
+
+        // Initialize circuit breaker
+        self.circuit_breaker_instance = Some(CircuitBreaker::new(self.circuit_breaker.clone()));
+        internal!(
+            "Circuit breaker initialized (threshold: {} failures in {}s, timeout: {}s)",
+            self.circuit_breaker.failure_threshold,
+            self.circuit_breaker.failure_window_secs,
+            self.circuit_breaker.timeout_secs
         );
 
         Ok(())
