@@ -33,6 +33,7 @@ empath-spool = { path = "../empath-spool", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 hickory-resolver = "0.25"
 mailparse = "0.16"
+parking_lot = "0.12"
 rand = "0.9"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"

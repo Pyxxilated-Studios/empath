@@ -378,6 +378,24 @@ Empath (
                 accept_invalid_certs: true,  // Per-domain override
             ),
         },
+
+        // Rate limiting configuration (optional, defaults shown)
+        // Prevents overwhelming recipient SMTP servers and avoids blacklisting
+        rate_limit: (
+            messages_per_second: 10.0,  // Default rate: 10 messages per second per domain
+            burst_size: 20,             // Allow bursts of up to 20 messages
+            // Per-domain rate limit overrides
+            domain_limits: {
+                "gmail.com": (
+                    messages_per_second: 50.0,  // Higher rate for high-volume domains
+                    burst_size: 100,
+                ),
+                "test.example.com": (
+                    messages_per_second: 1.0,   // Lower rate for testing
+                    burst_size: 5,
+                ),
+            },
+        ),
     ),
     // Control socket configuration (optional)
     control_socket: "/tmp/empath.sock",  // Path for IPC control socket
@@ -785,6 +803,179 @@ sum by (fields_domain) (
 2. **Monitor DSN rates** (high rates indicate delivery problems)
 3. **Keep enabled** in production (RFC requirement for MTAs)
 4. **Review bounce patterns** to identify configuration issues
+
+### Rate Limiting
+
+Empath implements per-domain rate limiting using the token bucket algorithm to prevent overwhelming recipient SMTP servers and avoid blacklisting.
+
+**Why Rate Limiting?**
+
+Without rate limiting, bulk email delivery can:
+- **Overwhelm** recipient servers (causing connection refusals)
+- **Trigger spam filters** (high-volume bursts look suspicious)
+- **Cause blacklisting** (IP/domain reputation damage)
+- **Violate policies** (many providers have rate limits)
+
+**Token Bucket Algorithm:**
+
+Each domain has its own token bucket with:
+- **Tokens**: Replenished at a constant rate (messages_per_second)
+- **Capacity**: Maximum burst size (allows short bursts)
+- **Consumption**: Each delivery attempt consumes 1 token
+- **Delay**: When bucket empty, delivery is delayed until tokens refill
+
+**Example Flow:**
+
+```text
+Rate: 10 msg/sec, Burst: 20 tokens
+─────────────────────────────────────────────────────
+Time 0s:  Bucket has 20 tokens (full capacity)
+          Send 20 messages → 0 tokens remaining
+
+Time 1s:  Bucket refills to 10 tokens
+          Send 10 messages → 0 tokens remaining
+
+Time 2s:  Bucket refills to 10 tokens
+          Sustained rate: 10 msg/sec
+```
+
+**Configuration:**
+
+```ron
+rate_limit: (
+    // Default rate for all domains
+    messages_per_second: 10.0,  // 10 messages per second
+    burst_size: 20,             // Allow bursts of 20 messages
+
+    // Per-domain overrides
+    domain_limits: {
+        // High-volume providers
+        "gmail.com": (
+            messages_per_second: 50.0,
+            burst_size: 100,
+        ),
+        "outlook.com": (
+            messages_per_second: 50.0,
+            burst_size: 100,
+        ),
+
+        // Conservative rate for small domains
+        "smalldomain.com": (
+            messages_per_second: 1.0,
+            burst_size: 5,
+        ),
+
+        // Testing/development
+        "test.example.com": (
+            messages_per_second: 1.0,
+            burst_size: 5,
+        ),
+    },
+),
+```
+
+**How It Works:**
+
+1. **Check before delivery**: Before attempting SMTP delivery, check if tokens available
+2. **Consume token**: If available, consume 1 token and proceed with delivery
+3. **Delay if limited**: If no tokens, calculate wait time and reschedule message
+4. **Automatic refill**: Tokens refill continuously at configured rate
+5. **Per-domain isolation**: Each domain has independent bucket (no cross-domain impact)
+
+**Rate Limit Delay:**
+
+When rate limited, messages are:
+- **Not failed** - Status remains `Pending` (not an error)
+- **Rescheduled** - `next_retry_at` set to when tokens available
+- **Logged** - Structured log with domain, wait time, and next retry
+- **Metered** - Metrics track rate limit events per domain
+
+**Metrics:**
+
+```promql
+# Total rate limited deliveries by domain
+empath_delivery_rate_limited_total{domain="example.com"}
+
+# Distribution of rate limit delays
+histogram_quantile(0.95, empath_delivery_rate_limit_delay_seconds_bucket)
+
+# Rate limit delay seconds by domain
+empath_delivery_rate_limit_delay_seconds_sum{domain="example.com"} /
+empath_delivery_rate_limit_delay_seconds_count{domain="example.com"}
+```
+
+**Monitoring Rate Limiting:**
+
+```logql
+# Find rate limited deliveries
+{service="empath"} | json | fields.message=~"Rate limit exceeded"
+
+# Count rate limits by domain (last hour)
+sum by (fields_domain) (
+  count_over_time(
+    {service="empath"} | json | fields.message=~"Rate limit exceeded" [1h]
+  )
+)
+
+# Average rate limit delay by domain
+avg by (fields_domain) (
+  avg_over_time(
+    {service="empath"} | json | fields.wait_seconds > 0 [5m]
+  )
+)
+```
+
+**Example Logs:**
+
+```json
+{
+  "timestamp": "2025-11-16T10:30:45.123456+00:00",
+  "level": "INFO",
+  "fields": {
+    "message": "Rate limit exceeded, delaying delivery",
+    "message_id": "01JCXYZ123ABC",
+    "domain": "example.com",
+    "wait_seconds": 0.5,
+    "next_retry_at": "2025-11-16T10:30:45.623456+00:00"
+  },
+  "target": "empath_delivery::processor::delivery"
+}
+```
+
+**Implementation Details:**
+
+- **Location**: `empath-delivery/src/rate_limiter.rs`
+- **Concurrency**: `DashMap` for lock-free domain bucket lookup
+- **Synchronization**: `parking_lot::Mutex` for individual bucket access
+- **Precision**: Floating-point tokens for sub-second accuracy
+- **Refill**: Automatic time-based refill on every access
+
+**Best Practices:**
+
+1. **Start conservative**: Use default 10 msg/sec, monitor, adjust upward
+2. **Override high-volume**: Gmail/Outlook can handle 50-100 msg/sec
+3. **Burst appropriately**: Burst size = 2x sustained rate is a good starting point
+4. **Monitor metrics**: Watch for excessive rate limiting (increase limits)
+5. **Check logs**: Rate limit events indicate capacity planning needs
+6. **Domain research**: Check recipient provider's published rate limits
+7. **Test first**: Use low rates for new domains until reputation established
+
+**Common Rate Limits (Approximate):**
+
+| Provider | Recommended Rate | Burst Size | Notes |
+|----------|------------------|------------|-------|
+| Gmail    | 20-50 msg/sec    | 100        | High volume tolerance |
+| Outlook  | 20-50 msg/sec    | 100        | Enforce sender reputation |
+| Yahoo    | 10-20 msg/sec    | 50         | Conservative limits |
+| Small domains | 1-5 msg/sec   | 10         | May have limited capacity |
+| Default  | 10 msg/sec       | 20         | Safe starting point |
+
+**Troubleshooting:**
+
+- **Too many rate limits**: Increase `messages_per_second` for affected domain
+- **Blacklisting despite limits**: Reduce rate further or check IP reputation
+- **Slow delivery**: Expected behavior - rate limiting trades speed for reliability
+- **No rate limiting observed**: Check configuration loaded, verify domain name matches
 
 ### JSON Structured Logging
 

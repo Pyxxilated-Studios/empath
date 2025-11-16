@@ -6,6 +6,7 @@
 //! - Prepare messages for sending via SMTP
 //! - DNS MX record resolution for recipient domains
 //! - Generate Delivery Status Notifications (DSNs) for failed deliveries
+//! - Per-domain rate limiting to prevent overwhelming recipients
 
 mod dns;
 mod domain_config;
@@ -13,6 +14,7 @@ mod dsn;
 mod error;
 mod processor;
 pub mod queue;
+mod rate_limiter;
 mod service;
 mod smtp_transaction;
 mod types;
@@ -30,5 +32,7 @@ pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 // Re-export core types
 pub use processor::DeliveryProcessor;
 pub use queue::DeliveryQueue;
+// Re-export rate limiting types
+pub use rate_limiter::{DomainRateLimit, RateLimitConfig, RateLimitStats};
 pub use service::DeliveryQueryService;
 pub use types::{DeliveryInfo, SmtpTimeouts};

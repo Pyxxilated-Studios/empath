@@ -43,6 +43,12 @@ pub struct DeliveryMetrics {
     /// Age of the oldest pending message in the queue
     oldest_message_seconds: Arc<AtomicU64>,
 
+    /// Total number of deliveries delayed by rate limiting
+    rate_limited_total: Counter<u64>,
+
+    /// Distribution of rate limit delay durations
+    rate_limit_delay_seconds: Histogram<f64>,
+
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     messages_delivered_count: Arc<AtomicU64>,
     messages_failed_count: Arc<AtomicU64>,
@@ -199,6 +205,16 @@ impl DeliveryMetrics {
             .with_description("Distribution of queue age (time between spool and delivery attempt)")
             .build();
 
+        let rate_limited_total = meter
+            .u64_counter("empath.delivery.rate_limited.total")
+            .with_description("Total number of deliveries delayed by rate limiting")
+            .build();
+
+        let rate_limit_delay_seconds = meter
+            .f64_histogram("empath.delivery.rate_limit.delay.seconds")
+            .with_description("Distribution of rate limit delay durations")
+            .build();
+
         // Create atomic counter for oldest message tracking
         let oldest_message_ref = Arc::new(AtomicU64::new(0));
 
@@ -290,6 +306,8 @@ impl DeliveryMetrics {
             retry_count,
             queue_age_seconds,
             oldest_message_seconds: oldest_message_ref,
+            rate_limited_total,
+            rate_limit_delay_seconds,
             messages_delivered_count: messages_delivered_ref,
             messages_failed_count: messages_failed_ref,
             messages_retrying_count: messages_retrying_ref,
@@ -504,6 +522,19 @@ impl DeliveryMetrics {
     #[must_use]
     pub fn tracked_domains_count(&self) -> usize {
         self.tracked_domains.len()
+    }
+
+    /// Record a rate limiting event
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain that was rate limited
+    /// * `delay_secs` - The delay duration in seconds before the next retry
+    pub fn record_rate_limit(&self, domain: &str, delay_secs: f64) {
+        let bucketed_domain = self.bucket_domain(domain);
+        let attributes = [KeyValue::new("domain", bucketed_domain)];
+        self.rate_limited_total.add(1, &attributes);
+        self.rate_limit_delay_seconds.record(delay_secs, &attributes);
     }
 }
 

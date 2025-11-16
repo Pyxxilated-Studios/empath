@@ -155,6 +155,46 @@ pub async fn prepare_message(
     });
     modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
 
+    // Check rate limit before attempting delivery
+    if let Some(rate_limiter) = &processor.rate_limiter {
+        if let Err(wait_time) = rate_limiter.check_rate_limit(&info.recipient_domain) {
+            // Rate limited - schedule retry
+            let next_retry_at =
+                std::time::SystemTime::now() + std::time::Duration::from_secs(wait_time.as_secs());
+
+            processor.queue.set_next_retry_at(message_id, next_retry_at);
+            processor
+                .queue
+                .update_status(message_id, DeliveryStatus::Pending);
+
+            // Record rate limiting metrics
+            if let Some(metrics) = empath_metrics::try_metrics() {
+                metrics
+                    .delivery
+                    .record_rate_limit(info.recipient_domain.as_str(), wait_time.as_secs_f64());
+            }
+
+            info!(
+                message_id = %message_id,
+                domain = %info.recipient_domain,
+                wait_seconds = wait_time.as_secs_f64(),
+                next_retry_at = ?next_retry_at,
+                "Rate limit exceeded, delaying delivery"
+            );
+
+            // Persist the delayed status to spool
+            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+                warn!(
+                    message_id = %message_id,
+                    error = %e,
+                    "Failed to persist delivery state after rate limit delay"
+                );
+            }
+
+            return Ok(()); // Not an error, just delayed
+        }
+    }
+
     // Deliver the message via SMTP (including DATA command)
     let result = deliver_message(processor, &mx_address, &context, &info).await;
 

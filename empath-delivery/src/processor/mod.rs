@@ -17,6 +17,7 @@ use crate::{
     dsn::DsnConfig,
     error::DeliveryError,
     queue::DeliveryQueue,
+    rate_limiter::{RateLimitConfig, RateLimiter},
     types::SmtpTimeouts,
 };
 
@@ -141,6 +142,15 @@ pub struct DeliveryProcessor {
     #[serde(default)]
     pub dsn: DsnConfig,
 
+    /// Rate limiting configuration
+    ///
+    /// Controls per-domain rate limits to prevent overwhelming recipient servers
+    /// and avoid blacklisting. Uses token bucket algorithm for burst tolerance.
+    ///
+    /// Default: 10 messages/sec with burst of 20
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+
     /// How often to process the cleanup queue for failed deletions (in seconds)
     ///
     /// When spool deletion fails after successful delivery, messages are added
@@ -178,6 +188,10 @@ pub struct DeliveryProcessor {
     /// Delivery metrics collector (initialized in `init()`)
     #[serde(skip)]
     pub(crate) metrics: Option<empath_metrics::DeliveryMetrics>,
+
+    /// Rate limiter for per-domain throttling (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) rate_limiter: Option<RateLimiter>,
 }
 
 impl Default for DeliveryProcessor {
@@ -195,6 +209,7 @@ impl Default for DeliveryProcessor {
             domains: DomainConfigRegistry::default(),
             smtp_timeouts: SmtpTimeouts::default(),
             dsn: DsnConfig::default(),
+            rate_limit: RateLimitConfig::default(),
             cleanup_interval_secs: default_cleanup_interval(),
             max_cleanup_attempts: default_max_cleanup_attempts(),
             spool: None,
@@ -202,6 +217,7 @@ impl Default for DeliveryProcessor {
             dns_resolver: None,
             cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
             metrics: None,
+            rate_limiter: None,
         }
     }
 }
@@ -241,6 +257,14 @@ impl DeliveryProcessor {
                 empath_common::tracing::warn!(error = %e, "Failed to initialize delivery metrics");
             }
         }
+
+        // Initialize rate limiter
+        self.rate_limiter = Some(RateLimiter::new(self.rate_limit.clone()));
+        internal!(
+            "Rate limiter initialized (default: {} msg/sec, burst: {})",
+            self.rate_limit.messages_per_second,
+            self.rate_limit.burst_size
+        );
 
         Ok(())
     }

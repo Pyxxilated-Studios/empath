@@ -715,6 +715,7 @@ dependencies = [
  "empath-tracing",
  "hickory-resolver",
  "mailparse",
+ "parking_lot",
  "rand",
  "ron",
  "serde",
