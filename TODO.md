@@ -710,21 +710,58 @@ count(count by (domain) (empath_delivery_attempts_total)) > 5000
 
 ---
 
-### 🟢 0.11 Create Security Documentation
+### ✅ 0.11 Create Security Documentation
+**Status:** COMPLETED
 **Priority:** Medium
 **Effort:** 1 day
-**Files:** `docs/SECURITY.md` (new)
+**Files:** `docs/SECURITY.md` (created)
 
-Document threat model, TLS certificate validation policy, DNSSEC considerations, rate limiting, input validation, and vulnerability reporting.
+**Implementation:**
+Comprehensive security documentation covering:
+- ✅ Vulnerability reporting process
+- ✅ Threat model with 5 attack surfaces and 5 threat scenarios
+- ✅ TLS certificate validation policies (server and client)
+- ✅ Timeouts and resource limits (RFC 5321 compliant)
+- ✅ Input validation (SMTP commands, ESMTP parameters, message size)
+- ✅ Authentication and authorization (control socket, metrics)
+- ✅ Audit logging (control commands, SMTP transactions)
+- ✅ DNS security (cache with TTL bounds)
+- ✅ Configuration best practices (production checklist)
+- ✅ Known limitations with risk assessment
+- ✅ Security roadmap
+
+**Files Created:**
+- `docs/SECURITY.md` - 900+ lines of comprehensive security documentation
 
 ---
 
-### 🟢 0.12 Create Deployment Guide
+### ✅ 0.12 Create Deployment Guide
+**Status:** COMPLETED
 **Priority:** Medium
 **Effort:** 2 days
-**Files:** `docs/DEPLOYMENT.md` (new)
+**Files:** `docs/DEPLOYMENT.md` (created)
 
-Document system requirements, configuration best practices, TLS setup, monitoring, performance tuning, backup/recovery, and troubleshooting.
+**Implementation:**
+Comprehensive deployment guide (1000+ lines) covering:
+- ✅ System requirements (hardware, software, network)
+- ✅ Installation (from source, Docker, Kubernetes)
+- ✅ Configuration (production config, TLS setup, performance tuning)
+- ✅ Monitoring (OpenTelemetry, Prometheus, Grafana dashboards)
+- ✅ Health checks (Kubernetes liveness/readiness probes)
+- ✅ Operational procedures (start/stop, queue management, DNS cache)
+- ✅ Backup and recovery procedures
+- ✅ Troubleshooting guide (5 common issues with solutions)
+- ✅ Maintenance (log rotation, updates, security)
+- ✅ Scaling (horizontal/vertical, load balancing)
+
+**Deployment Methods Documented:**
+- Systemd service with security hardening
+- Docker with multi-stage builds
+- Docker Compose with full observability stack
+- Kubernetes with manifests (Deployment, Service, PVC, ConfigMap)
+
+**Files Created:**
+- `docs/DEPLOYMENT.md` - 1000+ lines of production deployment documentation
 
 ---
 
