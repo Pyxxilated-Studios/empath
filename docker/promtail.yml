@@ -1,0 +1,134 @@
+# Promtail configuration for shipping Docker container logs to Loki
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+# Positions file to track which logs have been read
+positions:
+  filename: /tmp/positions.yaml
+
+# Loki client configuration
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+# Scrape configuration
+scrape_configs:
+  # Docker container logs
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["logging=promtail"]
+
+    # Relabeling rules to extract metadata
+    relabel_configs:
+      # Set the container name as a label
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+
+      # Extract job name from container label
+      - source_labels: ['__meta_docker_container_label_logging_jobname']
+        target_label: 'job'
+
+      # Set the compose project name
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'compose_project'
+
+      # Set the compose service name
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'compose_service'
+
+      # Container ID
+      - source_labels: ['__meta_docker_container_id']
+        target_label: 'container_id'
+
+      # Image name
+      - source_labels: ['__meta_docker_container_image']
+        target_label: 'image'
+
+      # Network name
+      - source_labels: ['__meta_docker_container_network_mode']
+        target_label: 'network'
+
+    # Pipeline stages for log processing
+    pipeline_stages:
+      # Parse JSON logs
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            target: target
+            message: fields.message
+            message_id: fields.message_id
+            domain: fields.domain
+            delivery_attempt: fields.delivery_attempt
+            smtp_code: fields.smtp_code
+            sender: fields.sender
+            recipient: fields.recipient
+            server: fields.server
+            error: fields.error
+            filename: filename
+            line_number: line_number
+
+      # Add labels from parsed JSON
+      - labels:
+          level:
+          target:
+          message_id:
+          domain:
+
+      # Use timestamp from JSON if available
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - RFC3339
+
+      # Output formatted log line
+      - output:
+          source: message
+
+  # System-wide Docker logs (fallback for containers without promtail label)
+  - job_name: docker-all
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+
+    relabel_configs:
+      # Only collect from empath network containers
+      - source_labels: ['__meta_docker_container_network_mode']
+        regex: '.*empath.*'
+        action: keep
+
+      # Skip containers already handled by the 'docker' job
+      - source_labels: ['__meta_docker_container_label_logging']
+        regex: 'promtail'
+        action: drop
+
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+
+      - source_labels: ['__meta_docker_container_image']
+        target_label: 'image'
+
+    pipeline_stages:
+      # Try to parse as JSON, fall back to plain text
+      - match:
+          selector: '{container=~".+"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+                  message: message
+            - labels:
+                level:
+            - output:
+                source: message

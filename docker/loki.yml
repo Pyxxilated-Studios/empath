@@ -1,0 +1,120 @@
+# Loki configuration for Empath MTA log aggregation
+# Provides 7-day retention with compression
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+# Query configuration
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+# Schema configuration
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Storage configuration with 7-day retention
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+  filesystem:
+    directory: /loki/chunks
+
+# Compactor for retention and compression
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+# Limits configuration
+limits_config:
+  # 7-day retention (168 hours)
+  retention_period: 168h
+
+  # Ingestion limits
+  ingestion_rate_mb: 10
+  ingestion_burst_size_mb: 20
+
+  # Query limits
+  max_query_length: 721h  # Allow queries up to 30 days (for historical analysis)
+  max_query_lookback: 721h
+  max_query_series: 1000
+  max_streams_per_user: 10000
+  max_entries_limit_per_query: 10000
+
+  # Compression
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  creation_grace_period: 10m
+  enforce_metric_name: false
+  max_label_name_length: 1024
+  max_label_value_length: 2048
+  max_label_names_per_series: 30
+
+# Table manager for retention
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 168h  # 7 days
+
+# Chunk store configuration with compression
+chunk_store_config:
+  chunk_cache_config:
+    embedded_cache:
+      enabled: true
+      max_size_mb: 100
+  write_dedupe_cache_config:
+    embedded_cache:
+      enabled: true
+      max_size_mb: 100
+
+# Frontend configuration for query performance
+frontend:
+  compress_responses: true
+  max_outstanding_per_tenant: 2048
+
+# Query scheduler
+query_scheduler:
+  max_outstanding_requests_per_tenant: 2048
+
+# Ruler configuration (for alerts - optional)
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-temp
+  alertmanager_url: http://localhost:9093
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: true
+  enable_alertmanager_v2: true

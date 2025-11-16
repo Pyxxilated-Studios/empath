@@ -39,9 +39,15 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "ansi",
     "chrono",
     "fmt",
+    "json",
     "parking_lot",
+    "registry",
     "tracing-log",
 ] }
+# OpenTelemetry trace context (trace_id, span_id) will be added in tasks 0.35+0.36
+# tracing-opentelemetry = "0.31"
+# opentelemetry = { version = "0.31", features = ["trace"] }
+# opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "trace"] }
 tokio = { version = "1", default-features = false, features = [
     "io-util",
     "net",

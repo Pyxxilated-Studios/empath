@@ -47,7 +47,7 @@ pub async fn prepare_message(
     // Persist the InProgress status to spool
     if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
         warn!(
-            message_id = ?message_id,
+            message_id = %message_id,
             error = %e,
             "Failed to persist delivery state after status update to InProgress"
         );
@@ -169,7 +169,7 @@ pub async fn prepare_message(
             // in case the deletion fails
             if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
                 warn!(
-                    message_id = ?message_id,
+                    message_id = %message_id,
                     error = %e,
                     "Failed to persist delivery state after successful delivery"
                 );
@@ -178,7 +178,7 @@ pub async fn prepare_message(
             // Delete the message from the spool after successful delivery
             if let Err(e) = spool.delete(message_id).await {
                 error!(
-                    message_id = ?message_id,
+                    message_id = %message_id,
                     error = %e,
                     "Failed to delete message from spool after successful delivery - adding to cleanup queue for retry"
                 );
@@ -268,8 +268,12 @@ pub async fn handle_delivery_error(
         && let Some(next_server) = info.current_mail_server()
     {
         info!(
-            "Trying next MX server for {:?}: {} (priority {})",
-            message_id, next_server.host, next_server.priority
+            message_id = %message_id,
+            domain = %info.recipient_domain,
+            server = %next_server.host,
+            priority = next_server.priority,
+            delivery_attempt = info.attempt_count(),
+            "Trying next MX server"
         );
         // Set status back to Pending to retry immediately with next server
         processor
@@ -281,7 +285,7 @@ pub async fn handle_delivery_error(
             && let Err(e) = persist_delivery_state(processor, message_id, spool).await
         {
             warn!(
-                message_id = ?message_id,
+                message_id = %message_id,
                 error = %e,
                 "Failed to persist delivery state after MX server fallback"
             );
@@ -323,8 +327,9 @@ pub async fn handle_delivery_error(
             .as_secs();
 
         info!(
-            message_id = ?message_id,
-            attempt = updated_info.attempt_count(),
+            message_id = %message_id,
+            domain = %updated_info.recipient_domain,
+            delivery_attempt = updated_info.attempt_count(),
             retry_delay_secs = delay_secs,
             next_retry_at = ?next_retry_at,
             "Scheduled retry with exponential backoff"
@@ -336,7 +341,7 @@ pub async fn handle_delivery_error(
         && let Err(e) = persist_delivery_state(processor, message_id, spool).await
     {
         warn!(
-            message_id = ?message_id,
+            message_id = %message_id,
             error = %e,
             "Failed to persist delivery state after handling delivery error"
         );

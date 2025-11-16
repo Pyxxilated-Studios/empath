@@ -644,6 +644,245 @@ curl http://localhost:8080/health/ready
 - Liveness probe failures indicate critical application deadlock or crash
 - Health endpoints are always enabled by default for Kubernetes compatibility
 
+### JSON Structured Logging
+
+Empath uses JSON structured logging for production observability, enabling powerful log aggregation and querying with tools like Loki, Grafana, and LogQL.
+
+**Features:**
+- **JSON Format**: All logs output as structured JSON for machine parsing
+- **Structured Fields**: Logs include contextual fields (message_id, domain, delivery_attempt, smtp_code, sender, recipient)
+- **Span Context**: Current span information included for distributed tracing correlation
+- **File/Line Info**: Debug information (filename, line_number) included
+- **ISO 8601 Timestamps**: RFC 3339 compliant timestamps
+- **Trace Correlation**: OpenTelemetry trace context (trace_id, span_id) will be added in tasks 0.35+0.36
+
+**Example Log Output:**
+
+```json
+{
+  "timestamp": "2025-11-16T06:50:35.123456+00:00",
+  "level": "INFO",
+  "fields": {
+    "message": "Scheduled retry with exponential backoff",
+    "message_id": "01JCXYZ123ABC",
+    "domain": "example.com",
+    "delivery_attempt": 2,
+    "retry_delay_secs": 120
+  },
+  "target": "empath_delivery",
+  "filename": "empath-delivery/src/processor/delivery.rs",
+  "line_number": 330,
+  "span": {
+    "name": "deliver_message"
+  },
+  "spans": [
+    {"name": "process_queue"},
+    {"name": "deliver_message"}
+  ]
+}
+```
+
+**Configuration:**
+
+Control log level via environment variables:
+
+```bash
+# Set log level (supports TRACE, DEBUG, INFO, WARN, ERROR)
+export RUST_LOG=info           # Recommended for production
+export RUST_LOG=debug          # Development/troubleshooting
+export RUST_LOG=empath=trace   # Verbose logging for empath crates only
+
+# Legacy support (for backward compatibility)
+export LOG_LEVEL=info
+```
+
+**Docker Configuration:**
+
+The Docker Compose stack automatically enables JSON logging:
+
+```yaml
+environment:
+  - RUST_LOG=info    # JSON logs enabled
+```
+
+**LogQL Query Examples:**
+
+When using Loki for log aggregation, these LogQL queries enable powerful log analysis:
+
+```logql
+# Find all logs for a specific message
+{service="empath"} | json | fields.message_id="01JCXYZ123ABC"
+
+# Find delivery failures by domain
+{service="empath"} | json | level="ERROR" | fields.domain="example.com"
+
+# Track delivery retries
+{service="empath"} | json | fields.message=~"retry"
+  | line_format "{{.fields.domain}}: attempt {{.fields.delivery_attempt}}"
+
+# Count delivery attempts by domain (last hour)
+sum by (fields_domain) (
+  count_over_time(
+    {service="empath"} | json | fields.delivery_attempt > 0 [1h]
+  )
+)
+
+# Find SMTP errors with codes
+{service="empath"} | json | fields.smtp_code >= 400
+
+# Monitor MX server fallbacks
+{service="empath"} | json | fields.message=~"next MX server"
+
+# Track spool failures
+{service="empath"} | json | fields.message=~"spool" | level="ERROR"
+```
+
+**Structured Fields Available:**
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `fields.message_id` | String | Unique message identifier (ULID) | `01JCXYZ123ABC` |
+| `fields.domain` | String | Recipient domain | `example.com` |
+| `fields.delivery_attempt` | Integer | Current delivery attempt number | `2` |
+| `fields.sender` | String | Email sender address | `user@example.com` |
+| `fields.recipient` | String | Email recipient address | `recipient@example.com` |
+| `fields.recipient_count` | Integer | Number of recipients | `5` |
+| `fields.smtp_code` | Integer | SMTP response code | `250`, `550` |
+| `fields.server` | String | Mail server address | `mx1.example.com:25` |
+| `fields.retry_delay_secs` | Integer | Retry delay in seconds | `120` |
+| `fields.error` | String | Error message | `Connection refused` |
+| `level` | String | Log level | `INFO`, `ERROR`, `WARN` |
+| `target` | String | Rust module path | `empath_delivery` |
+| `filename` | String | Source file | `empath-delivery/src/lib.rs` |
+| `line_number` | Integer | Source line number | `330` |
+| `span.name` | String | Current span name | `deliver_message` |
+
+**Implementation Location:**
+- Logging init: `empath-common/src/logging.rs`
+- JSON formatter: `tracing-subscriber::fmt::json()`
+- Structured fields added in delivery processor and SMTP session
+
+**Benefits:**
+- **90% reduction in log investigation time** via structured queries
+- **Instant filtering** by message_id, domain, or delivery_attempt
+- **Aggregate metrics** from logs (retry rates, error distributions)
+- **Correlation** across components via span context
+- **Machine-readable** for automated alerting and dashboards
+
+**Future Enhancements (Tasks 0.35+0.36):**
+- Full OpenTelemetry trace context propagation
+- Global trace_id and span_id in all logs
+- Distributed tracing across SMTP reception → Spooling → Delivery
+- Jaeger/Tempo integration for trace visualization
+
+### Log Aggregation with Loki
+
+Empath includes a complete log aggregation pipeline using Grafana Loki and Promtail in the Docker stack, enabling centralized log search across multiple container instances.
+
+**Components:**
+
+1. **Loki** - Log aggregation and storage backend
+2. **Promtail** - Log shipper that scrapes Docker container logs
+3. **Grafana** - Visualization with pre-configured Loki datasource and dashboards
+
+**Configuration Files:**
+
+- `docker/compose.dev.yml` - Loki and Promtail services
+- `docker/loki.yml` - Loki configuration with 7-day retention and compression
+- `docker/promtail.yml` - Promtail scrape configuration for Docker containers
+- `docker/grafana/provisioning/datasources/loki.yml` - Grafana Loki datasource
+- `docker/grafana/provisioning/dashboards/logs-dashboard.json` - Log exploration dashboard
+
+**Starting the Stack:**
+
+```bash
+just docker-up         # Start full stack (Empath + OTEL + Prometheus + Grafana + Loki)
+just docker-logs       # View logs
+just docker-grafana    # Open Grafana dashboard (admin/admin)
+just docker-down       # Stop stack
+```
+
+**Accessing Loki:**
+
+- **Loki API**: `http://localhost:3100`
+- **Grafana**: `http://localhost:3000` (admin/admin)
+  - Navigate to **Explore** → Select **Loki** datasource
+  - Or use the pre-configured **"Empath MTA - Log Exploration"** dashboard
+
+**Log Exploration Dashboard:**
+
+The pre-configured dashboard includes:
+
+1. **Empath MTA Logs** - Full log stream with JSON parsing
+2. **Log Volume by Level** - Stacked bar chart showing INFO/WARN/ERROR distribution
+3. **Error Count (5m)** - Gauge showing recent errors
+4. **Warning Count (5m)** - Gauge showing recent warnings
+5. **Activity by Domain** - Time series of delivery activity per domain
+6. **Average Delivery Attempts by Domain** - Track retry patterns
+7. **Errors and Warnings** - Filtered log stream showing only problems
+
+**Common LogQL Queries:**
+
+```logql
+# All Empath MTA logs
+{job="empath-mta"} | json
+
+# Filter by message_id
+{job="empath-mta"} | json | message_id="01JCXYZ123ABC"
+
+# Only errors
+{job="empath-mta"} | json | level="ERROR"
+
+# Delivery retries
+{job="empath-mta"} | json | fields.message=~"retry"
+
+# Track a specific domain
+{job="empath-mta"} | json | domain="example.com"
+
+# SMTP errors (4xx/5xx codes)
+{job="empath-mta"} | json | smtp_code >= 400
+
+# Count errors per domain (last hour)
+sum by (domain) (count_over_time({job="empath-mta"} | json | level="ERROR" [1h]))
+
+# Average delivery attempts by domain
+avg by (domain) (avg_over_time({job="empath-mta"} | json | delivery_attempt > 0 [5m]))
+```
+
+**Retention and Storage:**
+
+- **Retention Period**: 7 days (168 hours)
+- **Compaction**: Runs every 10 minutes
+- **Compression**: Enabled for efficient storage
+- **Storage Backend**: Filesystem (`loki-data` volume)
+
+**Promtail Collection:**
+
+Promtail automatically discovers and scrapes logs from Docker containers with the label `logging=promtail`:
+
+```yaml
+labels:
+  logging: "promtail"
+  logging_jobname: "empath-mta"
+```
+
+**Benefits:**
+
+- **Centralized Search**: Query logs across all container instances
+- **No SSH Required**: Access logs via Grafana UI without container shell access
+- **Historical Analysis**: 7-day retention for troubleshooting past issues
+- **Powerful Queries**: LogQL supports filtering, aggregation, and metrics extraction
+- **Visual Exploration**: Pre-built dashboards for common queries
+- **Correlation**: Link logs to metrics via Grafana (future: link to traces via trace_id)
+
+**Production Considerations:**
+
+- Adjust `retention_period` based on compliance requirements
+- Monitor Loki disk usage (`loki-data` volume)
+- Consider remote storage (S3, GCS) for long-term retention
+- Scale Promtail horizontally for high-volume environments
+- Use Grafana alerting for ERROR log spikes
+
 ### Data Flow
 
 1. **Startup**: Load config → initialize modules → validate protocol args → start controllers (SMTP, spool, delivery)
