@@ -4,21 +4,58 @@ use std::{sync::Arc, time::SystemTime};
 
 use empath_common::{
     DeliveryStatus,
-    tracing::{debug, error, warn},
+    tracing::{debug, error, info, warn},
 };
+use tokio::task::JoinSet;
 
 use crate::{
     dns::MailServer,
     error::DeliveryError,
     processor::{DeliveryProcessor, delivery::prepare_message},
+    types::DeliveryInfo,
 };
 
-/// Process all pending messages in the queue
+/// Process a single message for delivery (spawned as a task)
+async fn process_single_message(
+    processor: Arc<DeliveryProcessor>,
+    spool: Arc<dyn empath_spool::BackingStore>,
+    info: DeliveryInfo,
+) {
+    // Record queue age metric before attempting delivery
+    if let Some(metrics) = &processor.metrics {
+        metrics.record_queue_age(info.queued_at);
+    }
+
+    if let Err(e) = prepare_message(&processor, &info.message_id, &spool).await {
+        error!(
+            message_id = ?info.message_id,
+            error = %e,
+            "Failed to prepare message for delivery"
+        );
+
+        if let Ok(mut context) = spool.read(&info.message_id).await {
+            let server = info
+                .mail_servers
+                .get(info.current_server_index)
+                .map_or_else(|| info.recipient_domain.to_string(), MailServer::address);
+            let _error = super::delivery::handle_delivery_error(
+                &processor,
+                &info.message_id,
+                &mut context,
+                e,
+                server,
+            )
+            .await;
+        }
+    }
+}
+
+/// Process all pending messages in the queue with parallel delivery
 ///
 /// This method:
 /// 1. Checks for expired messages and marks them as `Expired`
 /// 2. For messages with `Retry` status, checks if it's time to retry
-/// 3. Processes messages that are ready for delivery
+/// 3. Processes messages that are ready for delivery in parallel (up to max_concurrent_deliveries)
 ///
 /// # Errors
 /// Returns an error if processing fails
@@ -27,10 +64,13 @@ use crate::{
     reason = "Queue processing logic naturally requires many branches"
 )]
 pub async fn process_queue_internal(
-    processor: &DeliveryProcessor,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    processor: Arc<DeliveryProcessor>,
+    spool: Arc<dyn empath_spool::BackingStore>,
 ) -> Result<(), DeliveryError> {
     let now = SystemTime::now();
+
+    // Vector to collect messages ready for parallel delivery
+    let mut pending_messages = Vec::new();
 
     // Get all messages to check for expiration and retry timing
     let all_messages = processor.queue.all_messages();
@@ -84,7 +124,7 @@ pub async fn process_queue_internal(
 
                 // Persist the Expired status to spool
                 if let Err(e) =
-                    super::delivery::persist_delivery_state(processor, &info.message_id, spool)
+                    super::delivery::persist_delivery_state(&processor, &info.message_id, &spool)
                         .await
                 {
                     warn!(
@@ -131,7 +171,7 @@ pub async fn process_queue_internal(
 
             // Persist the Pending status for retry
             if let Err(e) =
-                super::delivery::persist_delivery_state(processor, &info.message_id, spool).await
+                super::delivery::persist_delivery_state(&processor, &info.message_id, &spool).await
             {
                 warn!(
                     message_id = ?info.message_id,
@@ -141,34 +181,45 @@ pub async fn process_queue_internal(
             }
         }
 
-        // Process the message (Pending status)
+        // Collect Pending messages for parallel processing
         if matches!(info.status, DeliveryStatus::Pending) {
-            // Record queue age metric before attempting delivery
-            if let Some(metrics) = &processor.metrics {
-                metrics.record_queue_age(info.queued_at);
+            pending_messages.push(info);
+        }
+    }
+
+    // Process pending messages in parallel using JoinSet
+    if !pending_messages.is_empty() {
+        info!(
+            pending_count = pending_messages.len(),
+            max_concurrent = processor.max_concurrent_deliveries,
+            "Processing delivery queue with parallel workers"
+        );
+
+        let mut join_set: JoinSet<()> = JoinSet::new();
+        let mut pending_iter = pending_messages.into_iter();
+
+        // Spawn initial batch of tasks (up to max_concurrent_deliveries)
+        for _ in 0..processor.max_concurrent_deliveries.min(pending_iter.len()) {
+            if let Some(msg_info) = pending_iter.next() {
+                // Clone Arc for this task
+                let processor_clone = Arc::clone(&processor);
+                let spool_clone = Arc::clone(&spool);
+
+                join_set.spawn(async move {
+                    process_single_message(processor_clone, spool_clone, msg_info).await;
+                });
             }
+        }
 
-            if let Err(e) = prepare_message(processor, &info.message_id, spool).await {
-                error!(
-                    message_id = ?info.message_id,
-                    error = %e,
-                    "Failed to prepare message for delivery"
-                );
+        // As tasks complete, spawn new ones for remaining messages
+        while join_set.join_next().await.is_some() {
+            if let Some(msg_info) = pending_iter.next() {
+                let processor_clone = Arc::clone(&processor);
+                let spool_clone = Arc::clone(&spool);
 
-                if let Ok(mut context) = spool.read(&info.message_id).await {
-                    let server = info
-                        .mail_servers
-                        .get(info.current_server_index)
-                        .map_or_else(|| info.recipient_domain.to_string(), MailServer::address);
-                    let _error = super::delivery::handle_delivery_error(
-                        processor,
-                        &info.message_id,
-                        &mut context,
-                        e,
-                        server,
-                    )
-                    .await;
-                }
+                join_set.spawn(async move {
+                    process_single_message(processor_clone, spool_clone, msg_info).await;
+                });
             }
         }
     }

@@ -197,6 +197,7 @@ impl RateLimiter {
     }
 
     /// Get current stats for a domain (for monitoring/debugging)
+    #[allow(dead_code, reason = "Reserved for future CLI/debugging commands")]
     pub fn get_stats(&self, domain: &Domain) -> Option<RateLimitStats> {
         self.buckets.get(domain).map(|bucket| {
             let mut bucket = bucket.lock();

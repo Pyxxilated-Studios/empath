@@ -33,11 +33,12 @@ empath-spool = { path = "../empath-spool", version = "*" }
 empath-tracing = { path = "../empath-tracing", version = "*" }
 hickory-resolver = "0.25"
 mailparse = "0.16"
+num_cpus = "1"
 parking_lot = "0.12"
 rand = "0.9"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
-tokio = { version = "1", default-features = false, features = ["sync", "fs", "time"] }
+tokio = { version = "1", default-features = false, features = ["sync", "fs", "time", "rt"] }
 tracing = { version = "0.1", default-features = false }
 ulid = "1"
 

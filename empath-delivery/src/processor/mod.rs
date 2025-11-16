@@ -45,6 +45,11 @@ const fn default_retry_jitter_factor() -> f64 {
     0.2 // ±20%
 }
 
+fn default_max_concurrent_deliveries() -> usize {
+    // Default to number of CPU cores for optimal parallelism
+    num_cpus::get()
+}
+
 const fn default_cleanup_interval() -> u64 {
     60 // 1 minute
 }
@@ -91,6 +96,15 @@ pub struct DeliveryProcessor {
     /// Default: 86400 seconds (24 hours)
     #[serde(default = "default_max_retry_delay")]
     pub max_retry_delay_secs: u64,
+
+    /// Maximum number of concurrent delivery tasks
+    ///
+    /// Controls the level of parallelism for processing the delivery queue.
+    /// Higher values increase throughput but also increase resource usage.
+    ///
+    /// Default: Number of CPU cores (num_cpus::get())
+    #[serde(default = "default_max_concurrent_deliveries")]
+    pub max_concurrent_deliveries: usize,
 
     /// Jitter factor for retry delays (0.0 to 1.0)
     ///
@@ -202,6 +216,7 @@ impl Default for DeliveryProcessor {
             max_attempts: default_max_attempts(),
             base_retry_delay_secs: default_base_retry_delay(),
             max_retry_delay_secs: default_max_retry_delay(),
+            max_concurrent_deliveries: default_max_concurrent_deliveries(),
             retry_jitter_factor: default_retry_jitter_factor(),
             message_expiration_secs: None,
             accept_invalid_certs: false,
@@ -309,12 +324,12 @@ impl DeliveryProcessor {
     #[allow(clippy::too_many_lines)]
     #[traced(instrument(level = empath_common::tracing::Level::TRACE, skip_all))]
     pub async fn serve(
-        &self,
+        self: Arc<Self>,
         mut shutdown: tokio::sync::broadcast::Receiver<Signal>,
     ) -> Result<(), DeliveryError> {
         internal!("Delivery processor starting");
 
-        let Some(spool) = &self.spool else {
+        let Some(ref spool) = self.spool else {
             return Err(crate::error::SystemError::NotInitialized(
                 "Delivery processor not initialized. Call init() first.".to_string(),
             )
@@ -327,7 +342,7 @@ impl DeliveryProcessor {
 
         // Perform initial spool scan at startup to load existing messages
         // This ensures `empathctl queue list` works immediately
-        match scan::scan_spool_internal(self, spool).await {
+        match scan::scan_spool_internal(&self, spool).await {
             Ok(count) if count > 0 => {
                 internal!("Initial spool scan found {count} messages");
             }
@@ -355,7 +370,7 @@ impl DeliveryProcessor {
         loop {
             tokio::select! {
                 _ = scan_timer.tick() => {
-                    match scan::scan_spool_internal(self, spool).await {
+                    match scan::scan_spool_internal(&self, spool).await {
                         Ok(count) if count > 0 => {
                             empath_common::tracing::info!("Scanned spool, found {count} new messages");
                         }
@@ -372,7 +387,7 @@ impl DeliveryProcessor {
                     // Mark that we're processing
                     processing.store(true, std::sync::atomic::Ordering::SeqCst);
 
-                    match process::process_queue_internal(self, spool).await {
+                    match process::process_queue_internal(Arc::clone(&self), Arc::clone(spool)).await {
                         Ok(()) => {
                             empath_common::tracing::debug!("Processed delivery queue");
                         }
@@ -385,7 +400,7 @@ impl DeliveryProcessor {
                     processing.store(false, std::sync::atomic::Ordering::SeqCst);
                 }
                 _ = cleanup_timer.tick() => {
-                    match cleanup::process_cleanup_queue(self, spool).await {
+                    match cleanup::process_cleanup_queue(&self, spool).await {
                         Ok(count) if count > 0 => {
                             empath_common::tracing::info!("Cleanup queue processed, {count} messages cleaned up");
                         }
