@@ -196,7 +196,9 @@ async fn test_graceful_shutdown() {
     let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
 
     // Start the processor in a background task
-    let processor_handle = tokio::spawn(async move { processor.serve(shutdown_rx).await });
+    let processor = Arc::new(processor);
+    let processor_handle: tokio::task::JoinHandle<_> =
+        tokio::spawn(async move { processor.serve(shutdown_rx).await });
 
     // Give the processor a moment to start
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -240,7 +242,9 @@ async fn test_graceful_shutdown_respects_timeout() {
 
     // Start the processor in a background task
     let start_time = std::time::Instant::now();
-    let processor_handle = tokio::spawn(async move { processor.serve(shutdown_rx).await });
+    let processor = Arc::new(processor);
+    let processor_handle: tokio::task::JoinHandle<_> =
+        tokio::spawn(async move { processor.serve(shutdown_rx).await });
 
     // Give the processor a moment to start
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -249,7 +253,10 @@ async fn test_graceful_shutdown_respects_timeout() {
     shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
 
     // Wait for graceful shutdown to complete
-    let result = tokio::time::timeout(Duration::from_secs(35), processor_handle).await;
+    let result: Result<
+        Result<Result<_, empath_delivery::DeliveryError>, tokio::task::JoinError>,
+        tokio::time::error::Elapsed,
+    > = tokio::time::timeout(Duration::from_secs(35), processor_handle).await;
 
     // Verify shutdown completed quickly (since no processing was happening)
     let elapsed = start_time.elapsed();
@@ -259,7 +266,7 @@ async fn test_graceful_shutdown_respects_timeout() {
         "Shutdown should be fast when not processing (took {elapsed:?})"
     );
 
-    let shutdown_result = result.unwrap();
+    let shutdown_result: Result<_, tokio::task::JoinError> = result.unwrap();
     assert!(shutdown_result.is_ok(), "Processor serve should return Ok");
     assert!(
         shutdown_result.unwrap().is_ok(),

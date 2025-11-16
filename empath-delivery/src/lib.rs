@@ -22,15 +22,17 @@ mod smtp_transaction;
 mod types;
 
 // Re-export circuit breaker types
-pub use circuit_breaker::{CircuitBreakerConfig, CircuitBreakerStats, CircuitState, DomainCircuitBreakerConfig};
+pub use circuit_breaker::{
+    CircuitBreakerConfig, CircuitBreakerStats, CircuitState, DomainCircuitBreakerConfig,
+};
 // Re-export DNS types
 pub use dns::{CacheStats, DnsConfig, DnsError, DnsResolver, MailServer};
 // Re-export domain configuration types
 pub use domain_config::{DomainConfig, DomainConfigRegistry};
-// Re-export common types
-pub use empath_common::{DeliveryAttempt, DeliveryStatus};
 // Re-export DSN types
 pub use dsn::DsnConfig;
+// Re-export common types
+pub use empath_common::{DeliveryAttempt, DeliveryStatus};
 // Re-export error types
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 // Re-export core types

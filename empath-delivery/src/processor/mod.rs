@@ -103,7 +103,7 @@ pub struct DeliveryProcessor {
     /// Controls the level of parallelism for processing the delivery queue.
     /// Higher values increase throughput but also increase resource usage.
     ///
-    /// Default: Number of CPU cores (num_cpus::get())
+    /// Default: Number of CPU cores (`num_cpus::get()`)
     #[serde(default = "default_max_concurrent_deliveries")]
     pub max_concurrent_deliveries: usize,
 

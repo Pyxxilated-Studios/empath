@@ -123,31 +123,21 @@ pub fn generate_dsn(
     );
 
     // Extract sender from original message (this will be the DSN recipient)
-    let original_sender = original_context
-        .envelope
-        .sender()
-        .ok_or_else(|| PermanentError::InvalidRecipient("No sender in original message".to_string()))?;
+    let original_sender = original_context.envelope.sender().ok_or_else(|| {
+        PermanentError::InvalidRecipient("No sender in original message".to_string())
+    })?;
 
     // Extract recipient from original message (for DSN body)
-    let original_recipients = original_context
-        .envelope
-        .recipients()
-        .ok_or_else(|| PermanentError::InvalidRecipient("No recipients in original message".to_string()))?;
+    let original_recipients = original_context.envelope.recipients().ok_or_else(|| {
+        PermanentError::InvalidRecipient("No recipients in original message".to_string())
+    })?;
 
     // Build the three parts of the DSN
-    let human_readable = build_human_readable_part(
-        original_sender,
-        original_recipients,
-        delivery_info,
-        error,
-    );
+    let human_readable =
+        build_human_readable_part(original_sender, original_recipients, delivery_info, error);
 
-    let machine_readable = build_machine_readable_part(
-        config,
-        original_recipients,
-        delivery_info,
-        error,
-    );
+    let machine_readable =
+        build_machine_readable_part(config, original_recipients, delivery_info, error);
 
     let original_headers = extract_original_headers(original_context);
 
@@ -218,13 +208,18 @@ pub fn generate_dsn(
         .and_then(|mut addrs| addrs.pop())
         .map(Address)
         .ok_or_else(|| {
-            PermanentError::InvalidRecipient(format!("Invalid postmaster address: {}", config.postmaster))
+            PermanentError::InvalidRecipient(format!(
+                "Invalid postmaster address: {}",
+                config.postmaster
+            ))
         })?;
 
     *dsn_context.envelope.sender_mut() = Some(postmaster_addr);
 
     // Set recipient to original sender
-    *dsn_context.envelope.recipients_mut() = Some(AddressList::from(vec![Address((**original_sender).clone())]));
+    *dsn_context.envelope.recipients_mut() = Some(AddressList::from(vec![Address(
+        (**original_sender).clone(),
+    )]));
 
     Ok(dsn_context)
 }
@@ -268,10 +263,13 @@ fn build_human_readable_part(
         original_sender = original_sender,
         attempts = delivery_info.attempt_count(),
         domain = delivery_info.recipient_domain,
-        last_server = delivery_info.current_mail_server().map_or_else(
-            String::new,
-            |server| format!("- Last server attempted: {}", server.address())
-        )
+        last_server =
+            delivery_info
+                .current_mail_server()
+                .map_or_else(String::new, |server| format!(
+                    "- Last server attempted: {}",
+                    server.address()
+                ))
     )
 }
 
@@ -290,21 +288,18 @@ fn build_machine_readable_part(
     };
 
     // Per-message fields (mandatory: Reporting-MTA)
-    let mut dsn = format!(
-        "Reporting-MTA: dns; {}\r\n",
-        config.reporting_mta
-    );
+    let mut dsn = format!("Reporting-MTA: dns; {}\r\n", config.reporting_mta);
 
     // Add arrival date if available
-    if let Ok(duration) = delivery_info.queued_at.duration_since(SystemTime::UNIX_EPOCH) {
+    if let Ok(duration) = delivery_info
+        .queued_at
+        .duration_since(SystemTime::UNIX_EPOCH)
+    {
         let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
             duration.as_secs().try_into().unwrap_or(0),
             duration.subsec_nanos(),
         )
-        .map_or_else(
-            || "unknown".to_string(),
-            |dt| dt.to_rfc2822(),
-        );
+        .map_or_else(|| "unknown".to_string(), |dt| dt.to_rfc2822());
         let _ = write!(dsn, "Arrival-Date: {timestamp}\r\n");
     }
 
@@ -336,16 +331,15 @@ fn build_machine_readable_part(
 
         // Last-Attempt-Date (if available)
         if let Some(last_attempt) = delivery_info.attempts.last()
-            && let Ok(duration) = last_attempt.timestamp.duration_since(SystemTime::UNIX_EPOCH)
+            && let Ok(duration) = last_attempt
+                .timestamp
+                .duration_since(SystemTime::UNIX_EPOCH)
         {
             let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
                 duration.as_secs().try_into().unwrap_or(0),
                 duration.subsec_nanos(),
             )
-            .map_or_else(
-                || "unknown".to_string(),
-                |dt| dt.to_rfc2822(),
-            );
+            .map_or_else(|| "unknown".to_string(), |dt| dt.to_rfc2822());
             let _ = write!(dsn, "Last-Attempt-Date: {timestamp}\r\n");
         }
     }
@@ -373,10 +367,12 @@ fn extract_original_headers(original_context: &Context) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
     use empath_common::{DeliveryAttempt, domain::Domain};
     use empath_spool::SpooledMessageId;
+
+    use super::*;
     use crate::{TemporaryError, types::DeliveryInfo};
 
     #[test]
@@ -455,9 +451,7 @@ mod tests {
             mail_servers: Arc::new(vec![]),
         };
 
-        let error = DeliveryError::Temporary(TemporaryError::ServerBusy(
-            "Server busy".to_string(),
-        ));
+        let error = DeliveryError::Temporary(TemporaryError::ServerBusy("Server busy".to_string()));
 
         assert!(!should_generate_dsn(&context, &info, &error));
     }
@@ -476,7 +470,8 @@ mod tests {
         *context.envelope.recipients_mut() = Some(AddressList::from(vec![Address(recipient)]));
 
         context.data = Some(Arc::from(
-            b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nBody".as_slice(),
+            b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nBody"
+                .as_slice(),
         ));
 
         let info = DeliveryInfo {

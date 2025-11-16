@@ -5,7 +5,7 @@
 //!
 //! # Token Bucket Algorithm
 //!
-//! - Tokens are added to the bucket at a constant rate (refill_rate)
+//! - Tokens are added to the bucket at a constant rate (`refill_rate`)
 //! - Each message consumes one token
 //! - If no tokens available, delivery is delayed
 //! - Bucket has maximum capacity (allows bursts)
@@ -159,11 +159,8 @@ impl RateLimiter {
         self.buckets
             .entry(domain.clone())
             .or_insert_with(|| {
-                let (messages_per_second, burst_size) = self
-                    .config
-                    .domain_limits
-                    .get(domain.as_str())
-                    .map_or_else(
+                let (messages_per_second, burst_size) =
+                    self.config.domain_limits.get(domain.as_str()).map_or_else(
                         || (self.config.messages_per_second, self.config.burst_size),
                         |limit| (limit.messages_per_second, limit.burst_size),
                     );
@@ -187,6 +184,7 @@ impl RateLimiter {
             Ok(())
         } else {
             let wait_time = bucket.time_until_available();
+            drop(bucket);
             tracing::debug!(
                 domain = %domain,
                 wait_seconds = wait_time.as_secs_f64(),
@@ -224,6 +222,7 @@ pub struct RateLimitStats {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -258,7 +257,7 @@ mod tests {
         assert!(!bucket.try_consume());
 
         // Wait for refill (simulate time passing)
-        bucket.last_refill = Instant::now() - Duration::from_secs(1);
+        bucket.last_refill = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
         bucket.refill();
 
         // Should have ~10 tokens after 1 second at 10/sec rate
@@ -326,8 +325,8 @@ mod tests {
         // Now get stats after first consumption
         let stats = limiter.get_stats(&domain).unwrap();
         assert!((stats.available_tokens - 19.0).abs() < 0.1); // One token consumed
-        assert_eq!(stats.capacity, 20.0);
-        assert_eq!(stats.refill_rate, 10.0);
+        assert!((stats.capacity - 20.0_f64).abs() < f64::MIN_POSITIVE);
+        assert!((stats.refill_rate - 10.0_f64).abs() < f64::MIN_POSITIVE);
 
         // Consume some more tokens
         limiter.check_rate_limit(&domain).unwrap();

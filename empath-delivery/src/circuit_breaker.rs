@@ -147,7 +147,7 @@ struct CircuitBreakerData {
 
 impl CircuitBreakerData {
     /// Create a new circuit breaker in closed state
-    fn new(config: DomainCircuitBreakerConfig) -> Self {
+    const fn new(config: DomainCircuitBreakerConfig) -> Self {
         Self {
             state: CircuitState::Closed,
             failure_count: 0,
@@ -160,29 +160,25 @@ impl CircuitBreakerData {
 
     /// Check if the failure window has expired
     fn is_failure_window_expired(&self) -> bool {
-        if let Some(first_failure) = self.first_failure_at {
+        self.first_failure_at.is_none_or(|first_failure| {
             let window = Duration::from_secs(self.config.failure_window_secs);
             Instant::now().duration_since(first_failure) > window
-        } else {
-            true
-        }
+        })
     }
 
     /// Check if the timeout has expired (circuit can transition to half-open)
     fn is_timeout_expired(&self) -> bool {
-        if let Some(opened_at) = self.opened_at {
+        self.opened_at.is_some_and(|opened_at| {
             let timeout = Duration::from_secs(self.config.timeout_secs);
             Instant::now().duration_since(opened_at) >= timeout
-        } else {
-            false
-        }
+        })
     }
 
     /// Record a failure and update state
     ///
     /// Returns `true` if circuit transitioned to Open state
     fn record_failure(&mut self, domain: &Domain) -> bool {
-        let transitioned_to_open = match self.state {
+        match self.state {
             CircuitState::Closed => {
                 // Reset failure count if window expired
                 if self.is_failure_window_expired() {
@@ -227,16 +223,14 @@ impl CircuitBreakerData {
                 // Already open, nothing to do
                 false
             }
-        };
-
-        transitioned_to_open
+        }
     }
 
     /// Record a success and update state
     ///
     /// Returns `true` if circuit transitioned to Closed state (recovered)
     fn record_success(&mut self, domain: &Domain) -> bool {
-        let transitioned_to_closed = match self.state {
+        match self.state {
             CircuitState::Closed => {
                 // Reset failure tracking on success
                 self.failure_count = 0;
@@ -270,15 +264,12 @@ impl CircuitBreakerData {
                 );
                 false
             }
-        };
-
-        transitioned_to_closed
+        }
     }
 
     /// Check if delivery should be allowed
     fn should_allow_delivery(&mut self) -> bool {
         match self.state {
-            CircuitState::Closed => true,
             CircuitState::Open => {
                 // Check if timeout expired, transition to half-open
                 if self.is_timeout_expired() {
@@ -290,7 +281,7 @@ impl CircuitBreakerData {
                     false // Circuit still open
                 }
             }
-            CircuitState::HalfOpen => {
+            CircuitState::Closed | CircuitState::HalfOpen => {
                 // Only allow one delivery at a time in half-open state
                 true
             }
@@ -298,6 +289,7 @@ impl CircuitBreakerData {
     }
 
     /// Get current state
+    #[allow(dead_code)]
     const fn get_state(&self) -> CircuitState {
         self.state
     }
@@ -333,7 +325,7 @@ impl CircuitBreaker {
                     .domain_overrides
                     .get(domain.as_str())
                     .cloned()
-                    .unwrap_or_else(|| DomainCircuitBreakerConfig {
+                    .unwrap_or(DomainCircuitBreakerConfig {
                         failure_threshold: self.config.failure_threshold,
                         failure_window_secs: self.config.failure_window_secs,
                         timeout_secs: self.config.timeout_secs,
@@ -375,6 +367,7 @@ impl CircuitBreaker {
     }
 
     /// Get current circuit state for a domain
+    #[allow(dead_code)]
     pub fn get_state(&self, domain: &Domain) -> CircuitState {
         let breaker = self.get_breaker(domain);
         let breaker_guard = breaker.lock();

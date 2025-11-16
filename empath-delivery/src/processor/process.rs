@@ -27,25 +27,28 @@ async fn process_single_message(
     }
 
     // Check circuit breaker before attempting delivery
-    if let Some(circuit_breaker) = &processor.circuit_breaker_instance {
-        if !circuit_breaker.should_allow_delivery(&info.recipient_domain) {
-            warn!(
-                message_id = ?info.message_id,
-                domain = %info.recipient_domain,
-                "Circuit breaker is OPEN - rejecting delivery attempt to prevent retry storm"
-            );
-            // Update next retry time to check again after circuit timeout
-            let next_retry = std::time::SystemTime::now()
-                + std::time::Duration::from_secs(processor.circuit_breaker.timeout_secs);
-            processor
-                .queue
-                .update_status(&info.message_id, DeliveryStatus::Retry {
-                    attempts: info.attempt_count(),
-                    last_error: "Circuit breaker open".to_string(),
-                });
-            processor.queue.set_next_retry_at(&info.message_id, next_retry);
-            return; // Skip delivery
-        }
+    if let Some(circuit_breaker) = &processor.circuit_breaker_instance
+        && !circuit_breaker.should_allow_delivery(&info.recipient_domain)
+    {
+        warn!(
+            message_id = ?info.message_id,
+            domain = %info.recipient_domain,
+            "Circuit breaker is OPEN - rejecting delivery attempt to prevent retry storm"
+        );
+        // Update next retry time to check again after circuit timeout
+        let next_retry = std::time::SystemTime::now()
+            + std::time::Duration::from_secs(processor.circuit_breaker.timeout_secs);
+        processor.queue.update_status(
+            &info.message_id,
+            DeliveryStatus::Retry {
+                attempts: info.attempt_count(),
+                last_error: "Circuit breaker open".to_string(),
+            },
+        );
+        processor
+            .queue
+            .set_next_retry_at(&info.message_id, next_retry);
+        return; // Skip delivery
     }
 
     if let Err(e) = prepare_message(&processor, &info.message_id, &spool).await {
@@ -77,7 +80,7 @@ async fn process_single_message(
 /// This method:
 /// 1. Checks for expired messages and marks them as `Expired`
 /// 2. For messages with `Retry` status, checks if it's time to retry
-/// 3. Processes messages that are ready for delivery in parallel (up to max_concurrent_deliveries)
+/// 3. Processes messages that are ready for delivery in parallel (up to `max_concurrent_deliveries`)
 ///
 /// # Errors
 /// Returns an error if processing fails

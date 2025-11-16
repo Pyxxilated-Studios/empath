@@ -226,12 +226,16 @@ impl DeliveryMetrics {
 
         let circuit_breaker_trips_total = meter
             .u64_counter("empath.delivery.circuit_breaker.trips.total")
-            .with_description("Total number of circuit breaker trips (Open state entered) by domain")
+            .with_description(
+                "Total number of circuit breaker trips (Open state entered) by domain",
+            )
             .build();
 
         let circuit_breaker_recoveries_total = meter
             .u64_counter("empath.delivery.circuit_breaker.recoveries.total")
-            .with_description("Total number of circuit breaker recoveries (Closed state resumed) by domain")
+            .with_description(
+                "Total number of circuit breaker recoveries (Closed state resumed) by domain",
+            )
             .build();
 
         // Create atomic map for per-domain circuit breaker state tracking
@@ -241,7 +245,9 @@ impl DeliveryMetrics {
         let circuit_states_clone = circuit_states_ref.clone();
         meter
             .u64_observable_gauge("empath.delivery.circuit_breaker.state")
-            .with_description("Current circuit breaker state by domain (0=Closed, 1=Open, 2=HalfOpen)")
+            .with_description(
+                "Current circuit breaker state by domain (0=Closed, 1=Open, 2=HalfOpen)",
+            )
             .with_callback(move |observer| {
                 for entry in circuit_states_clone.iter() {
                     let domain = entry.key();
@@ -573,7 +579,8 @@ impl DeliveryMetrics {
         let bucketed_domain = self.bucket_domain(domain);
         let attributes = [KeyValue::new("domain", bucketed_domain)];
         self.rate_limited_total.add(1, &attributes);
-        self.rate_limit_delay_seconds.record(delay_secs, &attributes);
+        self.rate_limit_delay_seconds
+            .record(delay_secs, &attributes);
     }
 
     /// Record a circuit breaker trip (Open state entered)
