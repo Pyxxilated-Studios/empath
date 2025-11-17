@@ -86,6 +86,7 @@ fn command_strategy() -> impl Strategy<Value = String> {
 proptest! {
     /// Test that simple commands parse successfully
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_simple_commands_parse(cmd in simple_command_strategy()) {
         let parsed = Command::try_from(cmd.as_str());
         prop_assert!(parsed.is_ok(), "Failed to parse command: {}", cmd);
@@ -93,6 +94,7 @@ proptest! {
 
     /// Test that HELO/EHLO commands parse successfully
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_helo_commands_parse(cmd in helo_command_strategy()) {
         let parsed = Command::try_from(cmd.as_str());
         prop_assert!(parsed.is_ok(), "Failed to parse HELO/EHLO: {}", cmd);
@@ -100,6 +102,7 @@ proptest! {
 
     /// Test that MAIL FROM commands parse successfully
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_mail_from_parses(cmd in mail_from_strategy()) {
         let parsed = Command::try_from(cmd.as_str());
         prop_assert!(parsed.is_ok(), "Failed to parse MAIL FROM: {}", cmd);
@@ -107,6 +110,7 @@ proptest! {
 
     /// Test that RCPT TO commands parse successfully
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_rcpt_to_parses(cmd in rcpt_to_strategy()) {
         let parsed = Command::try_from(cmd.as_str());
         prop_assert!(parsed.is_ok(), "Failed to parse RCPT TO: {}", cmd);
@@ -114,6 +118,7 @@ proptest! {
 
     /// Test that parsing is case-insensitive for command keywords
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_case_insensitive_parsing(cmd in simple_command_strategy()) {
         let lower = cmd.to_lowercase();
         let upper = cmd.to_uppercase();
@@ -154,6 +159,7 @@ proptest! {
 
     /// Test that invalid commands are handled gracefully
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_invalid_commands_dont_panic(s in {
         #[allow(clippy::expect_used, reason = "compile-time constant regex should be valid")]
         let regex = prop::string::string_regex("[A-Z]{1,20}")
@@ -167,6 +173,7 @@ proptest! {
 
     /// Test that email addresses with various valid characters parse correctly
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_email_address_characters(email in email_strategy()) {
         let mail_from = format!("MAIL FROM:<{email}>");
         let result = Command::try_from(mail_from.as_str());
@@ -175,6 +182,7 @@ proptest! {
 
     /// Test that commands with trailing whitespace parse correctly
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_trailing_whitespace(cmd in command_strategy()) {
         let with_whitespace = format!("{cmd}   ");
         let result = Command::try_from(with_whitespace.as_str());
@@ -183,6 +191,7 @@ proptest! {
 
     /// Test that commands with leading whitespace parse correctly
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_leading_whitespace(cmd in command_strategy()) {
         let with_whitespace = format!("   {cmd}");
         let result = Command::try_from(with_whitespace.as_str());
@@ -197,6 +206,7 @@ mod roundtrip_tests {
     proptest! {
         /// Test that simple commands roundtrip correctly (parse -> display -> parse)
         #[test]
+        #[cfg_attr(miri, ignore = "Calls an unsupported method")]
         fn test_simple_command_roundtrip(cmd in simple_command_strategy()) {
             let parsed1_result = Command::try_from(cmd.as_str());
             prop_assert!(parsed1_result.is_ok(), "First parse failed for: {}", cmd);

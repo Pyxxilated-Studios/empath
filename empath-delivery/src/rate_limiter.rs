@@ -247,6 +247,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
     fn test_token_bucket_refill() {
         let mut bucket = TokenBucket::new(10.0, 20);
 
@@ -266,6 +267,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
     fn test_rate_limiter_default_limits() {
         let config = RateLimitConfig::default();
         let limiter = RateLimiter::new(config);
@@ -284,6 +286,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
     fn test_rate_limiter_per_domain_override() {
         let mut config = RateLimitConfig::default();
         config.domain_limits.insert(
@@ -311,6 +314,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
     fn test_rate_limiter_stats() {
         let config = RateLimitConfig::default();
         let limiter = RateLimiter::new(config);

@@ -363,6 +363,7 @@ mod tests {
     use crate::{TemporaryError, types::DeliveryInfo};
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_should_generate_dsn_permanent_failure() {
         let mut context = Context::default();
         let sender_mailbox = Mailbox {
@@ -390,6 +391,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_should_not_generate_dsn_null_sender() {
         let mut context = Context::default();
         // Null sender (bounce message) - MAIL FROM:<> results in None
@@ -414,6 +416,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_should_not_generate_dsn_temporary_in_retry() {
         let mut context = Context::default();
         let sender_mailbox = Mailbox {
@@ -442,6 +445,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_generate_dsn_creates_valid_context() {
         let mut context = Context::default();
         let sender_mailbox = Mailbox {

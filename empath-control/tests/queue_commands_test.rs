@@ -11,6 +11,7 @@ use empath_control::protocol::{
 
 /// Integration test for queue list command via control socket
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_queue_list_command() {
     // This test requires a full empath instance with delivery processor
     // For now, we verify the protocol serialization works correctly
@@ -36,6 +37,7 @@ async fn test_queue_list_command() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_queue_list_with_status_filter() {
     // Test QueueCommand::List with status filter
     let request = Request::new(RequestCommand::Queue(QueueCommand::List {
@@ -62,6 +64,7 @@ async fn test_queue_list_with_status_filter() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_queue_message_response_serialization() {
     use empath_control::protocol::QueueMessage;
 
@@ -131,6 +134,7 @@ async fn test_queue_message_response_serialization() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_queue_stats_command() {
     // Test QueueCommand::Stats serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::Stats));
@@ -151,6 +155,7 @@ async fn test_queue_stats_command() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_queue_view_command() {
     // Test QueueCommand::View serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::View {
@@ -173,6 +178,7 @@ async fn test_queue_view_command() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_queue_delete_command() {
     // Test QueueCommand::Delete serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::Delete {
@@ -195,6 +201,7 @@ async fn test_queue_delete_command() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_queue_retry_command() {
     // Test QueueCommand::Retry serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::Retry {

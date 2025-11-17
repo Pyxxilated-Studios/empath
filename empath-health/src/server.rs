@@ -119,6 +119,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_liveness_probe_always_passes() {
         let checker = Arc::new(HealthChecker::new(10000));
         let response = liveness_handler(State(checker)).await;
@@ -126,6 +127,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_readiness_probe_fails_when_not_ready() {
         let checker = Arc::new(HealthChecker::new(10000));
         // Don't set any components as ready
@@ -134,6 +136,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_readiness_probe_passes_when_all_ready() {
         let checker = Arc::new(HealthChecker::new(10000));
         checker.set_smtp_ready(true);
@@ -147,6 +150,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_readiness_probe_fails_when_queue_too_large() {
         let checker = Arc::new(HealthChecker::new(1000));
         checker.set_smtp_ready(true);

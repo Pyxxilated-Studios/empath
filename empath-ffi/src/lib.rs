@@ -1,4 +1,4 @@
-#![feature(bstr, slice_pattern, result_option_map_or_default, vec_into_raw_parts)]
+#![feature(bstr, slice_pattern, result_option_map_or_default)]
 
 use core::slice::SlicePattern;
 use std::{borrow::Cow, ffi::CStr};

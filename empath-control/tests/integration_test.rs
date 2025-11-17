@@ -133,6 +133,7 @@ async fn start_test_server(
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_dns_list_cache() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -162,6 +163,7 @@ async fn test_dns_list_cache() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_dns_clear_cache() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -187,6 +189,7 @@ async fn test_dns_clear_cache() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_dns_refresh_domain() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -214,6 +217,7 @@ async fn test_dns_refresh_domain() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_dns_set_override() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -244,6 +248,7 @@ async fn test_dns_set_override() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_dns_remove_override() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -272,6 +277,7 @@ async fn test_dns_remove_override() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_dns_list_overrides() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -298,6 +304,7 @@ async fn test_dns_list_overrides() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_system_ping() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -320,6 +327,7 @@ async fn test_system_ping() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_system_status() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -348,6 +356,7 @@ async fn test_system_status() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_socket_not_exist_error() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("nonexistent.sock");
@@ -363,6 +372,7 @@ async fn test_socket_not_exist_error() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_check_socket_exists() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -387,6 +397,7 @@ async fn test_check_socket_exists() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_client_timeout() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -411,6 +422,7 @@ async fn test_client_timeout() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_graceful_shutdown() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -439,6 +451,7 @@ async fn test_graceful_shutdown() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_concurrent_requests() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -472,6 +485,7 @@ async fn test_concurrent_requests() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_multiple_sequential_requests() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -500,6 +514,7 @@ async fn test_multiple_sequential_requests() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_persistent_connection_mode() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
@@ -524,6 +539,7 @@ async fn test_persistent_connection_mode() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_persistent_connection_reconnect() {
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");

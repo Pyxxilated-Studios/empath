@@ -101,6 +101,7 @@ mod tests {
         clippy::cast_sign_loss,
         clippy::cast_possible_truncation
     )]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_exponential_backoff_with_jitter() {
         // Test that jitter is applied (result should be different from exact calculation)
         let base_delay = 60;

@@ -414,6 +414,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_with_attachment() {
         let message = MessageBuilder::new()
             .from("sender@example.com")

@@ -102,6 +102,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_add_failed_deletion() {
         let queue = CleanupQueue::new();
         let message_id = SpooledMessageId::generate();
@@ -116,6 +117,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_ready_for_retry() {
         let queue = CleanupQueue::new();
         let message_id = SpooledMessageId::generate();
@@ -142,6 +144,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_remove() {
         let queue = CleanupQueue::new();
         let message_id = SpooledMessageId::generate();

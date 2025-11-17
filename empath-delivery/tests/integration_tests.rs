@@ -486,6 +486,7 @@ async fn test_cleanup_queue_exponential_backoff() {
 
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_mock_smtp_server_basic() {
     use support::mock_server::{MockSmtpServer, SmtpCommand};
     use tokio::{
@@ -639,6 +640,7 @@ async fn test_mock_smtp_server_basic() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_mock_smtp_server_with_errors() {
     use support::mock_server::MockSmtpServer;
     use tokio::{
@@ -711,6 +713,7 @@ async fn test_mock_smtp_server_with_errors() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_mock_smtp_server_connection_drop() {
     use support::mock_server::MockSmtpServer;
     use tokio::{

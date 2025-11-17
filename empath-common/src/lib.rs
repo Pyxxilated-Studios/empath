@@ -3,8 +3,7 @@
     associated_type_defaults,
     iter_advance_by,
     result_option_map_or_default,
-    slice_pattern,
-    vec_into_raw_parts
+    slice_pattern
 )]
 
 pub mod address;

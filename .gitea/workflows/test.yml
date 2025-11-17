@@ -43,7 +43,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/      
+            target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run rust-clippy
@@ -76,16 +76,16 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/      
+            target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install nextest
         uses: taiki-e/install-action@v2
-        with: 
+        with:
           tool: nextest
 
       - name: Test Server
-        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run && cargo test --doc
+        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run && cargo nextest run && cargo test --doc
 
       - name: Test Property-Based
         run: cargo nextest run --test proptest_commands

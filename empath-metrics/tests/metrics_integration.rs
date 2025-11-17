@@ -317,6 +317,7 @@ fn test_dns_metrics_creation() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 fn test_queue_age_recording() {
     use std::time::{Duration, SystemTime};
 
@@ -353,6 +354,7 @@ fn test_oldest_message_age_update() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
 fn test_queue_age_with_system_time_edge_cases() {
     let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
 
