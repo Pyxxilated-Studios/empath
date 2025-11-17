@@ -17,15 +17,26 @@ fn domain_strategy() -> impl Strategy<Value = String> {
     regex.prop_map(|s| s.to_lowercase())
 }
 
-/// Strategy to generate valid email local parts
+/// Strategy to generate valid email local parts according to RFC 5321
+///
+/// RFC 5321 Dot-string rules:
+/// - Must be one or more atoms separated by dots
+/// - Atom = 1\*atext (one or more valid characters)
+/// - Cannot start or end with a dot
+/// - Cannot have consecutive dots
+/// - Valid atext chars include: alphanumeric and special characters
 fn email_local_strategy() -> impl Strategy<Value = String> {
+    // Generate an atom (1-10 valid atext characters)
+    // Using a subset of atext that's commonly used: alphanumeric, dot, plus, underscore, hyphen
     #[allow(
         clippy::expect_used,
         reason = "compile-time constant regex should be valid"
     )]
-    let regex =
-        prop::string::string_regex("[a-z0-9._-]{1,20}").expect("email local regex should be valid");
-    regex.prop_map(|s| s.to_lowercase())
+    let atom_regex =
+        prop::string::string_regex("[a-z0-9+_-]{1,10}").expect("atom regex should be valid");
+
+    // Generate 1-3 atoms and join them with dots to create a valid Dot-string
+    prop::collection::vec(atom_regex, 1..=3).prop_map(|atoms| atoms.join("."))
 }
 
 /// Strategy to generate valid email addresses

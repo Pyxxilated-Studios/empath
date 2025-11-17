@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 714ba3298d43509226d6c7517c361b7f9b30165b2efe5d45cec3fbf0c2d249cb # shrinks to cmd = "RCPT TO:<.@aaa.aa>"
+cc 8fc62a482ad40b2443c47dd6d043844428fbc03c5260e70c06a7b44f20f607f4 # shrinks to email = ".@aaa.aa"
+cc 525e27a6a59072e1db243b9da95fdd6fc5d609a3e2cfe0b7cf9d7c18184fcf75 # shrinks to cmd = "MAIL FROM:<.@aaa.aa>"
+cc 9b97382b788d5012f45f1e2e1a1783ed4e9fb330bc020b8168f4d222097f3a7e # shrinks to cmd = "RCPT TO:<.@aaa.aa>"

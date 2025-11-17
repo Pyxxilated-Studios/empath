@@ -22,7 +22,6 @@ use empath_common::{
     envelope::Envelope,
     tracing::info,
 };
-use mailparse::MailAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{DeliveryError, DeliveryInfo, error::PermanentError};
@@ -59,20 +58,14 @@ impl Default for DsnConfig {
 /// - Messages from null sender (MAIL FROM:<>) - prevents bounce loops
 /// - System errors (internal errors that don't indicate delivery failure)
 #[must_use]
-pub fn should_generate_dsn(
+pub const fn should_generate_dsn(
     original_context: &Context,
     delivery_info: &DeliveryInfo,
     error: &DeliveryError,
 ) -> bool {
     // Don't generate DSN if sender is null (prevents bounce loops)
-    // Null sender is indicated by MAIL FROM:<>
-    if let Some(sender) = original_context.envelope.sender()
-        && let MailAddr::Single(info) = &**sender
-        && info.addr.is_empty()
-    {
-        return false;
-    } else if original_context.envelope.sender().is_none() {
-        // No sender address
+    // Null sender is indicated by MAIL FROM:<> which results in sender = None
+    if original_context.envelope.sender().is_none() {
         return false;
     }
 
@@ -202,24 +195,26 @@ pub fn generate_dsn(
     };
 
     // Set envelope: FROM postmaster, TO original sender
-    // Parse postmaster address
-    let postmaster_addr = mailparse::addrparse(&config.postmaster)
-        .ok()
-        .and_then(|mut addrs| addrs.pop())
-        .map(Address)
-        .ok_or_else(|| {
-            PermanentError::InvalidRecipient(format!(
-                "Invalid postmaster address: {}",
-                config.postmaster
-            ))
-        })?;
+    // Parse postmaster address - add brackets if not present
+    let postmaster_with_brackets = if config.postmaster.starts_with('<') {
+        config.postmaster.clone()
+    } else {
+        format!("<{}>", config.postmaster)
+    };
+    let postmaster_mailbox = empath_common::address_parser::parse_forward_path(
+        &postmaster_with_brackets,
+    )
+    .map_err(|_| {
+        PermanentError::InvalidRecipient(format!(
+            "Invalid postmaster address: {}",
+            config.postmaster
+        ))
+    })?;
 
-    *dsn_context.envelope.sender_mut() = Some(postmaster_addr);
+    *dsn_context.envelope.sender_mut() = Some(Address::from(postmaster_mailbox));
 
     // Set recipient to original sender
-    *dsn_context.envelope.recipients_mut() = Some(AddressList::from(vec![Address(
-        (**original_sender).clone(),
-    )]));
+    *dsn_context.envelope.recipients_mut() = Some(AddressList::from(vec![original_sender.clone()]));
 
     Ok(dsn_context)
 }
@@ -233,10 +228,7 @@ fn build_human_readable_part(
 ) -> String {
     let recipient_list = original_recipients
         .iter()
-        .map(|addr| match &**addr {
-            MailAddr::Single(info) => info.addr.as_str(),
-            MailAddr::Group(group) => group.group_name.as_str(),
-        })
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -305,15 +297,10 @@ fn build_machine_readable_part(
 
     // Per-recipient fields (one group per recipient)
     for recipient in original_recipients.iter() {
-        let recipient_addr = match &**recipient {
-            MailAddr::Single(info) => &info.addr,
-            MailAddr::Group(group) => &group.group_name,
-        };
-
         dsn.push_str("\r\n"); // Blank line separates per-recipient groups
 
         // Final-Recipient (mandatory)
-        let _ = write!(dsn, "Final-Recipient: rfc822; {recipient_addr}\r\n");
+        let _ = write!(dsn, "Final-Recipient: rfc822; {recipient}\r\n");
 
         // Action (mandatory)
         let _ = write!(dsn, "Action: {action}\r\n");
@@ -369,7 +356,7 @@ fn extract_original_headers(original_context: &Context) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use empath_common::{DeliveryAttempt, domain::Domain};
+    use empath_common::{DeliveryAttempt, address_parser::Mailbox, domain::Domain};
     use empath_spool::SpooledMessageId;
 
     use super::*;
@@ -378,10 +365,11 @@ mod tests {
     #[test]
     fn test_should_generate_dsn_permanent_failure() {
         let mut context = Context::default();
-        let sender = mailparse::addrparse("sender@example.com")
-            .unwrap()
-            .remove(0);
-        *context.envelope.sender_mut() = Some(Address(sender));
+        let sender_mailbox = Mailbox {
+            local_part: "sender".to_string(),
+            domain: "example.com".to_string(),
+        };
+        *context.envelope.sender_mut() = Some(Address::from(sender_mailbox));
 
         let info = DeliveryInfo {
             message_id: SpooledMessageId::new(ulid::Ulid::new()),
@@ -404,12 +392,8 @@ mod tests {
     #[test]
     fn test_should_not_generate_dsn_null_sender() {
         let mut context = Context::default();
-        // Null sender (bounce message)
-        let sender = MailAddr::Single(mailparse::SingleInfo {
-            addr: String::new(),
-            display_name: None,
-        });
-        *context.envelope.sender_mut() = Some(Address(sender));
+        // Null sender (bounce message) - MAIL FROM:<> results in None
+        *context.envelope.sender_mut() = None;
 
         let info = DeliveryInfo {
             message_id: SpooledMessageId::new(ulid::Ulid::new()),
@@ -432,10 +416,11 @@ mod tests {
     #[test]
     fn test_should_not_generate_dsn_temporary_in_retry() {
         let mut context = Context::default();
-        let sender = mailparse::addrparse("sender@example.com")
-            .unwrap()
-            .remove(0);
-        *context.envelope.sender_mut() = Some(Address(sender));
+        let sender_mailbox = Mailbox {
+            local_part: "sender".to_string(),
+            domain: "example.com".to_string(),
+        };
+        *context.envelope.sender_mut() = Some(Address::from(sender_mailbox));
 
         let info = DeliveryInfo {
             message_id: SpooledMessageId::new(ulid::Ulid::new()),
@@ -459,15 +444,18 @@ mod tests {
     #[test]
     fn test_generate_dsn_creates_valid_context() {
         let mut context = Context::default();
-        let sender = mailparse::addrparse("sender@example.com")
-            .unwrap()
-            .remove(0);
-        *context.envelope.sender_mut() = Some(Address(sender));
+        let sender_mailbox = Mailbox {
+            local_part: "sender".to_string(),
+            domain: "example.com".to_string(),
+        };
+        *context.envelope.sender_mut() = Some(Address::from(sender_mailbox));
 
-        let recipient = mailparse::addrparse("recipient@example.com")
-            .unwrap()
-            .remove(0);
-        *context.envelope.recipients_mut() = Some(AddressList::from(vec![Address(recipient)]));
+        let recipient_mailbox = Mailbox {
+            local_part: "recipient".to_string(),
+            domain: "example.com".to_string(),
+        };
+        *context.envelope.recipients_mut() =
+            Some(AddressList::from(vec![Address::from(recipient_mailbox)]));
 
         context.data = Some(Arc::from(
             b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nBody"

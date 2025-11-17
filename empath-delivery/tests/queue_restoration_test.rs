@@ -29,22 +29,29 @@ fn create_test_context_with_delivery_state(
 ) -> Context {
     let mut envelope = Envelope::default();
 
-    // Parse and set sender
-    if let Ok(sender_addr) = mailparse::addrparse(from)
-        && let Some(addr) = sender_addr.iter().next()
+    // Parse and set sender - add brackets if needed
+    let from_with_brackets = if from.starts_with('<') {
+        from.to_string()
+    } else {
+        format!("<{from}>")
+    };
+    if let Ok(sender_mailbox) =
+        empath_common::address_parser::parse_forward_path(&from_with_brackets)
     {
-        *envelope.sender_mut() = Some(Address(addr.clone()));
+        *envelope.sender_mut() = Some(Address::from(sender_mailbox));
     }
 
-    // Parse and set recipient
-    if let Ok(recip_addr) = mailparse::addrparse(to) {
-        *envelope.recipients_mut() = Some(AddressList(
-            recip_addr.iter().map(|a| Address(a.clone())).collect(),
-        ));
-    }
-
-    // Extract domain from recipient
+    // Parse and set recipient - add brackets if needed
+    let to_with_brackets = if to.starts_with('<') {
+        to.to_string()
+    } else {
+        format!("<{to}>")
+    };
     let domain = to.split('@').nth(1).unwrap_or("example.com").to_string();
+    if let Ok(recip_mailbox) = empath_common::address_parser::parse_forward_path(&to_with_brackets)
+    {
+        *envelope.recipients_mut() = Some(AddressList(vec![Address::from(recip_mailbox)]));
+    }
 
     // Create delivery context with state
     // Generate attempt history matching the attempt count

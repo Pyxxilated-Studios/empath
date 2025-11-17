@@ -60,9 +60,9 @@ pub unsafe extern "C" fn em_context_set_sender(
     let sender = unsafe { CStr::from_ptr(sender) };
 
     match sender.to_str() {
-        Ok(sender) => match mailparse::addrparse(sender) {
-            Ok(sender) => {
-                *validate_context.envelope.sender_mut() = Some(Address(sender[0].clone()));
+        Ok(sender) => match empath_common::address_parser::parse_forward_path(sender) {
+            Ok(mailbox) => {
+                *validate_context.envelope.sender_mut() = Some(Address::from(mailbox));
                 true
             }
             Err(_err) => false,
@@ -329,11 +329,14 @@ mod test {
     fn test_recipients() {
         let mut validate_context = Context::default();
 
-        let mut recipients = mailparse::addrparse("test@gmail.com").unwrap();
-        recipients.extend_from_slice(&mailparse::addrparse("test@test.com").unwrap()[..]);
-        *validate_context.envelope.recipients_mut() = Some(AddressList(
-            recipients.iter().map(|a| Address(a.clone())).collect(),
-        ));
+        let recipient1 =
+            empath_common::address_parser::parse_forward_path("<test@gmail.com>").unwrap();
+        let recipient2 =
+            empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
+        *validate_context.envelope.recipients_mut() = Some(AddressList(vec![
+            Address::from(recipient1),
+            Address::from(recipient2),
+        ]));
 
         let buffer = em_context_get_recipients(&validate_context);
         assert_eq!(buffer.len, 2);
@@ -368,13 +371,13 @@ mod test {
         unsafe {
             assert!(em_context_set_sender(
                 &mut validate_context,
-                cstr!("test@test.com")
+                cstr!("<test@test.com>")
             ));
+            let expected_mailbox =
+                empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
             assert_eq!(
                 validate_context.envelope.sender(),
-                Some(&Address(
-                    mailparse::addrparse("test@test.com").unwrap()[0].clone()
-                ))
+                Some(&Address::from(expected_mailbox))
             );
         }
     }
@@ -382,9 +385,8 @@ mod test {
     #[test]
     fn test_null_sender() {
         let mut envelope = Envelope::default();
-        *envelope.sender_mut() = Some(Address(
-            mailparse::addrparse("test@test.com").unwrap()[0].clone(),
-        ));
+        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
+        *envelope.sender_mut() = Some(Address::from(mailbox));
 
         let mut validate_context = Context {
             id: String::from("Testing"),
@@ -400,9 +402,10 @@ mod test {
 
     #[test]
     fn test_invalid_sender() {
-        let sender = mailparse::addrparse("test@test.com").unwrap();
+        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
+        let original_sender = Address::from(mailbox);
         let mut envelope = Envelope::default();
-        *envelope.sender_mut() = Some(sender[0].clone().into());
+        *envelope.sender_mut() = Some(original_sender.clone());
 
         let mut validate_context = Context {
             id: String::from("Testing"),
@@ -412,10 +415,7 @@ mod test {
 
         unsafe {
             assert!(!em_context_set_sender(&mut validate_context, cstr!("---")));
-            assert_eq!(
-                validate_context.envelope.sender(),
-                Some(&sender[0].clone().into())
-            );
+            assert_eq!(validate_context.envelope.sender(), Some(&original_sender));
         }
     }
 

@@ -31,15 +31,12 @@ enum TlsNegotiationOutcome {
 
 /// Extracts the email address string from an Address (for SMTP commands)
 ///
-/// For `Single` addresses, returns just the email address.
-/// For `Group` addresses, returns `None` as they can't be used in SMTP commands.
+/// Since Address now wraps Mailbox which is always a simple email address,
+/// this function uses the Display impl to format the address.
 ///
-/// Returns a reference to avoid allocations in the hot delivery path.
-fn extract_email_address(address: &empath_common::address::Address) -> Option<&str> {
-    match &**address {
-        mailparse::MailAddr::Single(single_info) => Some(&single_info.addr),
-        mailparse::MailAddr::Group(_) => None, // Groups can't be used in SMTP commands
-    }
+/// Returns a formatted email address (`local_part@domain`).
+fn extract_email_address(address: &empath_common::address::Address) -> String {
+    address.to_string()
 }
 
 /// Represents a single SMTP transaction for delivering a message
@@ -324,16 +321,19 @@ impl<'a> SmtpTransaction<'a> {
             .context
             .envelope
             .sender()
-            .and_then(extract_email_address)
+            .map(extract_email_address)
             .unwrap_or_default();
 
         let mail_from_timeout = Duration::from_secs(self.smtp_timeouts.mail_from_secs);
-        let mail_response = tokio::time::timeout(mail_from_timeout, client.mail_from(sender, None))
-            .await
-            .map_err(|_| {
-                TemporaryError::Timeout(format!("MAIL FROM timed out after {mail_from_timeout:?}"))
-            })?
-            .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
+        let mail_response =
+            tokio::time::timeout(mail_from_timeout, client.mail_from(&sender, None))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!(
+                        "MAIL FROM timed out after {mail_from_timeout:?}"
+                    ))
+                })?
+                .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
 
         if !mail_response.is_success() {
             let code = mail_response.code;
@@ -359,12 +359,10 @@ impl<'a> SmtpTransaction<'a> {
 
         let rcpt_to_timeout = Duration::from_secs(self.smtp_timeouts.rcpt_to_secs);
         for recipient in recipients.iter() {
-            let Some(recipient_addr) = extract_email_address(recipient) else {
-                continue; // Skip group addresses
-            };
+            let recipient_addr = extract_email_address(recipient);
 
             let rcpt_response =
-                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(recipient_addr))
+                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(&recipient_addr))
                     .await
                     .map_err(|_| {
                         TemporaryError::Timeout(format!(

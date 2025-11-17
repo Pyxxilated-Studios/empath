@@ -80,6 +80,9 @@ pub struct DeliveryMetrics {
     /// Currently tracked domains (up to `max_domains`)
     /// Lock-free concurrent map prevents panic on lock poisoning
     tracked_domains: Arc<DashMap<String, ()>>,
+    /// Atomic counter for tracked regular domains (excludes high-priority domains)
+    /// Used for lock-free cardinality limiting
+    tracked_domains_count: Arc<AtomicU64>,
     /// Counter for domains bucketed into "other"
     bucketed_domains_count: Arc<AtomicU64>,
 }
@@ -366,6 +369,7 @@ impl DeliveryMetrics {
             max_domains,
             high_priority_domains: high_priority_set,
             tracked_domains: Arc::new(DashMap::new()),
+            tracked_domains_count: Arc::new(AtomicU64::new(0)),
             bucketed_domains_count: bucketed_domains_ref,
         })
     }
@@ -401,17 +405,45 @@ impl DeliveryMetrics {
             return domain.to_string();
         }
 
-        // Try to add this domain if we haven't reached the limit
-        // DashMap::insert is lock-free and thread-safe
-        if self.tracked_domains.len() < self.max_domains {
-            // Use insert which returns None if key didn't exist, or Some(old_value) if it did
-            // This handles the race where another thread added it between contains_key and insert
-            self.tracked_domains.insert(domain.to_string(), ());
-            domain.to_string()
-        } else {
-            // Cardinality limit reached - bucket into "other"
-            self.bucketed_domains_count.fetch_add(1, Ordering::Relaxed);
-            "other".to_string()
+        // Atomically try to reserve a slot for this domain using compare-and-swap
+        // This prevents the race condition where multiple threads check len() < max_domains
+        // and all insert, causing the limit to be exceeded
+        let mut current = self.tracked_domains_count.load(Ordering::Acquire);
+        loop {
+            // Check if we've reached the limit
+            #[allow(clippy::cast_possible_truncation)]
+            if current >= self.max_domains as u64 {
+                // Limit reached - bucket into "other"
+                self.bucketed_domains_count.fetch_add(1, Ordering::Relaxed);
+                return "other".to_string();
+            }
+
+            // Try to atomically increment the counter to reserve a slot
+            // If another thread incremented it, we'll retry with the new value
+            match self.tracked_domains_count.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    // Successfully reserved a slot - now insert the domain
+                    // insert() returns Some(old_value) if the key already existed
+                    if self
+                        .tracked_domains
+                        .insert(domain.to_string(), ())
+                        .is_some()
+                    {
+                        // Another thread inserted this domain first - unreserve our slot
+                        self.tracked_domains_count.fetch_sub(1, Ordering::Release);
+                    }
+                    return domain.to_string();
+                }
+                Err(actual) => {
+                    // Another thread modified the counter - retry with the actual value
+                    current = actual;
+                }
+            }
         }
     }
 

@@ -10,7 +10,7 @@
 use std::{hint::black_box, sync::Arc};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use empath_common::context::Context;
+use empath_common::{address::Address, address_parser, context::Context};
 use empath_smtp::{
     MailParameters, State,
     command::{Command, HeloVariant},
@@ -198,8 +198,8 @@ fn bench_fsm_transitions(c: &mut Criterion) {
             });
             let cmd = Command::MailFrom(
                 Some(
-                    mailparse::addrparse("user@example.com").expect("Valid address")[0]
-                        .clone()
+                    address_parser::parse_forward_path("<user@example.com>")
+                        .expect("Valid address")
                         .into(),
                 ),
                 MailParameters::new(),
@@ -214,16 +214,18 @@ fn bench_fsm_transitions(c: &mut Criterion) {
             let mut ctx = Context::default();
             let state = State::MailFrom(MailFrom {
                 sender: Some(
-                    mailparse::addrparse("user@example.com").expect("Valid address")[0]
-                        .clone()
+                    address_parser::parse_forward_path("<user@example.com>")
+                        .expect("Valid address")
                         .into(),
                 ),
                 params: MailParameters::new(),
             });
             let cmd = Command::RcptTo(
-                mailparse::addrparse("recipient@example.com")
-                    .expect("Valid address")
-                    .into(),
+                vec![Address::from(
+                    address_parser::parse_forward_path("<recipient@example.com>")
+                        .expect("Valid address"),
+                )]
+                .into(),
             );
             let new_state = black_box(state).transition(black_box(cmd), &mut ctx);
             black_box(new_state)
@@ -235,8 +237,8 @@ fn bench_fsm_transitions(c: &mut Criterion) {
             let mut ctx = Context::default();
             let state = State::RcptTo(RcptTo {
                 sender: Some(
-                    mailparse::addrparse("user@example.com").expect("Valid address")[0]
-                        .clone()
+                    address_parser::parse_forward_path("<user@example.com>")
+                        .expect("Valid address")
                         .into(),
                 ),
                 params: MailParameters::new(),
@@ -279,8 +281,8 @@ fn bench_fsm_full_transaction(c: &mut Criterion) {
             state = state.transition(
                 Command::MailFrom(
                     Some(
-                        mailparse::addrparse("sender@example.com").expect("Valid address")[0]
-                            .clone()
+                        address_parser::parse_forward_path("<sender@example.com>")
+                            .expect("Valid address")
                             .into(),
                     ),
                     MailParameters::new(),
@@ -291,9 +293,11 @@ fn bench_fsm_full_transaction(c: &mut Criterion) {
             // RCPT TO
             state = state.transition(
                 Command::RcptTo(
-                    mailparse::addrparse("recipient@example.com")
-                        .expect("Valid address")
-                        .into(),
+                    vec![Address::from(
+                        address_parser::parse_forward_path("<recipient@example.com>")
+                            .expect("Valid address"),
+                    )]
+                    .into(),
                 ),
                 &mut ctx,
             );
@@ -330,16 +334,15 @@ fn bench_context_operations(c: &mut Criterion) {
         b.iter(|| {
             let mut envelope = empath_common::envelope::Envelope::default();
             *envelope.sender_mut() = Some(
-                mailparse::addrparse("sender@example.com").expect("Valid address")[0]
-                    .clone()
+                address_parser::parse_forward_path("<sender@example.com>")
+                    .expect("Valid address")
                     .into(),
             );
             *envelope.recipients_mut() = Some(
-                vec![
-                    mailparse::addrparse("recipient@example.com").expect("Valid address")[0]
-                        .clone()
-                        .into(),
-                ]
+                vec![Address::from(
+                    address_parser::parse_forward_path("<recipient@example.com>")
+                        .expect("Valid address"),
+                )]
                 .into(),
             );
 

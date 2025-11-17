@@ -2,8 +2,10 @@ use core::fmt::{self, Display, Formatter};
 use std::borrow::Cow;
 
 use ahash::AHashMap;
-use empath_common::address::{Address, AddressList};
-use mailparse::MailAddr;
+use empath_common::{
+    address::{Address, AddressList},
+    address_parser,
+};
 use phf::phf_map;
 
 /// ESMTP parameters for MAIL FROM command (RFC 5321 Section 3.3).
@@ -224,13 +226,9 @@ impl Command {
     #[must_use]
     pub fn inner(&self) -> Cow<'_, str> {
         match self {
-            Self::MailFrom(from, _) => from.as_ref().map_or_else(
-                || Cow::Borrowed(""),
-                |f| match &**f {
-                    MailAddr::Group(_) => Cow::Borrowed(""),
-                    MailAddr::Single(s) => Cow::Owned(s.to_string()),
-                },
-            ),
+            Self::MailFrom(from, _) => from
+                .as_ref()
+                .map_or_else(|| Cow::Borrowed(""), |f| Cow::Owned(f.to_string())),
             Self::RcptTo(to) => Cow::Owned(to.to_string()),
             Self::Invalid(command) => Cow::Borrowed(command.as_str()),
             Self::Helo(HeloVariant::Ehlo(id) | HeloVariant::Helo(id)) => Cow::Borrowed(id.as_str()),
@@ -276,10 +274,7 @@ impl Display for Command {
         match self {
             Self::Helo(v) => fmt.write_fmt(format_args!("{} {}", v, self.inner())),
             Self::MailFrom(s, params) => {
-                let addr = s.as_ref().map_or_else(String::new, |f| match &**f {
-                    MailAddr::Group(_) => String::new(),
-                    MailAddr::Single(s) => s.to_string(),
-                });
+                let addr = s.as_ref().map_or_else(String::new, ToString::to_string);
                 if params.is_empty() {
                     fmt.write_fmt(format_args!("MAIL FROM:{addr}"))
                 } else {
@@ -325,32 +320,41 @@ impl TryFrom<&str> for Command {
                 MailParameters::new()
             };
 
-            // Handle NULL sender explicitly, as mailparse doesn't tend to like this
-            if addr == "<>" {
-                return Ok(Self::MailFrom(None, mail_params));
-            }
+            // Parse MAIL FROM address using RFC 5321-compliant parser
+            // Supports null sender (<>) and standard mailbox syntax
+            // Auto-wrap addresses without angle brackets for compatibility
+            let addr_with_brackets = if addr.starts_with('<') {
+                addr.to_string()
+            } else {
+                format!("<{addr}>")
+            };
 
-            mailparse::addrparse(addr).map_or_else(
-                |err| Err(Self::Invalid(err.to_string())),
-                |from| {
-                    Ok(Self::MailFrom(
-                        if from.is_empty() {
-                            None
-                        } else {
-                            Some(from[0].clone().into())
-                        },
-                        mail_params,
-                    ))
-                },
+            address_parser::parse_reverse_path(&addr_with_brackets).map_or_else(
+                |err| Err(Self::Invalid(format!("Invalid MAIL FROM address: {err}"))),
+                |mailbox_opt| Ok(Self::MailFrom(mailbox_opt.map(Address::from), mail_params)),
             )
         } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("RCPT TO:") {
             if trimmed.len() < 9 {
                 return Err(Self::Invalid(command.to_owned()));
             }
 
-            mailparse::addrparse(trimmed[8..].trim()).map_or_else(
-                |e| Err(Self::Invalid(e.to_string())),
-                |to| Ok(Self::RcptTo(to.into())),
+            // Parse RCPT TO address using RFC 5321-compliant parser
+            // Auto-wrap addresses without angle brackets for compatibility
+            let addr = trimmed[8..].trim();
+            let addr_with_brackets = if addr.starts_with('<') {
+                addr.to_string()
+            } else {
+                format!("<{addr}>")
+            };
+
+            address_parser::parse_forward_path(&addr_with_brackets).map_or_else(
+                |err| Err(Self::Invalid(format!("Invalid RCPT TO address: {err}"))),
+                |mailbox| {
+                    // Convert single Mailbox to AddressList
+                    Ok(Self::RcptTo(AddressList::from(vec![Address::from(
+                        mailbox,
+                    )])))
+                },
             )
         } else if trimmed.len() >= 4 {
             let prefix = &trimmed[..4];
@@ -405,6 +409,11 @@ impl TryFrom<String> for Command {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
+    use empath_common::{
+        address::{Address, AddressList},
+        address_parser,
+    };
+
     use crate::command::{Command, HeloVariant, MailParameters};
 
     // Idea copied from https://gitlab.com/erichdongubler-experiments/rust_case_permutations/blob/master/src/lib.rs#L97
@@ -435,14 +444,11 @@ mod test {
 
     #[test]
     fn mail_from_command() {
+        let expected_mailbox = address_parser::parse_forward_path("<test@gmail.com>").unwrap();
         assert_eq!(
-            Command::try_from("Mail From: test@gmail.com"),
+            Command::try_from("Mail From: <test@gmail.com>"),
             Ok(Command::MailFrom(
-                Some(
-                    mailparse::addrparse("test@gmail.com").unwrap()[0]
-                        .clone()
-                        .into()
-                ),
+                Some(Address::from(expected_mailbox)),
                 MailParameters::new()
             ))
         );
@@ -459,14 +465,11 @@ mod test {
         // Test SIZE parameter parsing
         let mut params_with_size = MailParameters::new();
         params_with_size.insert("SIZE", "12345");
+        let expected_mailbox2 = address_parser::parse_forward_path("<test@gmail.com>").unwrap();
         assert_eq!(
             Command::try_from("MAIL FROM: <test@gmail.com> SIZE=12345"),
             Ok(Command::MailFrom(
-                Some(
-                    mailparse::addrparse("test@gmail.com").unwrap()[0]
-                        .clone()
-                        .into()
-                ),
+                Some(Address::from(expected_mailbox2)),
                 params_with_size
             ))
         );
@@ -514,28 +517,22 @@ mod test {
         // Case insensitive SIZE parameter
         let mut params_lower = MailParameters::new();
         params_lower.insert("SIZE", "5000");
+        let mailbox1 = address_parser::parse_forward_path("<test@example.com>").unwrap();
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> size=5000"),
             Ok(Command::MailFrom(
-                Some(
-                    mailparse::addrparse("test@example.com").unwrap()[0]
-                        .clone()
-                        .into()
-                ),
+                Some(Address::from(mailbox1)),
                 params_lower
             ))
         );
 
         let mut params_mixed = MailParameters::new();
         params_mixed.insert("SIZE", "3000");
+        let mailbox2 = address_parser::parse_forward_path("<test@example.com>").unwrap();
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> SiZe=3000"),
             Ok(Command::MailFrom(
-                Some(
-                    mailparse::addrparse("test@example.com").unwrap()[0]
-                        .clone()
-                        .into()
-                ),
+                Some(Address::from(mailbox2)),
                 params_mixed
             ))
         );
@@ -544,14 +541,11 @@ mod test {
         let mut params_multi = MailParameters::new();
         params_multi.insert("SIZE", "1000");
         params_multi.insert("BODY", "8BITMIME");
+        let mailbox3 = address_parser::parse_forward_path("<test@example.com>").unwrap();
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> SIZE=1000 BODY=8BITMIME"),
             Ok(Command::MailFrom(
-                Some(
-                    mailparse::addrparse("test@example.com").unwrap()[0]
-                        .clone()
-                        .into()
-                ),
+                Some(Address::from(mailbox3)),
                 params_multi
             ))
         );
@@ -567,11 +561,12 @@ mod test {
 
     #[test]
     fn rcpt_to_command() {
+        let mailbox = address_parser::parse_forward_path("<test@gmail.com>").unwrap();
         assert_eq!(
-            Command::try_from("Rcpt To: test@gmail.com"),
-            Ok(Command::RcptTo(
-                mailparse::addrparse("test@gmail.com").unwrap().into()
-            ))
+            Command::try_from("Rcpt To: <test@gmail.com>"),
+            Ok(Command::RcptTo(AddressList::from(vec![Address::from(
+                mailbox
+            )])))
         );
 
         assert!(Command::try_from("Rcpt To:").is_err());

@@ -308,8 +308,10 @@ impl State {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
-    use empath_common::address::AddressList;
-    use mailparse::addrparse;
+    use empath_common::{
+        address::{Address, AddressList},
+        address_parser,
+    };
 
     use super::*;
     use crate::MailParameters;
@@ -383,10 +385,10 @@ mod test {
         assert!(matches!(state, State::Ehlo(_)));
 
         // MAIL FROM
-        let sender: AddressList = addrparse("sender@example.com").unwrap().into();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
         let state = state.transition(
             Command::MailFrom(
-                sender.iter().next().cloned(),
+                Some(Address::from(sender_mailbox)),
                 crate::command::MailParameters::new(),
             ),
             &mut ctx,
@@ -394,7 +396,8 @@ mod test {
         assert!(matches!(state, State::MailFrom(_)));
 
         // RCPT TO
-        let rcpt: AddressList = addrparse("recipient@example.com").unwrap().into();
+        let rcpt_mailbox = address_parser::parse_forward_path("<recipient@example.com>").unwrap();
+        let rcpt = AddressList::from(vec![Address::from(rcpt_mailbox)]);
         let state = state.transition(Command::RcptTo(rcpt), &mut ctx);
         assert!(matches!(state, State::RcptTo(_)));
 
@@ -430,11 +433,12 @@ mod test {
         };
 
         // Start with MailFrom state
-        let sender: AddressList = addrparse("sender@example.com").unwrap().into();
-        *ctx.envelope.sender_mut() = sender.iter().next().cloned();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_addr = Address::from(sender_mailbox);
+        *ctx.envelope.sender_mut() = Some(sender_addr.clone());
 
         let state = State::MailFrom(MailFrom {
-            sender: sender.iter().next().cloned(),
+            sender: Some(sender_addr),
             params: MailParameters::new(),
         });
 

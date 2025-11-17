@@ -11,7 +11,7 @@ use std::{borrow::Cow, hint::black_box, sync::Arc};
 
 use ahash::AHashMap;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use empath_common::{context::Context, envelope::Envelope};
+use empath_common::{address::Address, address_parser, context::Context, envelope::Envelope};
 use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
 
 // ============================================================================
@@ -26,16 +26,14 @@ fn create_test_message(data_size: usize) -> Context {
 
     let mut envelope = Envelope::default();
     *envelope.sender_mut() = Some(
-        mailparse::addrparse("sender@example.com").expect("Valid address")[0]
-            .clone()
+        address_parser::parse_forward_path("<sender@example.com>")
+            .expect("Valid address")
             .into(),
     );
     *envelope.recipients_mut() = Some(
-        vec![
-            mailparse::addrparse("recipient@example.com").expect("Valid address")[0]
-                .clone()
-                .into(),
-        ]
+        vec![Address::from(
+            address_parser::parse_forward_path("<recipient@example.com>").expect("Valid address"),
+        )]
         .into(),
     );
 

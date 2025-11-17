@@ -20,18 +20,27 @@ use tokio::sync::broadcast;
 fn create_test_context(from: &str, to: &str) -> Context {
     let mut envelope = Envelope::default();
 
-    // Parse and set sender
-    if let Ok(sender_addr) = mailparse::addrparse(from)
-        && let Some(addr) = sender_addr.iter().next()
+    // Parse and set sender - add brackets if needed
+    let from_with_brackets = if from.starts_with('<') {
+        from.to_string()
+    } else {
+        format!("<{from}>")
+    };
+    if let Ok(sender_mailbox) =
+        empath_common::address_parser::parse_forward_path(&from_with_brackets)
     {
-        *envelope.sender_mut() = Some(Address(addr.clone()));
+        *envelope.sender_mut() = Some(Address::from(sender_mailbox));
     }
 
-    // Parse and set recipient
-    if let Ok(recip_addr) = mailparse::addrparse(to) {
-        *envelope.recipients_mut() = Some(AddressList(
-            recip_addr.iter().map(|a| Address(a.clone())).collect(),
-        ));
+    // Parse and set recipient - add brackets if needed
+    let to_with_brackets = if to.starts_with('<') {
+        to.to_string()
+    } else {
+        format!("<{to}>")
+    };
+    if let Ok(recip_mailbox) = empath_common::address_parser::parse_forward_path(&to_with_brackets)
+    {
+        *envelope.recipients_mut() = Some(AddressList(vec![Address::from(recip_mailbox)]));
     }
 
     Context {
@@ -152,15 +161,15 @@ async fn test_delivery_queue_domain_grouping() {
 
     // Add more recipients to different domains
     if let Some(recipients) = context.envelope.recipients_mut() {
-        if let Ok(addr2) = mailparse::addrparse("user2@domain2.com") {
-            for addr in addr2.iter() {
-                recipients.push(Address(addr.clone()));
-            }
+        if let Ok(mailbox2) =
+            empath_common::address_parser::parse_forward_path("<user2@domain2.com>")
+        {
+            recipients.push(Address::from(mailbox2));
         }
-        if let Ok(addr3) = mailparse::addrparse("user3@domain1.com") {
-            for addr in addr3.iter() {
-                recipients.push(Address(addr.clone()));
-            }
+        if let Ok(mailbox3) =
+            empath_common::address_parser::parse_forward_path("<user3@domain1.com>")
+        {
+            recipients.push(Address::from(mailbox3));
         }
     }
 

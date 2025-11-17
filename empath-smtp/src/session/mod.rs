@@ -411,7 +411,11 @@ mod test {
         sync::{Arc, RwLock},
     };
 
-    use empath_common::{context::Context, status::Status};
+    use empath_common::{
+        address::{Address, AddressList},
+        context::Context,
+        status::Status,
+    };
     use empath_ffi::modules::{self, MODULE_STORE, Module, validate::Event};
     use empath_spool::{BackingStore, TestBackingStore};
 
@@ -536,16 +540,18 @@ mod test {
             sender: None,
             params: crate::MailParameters::new(),
         });
-        let mut sender_addrs = mailparse::addrparse("test@example.com").unwrap();
+        let sender_mailbox =
+            empath_common::address_parser::parse_forward_path("<test@example.com>").unwrap();
         context
             .envelope
             .sender_mut()
-            .replace(sender_addrs.remove(0).into());
-        context.envelope.recipients_mut().replace(
-            mailparse::addrparse("recipient@example.com")
-                .unwrap()
-                .into(),
-        );
+            .replace(Address::from(sender_mailbox));
+        let recipient_mailbox =
+            empath_common::address_parser::parse_forward_path("<recipient@example.com>").unwrap();
+        context
+            .envelope
+            .recipients_mut()
+            .replace(AddressList::from(vec![Address::from(recipient_mailbox)]));
 
         let _ = session.response(&mut context).await;
         let response = session.receive(&mut context).await;

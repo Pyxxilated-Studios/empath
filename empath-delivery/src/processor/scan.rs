@@ -10,28 +10,6 @@ use crate::{
     types::DeliveryInfo,
 };
 
-/// Extract domain from an email address
-///
-/// # Errors
-/// Returns an error if the email address format is invalid or has no domain part
-pub fn extract_domain(email: &str) -> Result<String, DeliveryError> {
-    // Remove angle brackets if present
-    let cleaned = email.trim().trim_matches(|c| c == '<' || c == '>');
-
-    // Split on @ and get the domain part
-    cleaned
-        .split('@')
-        .nth(1)
-        .map(|domain| domain.trim().to_string())
-        .filter(|domain| !domain.is_empty())
-        .ok_or_else(|| {
-            SystemError::Internal(format!(
-                "Invalid email address: no domain found in '{email}'"
-            ))
-            .into()
-        })
-}
-
 /// Scan the spool for new messages and add them to the queue
 ///
 /// # Errors
@@ -88,28 +66,14 @@ pub async fn scan_spool_internal(
         // Collect unique domains from all recipients
         let mut domains = std::collections::HashMap::new();
         for recipient in recipients.iter() {
-            // Extract the actual email address from the MailAddr
-            let recipient_str = match &**recipient {
-                mailparse::MailAddr::Single(single) => &single.addr,
-                mailparse::MailAddr::Group(_) => continue, // Skip groups
-            };
+            // Extract the domain from the Mailbox
+            let domain = recipient.domain.clone();
+            let recipient_str = recipient.to_string();
 
-            match extract_domain(recipient_str) {
-                Ok(domain) => {
-                    domains
-                        .entry(domain)
-                        .or_insert_with(Vec::new)
-                        .push(recipient_str.to_owned());
-                }
-                Err(e) => {
-                    warn!(
-                        message_id = ?msg_id,
-                        recipient = %recipient_str,
-                        error = %e,
-                        "Failed to extract domain from recipient, skipping"
-                    );
-                }
-            }
+            domains
+                .entry(domain)
+                .or_insert_with(Vec::new)
+                .push(recipient_str);
         }
 
         // Enqueue for each unique domain
@@ -120,21 +84,4 @@ pub async fn scan_spool_internal(
     }
 
     Ok(added)
-}
-
-#[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_domain() {
-        assert_eq!(extract_domain("user@example.com").unwrap(), "example.com");
-        assert_eq!(extract_domain("<user@test.org>").unwrap(), "test.org");
-        assert_eq!(extract_domain("  user@domain.net  ").unwrap(), "domain.net");
-
-        assert!(extract_domain("invalid").is_err());
-        assert!(extract_domain("user@").is_err());
-        assert!(extract_domain("@domain.com").is_ok()); // Empty local part is technically valid
-    }
 }
