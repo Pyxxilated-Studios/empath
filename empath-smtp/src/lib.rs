@@ -181,33 +181,28 @@ impl Protocol for Smtp {
 
     #[traced(instrument(skip(self, args)), timing(precision = "ns"))]
     fn validate(&mut self, args: &mut Self::Args) -> Result<(), ProtocolError> {
-        if let Some(ext) = args
+        if let Some(Extension::Starttls(tls)) = args
             .extensions
             .iter()
             .find(|arg| matches!(arg, Extension::Starttls(_)))
         {
-            match ext {
-                Extension::Starttls(tls) => {
-                    if !tls.certificate.try_exists()? {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            format!(
-                                "Unable to find TLS Certificate {}",
-                                tls.certificate.display()
-                            ),
-                        )
-                        .into());
-                    }
+            if !tls.certificate.try_exists()? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "Unable to find TLS Certificate {}",
+                        tls.certificate.display()
+                    ),
+                )
+                .into());
+            }
 
-                    if !tls.key.try_exists()? {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            format!("Unable to find TLS Key {}", tls.key.display()),
-                        )
-                        .into());
-                    }
-                }
-                _ => unreachable!(),
+            if !tls.key.try_exists()? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Unable to find TLS Key {}", tls.key.display()),
+                )
+                .into());
             }
         }
 

@@ -415,19 +415,21 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                         .await?;
 
                     match response.payload {
-                        ResponsePayload::Data(d) if matches!(*d, ResponseData::QueueStats(_)) => {
-                            match *d {
-                                ResponseData::QueueStats(stats) => {
-                                    display_queue_stats(&stats);
-                                }
-                                _ => unreachable!(),
+                        ResponsePayload::Data(d) => match *d {
+                            ResponseData::QueueStats(stats) => {
+                                display_queue_stats(&stats);
                             }
-                        }
+                            _ => {
+                                anyhow::bail!(
+                                    "Expected QueueStats response, got different data type"
+                                );
+                            }
+                        },
                         ResponsePayload::Error(err) => {
                             anyhow::bail!("Server error: {err}");
                         }
-                        _ => {
-                            anyhow::bail!("Unexpected response for stats command");
+                        ResponsePayload::Ok => {
+                            anyhow::bail!("Unexpected Ok response for stats command");
                         }
                     }
 

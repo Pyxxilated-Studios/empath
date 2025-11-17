@@ -10,6 +10,11 @@ must_use_candidate = "allow"
 # Warn on unwrap/expect in production code (test unwraps are acceptable)
 unwrap_used = "warn"
 expect_used = "warn"
+# Deny panic-related macros in production code (tests are allowed via #[allow] attribute)
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
 
 [workspace.lints.rust]
 dead_code = "deny"

@@ -1,4 +1,9 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use empath_control::protocol::{
     QueueCommand, Request, RequestCommand, Response, ResponseData, ResponsePayload,
