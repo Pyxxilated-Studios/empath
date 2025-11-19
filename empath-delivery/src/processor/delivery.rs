@@ -13,9 +13,8 @@ use empath_spool::SpooledMessageId;
 
 use crate::{
     dns::MailServer,
-    error::{DeliveryError, PermanentError, SystemError},
+    error::{DeliveryError, SystemError},
     processor::DeliveryProcessor,
-    queue::retry::calculate_next_retry_time,
     types::DeliveryInfo,
 };
 
@@ -80,64 +79,41 @@ pub async fn prepare_message(
         modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
     }
 
-    // Check for domain-specific MX override first (for testing/debugging)
-    let mail_servers = if let Some(domain_config) = processor.domains.get(&info.recipient_domain)
-        && let Some(mx_override) = domain_config.mx_override_address()
-    {
-        internal!(
-            "Using MX override for {}: {}",
-            info.recipient_domain,
-            mx_override
-        );
+    // Create delivery pipeline to orchestrate DNS → Rate Limit → SMTP stages
+    let dns_resolver = processor.dns_resolver.as_ref().ok_or_else(|| {
+        SystemError::NotInitialized("DNS resolver not initialized. Call init() first.".to_string())
+    })?;
+    let domain_resolver = processor.domain_resolver.as_ref().ok_or_else(|| {
+        SystemError::NotInitialized(
+            "Domain policy resolver not initialized. Call init() first.".to_string(),
+        )
+    })?;
 
-        // Parse host:port or use default port 25
-        let (host, port) = if let Some((h, p)) = mx_override.split_once(':') {
-            (h.to_string(), p.parse::<u16>().unwrap_or(25))
-        } else {
-            (mx_override.to_string(), 25)
-        };
+    let pipeline = crate::policy::DeliveryPipeline::new(
+        dns_resolver,
+        domain_resolver,
+        processor.rate_limiter.as_ref(),
+        processor.circuit_breaker_instance.as_ref(),
+    );
 
-        Arc::new(vec![MailServer {
-            host,
-            port,
-            priority: 0,
-        }])
-    } else {
-        // Get the DNS resolver
-        let Some(dns_resolver) = &processor.dns_resolver else {
-            return Err(SystemError::NotInitialized(
-                "DNS resolver not initialized. Call init() first.".to_string(),
-            )
-            .into());
-        };
-
-        // Perform real DNS MX lookup for the recipient domain
-        // DNS errors are automatically converted to DeliveryError via From<DnsError>
-        let resolved = dns_resolver
-            .resolve_mail_servers(&info.recipient_domain)
-            .await?;
-
-        if resolved.is_empty() {
-            return Err(PermanentError::NoMailServers(info.recipient_domain.to_string()).into());
-        }
-
-        resolved
-    };
+    // Stage 1: Resolve mail servers (MX override or DNS lookup)
+    let dns_resolution = pipeline
+        .resolve_mail_servers(&info.recipient_domain)
+        .await?;
 
     // Store the resolved mail servers
     processor
         .queue
-        .set_mail_servers(message_id, mail_servers.clone());
+        .set_mail_servers(message_id, dns_resolution.mail_servers.clone());
 
-    // Use the first (highest priority) mail server
-    let primary_server = &mail_servers[0];
-    let mx_address = primary_server.address();
+    // Use the primary (highest priority) mail server
+    let mx_address = dns_resolution.primary_server.address();
 
     internal!(
         "Sending message to {:?} with MX host {} (priority {})",
         message_id,
         mx_address,
-        primary_server.priority
+        dns_resolution.primary_server.priority
     );
 
     // Dispatch DeliveryAttempt event before attempting delivery
@@ -155,44 +131,32 @@ pub async fn prepare_message(
     });
     modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
 
-    // Check rate limit before attempting delivery
-    if let Some(rate_limiter) = &processor.rate_limiter
-        && let Err(wait_time) = rate_limiter.check_rate_limit(&info.recipient_domain)
-    {
-        // Rate limited - schedule retry
-        let next_retry_at =
-            std::time::SystemTime::now() + std::time::Duration::from_secs(wait_time.as_secs());
+    // Stage 2: Check rate limit before attempting delivery
+    match pipeline.check_rate_limit(message_id, &info.recipient_domain) {
+        crate::policy::RateLimitResult::RateLimited { wait_time } => {
+            // Rate limited - schedule retry
+            let next_retry_at =
+                crate::policy::DeliveryPipeline::calculate_rate_limit_retry(wait_time);
 
-        processor.queue.set_next_retry_at(message_id, next_retry_at);
-        processor
-            .queue
-            .update_status(message_id, DeliveryStatus::Pending);
+            processor.queue.set_next_retry_at(message_id, next_retry_at);
+            processor
+                .queue
+                .update_status(message_id, DeliveryStatus::Pending);
 
-        // Record rate limiting metrics
-        if let Some(metrics) = empath_metrics::try_metrics() {
-            metrics
-                .delivery
-                .record_rate_limit(info.recipient_domain.as_str(), wait_time.as_secs_f64());
+            // Persist the delayed status to spool
+            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+                warn!(
+                    message_id = %message_id,
+                    error = %e,
+                    "Failed to persist delivery state after rate limit delay"
+                );
+            }
+
+            return Ok(()); // Not an error, just delayed
         }
-
-        info!(
-            message_id = %message_id,
-            domain = %info.recipient_domain,
-            wait_seconds = wait_time.as_secs_f64(),
-            next_retry_at = ?next_retry_at,
-            "Rate limit exceeded, delaying delivery"
-        );
-
-        // Persist the delayed status to spool
-        if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
-            warn!(
-                message_id = %message_id,
-                error = %e,
-                "Failed to persist delivery state after rate limit delay"
-            );
+        crate::policy::RateLimitResult::Allowed => {
+            // Proceed with delivery
         }
-
-        return Ok(()); // Not an error, just delayed
     }
 
     // Audit log: Delivery attempt
@@ -267,16 +231,8 @@ pub async fn prepare_message(
                 duration_ms,
             );
 
-            // Record circuit breaker success
-            if let Some(circuit_breaker) = &processor.circuit_breaker_instance {
-                let recovered = circuit_breaker.record_success(&info.recipient_domain);
-                if recovered {
-                    // Circuit breaker recovered (transitioned to Closed)
-                    if let Some(metrics) = &processor.metrics {
-                        metrics.record_circuit_breaker_recovery(info.recipient_domain.as_str());
-                    }
-                }
-            }
+            // Stage 3: Record successful delivery in circuit breaker
+            pipeline.record_success(&info.recipient_domain);
 
             Ok(())
         }
@@ -365,7 +321,7 @@ pub async fn handle_delivery_error(
 
     // All MX servers exhausted or permanent failure, use normal retry logic
     // Determine new status based on attempt count
-    let new_status = if updated_info.attempt_count() >= processor.max_attempts {
+    let new_status = if updated_info.attempt_count() >= processor.retry_policy.max_attempts {
         DeliveryStatus::Failed(error.to_string())
     } else {
         DeliveryStatus::Retry {
@@ -380,12 +336,9 @@ pub async fn handle_delivery_error(
 
     // Calculate and set next retry time using exponential backoff
     if matches!(new_status, DeliveryStatus::Retry { .. }) {
-        let next_retry_at = calculate_next_retry_time(
-            updated_info.attempt_count(),
-            processor.base_retry_delay_secs,
-            processor.max_retry_delay_secs,
-            processor.retry_jitter_factor,
-        );
+        let next_retry_at = processor
+            .retry_policy
+            .calculate_next_retry(updated_info.attempt_count());
 
         processor.queue.set_next_retry_at(message_id, next_retry_at);
 
@@ -440,16 +393,20 @@ pub async fn handle_delivery_error(
         &format!("{new_status:?}"),
     );
 
-    // Record circuit breaker failure (only for temporary failures)
-    // Permanent failures are recipient/config issues, not server health problems
-    if is_temporary_failure && let Some(circuit_breaker) = &processor.circuit_breaker_instance {
-        let tripped = circuit_breaker.record_failure(&updated_info.recipient_domain);
-        if tripped {
-            // Circuit breaker tripped (transitioned to Open)
-            if let Some(metrics) = &processor.metrics {
-                metrics.record_circuit_breaker_trip(updated_info.recipient_domain.as_str());
-            }
-        }
+    // Create delivery pipeline for circuit breaker tracking
+    if let Some(dns_resolver) = &processor.dns_resolver
+        && let Some(domain_resolver) = &processor.domain_resolver
+    {
+        let pipeline = crate::policy::DeliveryPipeline::new(
+            dns_resolver,
+            domain_resolver,
+            processor.rate_limiter.as_ref(),
+            processor.circuit_breaker_instance.as_ref(),
+        );
+
+        // Record circuit breaker failure (only for temporary failures)
+        // Permanent failures are recipient/config issues, not server health problems
+        pipeline.record_failure(&updated_info.recipient_domain, is_temporary_failure);
     }
 
     // Generate DSN if appropriate
@@ -559,19 +516,21 @@ async fn deliver_message(
     context: &Context,
     delivery_info: &DeliveryInfo,
 ) -> Result<(), DeliveryError> {
+    // Get the domain policy resolver (already checked earlier in prepare_delivery)
+    let Some(domain_resolver) = &processor.domain_resolver else {
+        return Err(SystemError::NotInitialized(
+            "Domain policy resolver not initialized. Call init() first.".to_string(),
+        )
+        .into());
+    };
+
     // Check if TLS is required for this domain
-    let require_tls = processor
-        .domains
-        .get(&delivery_info.recipient_domain)
-        .is_some_and(|config| config.require_tls);
+    let require_tls = domain_resolver.requires_tls(&delivery_info.recipient_domain);
 
     // Determine if we should accept invalid certificates
     // Priority: per-domain override > global configuration
-    let accept_invalid_certs = processor
-        .domains
-        .get(&delivery_info.recipient_domain)
-        .and_then(|config| config.accept_invalid_certs)
-        .unwrap_or(processor.accept_invalid_certs);
+    let accept_invalid_certs =
+        domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain);
 
     // Create and execute the SMTP transaction
     let transaction = crate::smtp_transaction::SmtpTransaction::new(

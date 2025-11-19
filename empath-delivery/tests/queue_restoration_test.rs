@@ -98,8 +98,8 @@ async fn test_queue_restoration_across_restart() {
     let mut processor1 = DeliveryProcessor::default();
     processor1.scan_interval_secs = 1;
     processor1.process_interval_secs = 1;
-    processor1.max_attempts = 5;
-    processor1.base_retry_delay_secs = 60;
+    processor1.retry_policy.max_attempts = 5;
+    processor1.retry_policy.base_retry_delay_secs = 60;
 
     processor1
         .init(spool.clone())
@@ -150,8 +150,8 @@ async fn test_queue_restoration_across_restart() {
     let mut processor2 = DeliveryProcessor::default();
     processor2.scan_interval_secs = 1;
     processor2.process_interval_secs = 1;
-    processor2.max_attempts = 5;
-    processor2.base_retry_delay_secs = 60;
+    processor2.retry_policy.max_attempts = 5;
+    processor2.retry_policy.base_retry_delay_secs = 60;
 
     processor2
         .init(spool.clone())

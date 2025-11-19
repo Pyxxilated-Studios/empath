@@ -171,6 +171,81 @@ impl From<DnsError> for DeliveryError {
     }
 }
 
+/// Convert from SMTP `ClientError` to `DeliveryError`.
+///
+/// This automatic conversion eliminates the need for manual `.map_err()` calls
+/// throughout the delivery codebase. Errors are intelligently categorized based
+/// on SMTP response codes and error types:
+///
+/// - **4xx SMTP codes** → Temporary (should retry)
+/// - **5xx SMTP codes** → Permanent (should not retry)
+/// - **Connection/I/O errors** → Temporary (network issues are transient)
+/// - **TLS errors** → Temporary (may succeed with different config)
+/// - **Parse/Config errors** → System (internal issues)
+///
+/// # Examples
+///
+/// ```ignore
+/// // Before (manual conversion):
+/// client.connect().await.map_err(|e| {
+///     TemporaryError::ConnectionFailed(format!("Failed to connect: {e}"))
+/// })?;
+///
+/// // After (automatic conversion):
+/// client.connect().await?;
+/// ```
+impl From<empath_smtp::client::ClientError> for DeliveryError {
+    fn from(error: empath_smtp::client::ClientError) -> Self {
+        use empath_smtp::client::ClientError;
+
+        match error {
+            // 4xx SMTP codes are temporary failures - retry with backoff
+            ClientError::SmtpError { code, message } if (400..500).contains(&code) => {
+                Self::Temporary(TemporaryError::SmtpTemporary(format!("{code} {message}")))
+            }
+
+            // 5xx SMTP codes are permanent failures - do not retry
+            ClientError::SmtpError { code, message } if (500..600).contains(&code) => {
+                Self::Permanent(PermanentError::MessageRejected(format!("{code} {message}")))
+            }
+
+            // Unexpected response codes (not in standard ranges)
+            ClientError::SmtpError { code, message }
+            | ClientError::UnexpectedResponse { code, message } => Self::System(
+                SystemError::Internal(format!("Unexpected SMTP response: {code} {message}")),
+            ),
+
+            // I/O errors are temporary (connection refused, timeout, etc.)
+            ClientError::Io(e) => {
+                Self::Temporary(TemporaryError::ConnectionFailed(format!("I/O error: {e}")))
+            }
+
+            // Connection closed unexpectedly - temporary, retry may succeed
+            ClientError::ConnectionClosed => Self::Temporary(TemporaryError::ConnectionFailed(
+                "Connection closed unexpectedly".to_string(),
+            )),
+
+            // TLS errors are temporary - might succeed with different config or retry
+            ClientError::TlsError(msg) => Self::Temporary(TemporaryError::TlsHandshakeFailed(msg)),
+
+            // Parse errors indicate protocol violation or internal bugs - system error
+            ClientError::ParseError(msg) => Self::System(SystemError::Internal(format!(
+                "SMTP protocol parse error: {msg}"
+            ))),
+
+            // Builder/configuration errors are system errors
+            ClientError::BuilderError(msg) => Self::System(SystemError::Configuration(format!(
+                "SMTP client config error: {msg}"
+            ))),
+
+            // UTF-8 errors indicate data corruption or protocol issues
+            ClientError::Utf8Error(e) => {
+                Self::System(SystemError::Internal(format!("UTF-8 decoding error: {e}")))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +312,126 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Permanent failure: Invalid recipient: user@example.com"
+        );
+    }
+
+    #[test]
+    fn test_client_error_conversion_4xx() {
+        use empath_smtp::client::ClientError;
+
+        // 4xx SMTP codes should be temporary
+        let client_err = ClientError::SmtpError {
+            code: 421,
+            message: "Service not available".to_string(),
+        };
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_temporary());
+        assert!(!delivery_err.is_permanent());
+        assert!(!delivery_err.is_system());
+        assert_eq!(
+            delivery_err.to_string(),
+            "Temporary failure: Temporary SMTP error: 421 Service not available"
+        );
+    }
+
+    #[test]
+    fn test_client_error_conversion_5xx() {
+        use empath_smtp::client::ClientError;
+
+        // 5xx SMTP codes should be permanent
+        let client_err = ClientError::SmtpError {
+            code: 550,
+            message: "User not found".to_string(),
+        };
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_permanent());
+        assert!(!delivery_err.is_temporary());
+        assert!(!delivery_err.is_system());
+        assert_eq!(
+            delivery_err.to_string(),
+            "Permanent failure: Message rejected: 550 User not found"
+        );
+    }
+
+    #[test]
+    fn test_client_error_conversion_io() {
+        use empath_smtp::client::ClientError;
+
+        // I/O errors should be temporary
+        let client_err = ClientError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "connection refused",
+        ));
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_temporary());
+        assert!(!delivery_err.is_permanent());
+        assert!(!delivery_err.is_system());
+    }
+
+    #[test]
+    fn test_client_error_conversion_connection_closed() {
+        use empath_smtp::client::ClientError;
+
+        // Connection closed should be temporary
+        let client_err = ClientError::ConnectionClosed;
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_temporary());
+        assert_eq!(
+            delivery_err.to_string(),
+            "Temporary failure: Connection failed: Connection closed unexpectedly"
+        );
+    }
+
+    #[test]
+    fn test_client_error_conversion_tls() {
+        use empath_smtp::client::ClientError;
+
+        // TLS errors should be temporary
+        let client_err = ClientError::TlsError("Handshake failed".to_string());
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_temporary());
+        assert_eq!(
+            delivery_err.to_string(),
+            "Temporary failure: TLS handshake failed: Handshake failed"
+        );
+    }
+
+    #[test]
+    fn test_client_error_conversion_parse() {
+        use empath_smtp::client::ClientError;
+
+        // Parse errors should be system errors
+        let client_err = ClientError::ParseError("Invalid response".to_string());
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_system());
+        assert!(!delivery_err.is_temporary());
+        assert!(!delivery_err.is_permanent());
+    }
+
+    #[test]
+    fn test_client_error_conversion_builder() {
+        use empath_smtp::client::ClientError;
+
+        // Builder errors should be system errors
+        let client_err = ClientError::BuilderError("Invalid config".to_string());
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_system());
+    }
+
+    #[test]
+    fn test_client_error_conversion_unexpected_code() {
+        use empath_smtp::client::ClientError;
+
+        // Unexpected response codes (outside 4xx/5xx) should be system errors
+        let client_err = ClientError::UnexpectedResponse {
+            code: 999,
+            message: "Unknown code".to_string(),
+        };
+        let delivery_err: DeliveryError = client_err.into();
+        assert!(delivery_err.is_system());
+        assert_eq!(
+            delivery_err.to_string(),
+            "System error: Internal error: Unexpected SMTP response: 999 Unknown code"
         );
     }
 }

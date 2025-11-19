@@ -382,7 +382,7 @@ impl E2ETestHarnessBuilder {
         delivery.domains = domains;
         delivery.scan_interval_secs = self.scan_interval_secs;
         delivery.process_interval_secs = self.process_interval_secs;
-        delivery.max_attempts = self.max_attempts;
+        delivery.retry_policy.max_attempts = self.max_attempts;
         delivery.accept_invalid_certs = true; // Global fallback
 
         delivery.init(backing_store.clone())?;

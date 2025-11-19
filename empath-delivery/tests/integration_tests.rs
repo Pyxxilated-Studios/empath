@@ -105,7 +105,7 @@ async fn test_delivery_with_mx_override_integration() {
     processor.domains = domains;
     processor.scan_interval_secs = 1;
     processor.process_interval_secs = 1;
-    processor.max_attempts = 3;
+    processor.retry_policy.max_attempts = 3;
 
     processor.init(spool.clone()).unwrap();
 
@@ -197,7 +197,7 @@ async fn test_graceful_shutdown() {
     let mut processor = DeliveryProcessor::default();
     processor.scan_interval_secs = 1;
     processor.process_interval_secs = 1;
-    processor.max_attempts = 3;
+    processor.retry_policy.max_attempts = 3;
 
     processor.init(spool.clone()).unwrap();
 
@@ -242,7 +242,7 @@ async fn test_graceful_shutdown_respects_timeout() {
     let mut processor = DeliveryProcessor::default();
     processor.scan_interval_secs = 1;
     processor.process_interval_secs = 1;
-    processor.max_attempts = 3;
+    processor.retry_policy.max_attempts = 3;
 
     processor.init(spool.clone()).unwrap();
 
@@ -312,10 +312,10 @@ async fn test_retry_scheduling_with_backoff() {
 
     // Create a processor with fast backoff for testing
     let mut processor = DeliveryProcessor::default();
-    processor.base_retry_delay_secs = 2; // 2 seconds base delay
-    processor.max_retry_delay_secs = 60; // Cap at 60 seconds
-    processor.retry_jitter_factor = 0.0; // No jitter for predictable testing
-    processor.max_attempts = 3;
+    processor.retry_policy.base_retry_delay_secs = 2; // 2 seconds base delay
+    processor.retry_policy.max_retry_delay_secs = 60; // Cap at 60 seconds
+    processor.retry_policy.retry_jitter_factor = 0.0; // No jitter for predictable testing
+    processor.retry_policy.max_attempts = 3;
 
     processor.init(spool.clone()).unwrap();
 

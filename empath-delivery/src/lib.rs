@@ -14,6 +14,7 @@ mod dns;
 mod domain_config;
 mod dsn;
 mod error;
+mod policy;
 mod processor;
 pub mod queue;
 mod rate_limiter;
@@ -35,6 +36,10 @@ pub use dsn::DsnConfig;
 pub use empath_common::{DeliveryAttempt, DeliveryStatus};
 // Re-export error types
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
+// Re-export policy types
+pub use policy::{
+    DeliveryPipeline, DnsResolution, DomainPolicyResolver, RateLimitResult, RetryPolicy,
+};
 // Re-export core types
 pub use processor::DeliveryProcessor;
 pub use queue::DeliveryQueue;

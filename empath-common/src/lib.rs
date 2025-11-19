@@ -9,6 +9,7 @@
 pub mod address;
 pub mod address_parser;
 pub mod audit;
+pub mod config;
 pub mod context;
 pub mod controller;
 pub mod domain;

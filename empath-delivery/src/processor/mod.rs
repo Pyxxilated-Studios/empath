@@ -17,6 +17,7 @@ use crate::{
     domain_config::DomainConfigRegistry,
     dsn::DsnConfig,
     error::DeliveryError,
+    policy::RetryPolicy,
     queue::DeliveryQueue,
     rate_limiter::{RateLimitConfig, RateLimiter},
     types::SmtpTimeouts,
@@ -28,22 +29,6 @@ const fn default_scan_interval() -> u64 {
 
 const fn default_process_interval() -> u64 {
     10
-}
-
-const fn default_max_attempts() -> u32 {
-    25
-}
-
-const fn default_base_retry_delay() -> u64 {
-    60 // 1 minute
-}
-
-const fn default_max_retry_delay() -> u64 {
-    86400 // 24 hours
-}
-
-const fn default_retry_jitter_factor() -> f64 {
-    0.2 // ±20%
 }
 
 fn default_max_concurrent_deliveries() -> usize {
@@ -77,26 +62,14 @@ pub struct DeliveryProcessor {
     #[serde(default = "default_process_interval")]
     pub process_interval_secs: u64,
 
-    /// Maximum number of delivery attempts before giving up
-    #[serde(default = "default_max_attempts")]
-    pub max_attempts: u32,
-
-    /// Base delay for exponential backoff (in seconds)
+    /// Retry policy configuration
     ///
-    /// First retry will occur after this delay. Subsequent retries will double
-    /// this delay (with jitter) up to `max_retry_delay_secs`.
+    /// Controls retry behavior including maximum attempts, exponential backoff,
+    /// and jitter. This is flattened into the config for backward compatibility.
     ///
-    /// Default: 60 seconds (1 minute)
-    #[serde(default = "default_base_retry_delay")]
-    pub base_retry_delay_secs: u64,
-
-    /// Maximum delay between retry attempts (in seconds)
-    ///
-    /// Caps the exponential backoff to prevent excessively long delays.
-    ///
-    /// Default: 86400 seconds (24 hours)
-    #[serde(default = "default_max_retry_delay")]
-    pub max_retry_delay_secs: u64,
+    /// Default: 25 attempts, 300s base delay, 86400s max delay, 10% jitter
+    #[serde(flatten, default)]
+    pub retry_policy: RetryPolicy,
 
     /// Maximum number of concurrent delivery tasks
     ///
@@ -106,15 +79,6 @@ pub struct DeliveryProcessor {
     /// Default: Number of CPU cores (`num_cpus::get()`)
     #[serde(default = "default_max_concurrent_deliveries")]
     pub max_concurrent_deliveries: usize,
-
-    /// Jitter factor for retry delays (0.0 to 1.0)
-    ///
-    /// Adds randomness to retry delays to prevent thundering herd.
-    /// A factor of 0.2 means ±20% randomness.
-    ///
-    /// Default: 0.2 (±20%)
-    #[serde(default = "default_retry_jitter_factor")]
-    pub retry_jitter_factor: f64,
 
     /// Message expiration time (in seconds)
     ///
@@ -222,6 +186,10 @@ pub struct DeliveryProcessor {
     /// Circuit breaker for per-domain failure protection (initialized in `init()`)
     #[serde(skip)]
     pub(crate) circuit_breaker_instance: Option<CircuitBreaker>,
+
+    /// Domain policy resolver for configuration lookups (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) domain_resolver: Option<crate::policy::DomainPolicyResolver>,
 }
 
 impl Default for DeliveryProcessor {
@@ -229,11 +197,8 @@ impl Default for DeliveryProcessor {
         Self {
             scan_interval_secs: default_scan_interval(),
             process_interval_secs: default_process_interval(),
-            max_attempts: default_max_attempts(),
-            base_retry_delay_secs: default_base_retry_delay(),
-            max_retry_delay_secs: default_max_retry_delay(),
+            retry_policy: RetryPolicy::default(),
             max_concurrent_deliveries: default_max_concurrent_deliveries(),
-            retry_jitter_factor: default_retry_jitter_factor(),
             message_expiration_secs: None,
             accept_invalid_certs: false,
             dns: DnsConfig::default(),
@@ -251,6 +216,7 @@ impl Default for DeliveryProcessor {
             metrics: None,
             rate_limiter: None,
             circuit_breaker_instance: None,
+            domain_resolver: None,
         }
     }
 }
@@ -306,6 +272,17 @@ impl DeliveryProcessor {
             self.circuit_breaker.failure_threshold,
             self.circuit_breaker.failure_window_secs,
             self.circuit_breaker.timeout_secs
+        );
+
+        // Initialize domain policy resolver
+        self.domain_resolver = Some(crate::policy::DomainPolicyResolver::new(
+            self.domains.clone(),
+            self.accept_invalid_certs,
+        ));
+        internal!(
+            "Domain policy resolver initialized ({} domain configs, global accept_invalid_certs: {})",
+            self.domains.len(),
+            self.accept_invalid_certs
         );
 
         Ok(())

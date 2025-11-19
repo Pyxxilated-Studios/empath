@@ -88,9 +88,11 @@ impl<'a> SmtpTransaction<'a> {
     /// Returns an error if connection or greeting fails
     async fn connect_and_greet(&self) -> Result<SmtpClient, DeliveryError> {
         // Connect to the SMTP server
+        // Automatic From<ClientError> conversion handles connection errors
         let mut client = SmtpClient::connect(&self.server_address, self.server_address.clone())
             .await
             .map_err(|e| {
+                // Add context about which server we tried to connect to
                 TemporaryError::ConnectionFailed(format!(
                     "Failed to connect to {}: {e}",
                     self.server_address
@@ -99,9 +101,7 @@ impl<'a> SmtpTransaction<'a> {
             .accept_invalid_certs(self.accept_invalid_certs);
 
         // Read greeting
-        let greeting = client.read_greeting().await.map_err(|e| {
-            TemporaryError::ConnectionFailed(format!("Failed to read greeting: {e}"))
-        })?;
+        let greeting = client.read_greeting().await?;
 
         if !greeting.is_success() {
             return Err(TemporaryError::ServerBusy(format!(
@@ -161,8 +161,7 @@ impl<'a> SmtpTransaction<'a> {
                 .await
                 .map_err(|_| {
                     TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
-                })?
-                .map_err(|e| TemporaryError::SmtpTemporary(format!("EHLO failed: {e}")))?;
+                })??;
 
             if !ehlo_response.is_success() {
                 return Err(TemporaryError::SmtpTemporary(format!(
@@ -218,8 +217,9 @@ impl<'a> SmtpTransaction<'a> {
         let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
         let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
             .await
-            .map_err(|_| TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}")))?
-            .map_err(|e| TemporaryError::SmtpTemporary(format!("EHLO failed: {e}")))?;
+            .map_err(|_| {
+                TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
+            })??;
 
         if !ehlo_response.is_success() {
             return Err(TemporaryError::SmtpTemporary(format!(
@@ -288,10 +288,7 @@ impl<'a> SmtpTransaction<'a> {
                     TemporaryError::Timeout(format!(
                         "EHLO after STARTTLS timed out after {ehlo_timeout:?}"
                     ))
-                })?
-                .map_err(|e| {
-                    TemporaryError::SmtpTemporary(format!("EHLO after STARTTLS failed: {e}"))
-                })?;
+                })??;
 
             if !ehlo_response.is_success() {
                 return Err(TemporaryError::SmtpTemporary(format!(
@@ -332,8 +329,7 @@ impl<'a> SmtpTransaction<'a> {
                     TemporaryError::Timeout(format!(
                         "MAIL FROM timed out after {mail_from_timeout:?}"
                     ))
-                })?
-                .map_err(|e| TemporaryError::SmtpTemporary(format!("MAIL FROM failed: {e}")))?;
+                })??;
 
         if !mail_response.is_success() {
             let code = mail_response.code;
@@ -368,8 +364,7 @@ impl<'a> SmtpTransaction<'a> {
                         TemporaryError::Timeout(format!(
                             "RCPT TO timed out after {rcpt_to_timeout:?}"
                         ))
-                    })?
-                    .map_err(|e| TemporaryError::SmtpTemporary(format!("RCPT TO failed: {e}")))?;
+                    })??;
 
             if !rcpt_response.is_success() {
                 let code = rcpt_response.code;
@@ -400,8 +395,7 @@ impl<'a> SmtpTransaction<'a> {
             .await
             .map_err(|_| {
                 TemporaryError::Timeout(format!("DATA command timed out after {data_timeout:?}"))
-            })?
-            .map_err(|e| TemporaryError::SmtpTemporary(format!("DATA command failed: {e}")))?;
+            })??;
 
         if !(300..400).contains(&data_response.code) {
             let code = data_response.code;
@@ -429,10 +423,7 @@ impl<'a> SmtpTransaction<'a> {
                 TemporaryError::Timeout(format!(
                     "Sending message data timed out after {data_timeout:?}"
                 ))
-            })?
-            .map_err(|e| {
-                TemporaryError::SmtpTemporary(format!("Failed to send message data: {e}"))
-            })?;
+            })??;
 
         if !send_response.is_success() {
             let code = send_response.code;
