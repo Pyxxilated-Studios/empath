@@ -13,6 +13,9 @@ use std::{
 
 use chrono::{TimeZone, Utc, offset::LocalResult};
 use clap::{Parser, Subcommand, ValueEnum};
+use empath_common::context::{
+    COMPLETED_STR, EXPIRED_STR, FAILED_STR, IN_PROGRESS_STR, PENDING_STR, RETRY_STR,
+};
 use empath_control::{
     ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, RequestCommand, ResponsePayload,
     SystemCommand, protocol::ResponseData,
@@ -42,10 +45,15 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Queue management commands (file-based)
+    /// Queue management commands (runtime control via socket - active delivery queue)
     Queue {
         #[command(subcommand)]
         action: QueueAction,
+    },
+    /// Spool management commands (runtime control via socket - persistent storage)
+    Spool {
+        #[command(subcommand)]
+        action: SpoolAction,
     },
     /// DNS cache management (runtime control via socket)
     Dns {
@@ -143,6 +151,29 @@ enum QueueAction {
     ProcessNow,
 }
 
+#[derive(Subcommand, Debug)]
+enum SpoolAction {
+    /// List ALL messages in the spool (including delivered/failed)
+    List {
+        /// Filter by status
+        #[arg(long, value_enum)]
+        status: Option<StatusFilter>,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// View detailed information about a specific message in spool
+    View {
+        /// Message ID to view
+        message_id: String,
+    },
+    /// Clean up completed/failed messages from spool
+    CleanupCompleted,
+    /// Show spool statistics
+    Stats,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum StatusFilter {
     Pending,
@@ -152,13 +183,6 @@ enum StatusFilter {
     Retry,
     Expired,
 }
-
-static PENDING_STR: &str = "Pending";
-static IN_PROGRESS_STR: &str = "In Progress";
-static COMPLETED_STR: &str = "Completed";
-static FAILED_STR: &str = "Failed";
-static RETRY_STR: &str = "Retry";
-static EXPIRED_STR: &str = "Expired";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -175,6 +199,9 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Queue { action } => {
             handle_queue_command_direct(&cli.control_socket, action).await?;
+        }
+        Commands::Spool { action } => {
+            handle_spool_command_direct(&cli.control_socket, action).await?;
         }
         Commands::Dns { action } => {
             handle_dns_command_direct(&cli.control_socket, action).await?;
@@ -305,7 +332,9 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
             ResponseData::SystemStatus(_)
             | ResponseData::QueueList(_)
             | ResponseData::QueueMessageDetails(_)
-            | ResponseData::QueueStats(_) => {
+            | ResponseData::QueueStats(_)
+            | ResponseData::SpoolList(_)
+            | ResponseData::SpoolStats(_) => {
                 println!("Unexpected response for DNS command: {data:?}");
             }
         },
@@ -346,7 +375,9 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
             | ResponseData::Message(_)
             | ResponseData::QueueList(_)
             | ResponseData::QueueMessageDetails(_)
-            | ResponseData::QueueStats(_) => {
+            | ResponseData::QueueStats(_)
+            | ResponseData::SpoolList(_)
+            | ResponseData::SpoolStats(_) => {
                 println!("Unexpected response for system command: {data:?}");
             }
         },
@@ -505,7 +536,9 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
             }
             ResponseData::DnsCache(_)
             | ResponseData::MxOverrides(_)
-            | ResponseData::SystemStatus(_) => {
+            | ResponseData::SystemStatus(_)
+            | ResponseData::SpoolList(_)
+            | ResponseData::SpoolStats(_) => {
                 println!("Unexpected response for queue command: {data:?}");
             }
         },
@@ -515,6 +548,146 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
     }
 
     Ok(())
+}
+
+/// Handle spool commands directly
+async fn handle_spool_command_direct(socket_path: &str, action: SpoolAction) -> anyhow::Result<()> {
+    let client = check_control_socket(socket_path)?;
+    handle_spool_command(&client, action).await
+}
+
+/// Handle spool management commands
+#[allow(clippy::too_many_lines)]
+async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> anyhow::Result<()> {
+    use empath_control::{SpoolCommand, protocol::ResponseData};
+
+    let request = match action {
+        SpoolAction::List { status, format: _ } => {
+            let status_filter = status.map(|s| {
+                match s {
+                    StatusFilter::Pending => PENDING_STR,
+                    StatusFilter::InProgress => IN_PROGRESS_STR,
+                    StatusFilter::Completed => COMPLETED_STR,
+                    StatusFilter::Failed => FAILED_STR,
+                    StatusFilter::Retry => RETRY_STR,
+                    StatusFilter::Expired => EXPIRED_STR,
+                }
+                .to_string()
+            });
+            Request::new(RequestCommand::Spool(SpoolCommand::List { status_filter }))
+        }
+        SpoolAction::View { message_id } => {
+            Request::new(RequestCommand::Spool(SpoolCommand::View { message_id }))
+        }
+        SpoolAction::CleanupCompleted => {
+            Request::new(RequestCommand::Spool(SpoolCommand::CleanupCompleted))
+        }
+        SpoolAction::Stats => Request::new(RequestCommand::Spool(SpoolCommand::Stats)),
+    };
+
+    let response = client.send_request(request).await?;
+
+    match response.payload {
+        ResponsePayload::Ok => {
+            println!("✓ Command completed successfully");
+        }
+        ResponsePayload::Data(data) => match *data {
+            ResponseData::SpoolList(messages) => {
+                if messages.is_empty() {
+                    println!("No messages in spool");
+                } else {
+                    println!("=== Spool Messages ({}) ===\n", messages.len());
+                    for msg in messages {
+                        println!("ID:        {}", msg.id);
+                        println!("From:      {}", msg.from);
+                        println!("To:        {}", msg.to.join(", "));
+                        if let Some(domain) = &msg.domain {
+                            println!("Domain:    {domain}");
+                        }
+                        if let Some(status) = &msg.status {
+                            println!("Status:    {status}");
+                        } else {
+                            println!("Status:    [New/No delivery context]");
+                        }
+                        if let Some(attempts) = msg.attempts {
+                            println!("Attempts:  {attempts}");
+                        }
+                        println!("Size:      {} bytes", msg.size);
+                        println!("Spooled:   {}", format_timestamp(msg.spooled_at * 1000));
+                        println!();
+                    }
+                }
+            }
+            ResponseData::SpoolStats(stats) => {
+                display_spool_stats(&stats);
+            }
+            ResponseData::QueueMessageDetails(details) => {
+                // Reuse queue view display
+                println!("=== Message Details (from Spool) ===\n");
+                println!("ID:        {}", details.id);
+                println!("From:      {}", details.from);
+                println!("To:        {}", details.to.join(", "));
+                println!("Domain:    {}", details.domain);
+                println!("Status:    {}", details.status);
+                println!("Attempts:  {}", details.attempts);
+                if let Some(next_retry) = details.next_retry {
+                    println!("Next retry: {}", format_timestamp(next_retry * 1000));
+                }
+                if let Some(ref error) = details.last_error {
+                    println!("Last error: {error}");
+                }
+                println!("Size:      {} bytes", details.size);
+                println!("Spooled:   {}", format_timestamp(details.spooled_at * 1000));
+
+                if !details.headers.is_empty() {
+                    println!("\n--- Headers ---");
+                    for (key, value) in &details.headers {
+                        println!("{key}: {value}");
+                    }
+                }
+
+                println!("\n--- Body Preview ---");
+                println!("{}", details.body_preview);
+            }
+            ResponseData::Message(msg) => {
+                println!("✓ {msg}");
+            }
+            ResponseData::DnsCache(_)
+            | ResponseData::MxOverrides(_)
+            | ResponseData::SystemStatus(_)
+            | ResponseData::QueueList(_)
+            | ResponseData::QueueStats(_) => {
+                println!("Unexpected response for spool command: {data:?}");
+            }
+        },
+        ResponsePayload::Error(err) => {
+            anyhow::bail!("Server error: {err}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Display spool statistics
+fn display_spool_stats(stats: &empath_control::protocol::SpoolStats) {
+    println!("=== Spool Statistics ===\n");
+    println!("Total messages: {}", stats.total);
+    println!(
+        "Total size:     {} bytes ({:.2} MB)",
+        stats.total_size,
+        f64::from(u32::try_from(stats.total_size).unwrap_or(u32::MAX)) / 1_048_576.0
+    );
+
+    if !stats.by_status.is_empty() {
+        println!("\nBy Status:");
+        for (status, count) in &stats.by_status {
+            println!("  {status:20} {count}");
+        }
+    }
+
+    if let Some(age) = stats.oldest_message_age_secs {
+        println!("\nOldest message age: {}", format_duration(age));
+    }
 }
 
 /// Display queue statistics

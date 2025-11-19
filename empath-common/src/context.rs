@@ -33,15 +33,22 @@ pub enum DeliveryStatus {
     Expired,
 }
 
+pub static PENDING_STR: &str = "Pending";
+pub static IN_PROGRESS_STR: &str = "In Progress";
+pub static COMPLETED_STR: &str = "Completed";
+pub static FAILED_STR: &str = "Failed";
+pub static RETRY_STR: &str = "Retry";
+pub static EXPIRED_STR: &str = "Expired";
+
 impl Display for DeliveryStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pending => write!(f, "pending"),
-            Self::InProgress => write!(f, "inprogress"),
-            Self::Completed => write!(f, "completed"),
-            Self::Failed(_) => write!(f, "failed"),
-            Self::Retry { .. } => write!(f, "retry"),
-            Self::Expired => write!(f, "expired"),
+            Self::Pending => write!(f, "{PENDING_STR}"),
+            Self::InProgress => write!(f, "{IN_PROGRESS_STR}"),
+            Self::Completed => write!(f, "{COMPLETED_STR}"),
+            Self::Failed(_) => write!(f, "{FAILED_STR}"),
+            Self::Retry { .. } => write!(f, "{RETRY_STR}"),
+            Self::Expired => write!(f, "{EXPIRED_STR}"),
         }
     }
 }

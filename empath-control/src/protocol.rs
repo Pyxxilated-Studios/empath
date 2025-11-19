@@ -31,6 +31,8 @@ pub enum RequestCommand {
     System(SystemCommand),
     /// Queue management commands
     Queue(QueueCommand),
+    /// Spool management commands (direct access to persistent storage)
+    Spool(SpoolCommand),
 }
 
 /// DNS cache management commands
@@ -95,6 +97,25 @@ pub enum QueueCommand {
     ProcessNow,
 }
 
+/// Spool management commands (direct access to persistent storage)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SpoolCommand {
+    /// List all messages in the spool (regardless of queue state)
+    List {
+        /// Filter by status (optional)
+        status_filter: Option<String>,
+    },
+    /// View detailed information about a specific message in the spool
+    View {
+        /// Message ID to view
+        message_id: String,
+    },
+    /// Delete completed/failed messages from the spool
+    CleanupCompleted,
+    /// Get spool statistics
+    Stats,
+}
+
 /// Response from the control server (versioned wrapper)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {
@@ -130,6 +151,10 @@ pub enum ResponseData {
     QueueMessageDetails(QueueMessageDetails),
     /// Queue statistics
     QueueStats(QueueStats),
+    /// Spool message list
+    SpoolList(Vec<SpoolMessage>),
+    /// Spool statistics
+    SpoolStats(SpoolStats),
     /// Simple string message
     Message(String),
 }
@@ -221,6 +246,40 @@ pub struct QueueStats {
     pub by_status: HashMap<String, usize>,
     /// Messages by domain
     pub by_domain: HashMap<String, usize>,
+    /// Oldest message age in seconds
+    pub oldest_message_age_secs: Option<u64>,
+}
+
+/// Spool message summary (for list command)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpoolMessage {
+    /// Message ID
+    pub id: String,
+    /// Sender email address
+    pub from: String,
+    /// Recipient email addresses
+    pub to: Vec<String>,
+    /// Delivery status (if message has been processed)
+    pub status: Option<String>,
+    /// Domain being delivered to (if message has delivery context)
+    pub domain: Option<String>,
+    /// Number of delivery attempts (if message has delivery context)
+    pub attempts: Option<u32>,
+    /// Message size in bytes
+    pub size: usize,
+    /// Time message was spooled (Unix timestamp in seconds)
+    pub spooled_at: u64,
+}
+
+/// Spool statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpoolStats {
+    /// Total messages in spool
+    pub total: usize,
+    /// Messages by status (including "no delivery context")
+    pub by_status: HashMap<String, usize>,
+    /// Total size in bytes
+    pub total_size: u64,
     /// Oldest message age in seconds
     pub oldest_message_age_secs: Option<u64>,
 }

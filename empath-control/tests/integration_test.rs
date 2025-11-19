@@ -105,6 +105,9 @@ impl CommandHandler for MockHandler {
                     "Queue command not implemented in mock".to_string(),
                 )),
             },
+            RequestCommand::Spool(_) => Ok(Response::error(
+                "Spool command not implemented in mock".to_string(),
+            )),
         }
     }
 }

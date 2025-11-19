@@ -9,6 +9,8 @@ use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
+use crate::control_handler::EmpathControlHandler;
+
 #[allow(
     clippy::unsafe_derive_deserialize,
     reason = "The unsafe aspects have nothing to do with the struct"
@@ -147,10 +149,8 @@ impl Empath {
 
         // Create control server
         let delivery_arc = Arc::new(self.delivery);
-        let delivery_service: Arc<dyn empath_delivery::DeliveryQueryService> = delivery_arc.clone();
-        let control_handler = Arc::new(crate::control_handler::EmpathControlHandler::new(
-            delivery_service,
-        ));
+        let delivery_service = delivery_arc.clone();
+        let control_handler = Arc::new(EmpathControlHandler::new(delivery_service));
         let control_server = ControlServer::with_auth(
             &self.control_socket_path,
             control_handler,

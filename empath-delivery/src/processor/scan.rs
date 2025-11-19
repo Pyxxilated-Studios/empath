@@ -38,7 +38,18 @@ pub async fn scan_spool_internal(
 
         // Check if this message already has delivery state persisted
         if let Some(delivery_ctx) = &context.delivery {
-            // Restore from persisted state
+            // Skip messages in terminal states (Completed or Failed)
+            // These remain in spool for historical/audit purposes but should not
+            // be re-added to the active delivery queue
+            if matches!(
+                delivery_ctx.status,
+                empath_common::DeliveryStatus::Completed | empath_common::DeliveryStatus::Failed(_)
+            ) {
+                continue;
+            }
+
+            // Restore from persisted state for messages that need continued processing
+            // (Pending, InProgress, or Retry states)
             let info = DeliveryInfo {
                 message_id: msg_id.clone(),
                 status: delivery_ctx.status.clone(),

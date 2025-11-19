@@ -18,7 +18,7 @@ pub use client::ControlClient;
 pub use error::{ControlError, Result};
 pub use protocol::{
     DnsCommand, PROTOCOL_VERSION, QueueCommand, Request, RequestCommand, Response, ResponsePayload,
-    SystemCommand,
+    SpoolCommand, SystemCommand,
 };
 pub use server::ControlServer;
 

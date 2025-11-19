@@ -49,6 +49,7 @@ impl CommandHandler for EmpathControlHandler {
             RequestCommand::Dns(dns_cmd) => self.handle_dns_command(dns_cmd).await,
             RequestCommand::System(sys_cmd) => self.handle_system_command(&sys_cmd),
             RequestCommand::Queue(queue_cmd) => self.handle_queue_command(queue_cmd).await,
+            RequestCommand::Spool(spool_cmd) => self.handle_spool_command(spool_cmd).await,
         }
     }
 }
@@ -319,6 +320,7 @@ impl EmpathControlHandler {
     ) -> empath_control::Result<Response> {
         // Get all messages from queue
         let all_info = self.delivery.list_messages(None);
+        internal!(level = TRACE, "{all_info:?}");
 
         // Filter by status if requested
         let filtered_info: Vec<_> = if let Some(status) = status_filter {
@@ -335,8 +337,18 @@ impl EmpathControlHandler {
         let mut messages = Vec::new();
         for info in filtered_info {
             // Read message from spool to get details
-            let Ok(context) = spool.read(&info.message_id).await else {
-                continue; // Skip messages that can't be read
+            let context = match spool.read(&info.message_id).await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    // Log warning but continue - message may have been deleted after queue read
+                    tracing::event!(
+                        tracing::Level::WARN,
+                        message_id = %info.message_id,
+                        error = %e,
+                        "Failed to read message from spool during queue list - message may have been deleted"
+                    );
+                    continue;
+                }
             };
 
             let message = empath_control::protocol::QueueMessage {
@@ -675,5 +687,287 @@ impl EmpathControlHandler {
         }
 
         overrides
+    }
+
+    /// Handle spool management commands
+    async fn handle_spool_command(
+        &self,
+        command: empath_control::SpoolCommand,
+    ) -> empath_control::Result<Response> {
+        // Audit log: Record who executed this command
+        #[cfg(unix)]
+        let uid = unsafe { libc::getuid() };
+        #[cfg(not(unix))]
+        let uid = "N/A";
+
+        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+
+        tracing::event!(
+            tracing::Level::INFO,
+            user = %user,
+            uid = %uid,
+            command = ?command,
+            "Control command: Spool"
+        );
+
+        let Some(spool) = self.delivery.spool() else {
+            tracing::event!(tracing::Level::WARN,
+                user = %user,
+                uid = %uid,
+                command = ?command,
+                "Spool command failed: spool not initialized"
+            );
+            return Err(ControlError::ServerError(
+                "Spool not initialized".to_string(),
+            ));
+        };
+
+        let result = match command {
+            empath_control::SpoolCommand::List { status_filter } => {
+                self.handle_spool_list_command(spool, status_filter).await
+            }
+            empath_control::SpoolCommand::View { message_id } => {
+                // Reuse queue view logic but directly from spool
+                self.handle_view_command(spool, message_id).await
+            }
+            empath_control::SpoolCommand::CleanupCompleted => {
+                self.handle_spool_cleanup_command(spool).await
+            }
+            empath_control::SpoolCommand::Stats => self.handle_spool_stats_command(spool).await,
+        };
+
+        // Audit log: Record command result
+        match &result {
+            Ok(_) => {
+                tracing::event!(tracing::Level::INFO,
+                    user = %user,
+                    uid = %uid,
+                    "Spool command completed successfully"
+                );
+            }
+            Err(e) => {
+                tracing::event!(tracing::Level::WARN,
+                    user = %user,
+                    uid = %uid,
+                    error = %e,
+                    "Spool command failed"
+                );
+            }
+        }
+
+        result
+    }
+
+    /// Handle spool list command - list ALL messages in spool
+    async fn handle_spool_list_command(
+        &self,
+        spool: &Arc<dyn BackingStore>,
+        status_filter: Option<String>,
+    ) -> empath_control::Result<Response> {
+        // List all messages in spool
+        let message_ids = spool
+            .list()
+            .await
+            .map_err(|e| ControlError::ServerError(format!("Failed to list spool: {e}")))?;
+
+        let mut messages = Vec::new();
+        for msg_id in message_ids {
+            // Read each message
+            let context = match spool.read(&msg_id).await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    tracing::event!(
+                        tracing::Level::WARN,
+                        message_id = %msg_id,
+                        error = %e,
+                        "Failed to read message from spool during spool list"
+                    );
+                    continue;
+                }
+            };
+
+            // Extract status from delivery context (if present)
+            let (status, domain, attempts) =
+                context
+                    .delivery
+                    .as_ref()
+                    .map_or((None, None, None), |delivery| {
+                        (
+                            Some(format!("{:?}", delivery.status)),
+                            Some(delivery.domain.to_string()),
+                            Some(u32::try_from(delivery.attempt_history.len()).unwrap_or_default()),
+                        )
+                    });
+
+            // Apply status filter if specified
+            if let Some(ref filter) = status_filter {
+                if let Some(ref msg_status) = status {
+                    if !msg_status.contains(filter) {
+                        continue;
+                    }
+                } else if filter != "new" && filter != "no_delivery_context" {
+                    // Message has no delivery context, only show if filter is "new" or "no_delivery_context"
+                    continue;
+                }
+            }
+
+            let message = empath_control::protocol::SpoolMessage {
+                id: msg_id.to_string(),
+                from: context
+                    .envelope
+                    .sender()
+                    .map_or_else(|| "<>".to_string(), ToString::to_string),
+                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
+                    list.iter().map(std::string::ToString::to_string).collect()
+                }),
+                status,
+                domain,
+                attempts,
+                size: context.data.as_ref().map_or(0, |d| d.len()),
+                spooled_at: msg_id.timestamp_ms() / 1000,
+            };
+            messages.push(message);
+        }
+
+        Ok(Response::data(ResponseData::SpoolList(messages)))
+    }
+
+    /// Handle spool stats command
+    async fn handle_spool_stats_command(
+        &self,
+        spool: &Arc<dyn BackingStore>,
+    ) -> empath_control::Result<Response> {
+        // List all messages in spool
+        let message_ids = spool
+            .list()
+            .await
+            .map_err(|e| ControlError::ServerError(format!("Failed to list spool: {e}")))?;
+
+        let mut total = 0;
+        let mut total_size: u64 = 0;
+        let mut by_status: HashMap<String, usize> = HashMap::new();
+        let mut oldest_age: Option<u64> = None;
+
+        for msg_id in &message_ids {
+            total += 1;
+
+            // Read message to get status and size
+            let context = match spool.read(msg_id).await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    tracing::event!(
+                        tracing::Level::WARN,
+                        message_id = %msg_id,
+                        error = %e,
+                        "Failed to read message from spool during stats"
+                    );
+                    continue;
+                }
+            };
+
+            // Count by status
+            let status = context.delivery.as_ref().map_or_else(
+                || "NoDeliveryContext".to_string(),
+                |delivery| format!("{:?}", delivery.status),
+            );
+            *by_status.entry(status).or_insert(0) += 1;
+
+            // Add to total size
+            if let Some(ref data) = context.data {
+                total_size += u64::try_from(data.len()).unwrap_or(0);
+            }
+
+            // Track oldest message
+            let age_secs = {
+                let now_ms = u64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis(),
+                )
+                .unwrap_or_default();
+                let spooled_ms = msg_id.timestamp_ms();
+                (now_ms - spooled_ms) / 1000
+            };
+            oldest_age = Some(oldest_age.map_or(age_secs, |current| current.max(age_secs)));
+        }
+
+        let stats = empath_control::protocol::SpoolStats {
+            total,
+            by_status,
+            total_size,
+            oldest_message_age_secs: oldest_age,
+        };
+
+        Ok(Response::data(ResponseData::SpoolStats(stats)))
+    }
+
+    /// Handle spool cleanup command - delete completed/failed messages
+    async fn handle_spool_cleanup_command(
+        &self,
+        spool: &Arc<dyn BackingStore>,
+    ) -> empath_control::Result<Response> {
+        // List all messages in spool
+        let message_ids = spool
+            .list()
+            .await
+            .map_err(|e| ControlError::ServerError(format!("Failed to list spool: {e}")))?;
+
+        let mut deleted_count = 0;
+        let mut failed_deletions = Vec::new();
+
+        for msg_id in message_ids {
+            // Read message to check status
+            let context = match spool.read(&msg_id).await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    tracing::event!(
+                        tracing::Level::WARN,
+                        message_id = %msg_id,
+                        error = %e,
+                        "Failed to read message from spool during cleanup"
+                    );
+                    continue;
+                }
+            };
+
+            // Delete if in terminal state
+            if let Some(ref delivery) = context.delivery
+                && matches!(
+                    delivery.status,
+                    empath_common::DeliveryStatus::Completed
+                        | empath_common::DeliveryStatus::Failed(_)
+                )
+            {
+                match spool.delete(&msg_id).await {
+                    Ok(()) => {
+                        // Also remove from queue if present
+                        self.delivery.remove(&msg_id);
+                        deleted_count += 1;
+                    }
+                    Err(e) => {
+                        tracing::event!(
+                            tracing::Level::WARN,
+                            message_id = %msg_id,
+                            error = %e,
+                            "Failed to delete completed message from spool"
+                        );
+                        failed_deletions.push(msg_id.to_string());
+                    }
+                }
+            }
+        }
+
+        let message = if failed_deletions.is_empty() {
+            format!("Cleaned up {deleted_count} completed/failed message(s)")
+        } else {
+            format!(
+                "Cleaned up {deleted_count} message(s), failed to delete {}: {}",
+                failed_deletions.len(),
+                failed_deletions.join(", ")
+            )
+        };
+
+        Ok(Response::data(ResponseData::Message(message)))
     }
 }

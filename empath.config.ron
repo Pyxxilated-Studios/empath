@@ -33,23 +33,23 @@ Empath (
         type: "File",
         path: "/tmp/spool/empath",
     ),
-    delivery: (
-        scan_interval_secs: 30,
-        process_interval_secs: 10,
-        max_attempts: 25,
+    delivery: {
+        "scan_interval_secs": 30,
+        "process_interval_secs": 10,
+        "max_attempts": 25,
 
         // Exponential backoff configuration for retry scheduling
         // Base delay for first retry (in seconds). Subsequent retries double this delay.
         // Default: 60 seconds (1 minute)
-        base_retry_delay_secs: 60,
+        "base_retry_delay_secs": 60,
 
         // Maximum delay between retry attempts (in seconds). Caps exponential growth.
         // Default: 86400 seconds (24 hours)
-        max_retry_delay_secs: 86400,
+        "max_retry_delay_secs": 86400,
 
         // Jitter factor for randomizing retry delays (0.0 to 1.0)
         // Adds ±20% randomness to prevent thundering herd. Default: 0.2
-        retry_jitter_factor: 0.2,
+        "retry_jitter_factor": 0.2,
 
         // Message expiration time (in seconds)
         // Messages older than this will be marked as expired.
@@ -63,7 +63,7 @@ Empath (
 
         // SMTP operation timeout configuration (all values in seconds)
         // These timeouts prevent hung connections and ensure timely failure detection
-        smtp_timeouts: (
+        "smtp_timeouts": (
             connect_secs: 30,      // Initial connection establishment
             ehlo_secs: 30,         // EHLO/HELO commands
             starttls_secs: 30,     // STARTTLS command and TLS upgrade
@@ -74,7 +74,7 @@ Empath (
         ),
 
         // Per-domain configuration for testing and custom settings
-        domains: {
+        "domains": {
             // Route test.example.com to local SMTP server for integration testing
             "test.example.com": (
                 mx_override: "localhost:1025",
@@ -94,7 +94,7 @@ Empath (
                 rate_limit: 100, // messages per minute
             ),
         },
-    ),
+    },
     // OpenTelemetry metrics configuration
     // Metrics are pushed to an OpenTelemetry Collector via OTLP/HTTP
     // The Collector can then expose them in Prometheus format for scraping
