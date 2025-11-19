@@ -9,9 +9,16 @@
 //! - **Bounded TTLs**: Applies min (60s) and max (3600s) bounds to prevent extremes
 //! - **Optional override**: `cache_ttl_secs` config can override DNS TTL for all entries (useful for testing)
 //! - **Lock-free**: `DashMap` provides concurrent access without mutex contention
+//!
+//! # Trait Abstraction
+//!
+//! The `DnsResolver` trait provides a testable abstraction over DNS resolution.
+//! - `HickoryDnsResolver`: Production implementation using Hickory DNS
+//! - `MockDnsResolver`: Test implementation with configurable responses
 
 use std::{
     borrow::Cow,
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -29,7 +36,7 @@ use thiserror::Error;
 use tracing::{debug, warn};
 
 /// Errors that can occur during DNS resolution.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum DnsError {
     /// No MX, A, or AAAA records found for the domain.
     #[error("No mail servers found for domain: {0}")]
@@ -152,18 +159,80 @@ impl MailServer {
     }
 }
 
-/// DNS resolver for mail delivery with concurrent caching.
+/// Type alias for the future returned by DNS resolution methods
+pub type DnsFuture<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, DnsError>> + Send + 'a>>;
+
+/// Trait for DNS resolution abstraction.
+///
+/// Allows for different DNS resolver implementations (production, mock, etc.)
+/// while maintaining a consistent interface for the delivery pipeline.
+///
+/// # Implementations
+///
+/// - `HickoryDnsResolver`: Production implementation using Hickory DNS
+/// - `MockDnsResolver`: Test implementation with configurable responses
+pub trait DnsResolver: Send + Sync + std::fmt::Debug {
+    /// Resolves mail servers for a domain following RFC 5321 section 5.1.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if:
+    /// - The domain does not exist
+    /// - No mail servers (MX, A, or AAAA) are found
+    /// - The DNS query fails or times out
+    fn resolve_mail_servers<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<MailServer>>>;
+
+    /// Validates that a domain exists by attempting any DNS lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError::DomainNotFound` if the domain does not exist.
+    fn validate_domain<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, ()>;
+
+    /// Get cache statistics
+    ///
+    /// Returns information about cache size and efficiency.
+    fn cache_stats(&self) -> CacheStats;
+
+    /// Clear the entire DNS cache
+    ///
+    /// All cached entries will be removed, forcing fresh DNS lookups
+    /// for subsequent `resolve_mail_servers` calls.
+    fn clear_cache(&self);
+
+    /// Invalidate the cache entry for a specific domain
+    ///
+    /// Returns `true` if an entry was removed, `false` if no entry existed.
+    fn invalidate_domain(&self, domain: &str) -> bool;
+
+    /// Refresh the DNS cache for a specific domain
+    ///
+    /// Performs a fresh DNS lookup and updates the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if the DNS lookup fails.
+    fn refresh_domain<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<MailServer>>>;
+
+    /// Get a snapshot of all cached DNS entries with their remaining TTL
+    ///
+    /// Returns a `HashMap` mapping domain names to their cached mail servers.
+    fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>>;
+}
+
+/// Production DNS resolver using Hickory DNS with concurrent caching.
 ///
 /// Uses `DashMap` for lock-free concurrent cache access, providing better
 /// throughput under high load compared to mutex-based caching.
 #[derive(Debug)]
-pub struct DnsResolver {
+pub struct HickoryDnsResolver {
     resolver: TokioResolver,
     cache: Arc<DashMap<String, CachedResult>>,
     config: DnsConfig,
 }
 
-impl DnsResolver {
+impl HickoryDnsResolver {
     /// Creates a new DNS resolver with default configuration.
     ///
     /// # Errors
@@ -470,7 +539,7 @@ impl DnsResolver {
     /// # Errors
     ///
     /// Returns `DnsError::DomainNotFound` if the domain does not exist.
-    pub async fn validate_domain(&self, domain: &str) -> Result<(), DnsError> {
+    pub async fn validate_domain_impl(&self, domain: &str) -> Result<(), DnsError> {
         match self.resolver.lookup_ip(domain).await {
             Ok(_) => Ok(()),
             Err(err) if err.is_no_records_found() || err.is_nx_domain() => {
@@ -492,9 +561,9 @@ impl DnsResolver {
     /// As a side effect, this method actively evicts expired entries from the cache,
     /// preventing memory waste in long-running MTAs.
     #[must_use]
-    pub fn list_cache(&self) -> std::collections::HashMap<String, Vec<(MailServer, Duration)>> {
+    pub fn list_cache_impl(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
         let now = Instant::now();
-        let mut result = std::collections::HashMap::new();
+        let mut result = HashMap::new();
         let mut expired_keys = Vec::new();
 
         for entry in self.cache.iter() {
@@ -538,7 +607,7 @@ impl DnsResolver {
     ///
     /// All cached entries will be removed, forcing fresh DNS lookups
     /// for subsequent `resolve_mail_servers` calls.
-    pub fn clear_cache(&self) {
+    pub fn clear_cache_impl(&self) {
         debug!("Clearing DNS cache ({} entries)", self.cache.len());
         self.cache.clear();
     }
@@ -549,7 +618,7 @@ impl DnsResolver {
     /// perform a fresh DNS lookup.
     ///
     /// Returns `true` if an entry was removed, `false` if no entry existed.
-    pub fn invalidate_domain(&self, domain: &str) -> bool {
+    pub fn invalidate_domain_impl(&self, domain: &str) -> bool {
         debug!("Invalidating DNS cache for domain: {domain}");
         self.cache.remove(domain).is_some()
     }
@@ -561,7 +630,10 @@ impl DnsResolver {
     /// # Errors
     ///
     /// Returns `DnsError` if the DNS lookup fails.
-    pub async fn refresh_domain(&self, domain: &str) -> Result<Arc<Vec<MailServer>>, DnsError> {
+    pub async fn refresh_domain_impl(
+        &self,
+        domain: &str,
+    ) -> Result<Arc<Vec<MailServer>>, DnsError> {
         debug!("Refreshing DNS cache for domain: {domain}");
 
         // Remove existing entry
@@ -575,7 +647,7 @@ impl DnsResolver {
     ///
     /// Returns information about cache size and efficiency.
     #[must_use]
-    pub fn cache_stats(&self) -> CacheStats {
+    pub fn cache_stats_impl(&self) -> CacheStats {
         let now = Instant::now();
         let mut expired_count = 0;
 
@@ -593,6 +665,39 @@ impl DnsResolver {
     }
 }
 
+/// Implement the `DnsResolver` trait for `HickoryDnsResolver`
+///
+/// This forwards trait method calls to the implementation methods.
+impl DnsResolver for HickoryDnsResolver {
+    fn resolve_mail_servers<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<MailServer>>> {
+        Box::pin(self.resolve_mail_servers(domain))
+    }
+
+    fn validate_domain<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, ()> {
+        Box::pin(self.validate_domain_impl(domain))
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        self.cache_stats_impl()
+    }
+
+    fn clear_cache(&self) {
+        self.clear_cache_impl();
+    }
+
+    fn invalidate_domain(&self, domain: &str) -> bool {
+        self.invalidate_domain_impl(domain)
+    }
+
+    fn refresh_domain<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<MailServer>>> {
+        Box::pin(self.refresh_domain_impl(domain))
+    }
+
+    fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
+        self.list_cache_impl()
+    }
+}
+
 /// Statistics about the DNS cache
 #[derive(Debug, Clone)]
 pub struct CacheStats {
@@ -604,7 +709,7 @@ pub struct CacheStats {
     pub capacity: usize,
 }
 
-impl Default for DnsResolver {
+impl Default for HickoryDnsResolver {
     fn default() -> Self {
         // Try system DNS configuration first
         Self::new().unwrap_or_else(|e| {
@@ -625,6 +730,142 @@ impl Default for DnsResolver {
     }
 }
 
+/// Mock DNS resolver for testing.
+///
+/// Allows tests to configure DNS responses without making real network calls.
+/// Useful for testing delivery logic with various DNS scenarios (multiple MX records,
+/// DNS failures, timeouts, etc.).
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use empath_delivery::{MockDnsResolver, MailServer, DnsResolver, DnsError};
+///
+/// # async {
+/// let mut mock = MockDnsResolver::new();
+///
+/// // Configure successful response
+/// mock.add_response("example.com", Ok(vec![
+///     MailServer::new("mx1.example.com".to_string(), 10, 25),
+///     MailServer::new("mx2.example.com".to_string(), 20, 25),
+/// ]));
+///
+/// // Configure DNS failure
+/// mock.add_response("bad.example.com",
+///     Err(DnsError::Timeout("bad.example.com".to_string())));
+///
+/// // Use mock in tests
+/// let servers = mock.resolve_mail_servers("example.com").await;
+/// assert!(servers.is_ok());
+/// # };
+/// ```
+#[derive(Debug, Default)]
+pub struct MockDnsResolver {
+    /// Configured responses for domain lookups
+    responses: DashMap<String, Result<Arc<Vec<MailServer>>, DnsError>>,
+}
+
+impl MockDnsResolver {
+    /// Create a new empty mock resolver
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            responses: DashMap::new(),
+        }
+    }
+
+    /// Add a mock response for a domain
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The domain to configure a response for
+    /// * `result` - The result to return when this domain is queried
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use empath_delivery::{MockDnsResolver, MailServer, DnsError};
+    ///
+    /// let mut mock = MockDnsResolver::new();
+    ///
+    /// // Success case
+    /// mock.add_response("example.com", Ok(vec![
+    ///     MailServer::new("mx.example.com".to_string(), 10, 25),
+    /// ]));
+    ///
+    /// // Failure case
+    /// mock.add_response("bad.example.com",
+    ///     Err(DnsError::Timeout("bad.example.com".to_string())));
+    /// ```
+    pub fn add_response(
+        &self,
+        domain: impl Into<String>,
+        result: Result<Vec<MailServer>, DnsError>,
+    ) {
+        let domain = domain.into();
+        let result = result.map(Arc::new);
+        self.responses.insert(domain, result);
+    }
+
+    /// Clear all configured responses
+    pub fn clear(&self) {
+        self.responses.clear();
+    }
+}
+
+impl DnsResolver for MockDnsResolver {
+    fn resolve_mail_servers<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<MailServer>>> {
+        let result = self.responses.get(domain).map_or_else(
+            || {
+                Err(DnsError::NoMailServers(format!(
+                    "No mock response configured for domain: {domain}"
+                )))
+            },
+            |entry| entry.clone(),
+        );
+
+        Box::pin(async move { result })
+    }
+
+    fn validate_domain<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, ()> {
+        let result = self.responses.get(domain).map_or_else(
+            || Err(DnsError::DomainNotFound(domain.to_string())),
+            |_| Ok(()),
+        );
+
+        Box::pin(async move { result })
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        // Mock resolver has no real cache
+        CacheStats {
+            total_entries: 0,
+            expired_entries: 0,
+            capacity: 0,
+        }
+    }
+
+    fn clear_cache(&self) {
+        // Mock resolver has no cache to clear
+    }
+
+    fn invalidate_domain(&self, _domain: &str) -> bool {
+        // Mock resolver has no cache to invalidate
+        false
+    }
+
+    fn refresh_domain<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<MailServer>>> {
+        // For mock, just return the configured response
+        self.resolve_mail_servers(domain)
+    }
+
+    fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
+        // Mock resolver has no cache
+        HashMap::new()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
@@ -633,7 +874,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires network access"]
     async fn test_mx_lookup_gmail() {
-        let resolver = DnsResolver::new().unwrap();
+        let resolver = HickoryDnsResolver::new().unwrap();
         let servers = resolver.resolve_mail_servers("gmail.com").await.unwrap();
 
         assert!(!servers.is_empty());
@@ -647,7 +888,7 @@ mod tests {
     async fn test_a_record_fallback() {
         // Use a domain that has A records but no MX records
         // Note: This test may fail if the domain changes its DNS configuration
-        let resolver = DnsResolver::new().unwrap();
+        let resolver = HickoryDnsResolver::new().unwrap();
         let servers = resolver.resolve_mail_servers("example.com").await;
 
         // Either MX or A/AAAA should work
@@ -657,7 +898,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires network access"]
     async fn test_domain_not_found() {
-        let resolver = DnsResolver::new().unwrap();
+        let resolver = HickoryDnsResolver::new().unwrap();
         let result = resolver
             .resolve_mail_servers("this-domain-definitely-does-not-exist-12345.com")
             .await;
@@ -705,7 +946,7 @@ mod tests {
         ];
 
         // Randomize
-        DnsResolver::randomize_equal_priority(&mut servers);
+        HickoryDnsResolver::randomize_equal_priority(&mut servers);
 
         // Verify priority boundaries are maintained
         assert_eq!(servers[0].priority, 10);
@@ -732,7 +973,7 @@ mod tests {
 
         for _ in 0..10 {
             let mut servers = original.clone();
-            DnsResolver::randomize_equal_priority(&mut servers);
+            HickoryDnsResolver::randomize_equal_priority(&mut servers);
 
             // Create a signature for this ordering
             let signature: Vec<_> = servers.iter().map(|s| s.host.clone()).collect();
@@ -752,7 +993,7 @@ mod tests {
         let mut servers = vec![MailServer::new("mx1.example.com".to_string(), 10, 25)];
 
         // Should not panic with single server
-        DnsResolver::randomize_equal_priority(&mut servers);
+        HickoryDnsResolver::randomize_equal_priority(&mut servers);
         assert_eq!(servers.len(), 1);
     }
 
@@ -761,7 +1002,7 @@ mod tests {
         let mut servers: Vec<MailServer> = vec![];
 
         // Should not panic with empty slice
-        DnsResolver::randomize_equal_priority(&mut servers);
+        HickoryDnsResolver::randomize_equal_priority(&mut servers);
         assert_eq!(servers.len(), 0);
     }
 }

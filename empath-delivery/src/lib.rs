@@ -27,7 +27,9 @@ pub use circuit_breaker::{
     CircuitBreakerConfig, CircuitBreakerStats, CircuitState, DomainCircuitBreakerConfig,
 };
 // Re-export DNS types
-pub use dns::{CacheStats, DnsConfig, DnsError, DnsResolver, MailServer};
+pub use dns::{
+    CacheStats, DnsConfig, DnsError, DnsResolver, HickoryDnsResolver, MailServer, MockDnsResolver,
+};
 // Re-export domain configuration types
 pub use domain_config::{DomainConfig, DomainConfigRegistry};
 // Re-export DSN types

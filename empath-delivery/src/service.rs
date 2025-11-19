@@ -102,7 +102,7 @@ pub trait DeliveryQueryService: Send + Sync {
     /// Used by DNS cache management commands.
     ///
     /// Returns `None` if the resolver is not initialized.
-    fn dns_resolver(&self) -> &Option<DnsResolver>;
+    fn dns_resolver(&self) -> &Option<Arc<dyn DnsResolver>>;
 
     /// Get a reference to the spool backing store
     ///

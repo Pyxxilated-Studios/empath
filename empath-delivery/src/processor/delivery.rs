@@ -90,7 +90,7 @@ pub async fn prepare_message(
     })?;
 
     let pipeline = crate::policy::DeliveryPipeline::new(
-        dns_resolver,
+        &**dns_resolver,
         domain_resolver,
         processor.rate_limiter.as_ref(),
         processor.circuit_breaker_instance.as_ref(),
@@ -398,7 +398,7 @@ pub async fn handle_delivery_error(
         && let Some(domain_resolver) = &processor.domain_resolver
     {
         let pipeline = crate::policy::DeliveryPipeline::new(
-            dns_resolver,
+            &**dns_resolver,
             domain_resolver,
             processor.rate_limiter.as_ref(),
             processor.circuit_breaker_instance.as_ref(),

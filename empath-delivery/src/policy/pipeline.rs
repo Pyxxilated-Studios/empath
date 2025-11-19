@@ -57,7 +57,7 @@ pub enum RateLimitResult {
 /// Coordinates DNS resolution, rate limiting, and delivery tracking.
 /// Does not perform SMTP delivery itself - that's handled by `SmtpTransaction`.
 pub struct DeliveryPipeline<'a> {
-    dns_resolver: &'a DnsResolver,
+    dns_resolver: &'a dyn DnsResolver,
     domain_resolver: &'a DomainPolicyResolver,
     rate_limiter: Option<&'a RateLimiter>,
     circuit_breaker: Option<&'a CircuitBreaker>,
@@ -68,13 +68,13 @@ impl<'a> DeliveryPipeline<'a> {
     ///
     /// # Arguments
     ///
-    /// * `dns_resolver` - DNS resolver for MX lookups
+    /// * `dns_resolver` - DNS resolver for MX lookups (trait object)
     /// * `domain_resolver` - Domain policy resolver for overrides
     /// * `rate_limiter` - Optional rate limiter for throttling
     /// * `circuit_breaker` - Optional circuit breaker for failure tracking
     #[must_use]
     pub const fn new(
-        dns_resolver: &'a DnsResolver,
+        dns_resolver: &'a dyn DnsResolver,
         domain_resolver: &'a DomainPolicyResolver,
         rate_limiter: Option<&'a RateLimiter>,
         circuit_breaker: Option<&'a CircuitBreaker>,
@@ -244,13 +244,13 @@ mod tests {
     use super::*;
     use crate::{
         circuit_breaker::CircuitBreakerConfig,
-        dns::DnsConfig,
+        dns::{DnsConfig, HickoryDnsResolver},
         domain_config::{DomainConfig, DomainConfigRegistry},
         rate_limiter::{RateLimitConfig, RateLimiter},
     };
 
     fn create_test_pipeline<'a>(
-        dns_resolver: &'a DnsResolver,
+        dns_resolver: &'a dyn DnsResolver,
         domain_resolver: &'a DomainPolicyResolver,
     ) -> DeliveryPipeline<'a> {
         DeliveryPipeline::new(dns_resolver, domain_resolver, None, None)
@@ -267,7 +267,7 @@ mod tests {
             },
         );
 
-        let dns_resolver = DnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn test_check_rate_limit_no_limiter() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = DnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn test_check_rate_limit_with_limiter_allowed() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = DnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         // Create rate limiter with high limit
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_record_success_no_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = DnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_record_success_with_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = DnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn test_record_failure_permanent_not_recorded() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = DnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn test_record_failure_temporary_recorded() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = DnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());

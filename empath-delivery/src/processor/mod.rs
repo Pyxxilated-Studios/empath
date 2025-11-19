@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{
     circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
-    dns::{DnsConfig, DnsResolver},
+    dns::{DnsConfig, DnsResolver, HickoryDnsResolver},
     domain_config::DomainConfigRegistry,
     dsn::DsnConfig,
     error::DeliveryError,
@@ -169,7 +169,7 @@ pub struct DeliveryProcessor {
 
     /// DNS resolver for MX record lookups (initialized in `init()`)
     #[serde(skip)]
-    pub(crate) dns_resolver: Option<DnsResolver>,
+    pub(crate) dns_resolver: Option<Arc<dyn DnsResolver>>,
 
     /// Cleanup queue for failed spool deletions (initialized in `init()`)
     #[serde(skip)]
@@ -233,7 +233,9 @@ impl DeliveryProcessor {
     ) -> Result<(), DeliveryError> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
-        self.dns_resolver = Some(DnsResolver::with_dns_config(self.dns.clone())?);
+        self.dns_resolver = Some(Arc::new(HickoryDnsResolver::with_dns_config(
+            self.dns.clone(),
+        )?));
         internal!(
             "DNS resolver initialized with timeout={}s, cache_ttl={}, min_ttl={}s, max_ttl={}s, cache_size={}",
             self.dns.timeout_secs,
@@ -290,7 +292,7 @@ impl DeliveryProcessor {
 
     /// Get a reference to the DNS resolver (for control interface)
     #[must_use]
-    pub const fn dns_resolver(&self) -> &Option<DnsResolver> {
+    pub const fn dns_resolver(&self) -> &Option<Arc<dyn DnsResolver>> {
         &self.dns_resolver
     }
 
@@ -517,7 +519,7 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         self.queue.remove(message_id)
     }
 
-    fn dns_resolver(&self) -> &Option<DnsResolver> {
+    fn dns_resolver(&self) -> &Option<Arc<dyn DnsResolver>> {
         &self.dns_resolver
     }
 
