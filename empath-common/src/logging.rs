@@ -110,7 +110,11 @@ macro_rules! internal {
 /// # Errors
 /// If there is an issue setting up the OTLP exporter
 ///
-pub fn init() -> anyhow::Result<()> {
+/// # Arguments
+///
+/// * `otlp_endpoint` - Optional OTLP endpoint URL. If not provided, falls back to
+///   `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable or default `http://localhost:4318`
+pub fn init(otlp_endpoint: Option<&str>) -> anyhow::Result<()> {
     let default = if cfg!(debug_assertions) {
         LevelFilter::TRACE
     } else {
@@ -128,12 +132,25 @@ pub fn init() -> anyhow::Result<()> {
         });
 
     // Set up OpenTelemetry tracer with OTLP exporter to send traces to Jaeger
-    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:4318".to_string());
+    // Priority: 1) Provided parameter, 2) Environment variable, 3) Default
+    let otlp_base_endpoint = otlp_endpoint
+        .map(String::from)
+        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
+        .unwrap_or_else(|| "http://localhost:4318".to_string());
+
+    // OTLP HTTP exporter requires full path for traces endpoint
+    let traces_endpoint = if otlp_base_endpoint.ends_with("/v1/traces") {
+        otlp_base_endpoint
+    } else if otlp_base_endpoint.ends_with("/v1/metrics") {
+        // Replace /v1/metrics with /v1/traces (reuse same OTLP collector)
+        otlp_base_endpoint.replace("/v1/metrics", "/v1/traces")
+    } else {
+        format!("{}/v1/traces", otlp_base_endpoint.trim_end_matches('/'))
+    };
 
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
-        .with_endpoint(otlp_endpoint)
+        .with_endpoint(traces_endpoint)
         .build()?;
 
     let resource = Resource::builder_empty()

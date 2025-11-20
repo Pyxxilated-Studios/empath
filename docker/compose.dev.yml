@@ -89,12 +89,12 @@ services:
 
   # Jaeger (distributed tracing)
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/jaeger:2.12.0
     container_name: jaeger
     ports:
       - "16686:16686"  # Jaeger UI
       - "4317:4317"    # OTLP gRPC receiver
-      - "4318:4318"    # OTLP HTTP receiver (alternative)
+      # - "4318:4318"    # OTLP HTTP receiver (alternative)
       - "14268:14268"  # Jaeger collector HTTP
     environment:
       - COLLECTOR_OTLP_ENABLED=true

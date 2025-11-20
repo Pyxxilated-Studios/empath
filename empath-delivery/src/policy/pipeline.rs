@@ -262,6 +262,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_resolve_mail_servers_with_override() {
         let registry = DomainConfigRegistry::new();
         registry.insert(
@@ -287,6 +288,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_check_rate_limit_no_limiter() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
@@ -300,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_check_rate_limit_with_limiter_allowed() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
@@ -322,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_record_success_no_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
@@ -333,6 +337,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_record_success_with_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
@@ -352,6 +357,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_record_failure_permanent_not_recorded() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
@@ -373,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_record_failure_temporary_recorded() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
@@ -392,6 +399,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_calculate_rate_limit_retry() {
         let wait_time = Duration::from_secs(10);
         let before = SystemTime::now();

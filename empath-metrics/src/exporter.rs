@@ -19,11 +19,17 @@ use crate::{MetricsConfig, MetricsError};
 ///
 /// Returns an error if the OTLP exporter cannot be initialized.
 pub fn init_otlp_exporter(config: &MetricsConfig) -> Result<SdkMeterProvider, MetricsError> {
-    tracing::info!(endpoint = %config.endpoint, "Configuring OTLP metrics exporter");
+    let endpoint = if config.endpoint.ends_with("/v1/metrics") {
+        config.endpoint.clone()
+    } else {
+        format!("{}/v1/metrics", config.endpoint.trim_end_matches('/'))
+    };
+
+    tracing::info!(endpoint = endpoint, "Configuring OTLP metrics exporter");
 
     let mut builder = opentelemetry_otlp::MetricExporter::builder()
         .with_http()
-        .with_endpoint(&config.endpoint);
+        .with_endpoint(endpoint.clone());
 
     // Add Authorization header if API key is configured
     if let Some(api_key) = &config.api_key {
@@ -36,7 +42,7 @@ pub fn init_otlp_exporter(config: &MetricsConfig) -> Result<SdkMeterProvider, Me
     }
 
     let exporter = builder.build().map_err(|e| {
-        tracing::error!(endpoint = %config.endpoint, error = %e, "Failed to build OTLP exporter");
+        tracing::error!(endpoint = endpoint, error = %e, "Failed to build OTLP exporter");
         MetricsError::OpenTelemetry(e.to_string())
     })?;
 

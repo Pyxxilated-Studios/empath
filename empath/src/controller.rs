@@ -109,7 +109,9 @@ impl Empath {
     /// to initialise.
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, err), timing(precision = "s"))]
     pub async fn run(mut self) -> anyhow::Result<()> {
-        logging::init()?;
+        // Initialize logging with configured OTLP endpoint for traces
+        // This uses the same endpoint as metrics (just different path: /v1/traces vs /v1/metrics)
+        logging::init(Some(&self.metrics.endpoint))?;
 
         internal!("Controller running");
 
