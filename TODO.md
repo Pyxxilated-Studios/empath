@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
-> **Last Updated**: 2025-11-20
-> **Total Active**: 17 tasks | **Completed**: 52 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
+> **Last Updated**: 2025-11-21
+> **Total Active**: 16 tasks | **Completed**: 53 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -9,16 +9,15 @@
 
 ### 🚨 Critical Blockers (Must Complete Before Production)
 
-**Priority**: 2 tasks remaining (5-8 days to 100% production ready)
+**Priority**: 1 task remaining (2-3 days to 100% production ready)
 
-1. **NEW-02** - Production Unwrap/Expect Audit (3-5 days) - 294 unwraps need review
-2. **NEW-05** - Production Alerting Rules (2-3 days) - No alert guidance exists
+1. **NEW-05** - Production Alerting Rules (2-3 days) - No alert guidance exists
 
 ### 📅 Current Sprint (Week of 2025-11-20)
 
 **This Week's Goals:**
 1. ✅ 5.4 - Implement span instrumentation (COMPLETED 2025-11-20)
-2. NEW-02 - Complete unwrap audit (eliminate panic risks)
+2. ✅ NEW-02 - Complete unwrap audit (COMPLETED 2025-11-21)
 3. NEW-05 - Create alerting rules (production readiness)
 
 **Ready to Start:**
@@ -29,58 +28,32 @@
 ### 📈 Metrics
 
 **Priority Distribution** (Active Tasks Only):
-- 🔴 Critical: 2 tasks (~5-8 days effort) - **PRODUCTION BLOCKERS**
+- 🔴 Critical: 1 task (~2-3 days effort) - **PRODUCTION BLOCKER**
 - 🟡 High: 3 tasks (~5-8 days effort)
 - 🟢 Medium: 6 tasks (~8-12 days effort)
 - 🔵 Low: 6 tasks (~8-12 days effort)
 
-**Production Readiness: 90%** (1-2 weeks to 100%)
+**Production Readiness: 95%** (<1 week to 100%)
 
 **Component Breakdown:**
 - Core Functionality: 100% ✅ (SMTP, delivery, spool, queue, retry logic)
-- Security: 70% ⚠️ (FFI ✅, unsafe audit ✅, panic audit ✅, unwrap audit ❌)
+- Security: 100% ✅ (FFI ✅, unsafe audit ✅, panic audit ✅, unwrap audit ✅)
 - Observability: 80% ✅ (metrics ✅, JSON logs ✅, trace infrastructure ✅, span instrumentation ✅, alerting ❌)
 - Durability: 95% ✅ (persistent queue ✅, graceful shutdown ✅)
-- Testing: 90% ✅ (336 tests, E2E suite ✅, property tests ✅, coverage tracking ✅)
+- Testing: 90% ✅ (348 tests, E2E suite ✅, property tests ✅, coverage tracking ✅)
 - Developer Experience: 85% ✅ (CI/CD ✅, Renovate ✅, docs ✅, profiling guide ❌)
 
 **Path to 100%:**
-1. Week 1: Complete unwrap audit + alerting rules (5-8 days)
-2. Week 2: Load testing + capacity metrics (4-6 days)
-3. Final validation and documentation updates (2-3 days)
+1. ✅ Week 1: Complete unwrap audit (DONE 2025-11-21)
+2. Week 1-2: Complete alerting rules (2-3 days remaining)
+3. Week 2: Load testing + capacity metrics (4-6 days)
+4. Final validation and documentation updates (2-3 days)
 
-**Estimated Production Ready**: 1-2 weeks
+**Estimated Production Ready**: <1 week
 
 ---
 
 ## Phase 0: Production Blockers
-
-### 🔴 NEW-02 Production Unwrap/Expect Audit
-**Priority**: Critical (Production Blocker)
-**Effort**: 3-5 days
-**Dependencies**: None
-**Owner**: Unassigned
-**Status**: Not Started
-**Risk**: High (production panics)
-**Tags**: rust, safety, refactoring
-**Added**: 2025-11-16 (Rust Expert Review)
-
-**Problem**: 294 `.unwrap()/.expect()` calls across codebase. Production unwraps can cause panics in edge cases (OOM, malformed input).
-
-**Solution**: Audit all unwraps, categorize, replace production unwraps with proper error handling.
-
-**Success Criteria**:
-- [ ] Audit report: `docs/AUDIT_UNWRAP.md` with categorization
-- [ ] All production unwraps replaced with `?` or proper error handling
-- [ ] Test-only unwraps documented as acceptable
-- [ ] Proven invariant unwraps documented with safety comments
-- [ ] CI check: `cargo clippy -- -D clippy::unwrap_used` (deny in lib code)
-
-**High-Risk Areas**:
-- `empath-smtp/src/session/mod.rs` (17 unwraps)
-- `empath-spool/src/backends/memory.rs` (13 unwraps)
-
----
 
 ### 🔵 0.12 Add More Control Commands [PARTIAL - Process-Now Complete]
 **Priority**: Low
@@ -523,11 +496,6 @@ See [BACKLOG.md](docs/BACKLOG.md) for:
 
 ### Remaining Active NEW Tasks Below
 
-### 🔴 NEW-02 Production Unwrap/Expect Audit **[SEE PHASE 0]**
-Moved to Phase 0 (Production Blockers section) - see line 59.
-
----
-
 ### 🔴 NEW-05 Production Alerting Rules **[SEE PHASE 5]**
 Moved to Phase 5 (Production Readiness section) - see line 293.
 
@@ -562,33 +530,6 @@ Moved to Phase 5 (Production Readiness section) - see line 293.
 
 ---
 
-### 🔴 NEW-02 Production Unwrap/Expect Audit
-**Priority**: Critical (Production Blocker)
-**Effort**: 3-5 days
-**Dependencies**: None
-**Owner**: Unassigned
-**Status**: Not Started
-**Risk**: High (production panics)
-**Tags**: rust, safety, refactoring
-**Added**: 2025-11-16 (Rust Expert Review)
-
-**Problem**: 294 `.unwrap()/.expect()` calls across codebase. Production unwraps can cause panics in edge cases (OOM, malformed input).
-
-**Solution**: Audit all unwraps, categorize, replace production unwraps with proper error handling.
-
-**Success Criteria**:
-- [ ] Audit report: `docs/AUDIT_UNWRAP.md` with categorization
-- [ ] All production unwraps replaced with `?` or proper error handling
-- [ ] Test-only unwraps documented as acceptable
-- [ ] Proven invariant unwraps documented with safety comments
-- [ ] CI check: `cargo clippy -- -D clippy::unwrap_used` (deny in lib code)
-
-**High-Risk Areas**:
-- `empath-smtp/src/session/mod.rs` (17 unwraps)
-- `empath-spool/src/backends/memory.rs` (13 unwraps)
-
----
-
 ### 🟢 NEW-03a Publish Coverage Reports and Badge
 **Priority**: Medium (Visibility)
 **Effort**: 2-3 hours
@@ -610,29 +551,6 @@ Moved to Phase 5 (Production Readiness section) - see line 293.
 - [ ] PR comments show coverage diff (optional)
 
 **Note**: Coverage generation already works via `cargo +nightly tarpaulin` in CI.
-
----
-
-### 🔴 NEW-04 Local E2E Test Harness
-**Priority**: Critical (Testing Infrastructure)
-**Effort**: 1-2 days
-**Dependencies**: 4.2 (MockSmtpServer) - ✅ COMPLETED
-**Owner**: Unassigned
-**Status**: Ready to start
-**Risk**: High
-**Tags**: testing, e2e
-**Added**: 2025-11-16 (DX Expert Review)
-
-**Problem**: E2E tests require manual Docker setup. No programmatic E2E test suite.
-
-**Solution**: Create `/home/user/empath/tests/e2e/` directory with full message flow tests.
-
-**Success Criteria**:
-- [ ] `tests/e2e/full_delivery_flow.rs` - SMTP receive → spool → deliver
-- [ ] Harness starts Empath with temp config automatically
-- [ ] MockSmtpServer integrated for delivery target
-- [ ] Tests verify message content matches end-to-end
-- [ ] Tests run in CI without Docker (self-contained)
 
 ---
 
@@ -663,53 +581,6 @@ Moved to Phase 5 (Production Readiness section) - see line 293.
 - [ ] Note in docs that alerting is user-configurable, not baked into MTA
 
 **Philosophy**: MTA provides metrics; users configure alerting to their SLA requirements.
-
----
-
-### 🔴 NEW-06 Structured JSON Logging with Trace Correlation
-**Priority**: Critical (Before Production)
-**Effort**: 1-2 days
-**Dependencies**: 0.35+0.36 (trace context propagation)
-**Owner**: Unassigned
-**Status**: Blocked
-**Risk**: Low
-**Tags**: observability, logging
-**Added**: 2025-11-16 (OTel Expert Review)
-
-**Problem**: Text logs via `tracing_subscriber::fmt` - cannot search by message_id, trace_id. No structured logging for machine parsing.
-
-**Solution**: Replace text logs with JSON formatter, inject trace context.
-
-**Success Criteria**:
-- [ ] JSON structured logging (tracing_subscriber::fmt::json)
-- [ ] trace_id/span_id in all log entries (via tracing-opentelemetry layer)
-- [ ] Fields: message_id, sender, recipient, domain, smtp_code, delivery_attempt
-- [ ] LogQL queries work: `{service="empath"} | json | message_id="abc123"`
-
-**Impact**: 90% reduction in log investigation time.
-
----
-
-### 🔴 NEW-07 Log Aggregation Pipeline (Loki Integration)
-**Priority**: Critical (Before Production)
-**Effort**: 1-2 days
-**Dependencies**: NEW-06 (JSON logging)
-**Owner**: Unassigned
-**Status**: Blocked
-**Risk**: Medium
-**Tags**: observability, logging
-**Added**: 2025-11-16 (OTel Expert Review)
-
-**Problem**: Production deployments have multiple instances - cannot SSH to containers to tail logs. No centralized log search.
-
-**Solution**: Add Loki to Docker Compose stack for log aggregation.
-
-**Success Criteria**:
-- [ ] Loki service in `docker/compose.dev.yml`
-- [ ] Promtail ships logs from containers
-- [ ] Loki datasource in Grafana
-- [ ] 7-day retention with compression
-- [ ] Log exploration dashboard in Grafana
 
 ---
 

@@ -7,9 +7,9 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 must_use_candidate = "allow"
-# Warn on unwrap/expect in production code (test unwraps are acceptable)
-unwrap_used = "warn"
-expect_used = "warn"
+# Deny unwrap/expect in production code (test unwraps are acceptable via #[allow] attribute)
+unwrap_used = "deny"
+expect_used = "deny"
 # Deny panic-related macros in production code (tests are allowed via #[allow] attribute)
 panic = "deny"
 todo = "deny"

@@ -1,7 +1,7 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2025-11-20
-> **Total Completed**: 52 tasks
+> **Last Updated**: 2025-11-21
+> **Total Completed**: 53 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
@@ -10,6 +10,45 @@ This file archives completed tasks from TODO.md to reduce cognitive load and imp
 ## Recently Completed (Last 30 Days)
 
 ### Week of 2025-11-16 - 2025-11-20
+
+#### ✅ NEW-02 - Production Unwrap/Expect Audit
+**Completed**: 2025-11-16 (audit + fixes), 2025-11-21 (CI enforcement strengthened)
+**Effort**: 3-5 days (actual: 1 day + 20 min CI update)
+**Priority**: Critical (Production Blocker)
+
+Comprehensive audit and elimination of all production unwrap/expect calls to prevent panics.
+
+**Accomplishments**:
+- ✅ Created `docs/AUDIT_UNWRAP.md` (463 lines) categorizing all 330+ unwrap/expect calls
+- ✅ Eliminated all 10 production unwraps across 6 files via 3 commits
+- ✅ All ~300 test unwraps properly annotated with `#[allow(clippy::unwrap_used)]`
+- ✅ Workspace-level CI lints upgraded from "warn" to "deny" for unwrap_used/expect_used
+- ✅ All 348 tests passing, zero clippy warnings
+
+**Production Unwraps Eliminated**:
+- `empath-delivery/src/dns.rs:591` - Added Cloudflare DNS fallback (commit 5270d51)
+- `empath-metrics/src/delivery.rs:336,343` - Replaced RwLock with DashMap (commit 5270d51)
+- `empath-smtp/src/connection.rs:28-29` - TLS info returns Result (commit 24ffb27)
+- `empath-metrics/src/lib.rs:146` - Added safe `try_metrics()` alternative (commit 24ffb27)
+- `empath-common/src/message.rs:188,213` - Replaced unsafe unwrap_unchecked (commit 00d7772)
+- `empath-ffi/src/modules/mod.rs:248` - TestModule handles poisoning (commit 00d7772)
+
+**CI Enforcement** (Cargo.toml lines 11-12):
+```toml
+unwrap_used = "deny"  # Upgraded from "warn" (2025-11-21)
+expect_used = "deny"  # Upgraded from "warn" (2025-11-21)
+```
+
+**Current Status**: ZERO production unwraps, ~300 test unwraps (properly allowed), CI will fail on new unwraps
+
+**Commits**:
+- `92906ab` - Initial audit document
+- `5270d51` - Critical fixes (DNS, metrics)
+- `24ffb27` - High priority fixes (TLS, metrics accessor)
+- `00d7772` - Low priority fixes + CI lints (warn level)
+- (2025-11-21) - Upgraded CI lints to deny level
+
+---
 
 #### ✅ 5.4 - Implement OpenTelemetry Span Instrumentation
 **Completed**: 2025-11-20
