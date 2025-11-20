@@ -8,6 +8,7 @@ authors = ["Pyxxil <pyxxil@pyxxil.tech>"]
 workspace = true
 
 [dependencies]
+chrono = "0.4"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 bincode = { version = "2", features = ["serde"] }

@@ -5,8 +5,11 @@ pub mod command;
 pub mod connection;
 pub mod error;
 pub mod extensions;
+pub mod fsm;
 pub mod session;
+pub mod session_state;
 pub mod state;
+pub mod transaction_handler;
 
 // Re-export commonly used types
 use std::{borrow::Cow, collections::HashMap, net::SocketAddr, sync::Arc};

@@ -11,7 +11,6 @@ use std::{
     path::PathBuf,
 };
 
-use chrono::{TimeZone, Utc, offset::LocalResult};
 use clap::{Parser, Subcommand, ValueEnum};
 use empath_common::context::{
     COMPLETED_STR, EXPIRED_STR, FAILED_STR, IN_PROGRESS_STR, PENDING_STR, RETRY_STR,
@@ -486,47 +485,13 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                 } else {
                     println!("=== Queue Messages ({}) ===\n", messages.len());
                     for msg in messages {
-                        println!("ID:        {}", msg.id);
-                        println!("From:      {}", msg.from);
-                        println!("To:        {}", msg.to.join(", "));
-                        println!("Domain:    {}", msg.domain);
-                        println!("Status:    {}", msg.status);
-                        println!("Attempts:  {}", msg.attempts);
-                        if let Some(next_retry) = msg.next_retry {
-                            println!("Next retry: {}", format_timestamp(next_retry * 1000));
-                        }
-                        println!("Size:      {} bytes", msg.size);
-                        println!("Spooled:   {}", format_timestamp(msg.spooled_at * 1000));
-                        println!();
+                        println!("{msg}");
                     }
                 }
             }
             ResponseData::QueueMessageDetails(details) => {
                 println!("=== Message Details ===\n");
-                println!("ID:        {}", details.id);
-                println!("From:      {}", details.from);
-                println!("To:        {}", details.to.join(", "));
-                println!("Domain:    {}", details.domain);
-                println!("Status:    {}", details.status);
-                println!("Attempts:  {}", details.attempts);
-                if let Some(next_retry) = details.next_retry {
-                    println!("Next retry: {}", format_timestamp(next_retry * 1000));
-                }
-                if let Some(ref error) = details.last_error {
-                    println!("Last error: {error}");
-                }
-                println!("Size:      {} bytes", details.size);
-                println!("Spooled:   {}", format_timestamp(details.spooled_at * 1000));
-
-                if !details.headers.is_empty() {
-                    println!("\n--- Headers ---");
-                    for (key, value) in &details.headers {
-                        println!("{key}: {value}");
-                    }
-                }
-
-                println!("\n--- Body Preview ---");
-                println!("{}", details.body_preview);
+                print!("{details}");
             }
             ResponseData::QueueStats(stats) => {
                 display_queue_stats(&stats);
@@ -598,23 +563,7 @@ async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> an
                 } else {
                     println!("=== Spool Messages ({}) ===\n", messages.len());
                     for msg in messages {
-                        println!("ID:        {}", msg.id);
-                        println!("From:      {}", msg.from);
-                        println!("To:        {}", msg.to.join(", "));
-                        if let Some(domain) = &msg.domain {
-                            println!("Domain:    {domain}");
-                        }
-                        if let Some(status) = &msg.status {
-                            println!("Status:    {status}");
-                        } else {
-                            println!("Status:    [New/No delivery context]");
-                        }
-                        if let Some(attempts) = msg.attempts {
-                            println!("Attempts:  {attempts}");
-                        }
-                        println!("Size:      {} bytes", msg.size);
-                        println!("Spooled:   {}", format_timestamp(msg.spooled_at * 1000));
-                        println!();
+                        println!("{msg}");
                     }
                 }
             }
@@ -624,30 +573,7 @@ async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> an
             ResponseData::QueueMessageDetails(details) => {
                 // Reuse queue view display
                 println!("=== Message Details (from Spool) ===\n");
-                println!("ID:        {}", details.id);
-                println!("From:      {}", details.from);
-                println!("To:        {}", details.to.join(", "));
-                println!("Domain:    {}", details.domain);
-                println!("Status:    {}", details.status);
-                println!("Attempts:  {}", details.attempts);
-                if let Some(next_retry) = details.next_retry {
-                    println!("Next retry: {}", format_timestamp(next_retry * 1000));
-                }
-                if let Some(ref error) = details.last_error {
-                    println!("Last error: {error}");
-                }
-                println!("Size:      {} bytes", details.size);
-                println!("Spooled:   {}", format_timestamp(details.spooled_at * 1000));
-
-                if !details.headers.is_empty() {
-                    println!("\n--- Headers ---");
-                    for (key, value) in &details.headers {
-                        println!("{key}: {value}");
-                    }
-                }
-
-                println!("\n--- Body Preview ---");
-                println!("{}", details.body_preview);
+                print!("{details}");
             }
             ResponseData::Message(msg) => {
                 println!("✓ {msg}");
@@ -711,16 +637,6 @@ fn display_queue_stats(stats: &empath_control::protocol::QueueStats) {
 
     if let Some(age) = stats.oldest_message_age_secs {
         println!("\nOldest message age: {}", format_duration(age));
-    }
-}
-
-/// Format timestamp (milliseconds since epoch) as human-readable
-fn format_timestamp(timestamp_ms: u64) -> String {
-    let datetime = Utc.timestamp_millis_opt(i64::try_from(timestamp_ms).unwrap_or(0));
-    if let LocalResult::Single(dt) = datetime {
-        dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-    } else {
-        "unknown".to_string()
     }
 }
 

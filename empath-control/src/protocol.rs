@@ -1,11 +1,25 @@
 //! Control protocol types and serialization
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt::{Display, Formatter},
+};
 
+use chrono::{TimeZone, Utc, offset::LocalResult};
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Format timestamp (milliseconds since epoch) as human-readable
+fn format_timestamp(timestamp_ms: u64) -> String {
+    let datetime = Utc.timestamp_millis_opt(i64::try_from(timestamp_ms).unwrap_or(0));
+    if let LocalResult::Single(dt) = datetime {
+        dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
 
 /// Request sent to the control server (versioned wrapper)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +222,28 @@ pub struct QueueMessage {
     pub spooled_at: u64,
 }
 
+impl Display for QueueMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("ID:        {}\n", self.id))?;
+        f.write_fmt(format_args!("From:      {}\n", self.from))?;
+        f.write_fmt(format_args!("To:        {}\n", self.to.join(", ")))?;
+        f.write_fmt(format_args!("Domain:    {}\n", self.domain))?;
+        f.write_fmt(format_args!("Status:    {}\n", self.status))?;
+        f.write_fmt(format_args!("Attempts:  {}\n", self.attempts))?;
+        if let Some(next_retry) = self.next_retry {
+            f.write_fmt(format_args!(
+                "Next retry: {}\n",
+                format_timestamp(next_retry * 1000)
+            ))?;
+        }
+        f.write_fmt(format_args!("Size:      {} bytes\n", self.size))?;
+        f.write_fmt(format_args!(
+            "Spooled:   {}\n",
+            format_timestamp(self.spooled_at * 1000)
+        ))
+    }
+}
+
 /// Queue message details (for view command)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueMessageDetails {
@@ -235,6 +271,41 @@ pub struct QueueMessageDetails {
     pub headers: HashMap<String, String>,
     /// Message body preview (first 1KB)
     pub body_preview: String,
+}
+
+impl Display for QueueMessageDetails {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("ID:        {}\n", self.id))?;
+        f.write_fmt(format_args!("From:      {}\n", self.from))?;
+        f.write_fmt(format_args!("To:        {}\n", self.to.join(", ")))?;
+        f.write_fmt(format_args!("Domain:    {}\n", self.domain))?;
+        f.write_fmt(format_args!("Status:    {}\n", self.status))?;
+        f.write_fmt(format_args!("Attempts:  {}\n", self.attempts))?;
+        if let Some(next_retry) = self.next_retry {
+            f.write_fmt(format_args!(
+                "Next retry: {}\n",
+                format_timestamp(next_retry * 1000)
+            ))?;
+        }
+        if let Some(ref error) = self.last_error {
+            f.write_fmt(format_args!("Last error: {error}\n"))?;
+        }
+        f.write_fmt(format_args!("Size:      {} bytes\n", self.size))?;
+        f.write_fmt(format_args!(
+            "Spooled:   {}\n",
+            format_timestamp(self.spooled_at * 1000)
+        ))?;
+
+        if !self.headers.is_empty() {
+            f.write_str("\n--- Headers ---\n")?;
+            for (key, value) in &self.headers {
+                f.write_fmt(format_args!("{key}: {value}\n"))?;
+            }
+        }
+
+        f.write_str("\n--- Body Preview ---\n")?;
+        f.write_fmt(format_args!("{}\n", self.body_preview))
+    }
 }
 
 /// Queue statistics
@@ -269,6 +340,30 @@ pub struct SpoolMessage {
     pub size: usize,
     /// Time message was spooled (Unix timestamp in seconds)
     pub spooled_at: u64,
+}
+
+impl Display for SpoolMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("ID:        {}\n", self.id))?;
+        f.write_fmt(format_args!("From:      {}\n", self.from))?;
+        f.write_fmt(format_args!("To:        {}\n", self.to.join(", ")))?;
+        if let Some(domain) = &self.domain {
+            f.write_fmt(format_args!("Domain:    {domain}\n"))?;
+        }
+        if let Some(status) = &self.status {
+            f.write_fmt(format_args!("Status:    {status}\n"))?;
+        } else {
+            f.write_str("Status:    [New/No delivery context]\n")?;
+        }
+        if let Some(attempts) = self.attempts {
+            f.write_fmt(format_args!("Attempts:  {attempts}\n"))?;
+        }
+        f.write_fmt(format_args!("Size:      {} bytes\n", self.size))?;
+        f.write_fmt(format_args!(
+            "Spooled:   {}\n",
+            format_timestamp(self.spooled_at * 1000)
+        ))
+    }
 }
 
 /// Spool statistics

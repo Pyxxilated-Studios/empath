@@ -351,8 +351,10 @@ impl SmtpClient {
             connection.send(b"\r\n").await?;
         }
 
-        // Send end-of-data marker
-        connection.send(b".\r\n").await?;
+        if !data.ends_with("\r\n.\r\n.") {
+            // Send end-of-data marker
+            connection.send(b".\r\n").await?;
+        }
 
         // Read the response
         self.read_response().await

@@ -224,14 +224,14 @@ See BACKLOG.md for details.
 - `empath-delivery/src/policy/pipeline.rs` (385 lines, 8 tests)
 - `empath-delivery/src/policy/mod.rs` (module organization)
 
-**Phase 4 (Highest Risk - 4 days):**
-- [ ] 4.0.2 - Separate SMTP session from protocol FSM
-  - Actually implement the `FiniteStateMachine` trait for `State`
-  - Separate protocol parser (Command parsing) from FSM
-  - Separate FSM from business logic (validation, spooling)
-  - Extract I/O orchestrator from Session
-  - Make state transitions pure (no context mutation)
-  - Most invasive change, requires comprehensive testing
+**Phase 4 (Highest Risk - 4 days): ✅ COMPLETED**
+- [x] 4.0.2 - Separate SMTP session from protocol FSM
+  - ✅ Actually implement the `FiniteStateMachine` trait for `State`
+  - ✅ Separate protocol parser (Command parsing) from FSM
+  - ✅ Separate FSM from business logic (validation, spooling)
+  - ✅ Extract I/O orchestrator from Session
+  - ✅ Make state transitions pure (no context mutation)
+  - ✅ Most invasive change, comprehensive testing completed
 
 **Success Criteria**:
 - [x] All existing tests pass unchanged (94 delivery + 181 workspace + 7 E2E) ✅ Phase 1-3 Complete

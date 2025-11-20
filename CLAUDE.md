@@ -143,6 +143,63 @@ pub trait FiniteStateMachine {
 
 SMTP states: Connect, Ehlo, Helo, StartTLS, MailFrom, RcptTo, Data, Reading, PostDot, Quit
 
+**SMTP Three-Layer Architecture:**
+
+The SMTP protocol implementation uses a clean three-layer separation:
+
+1. **Session State Layer** (`empath-smtp/src/session_state.rs`):
+   - `SessionState` struct manages pure FSM state: client ID, extended mode flag, envelope (sender/recipients)
+   - Separates protocol state from business logic concerns
+   - Convertible to/from full business `Context` for backward compatibility
+   - Serializable for persistence
+
+2. **FSM Layer** (`empath-smtp/src/fsm.rs`):
+   - Implements `FiniteStateMachine` trait for `State` enum
+   - Pure state transitions with zero side effects
+   - Uses only `SessionState` (not business `Context`)
+   - Enables polymorphic FSM usage and testing in isolation
+
+3. **Transaction Handler Layer** (`empath-smtp/src/transaction_handler.rs`):
+   - `SmtpTransactionHandler` trait separates validation/spooling from protocol concerns
+   - `DefaultSmtpTransactionHandler` dispatches to FFI module system
+   - Async operations (spooling, validation, audit logging)
+   - Called after FSM transitions for states requiring validation
+
+**Design Benefits:**
+- **Testability**: Each layer tested independently
+- **Purity**: FSM transitions are pure functions
+- **Flexibility**: Swap implementations (production vs testing)
+- **Single Responsibility**: Clear separation of concerns (protocol vs business vs I/O)
+
+**Example - Pure FSM Usage:**
+```rust
+use empath_common::traits::fsm::FiniteStateMachine;
+use empath_smtp::{session_state::SessionState, state::State, command::Command};
+
+let mut session_state = SessionState::new();
+let state = State::default(); // Connect state
+
+// Pure FSM transition - no side effects
+let new_state = FiniteStateMachine::transition(
+    state,
+    Command::Helo(HeloVariant::Ehlo("client.example.com".to_string())),
+    &mut session_state
+);
+```
+
+**Example - Transaction Handler Usage:**
+```rust
+use empath_smtp::transaction_handler::{SmtpTransactionHandler, DefaultSmtpTransactionHandler};
+
+let handler = DefaultSmtpTransactionHandler::new(Some(spool), peer);
+let valid = handler.validate_connect(&mut business_context).await;
+if valid {
+    handler.handle_message(&mut business_context).await;
+}
+```
+
+Location: `empath-smtp/src/state.rs:197-331` (transition methods), `empath-smtp/src/fsm.rs:49-84` (trait impl)
+
 #### 3. Module/Plugin System
 
 Two module types extend functionality without core modifications:

@@ -3,7 +3,10 @@ use core::fmt::{self, Display, Formatter};
 use empath_common::{address::Address, context::Context};
 use serde::{Deserialize, Serialize};
 
-use crate::command::{Command, HeloVariant};
+use crate::{
+    command::{Command, HeloVariant},
+    session_state::SessionState,
+};
 
 /// Sealed trait to prevent external state implementations
 mod sealed {
@@ -180,21 +183,35 @@ impl State {
     /// This method enforces valid state transitions at runtime while using
     /// type-safe state structs internally
     #[must_use]
-    pub fn transition(self, command: Command, ctx: &mut Context) -> Self {
+    /// Pure FSM transition using session state
+    ///
+    /// This is the new transition method that works with `SessionState`
+    /// instead of the full business `Context`. It contains only pure protocol
+    /// state transitions without side effects on business logic.
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The SMTP command to process
+    /// * `session_state` - Session-level state (id, extended, envelope)
+    ///
+    /// # Returns
+    ///
+    /// The new state after transition
+    pub fn transition_protocol(self, command: Command, session_state: &mut SessionState) -> Self {
         match (self, command) {
             // Connect state transitions
             (Self::Connect(_), Command::Helo(HeloVariant::Ehlo(id))) => {
-                ctx.id.clone_from(&id);
-                ctx.extended = true;
+                session_state.id.clone_from(&id);
+                session_state.extended = true;
                 Self::Ehlo(Ehlo { id })
             }
             (Self::Connect(_), Command::Helo(HeloVariant::Helo(id))) => {
-                ctx.id.clone_from(&id);
+                session_state.id.clone_from(&id);
                 Self::Helo(Helo { id })
             }
 
             // EHLO/HELO transitions (can do STARTTLS or HELP)
-            (Self::Ehlo(_) | Self::Helo(_), Command::StartTLS) if ctx.extended => {
+            (Self::Ehlo(_) | Self::Helo(_), Command::StartTLS) if session_state.extended => {
                 Self::StartTls(StartTls)
             }
             (Self::Ehlo(_), Command::Help) => Self::Help(Help { from_ehlo: true }),
@@ -209,9 +226,9 @@ impl State {
                 | Self::PostDot(_),
                 Command::MailFrom(sender, params),
             ) => {
-                ctx.envelope.sender_mut().clone_from(&sender);
+                session_state.envelope.sender_mut().clone_from(&sender);
                 // Store all MAIL FROM parameters in envelope for module access
-                *ctx.envelope.mail_params_mut() = Some(params.clone().into());
+                *session_state.envelope.mail_params_mut() = Some(params.clone().into());
                 Self::MailFrom(MailFrom { sender, params })
             }
 
@@ -224,10 +241,10 @@ impl State {
 
             // Recipient collection (can add multiple recipients)
             (Self::MailFrom(state), Command::RcptTo(recipients)) => {
-                if let Some(rcpts) = ctx.envelope.recipients_mut() {
+                if let Some(rcpts) = session_state.envelope.recipients_mut() {
                     rcpts.extend_from_slice(&recipients[..]);
                 } else {
-                    *ctx.envelope.recipients_mut() = Some(recipients);
+                    *session_state.envelope.recipients_mut() = Some(recipients);
                 }
                 Self::RcptTo(RcptTo {
                     sender: state.sender,
@@ -235,10 +252,10 @@ impl State {
                 })
             }
             (Self::RcptTo(state), Command::RcptTo(recipients)) => {
-                if let Some(rcpts) = ctx.envelope.recipients_mut() {
+                if let Some(rcpts) = session_state.envelope.recipients_mut() {
                     rcpts.extend_from_slice(&recipients[..]);
                 } else {
-                    *ctx.envelope.recipients_mut() = Some(recipients);
+                    *session_state.envelope.recipients_mut() = Some(recipients);
                 }
                 Self::RcptTo(state) // Stay in RcptTo, accumulating recipients
             }
@@ -251,15 +268,18 @@ impl State {
 
             // RSET clears transaction state and returns to ready state (EHLO or HELO)
             (_, Command::Rset) => {
-                // Clear transaction state including declared size
-                ctx.metadata.clear();
-                *ctx.envelope.sender_mut() = None;
-                *ctx.envelope.recipients_mut() = None;
-                *ctx.envelope.mail_params_mut() = None;
-                if ctx.extended {
-                    Self::Ehlo(Ehlo { id: ctx.id.clone() })
+                // Clear transaction state (envelope only, no business logic metadata)
+                *session_state.envelope.sender_mut() = None;
+                *session_state.envelope.recipients_mut() = None;
+                *session_state.envelope.mail_params_mut() = None;
+                if session_state.extended {
+                    Self::Ehlo(Ehlo {
+                        id: session_state.id.clone(),
+                    })
                 } else {
-                    Self::Helo(Helo { id: ctx.id.clone() })
+                    Self::Helo(Helo {
+                        id: session_state.id.clone(),
+                    })
                 }
             }
 
@@ -277,6 +297,45 @@ impl State {
                 reason: format!("Invalid command sequence from {state}"),
             }),
         }
+    }
+
+    /// Legacy transition method for backward compatibility
+    ///
+    /// This method maintains backward compatibility with existing code that
+    /// uses the full business `Context`. It delegates to `transition_protocol`
+    /// and syncs the protocol state back to the context.
+    ///
+    /// # Deprecated
+    ///
+    /// New code should use `transition_protocol` with `SessionState` instead.
+    /// This method will be removed in a future version after all call sites
+    /// are migrated.
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The SMTP command to process
+    /// * `ctx` - Business context (contains protocol fields + business logic)
+    ///
+    /// # Returns
+    ///
+    /// The new state after transition
+    #[must_use]
+    pub fn transition(self, command: Command, ctx: &mut Context) -> Self {
+        // Extract session state from business context
+        let mut session_state = SessionState::from_context(ctx);
+
+        // Clear metadata for RSET command (business logic side effect)
+        if matches!(command, Command::Rset) {
+            ctx.metadata.clear();
+        }
+
+        // Perform pure FSM transition
+        let new_state = self.transition_protocol(command, &mut session_state);
+
+        // Sync session state back to business context
+        session_state.sync_to_context(ctx);
+
+        new_state
     }
 
     /// Check if this state represents an error condition

@@ -646,7 +646,6 @@ dependencies = [
  "async-trait",
  "bincode",
  "cbindgen",
- "chrono",
  "clap",
  "empath-common",
  "empath-control",
@@ -702,6 +701,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "chrono",
  "empath-common",
  "empath-delivery",
  "hex",
@@ -794,6 +794,7 @@ version = "0.0.2"
 dependencies = [
  "ahash",
  "arrayvec",
+ "async-trait",
  "criterion",
  "empath-common",
  "empath-ffi",

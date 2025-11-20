@@ -23,6 +23,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 ahash = { version = "0.8", features = ["serde"] }
 arrayvec = "0.7"
+async-trait = "0.1"
 empath-common = { path = "../empath-common", version = "*" }
 empath-ffi = { path = "../empath-ffi", version = "*" }
 empath-spool = { path = "../empath-spool", version = "*" }

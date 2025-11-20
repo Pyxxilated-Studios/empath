@@ -8,7 +8,10 @@ use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, connection::Connection, extensions::Extension, state};
+use crate::{
+    State, connection::Connection, extensions::Extension, state,
+    transaction_handler::DefaultSmtpTransactionHandler,
+};
 
 // Submodules containing implementation details
 mod events;
@@ -142,7 +145,6 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     extensions: Vec<Extension>,
     pub(super) banner: Arc<str>,
     pub(super) tls_context: Option<TlsContext>,
-    pub(super) spool: Option<Arc<dyn empath_spool::BackingStore>>,
     pub(super) connection: Connection<Stream>,
     init_context: Arc<AHashMap<Cow<'static, str>, String>>,
     /// Maximum message size in bytes as advertised via SIZE extension (RFC 1870).
@@ -160,6 +162,8 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     timeouts: crate::SmtpServerTimeouts,
     /// Start time for tracking connection lifetime
     start_time: std::time::Instant,
+    /// SMTP transaction handler for validation and spooling
+    transaction_handler: DefaultSmtpTransactionHandler,
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
@@ -196,7 +200,6 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             context: Context::default(),
             extensions: config.extensions,
             tls_context,
-            spool: config.spool,
             banner: if config.banner.is_empty() {
                 std::env::var("HOSTNAME")
                     .unwrap_or_else(|_| "localhost".to_string())
@@ -208,6 +211,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             max_message_size,
             timeouts: config.timeouts,
             start_time: std::time::Instant::now(),
+            transaction_handler: DefaultSmtpTransactionHandler::new(config.spool, peer),
         }
     }
 
