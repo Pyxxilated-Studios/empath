@@ -230,23 +230,30 @@ impl DeliveryProcessor {
     pub fn init(
         &mut self,
         spool: Arc<dyn empath_spool::BackingStore>,
+        dns_resolver: Option<Arc<dyn crate::DnsResolver>>,
     ) -> Result<(), DeliveryError> {
         internal!("Initialising Delivery Processor ...");
         self.spool = Some(spool);
-        self.dns_resolver = Some(Arc::new(HickoryDnsResolver::with_dns_config(
-            self.dns.clone(),
-        )?));
-        internal!(
-            "DNS resolver initialized with timeout={}s, cache_ttl={}, min_ttl={}s, max_ttl={}s, cache_size={}",
-            self.dns.timeout_secs,
-            self.dns.cache_ttl_secs.map_or_else(
-                || "DNS record TTL".to_string(),
-                |ttl| format!("{ttl}s (override)")
-            ),
-            self.dns.min_cache_ttl_secs,
-            self.dns.max_cache_ttl_secs,
-            self.dns.cache_size
-        );
+
+        // Use injected DNS resolver or create default HickoryDnsResolver
+        self.dns_resolver = if let Some(resolver) = dns_resolver {
+            internal!("Using injected DNS resolver (likely MockDnsResolver for testing)");
+            Some(resolver)
+        } else {
+            let resolver = Arc::new(HickoryDnsResolver::with_dns_config(self.dns.clone())?);
+            internal!(
+                "DNS resolver initialized with timeout={}s, cache_ttl={}, min_ttl={}s, max_ttl={}s, cache_size={}",
+                self.dns.timeout_secs,
+                self.dns.cache_ttl_secs.map_or_else(
+                    || "DNS record TTL".to_string(),
+                    |ttl| format!("{ttl}s (override)")
+                ),
+                self.dns.min_cache_ttl_secs,
+                self.dns.max_cache_ttl_secs,
+                self.dns.cache_size
+            );
+            Some(resolver)
+        };
 
         // Initialize delivery metrics
         match empath_metrics::DeliveryMetrics::new(10, Vec::default()) {

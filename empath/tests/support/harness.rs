@@ -219,6 +219,10 @@ pub struct E2ETestHarnessBuilder {
 
     /// SMTP extensions for Empath server
     smtp_extensions: Vec<Extension>,
+
+    /// Optional DNS resolver (for testing DNS failure scenarios)
+    /// If None, a `MockDnsResolver` will be created that points to the mock server
+    dns_resolver: Option<Arc<dyn empath_delivery::DnsResolver>>,
 }
 
 impl E2ETestHarnessBuilder {
@@ -234,6 +238,7 @@ impl E2ETestHarnessBuilder {
             mock_rcpt_to_code: 250,
             mock_data_end_code: 250,
             smtp_extensions: vec![Extension::Size(10_000_000)],
+            dns_resolver: None,
         }
     }
 
@@ -288,6 +293,17 @@ impl E2ETestHarnessBuilder {
         self
     }
 
+    /// Inject a DNS resolver for testing DNS failure scenarios
+    ///
+    /// If not provided, a `MockDnsResolver` will be created automatically
+    /// that points to the mock server.
+    #[must_use]
+    #[allow(dead_code)] // Used in Phase 3 DNS failure scenario tests
+    pub fn with_dns_resolver(mut self, resolver: Arc<dyn empath_delivery::DnsResolver>) -> Self {
+        self.dns_resolver = Some(resolver);
+        self
+    }
+
     /// Build and start the E2E test harness
     ///
     /// This will:
@@ -318,6 +334,22 @@ impl E2ETestHarnessBuilder {
             .await?;
 
         let mock_addr = mock_server.addr();
+
+        // Create DNS resolver (use injected one or create default MockDnsResolver)
+        let dns_resolver: Arc<dyn empath_delivery::DnsResolver> =
+            self.dns_resolver.unwrap_or_else(|| {
+                // Default: Create MockDnsResolver pointing to mock server
+                let mock_dns = empath_delivery::MockDnsResolver::new();
+                mock_dns.add_response(
+                    &self.test_domain,
+                    Ok(vec![empath_delivery::MailServer::new(
+                        "localhost".to_string(),
+                        0,
+                        mock_addr.port(),
+                    )]),
+                );
+                Arc::new(mock_dns)
+            });
 
         // 2. Create backing store (memory-backed for speed)
         let backing_store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
@@ -368,11 +400,11 @@ impl E2ETestHarnessBuilder {
         });
 
         // 5. Create delivery processor with domain config
+        // NOTE: No mx_override needed since we're using MockDnsResolver
         let domains = DomainConfigRegistry::new();
         domains.insert(
             self.test_domain.clone(),
             DomainConfig {
-                mx_override: Some(format!("localhost:{}", mock_addr.port())),
                 accept_invalid_certs: Some(true),
                 ..Default::default()
             },
@@ -385,7 +417,8 @@ impl E2ETestHarnessBuilder {
         delivery.retry_policy.max_attempts = self.max_attempts;
         delivery.accept_invalid_certs = true; // Global fallback
 
-        delivery.init(backing_store.clone())?;
+        // Initialize with injected DNS resolver
+        delivery.init(backing_store.clone(), Some(dns_resolver))?;
 
         // Spawn delivery processor task
         let shutdown_rx_delivery = shutdown_tx.subscribe();

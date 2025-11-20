@@ -6,13 +6,14 @@
 
 mod support;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
+use empath_delivery::{DnsError, DnsResolver, MockDnsResolver};
 use support::{E2ETestHarness, SmtpCommand};
 
 /// Test the complete happy path: SMTP reception → spool → delivery → mock server
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Network operations not supported in MIRI")]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
 async fn test_full_delivery_flow_success() {
     // Create test harness with mock server that accepts everything
     let harness = E2ETestHarness::builder()
@@ -83,7 +84,7 @@ async fn test_full_delivery_flow_success() {
 
 /// Test delivery with multiple recipients
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Network operations not supported in MIRI")]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
 async fn test_delivery_multiple_recipients() {
     let harness = E2ETestHarness::builder()
         .with_test_domain("test.example.com")
@@ -117,7 +118,7 @@ async fn test_delivery_multiple_recipients() {
 
 /// Test that delivery retries on temporary failures
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Network operations not supported in MIRI")]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
 async fn test_delivery_with_recipient_rejection() {
     // Create harness with mock server that rejects RCPT TO
     let harness = E2ETestHarness::builder()
@@ -173,7 +174,7 @@ async fn test_delivery_with_recipient_rejection() {
 
 /// Test message content preservation through the pipeline
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Network operations not supported in MIRI")]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
 async fn test_message_content_preservation() {
     let harness = E2ETestHarness::builder()
         .with_test_domain("test.example.com")
@@ -226,7 +227,7 @@ async fn test_message_content_preservation() {
 
 /// Test graceful shutdown during delivery
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Network operations not supported in MIRI")]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
 async fn test_graceful_shutdown() {
     let harness = E2ETestHarness::builder()
         .with_test_domain("test.example.com")
@@ -252,7 +253,7 @@ async fn test_graceful_shutdown() {
 
 /// Test SMTP SIZE extension
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Network operations not supported in MIRI")]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
 async fn test_smtp_size_extension() {
     use empath_smtp::extensions::Extension;
 
@@ -279,7 +280,7 @@ async fn test_smtp_size_extension() {
 
 /// Test delivery with custom scan/process intervals
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Network operations not supported in MIRI")]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
 async fn test_custom_delivery_intervals() {
     let harness = E2ETestHarness::builder()
         .with_test_domain("test.example.com")
@@ -304,6 +305,140 @@ async fn test_custom_delivery_intervals() {
     assert!(
         result.is_ok(),
         "Message should deliver within 3 seconds with fast intervals"
+    );
+
+    harness.shutdown().await;
+}
+
+/// Test DNS timeout handling - should result in retry (temporary failure)
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
+async fn test_delivery_with_dns_timeout() {
+    // Create MockDnsResolver that returns DNS timeout error
+    let mock_dns = MockDnsResolver::new();
+    mock_dns.add_response(
+        "timeout.example.com",
+        Err(DnsError::Timeout("timeout.example.com".to_string())),
+    );
+
+    let harness = E2ETestHarness::builder()
+        .with_test_domain("timeout.example.com")
+        .with_dns_resolver(Arc::new(mock_dns) as Arc<dyn DnsResolver>)
+        .with_max_attempts(3)
+        .build()
+        .await
+        .expect("Failed to build harness");
+
+    // Send email - should be accepted by SMTP receiver
+    harness
+        .send_email(
+            "sender@example.org",
+            "recipient@timeout.example.com",
+            "Subject: DNS Timeout Test\r\n\r\nBody",
+        )
+        .await
+        .expect("SMTP accept failed");
+
+    // Wait a bit for delivery attempts
+    tokio::time::sleep(Duration::from_secs(4)).await;
+
+    // Verify message was NOT delivered (DNS timeout prevents delivery)
+    let commands = harness.mock_commands().await;
+    assert!(
+        commands.is_empty(),
+        "Should not deliver message when DNS times out"
+    );
+
+    harness.shutdown().await;
+}
+
+/// Test NXDOMAIN (domain not found) handling - should result in permanent failure
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
+async fn test_delivery_with_nxdomain() {
+    // Create MockDnsResolver that returns NXDOMAIN error
+    let mock_dns = MockDnsResolver::new();
+    mock_dns.add_response(
+        "nonexistent.example.com",
+        Err(DnsError::DomainNotFound(
+            "nonexistent.example.com".to_string(),
+        )),
+    );
+
+    let harness = E2ETestHarness::builder()
+        .with_test_domain("nonexistent.example.com")
+        .with_dns_resolver(Arc::new(mock_dns) as Arc<dyn DnsResolver>)
+        .build()
+        .await
+        .expect("Failed to build harness");
+
+    // Send email - should be accepted by SMTP receiver
+    harness
+        .send_email(
+            "sender@example.org",
+            "recipient@nonexistent.example.com",
+            "Subject: NXDOMAIN Test\r\n\r\nBody",
+        )
+        .await
+        .expect("SMTP accept failed");
+
+    // Wait a bit for delivery attempt
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Verify message was NOT delivered (NXDOMAIN is permanent failure)
+    let commands = harness.mock_commands().await;
+    assert!(
+        commands.is_empty(),
+        "Should not deliver message when domain does not exist"
+    );
+
+    // TODO: Once DSN functionality is accessible via test harness,
+    // verify that a bounce message was generated
+
+    harness.shutdown().await;
+}
+
+/// Test that delivery works with the default `MockDnsResolver` (single MX record)
+///
+/// NOTE: Testing multiple MX records requires more complex test infrastructure
+/// because we need to know the mock server port before building the harness,
+/// but the harness creates the mock server. For now, we verify that the
+/// basic `MockDnsResolver` injection works correctly (tested by the other E2E tests).
+///
+/// Multiple MX priority ordering is tested in pipeline unit tests instead.
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
+async fn test_delivery_with_mock_dns_resolver() {
+    // This test verifies that the default E2ETestHarness behavior uses `MockDnsResolver`
+    // instead of MX overrides (which was the old workaround)
+    let harness = E2ETestHarness::builder()
+        .with_test_domain("mock-dns.example.com")
+        .build()
+        .await
+        .expect("Failed to build harness");
+
+    // Send email
+    harness
+        .send_email(
+            "sender@example.org",
+            "recipient@mock-dns.example.com",
+            "Subject: MockDnsResolver Test\r\n\r\nBody",
+        )
+        .await
+        .expect("SMTP accept failed");
+
+    // Wait for delivery
+    let result = harness.wait_for_delivery(Duration::from_secs(10)).await;
+    assert!(
+        result.is_ok(),
+        "Message should be delivered using MockDnsResolver"
+    );
+
+    // Verify delivery attempt was made
+    let commands = harness.mock_commands().await;
+    assert!(
+        !commands.is_empty(),
+        "Should have attempted delivery using DNS resolution"
     );
 
     harness.shutdown().await;

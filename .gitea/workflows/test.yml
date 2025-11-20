@@ -84,8 +84,14 @@ jobs:
         with:
           tool: nextest
 
-      - name: Test Server
-        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run && cargo nextest run && cargo test --doc
+      - name: Test Server (under miri)
+        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run
+
+      - name: Test server
+        run: cargo nextest run
+
+      - name: Doc Tests
+        run: cargo test --doc
 
       - name: Test Property-Based
         run: cargo nextest run --test proptest_commands

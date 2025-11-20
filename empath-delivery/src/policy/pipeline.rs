@@ -249,7 +249,7 @@ mod tests {
     use super::*;
     use crate::{
         circuit_breaker::CircuitBreakerConfig,
-        dns::{DnsConfig, HickoryDnsResolver},
+        dns::MockDnsResolver,
         domain_config::{DomainConfig, DomainConfigRegistry},
         rate_limiter::{RateLimitConfig, RateLimiter},
     };
@@ -262,7 +262,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(
+        all(miri, target_os = "macos"),
+        ignore = "kqueue not supported in Miri on macOS"
+    )]
     async fn test_resolve_mail_servers_with_override() {
         let registry = DomainConfigRegistry::new();
         registry.insert(
@@ -273,7 +276,7 @@ mod tests {
             },
         );
 
-        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = MockDnsResolver::new();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
@@ -288,10 +291,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_check_rate_limit_no_limiter() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = MockDnsResolver::new();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
@@ -302,10 +304,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_check_rate_limit_with_limiter_allowed() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = MockDnsResolver::new();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         // Create rate limiter with high limit
@@ -325,10 +326,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_record_success_no_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = MockDnsResolver::new();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
@@ -337,10 +337,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_record_success_with_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = MockDnsResolver::new();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
@@ -357,10 +356,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_record_failure_permanent_not_recorded() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = MockDnsResolver::new();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
@@ -379,10 +377,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_record_failure_temporary_recorded() {
         let registry = DomainConfigRegistry::new();
-        let dns_resolver = HickoryDnsResolver::with_dns_config(DnsConfig::default()).unwrap();
+        let dns_resolver = MockDnsResolver::new();
         let domain_resolver = DomainPolicyResolver::new(registry, false);
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
@@ -399,7 +396,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_calculate_rate_limit_retry() {
         let wait_time = Duration::from_secs(10);
         let before = SystemTime::now();

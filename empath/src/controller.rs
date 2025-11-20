@@ -143,7 +143,8 @@ impl Empath {
         health_checker.set_smtp_ready(true);
 
         // Initialize delivery controller with the same backing store and spool path
-        self.delivery.init(backing_store)?;
+        // Use default DNS resolver (None = HickoryDnsResolver)
+        self.delivery.init(backing_store, None)?;
 
         // Mark delivery and DNS as ready after successful initialization
         health_checker.set_delivery_ready(true);

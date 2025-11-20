@@ -52,9 +52,14 @@ fn create_test_context(from: &str, to: &str) -> Context {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Calls an unsupported method")]
+#[cfg_attr(
+    all(miri, target_os = "macos"),
+    ignore = "kqueue not supported in Miri on macOS"
+)]
 async fn test_domain_config_mx_override() {
     // Create a domain config registry with an MX override
+    // Note: This tests the MX override feature itself (legitimate config option),
+    // not using it as a DNS workaround
     let domains = DomainConfigRegistry::new();
     domains.insert(
         "test.example.com".to_string(),
@@ -80,8 +85,11 @@ async fn test_domain_config_mx_override() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_delivery_with_mx_override_integration() {
+#[cfg_attr(
+    all(miri, target_os = "macos"),
+    ignore = "kqueue not supported in Miri on macOS"
+)]
+async fn test_delivery_with_mock_dns_resolver_integration() {
     // Create a memory-backed spool
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
@@ -91,23 +99,26 @@ async fn test_delivery_with_mx_override_integration() {
     // Spool the message
     let _msg_id = spool.write(&mut context).await.unwrap();
 
-    // Create domain config with MX override
-    let domains = DomainConfigRegistry::new();
-    domains.insert(
-        "test.example.com".to_string(),
-        DomainConfig {
-            mx_override: Some("localhost:1025".to_string()),
-            ..Default::default()
-        },
+    // Use MockDnsResolver instead of MX override workaround
+    let mock_dns = empath_delivery::MockDnsResolver::new();
+    mock_dns.add_response(
+        "test.example.com",
+        Ok(vec![empath_delivery::MailServer::new(
+            "localhost".to_string(),
+            0,
+            1025,
+        )]),
     );
 
     let mut processor = DeliveryProcessor::default();
-    processor.domains = domains;
     processor.scan_interval_secs = 1;
     processor.process_interval_secs = 1;
     processor.retry_policy.max_attempts = 3;
 
-    processor.init(spool.clone()).unwrap();
+    // Initialize with MockDnsResolver (Miri-compatible, no real DNS operations)
+    processor
+        .init(spool.clone(), Some(Arc::new(mock_dns)))
+        .unwrap();
 
     // Verify the processor was initialized correctly
     // The queue starts empty
@@ -176,7 +187,7 @@ async fn test_delivery_queue_domain_grouping() {
     let msg_id = spool.write(&mut context).await.unwrap();
 
     let mut processor = DeliveryProcessor::default();
-    processor.init(spool.clone()).unwrap();
+    processor.init(spool.clone(), None).unwrap();
 
     // Note: Since scan_spool_internal is now private, we can't test it directly here
     // The message won't be in the queue until a scan happens
@@ -199,7 +210,7 @@ async fn test_graceful_shutdown() {
     processor.process_interval_secs = 1;
     processor.retry_policy.max_attempts = 3;
 
-    processor.init(spool.clone()).unwrap();
+    processor.init(spool.clone(), None).unwrap();
 
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
@@ -244,7 +255,7 @@ async fn test_graceful_shutdown_respects_timeout() {
     processor.process_interval_secs = 1;
     processor.retry_policy.max_attempts = 3;
 
-    processor.init(spool.clone()).unwrap();
+    processor.init(spool.clone(), None).unwrap();
 
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
@@ -292,7 +303,7 @@ async fn test_message_expiration() {
     let mut processor = DeliveryProcessor::default();
     processor.message_expiration_secs = Some(1); // Expire after 1 second
 
-    processor.init(spool.clone()).unwrap();
+    processor.init(spool.clone(), None).unwrap();
 
     // Create and queue a message
     let mut context = create_test_context("sender@example.org", "recipient@test.com");
@@ -317,7 +328,7 @@ async fn test_retry_scheduling_with_backoff() {
     processor.retry_policy.retry_jitter_factor = 0.0; // No jitter for predictable testing
     processor.retry_policy.max_attempts = 3;
 
-    processor.init(spool.clone()).unwrap();
+    processor.init(spool.clone(), None).unwrap();
 
     // Create and queue a message
     let mut context = create_test_context("sender@example.org", "recipient@test.com");
@@ -440,7 +451,7 @@ async fn test_cleanup_processor_configuration() {
     processor.cleanup_interval_secs = 30;
     processor.max_cleanup_attempts = 5;
 
-    processor.init(spool.clone()).unwrap();
+    processor.init(spool.clone(), None).unwrap();
 
     // Verify configuration
     assert_eq!(processor.cleanup_interval_secs, 30);

@@ -102,7 +102,7 @@ async fn test_queue_restoration_across_restart() {
     processor1.retry_policy.base_retry_delay_secs = 60;
 
     processor1
-        .init(spool.clone())
+        .init(spool.clone(), None)
         .expect("Failed to init processor");
 
     // Create a message with Retry status and next_retry_at in the future
@@ -154,7 +154,7 @@ async fn test_queue_restoration_across_restart() {
     processor2.retry_policy.base_retry_delay_secs = 60;
 
     processor2
-        .init(spool.clone())
+        .init(spool.clone(), None)
         .expect("Failed to init processor");
 
     // Trigger initial spool scan manually (this is what happens in serve())
@@ -310,7 +310,7 @@ async fn test_queue_restoration_with_multiple_messages() {
 
     // Create processor and restore queue
     let mut processor = DeliveryProcessor::default();
-    processor.init(spool.clone()).expect("Failed to init");
+    processor.init(spool.clone(), None).expect("Failed to init");
 
     // Manually trigger restoration (simulating scan_spool_internal)
     let messages = BackingStore::list(spool.as_ref())
