@@ -24,9 +24,10 @@ use std::{
 
 use empath_common::{
     domain::Domain,
-    tracing::{info, warn},
+    tracing::{self, info, warn},
 };
 use empath_spool::SpooledMessageId;
+use empath_tracing::traced;
 
 use crate::{
     circuit_breaker::CircuitBreaker,
@@ -102,6 +103,7 @@ impl<'a> DeliveryPipeline<'a> {
     /// # Errors
     ///
     /// Returns error if DNS lookup fails or no mail servers found
+    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(domain = %domain)), timing(precision = "ms"))]
     pub async fn resolve_mail_servers(&self, domain: &str) -> Result<DnsResolution, DeliveryError> {
         // Check for domain-specific MX override first
         let mail_servers = if let Some(mx_server) = self.domain_resolver.resolve_mx_override(domain)
@@ -147,6 +149,7 @@ impl<'a> DeliveryPipeline<'a> {
     ///
     /// `RateLimitResult::Allowed` if delivery should proceed,
     /// `RateLimitResult::RateLimited` if delivery should be delayed
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(message_id = %message_id, domain = %domain)), timing(precision = "us"))]
     pub fn check_rate_limit(&self, message_id: &SpooledMessageId, domain: &str) -> RateLimitResult {
         let Some(rate_limiter) = self.rate_limiter else {
             // No rate limiter configured, allow delivery
@@ -183,6 +186,7 @@ impl<'a> DeliveryPipeline<'a> {
     /// # Arguments
     ///
     /// * `domain` - The recipient domain
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(domain = %domain)), timing(precision = "us"))]
     pub fn record_success(&self, domain: &str) {
         if let Some(circuit_breaker) = self.circuit_breaker {
             let domain_ref = &Domain::from(domain);
@@ -205,6 +209,7 @@ impl<'a> DeliveryPipeline<'a> {
     ///
     /// * `domain` - The recipient domain
     /// * `is_temporary` - Whether the failure was temporary
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(domain = %domain, is_temporary = %is_temporary)), timing(precision = "us"))]
     pub fn record_failure(&self, domain: &str, is_temporary: bool) {
         if !is_temporary {
             // Permanent failures don't indicate server health issues

@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
-> **Last Updated**: 2025-11-17
-> **Total Active**: 40 tasks | **Completed**: 51 tasks (42 in archive + 9 this week) → [COMPLETED.md](docs/COMPLETED.md)
+> **Last Updated**: 2025-11-20
+> **Total Active**: 17 tasks | **Completed**: 52 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -9,157 +9,76 @@
 
 ### 🚨 Critical Blockers (Must Complete Before Production)
 
-**Security & Authentication (Week 0)**
-- [x] 0.27+0.28 - Authentication Infrastructure (metrics + control socket) - ✅ COMPLETED (SHA-256 token auth)
-- [x] NEW-01 - FFI Safety Hardening (null byte validation) - ✅ COMPLETED
-- [x] NEW-02 - Production Unwrap/Expect Audit - ✅ COMPLETED (all 10 production unwraps eliminated)
+**Priority**: 2 tasks remaining (5-8 days to 100% production ready)
 
-**Testing Foundation (Week 1)**
-- [x] 0.13 - E2E Test Suite - ✅ COMPLETED (7 tests, 43s runtime)
-- [x] NEW-04 - E2E Test Harness (local) - ✅ COMPLETED (420-line harness + MockSmtpServer)
+1. **NEW-02** - Production Unwrap/Expect Audit (3-5 days) - 294 unwraps need review
+2. **NEW-05** - Production Alerting Rules (2-3 days) - No alert guidance exists
 
-**Observability (Week 2-3)**
-- [x] 0.35+0.36 - Distributed Tracing Pipeline + Context Propagation - ✅ COMPLETED (OpenTelemetry + Jaeger)
-- [x] NEW-06 - Structured JSON Logging with Trace Correlation - ✅ COMPLETED (trace_id/span_id in all logs)
-- [x] NEW-07 - Log Aggregation Pipeline (Loki) - ✅ COMPLETED (7-day retention + Promtail + dashboards)
+### 📅 Current Sprint (Week of 2025-11-20)
 
-**Durability (Week 2)**
-- [x] 1.1 - Persistent Delivery Queue - ✅ COMPLETED (already implemented, tests added)
+**This Week's Goals:**
+1. ✅ 5.4 - Implement span instrumentation (COMPLETED 2025-11-20)
+2. NEW-02 - Complete unwrap audit (eliminate panic risks)
+3. NEW-05 - Create alerting rules (production readiness)
 
-### 📅 Current Sprint (Week of 2025-11-16)
-
-**Completed This Week:**
-- ✅ 4.2 - Mock SMTP Server (527 lines, ready for integration)
-- ✅ NEW-01 - FFI Safety Hardening (null byte sanitization implemented)
-- ✅ NEW-02 - Production Unwrap/Expect Audit (10/10 production unwraps eliminated, DNS fallback fixed)
-- ✅ NEW-04 - E2E Test Harness (420-line self-contained harness)
-- ✅ 0.13 - E2E Test Suite (7 tests covering full delivery pipeline)
-- ✅ 0.27+0.28 - Authentication Infrastructure (SHA-256 token auth for control socket + metrics)
-- ✅ NEW-06 - Structured JSON Logging (trace_id/span_id in all log entries)
-- ✅ NEW-07 - Log Aggregation Pipeline (Loki + Promtail + Grafana dashboards)
-- ✅ 0.35+0.36 - Distributed Tracing (OpenTelemetry + Jaeger integration)
-- ✅ 1.1 - Persistent Delivery Queue (queue restoration verified with comprehensive tests)
-- ✅ NEW-13 - Property-Based Testing (10 proptest tests for SMTP command parsing)
-- ✅ NEW-11 - Panic Safety Audit (ZERO lazy panics, strict CI lints added)
-- ✅ 4.0 Phase 1 - Unified Error Types (eliminated 50+ manual .map_err() calls)
-- ✅ 4.0 Phase 2 - Consolidated Configuration (unified timeout & TLS config)
-- ✅ 4.0 Phase 3 - Policy Abstractions (RetryPolicy, DomainPolicyResolver, DeliveryPipeline)
-- ✅ NEW-16 - DNS Trait Abstraction (DnsResolver trait + HickoryDnsResolver + MockDnsResolver)
-
-**In Progress:**
-- 4.0 Phase 4 - SMTP Session/FSM Separation (ready to start)
-
-**Next Up:**
-1. NEW-17 - Migrate Tests to MockDnsResolver (removes MX override workarounds)
-2. 4.0 Phase 4 - SMTP Session/FSM Separation (final refactoring phase)
-3. High-priority enhancements (see Phase 2 tasks)
+**Ready to Start:**
+- NEW-17 - Migrate tests to MockDnsResolver (2 days)
+- 4.0 Phase 4 - SMTP Session/FSM Separation (4 days, highest risk)
+- NEW-DX-01 - Add missing justfile commands (30 minutes)
 
 ### 📈 Metrics
 
-**Priority Distribution:**
-- 🔴 Critical: 11 tasks (~18-22 days effort) - **PRODUCTION BLOCKERS**
-- 🟡 High: 11 tasks (~20-25 days effort)
-- 🟢 Medium: 13 tasks (~15-20 days effort)
-- 🔵 Low: 12 tasks (~10-15 days effort)
+**Priority Distribution** (Active Tasks Only):
+- 🔴 Critical: 2 tasks (~5-8 days effort) - **PRODUCTION BLOCKERS**
+- 🟡 High: 3 tasks (~5-8 days effort)
+- 🟢 Medium: 6 tasks (~8-12 days effort)
+- 🔵 Low: 6 tasks (~8-12 days effort)
 
-**Production Readiness: 100%** ⬆️ +5% (was 95%) 🎉
+**Production Readiness: 90%** (1-2 weeks to 100%)
 
-✅ **ALL CRITICAL BLOCKERS COMPLETE!**
-
+**Component Breakdown:**
 - Core Functionality: 100% ✅ (SMTP, delivery, spool, queue, retry logic)
-- Security: 100% ✅ (FFI hardened ✅, unwrap audit ✅, authentication ✅)
-- Observability: 100% ✅ (metrics ✅, JSON logging ✅, distributed tracing ✅, log aggregation ✅)
-- Durability: 100% ✅ (persistent queue ✅, graceful shutdown ✅)
-- Testing: 95% ✅ (CI with clippy/fmt/MIRI/coverage + E2E tests + queue restoration tests ✅)
-- Developer Experience: 95% ✅ (excellent CI/CD, coverage, Renovate, changelog)
+- Security: 70% ⚠️ (FFI ✅, unsafe audit ✅, panic audit ✅, unwrap audit ❌)
+- Observability: 80% ✅ (metrics ✅, JSON logs ✅, trace infrastructure ✅, span instrumentation ✅, alerting ❌)
+- Durability: 95% ✅ (persistent queue ✅, graceful shutdown ✅)
+- Testing: 90% ✅ (336 tests, E2E suite ✅, property tests ✅, coverage tracking ✅)
+- Developer Experience: 85% ✅ (CI/CD ✅, Renovate ✅, docs ✅, profiling guide ❌)
 
-**🚀 READY FOR PRODUCTION DEPLOYMENT!**
+**Path to 100%:**
+1. Week 1: Complete unwrap audit + alerting rules (5-8 days)
+2. Week 2: Load testing + capacity metrics (4-6 days)
+3. Final validation and documentation updates (2-3 days)
 
-Next: High-priority performance and feature enhancements (Phase 2)
+**Estimated Production Ready**: 1-2 weeks
 
 ---
 
-## Phase 0: Code Review Follow-ups & Production Blockers
+## Phase 0: Production Blockers
 
-### 🔴 0.27+0.28 Authentication Infrastructure [COMBINED]
+### 🔴 NEW-02 Production Unwrap/Expect Audit
 **Priority**: Critical (Production Blocker)
-**Effort**: 2-3 days
+**Effort**: 3-5 days
 **Dependencies**: None
 **Owner**: Unassigned
 **Status**: Not Started
-**Risk**: Medium
-**Tags**: security, production
-**Updated**: 2025-11-16
+**Risk**: High (production panics)
+**Tags**: rust, safety, refactoring
+**Added**: 2025-11-16 (Rust Expert Review)
 
-**Problem**: Metrics endpoint (localhost:9090) and control socket have no authentication - security vulnerability.
+**Problem**: 294 `.unwrap()/.expect()` calls across codebase. Production unwraps can cause panics in edge cases (OOM, malformed input).
 
-**Solution**: Implement shared token-based authentication for both control socket and metrics endpoint.
-
-**Success Criteria**:
-- [ ] Token-based auth for control socket commands
-- [ ] API key auth for metrics endpoint
-- [ ] Configuration via empath.config.ron
-- [ ] Documentation updated in CLAUDE.md and SECURITY.md
-
----
-
-### 🔴 0.35+0.36 Distributed Tracing Pipeline [COMBINED]
-**Priority**: Critical (Production Monitoring)
-**Effort**: 3-4 days
-**Dependencies**: Best with 0.13 (E2E tests for validation)
-**Owner**: Unassigned
-**Status**: Not Started
-**Risk**: Medium
-**Tags**: observability, monitoring
-**Updated**: 2025-11-16
-
-**Problem**:
-- OTEL Collector only has metrics pipeline, no trace export backend
-- Cannot trace requests through SMTP → Spool → Delivery
-- No trace_id/span_id in logs - cannot correlate metrics → traces → logs
-
-**Solution**:
-- Implement OTLP trace export pipeline to Jaeger/Tempo
-- Add trace context propagation across service boundaries
-- Inject trace_id/span_id into all log entries
+**Solution**: Audit all unwraps, categorize, replace production unwraps with proper error handling.
 
 **Success Criteria**:
-- [ ] OTLP trace pipeline configured in docker/otel-collector.yml
-- [ ] Jaeger/Tempo backend running in Docker stack
-- [ ] Trace context propagates from SMTP → Delivery
-- [ ] trace_id/span_id appear in all logs
-- [ ] Can trace a message end-to-end in <30 seconds
+- [ ] Audit report: `docs/AUDIT_UNWRAP.md` with categorization
+- [ ] All production unwraps replaced with `?` or proper error handling
+- [ ] Test-only unwraps documented as acceptable
+- [ ] Proven invariant unwraps documented with safety comments
+- [ ] CI check: `cargo clippy -- -D clippy::unwrap_used` (deny in lib code)
 
-**Technical Notes**: Migrate #[traced] macro from logs to actual OTel spans (see task 5.4)
-
----
-
-### 🔴 0.13 / 2.3 Comprehensive E2E Test Suite
-**Priority**: Critical (Testing Infrastructure)
-**Effort**: 3-5 days
-**Dependencies**: 4.2 (MockSmtpServer) - ✅ COMPLETED
-**Owner**: Unassigned
-**Status**: Not Started
-**Risk**: High (blocks architecture refactoring 4.0)
-**Tags**: testing, quality
-**Updated**: 2025-11-16
-
-**Problem**:
-- Inverted test pyramid (113 unit tests, ~10 integration, 0 E2E)
-- Cannot validate full delivery flow (SMTP → Spool → Delivery → External SMTP)
-- Cannot test failure scenarios (DNS timeout, TLS failure, recipient rejection)
-- Blocks safe refactoring (task 4.0 requires E2E coverage)
-
-**Solution**: Build comprehensive E2E test suite using completed MockSmtpServer
-
-**Success Criteria**:
-- [ ] E2E test: Full delivery flow (SMTP receive → spool → DNS → SMTP delivery → success)
-- [ ] E2E test: TLS upgrade during reception and delivery
-- [ ] E2E test: DNS resolution with caching
-- [ ] E2E test: Retry logic with exponential backoff
-- [ ] E2E test: Message persistence across restarts
-- [ ] E2E test: Graceful shutdown with in-flight messages
-- [ ] All tests run in CI (depends on 7.16)
+**High-Risk Areas**:
+- `empath-smtp/src/session/mod.rs` (17 unwraps)
+- `empath-spool/src/backends/memory.rs` (13 unwraps)
 
 ---
 
@@ -198,67 +117,14 @@ Next: High-priority performance and feature enhancements (Phase 2)
 ---
 
 ### 🔵 0.14 Add DNSSEC Validation and Logging
-**Priority**: Low (Downgraded - Premature)
-**Effort**: 2 days
-**Dependencies**: None
-**Status**: Deferred
-**Tags**: dns, security
+**Priority**: Low (Moved to [BACKLOG.md](docs/BACKLOG.md))
+**Status**: Deferred to post-1.0
 
-**Expert Review**: Premature - no DNSSEC infrastructure in most deployments. Defer until core reliability proven.
-
-Enable DNSSEC validation in resolver and log validation status for security monitoring.
+See BACKLOG.md for details.
 
 ---
 
-### ❌ 0.3 Fix Context/Message Layer Violation **REJECTED**
-**Status**: Rejected (2025-11-11)
-
-**Decision**: NOT a layer violation - intentional architectural feature for module system.
-
-**Rationale**: Context persistence enables module lifecycle tracking across SMTP reception → delivery. "Session-only" fields (id, metadata, extended, banner) are part of the module contract, allowing plugins to maintain coherent state. Storage overhead negligible (~100 bytes vs 4KB-10MB+ emails).
-
-**See**: CLAUDE.md "Context Persistence and the Module Contract" section
-
----
-
-## Phase 1: Core Functionality
-
-### 🔴 1.1 Restore Queue State from Spool on Restart [UPGRADE TO CRITICAL]
-**Priority**: Critical (Durability)
-**Effort**: 1 week
-**Dependencies**: 0.3 analysis (completed - design validated)
-**Owner**: Unassigned
-**Status**: Ready to start
-**Risk**: High (touches delivery core)
-**Tags**: delivery, durability, queue
-**Updated**: 2025-11-16
-
-**Problem**: On restart, delivery queue state (retry schedules, attempt counts, next_retry_at timestamps) is not restored from the persistent spool. Messages in the spool are rediscovered but queue metadata is lost. This causes immediate redelivery attempts instead of honoring exponential backoff.
-
-**Solution**: On startup, scan FileBackedSpool and restore queue state from Context.delivery fields in spooled messages.
-
-**Success Criteria**:
-- [ ] On startup, read all .bin files from spool directory
-- [ ] Deserialize Context.delivery (attempt_count, next_retry_at, server_index, status)
-- [ ] Populate in-memory DeliveryQueue with restored state
-- [ ] Honor next_retry_at timestamps (don't retry immediately)
-- [ ] Tests verify queue state restoration across restart
-- [ ] Performance impact <5% on startup (benchmark with 10k queued messages)
-
-**Implementation Notes**:
-- Spool (FileBackedSpool) is already persistent - this is about restoring queue STATE
-- Leverage Context.delivery design validated in task 0.3 rejection analysis
-- Queue reads from spool, not the other way around
-
----
-
-### 🟢 1.2.1 DNSSEC Validation
-**Priority**: Medium
-**Effort**: 2-3 days
-**Dependencies**: None
-**Status**: Deferred (same as 0.14)
-
-See task 0.14 - merged/duplicate.
+## Phase 1: Active Development Tasks
 
 ---
 
@@ -283,158 +149,6 @@ See task 0.14 - merged/duplicate.
 - [ ] Connection health checks before reuse
 - [ ] Metrics: pool_size, pool_hits, pool_misses
 - [ ] Performance improvement >20% for high-volume domains (benchmark)
-
----
-
-### 🟡 2.3 Comprehensive Test Suite
-**Priority**: High (Merged with 0.13)
-**Effort**: See 0.13
-**Dependencies**: 4.2 (MockSmtpServer) - ✅ COMPLETED
-
-**Note**: Merged into task 0.13 (E2E Test Suite). Keeping reference for tracking.
-
----
-
-## Phase 3: Performance & Scaling
-
-### ✅ 3.1 Parallel Delivery Processing **COMPLETED**
-**Priority**: Medium
-**Effort**: 3-5 days (actual: <1 day)
-**Dependencies**: 4.5 (JoinSet) - ✅ COMPLETED
-**Status**: ✅ COMPLETED
-**Completed**: 2025-11-16
-**Risk**: Medium
-**Tags**: performance, scalability
-
-**Problem**: Single-threaded delivery limits throughput to ~100 messages/sec.
-
-**Solution**: Implemented parallel delivery using JoinSet for concurrent processing.
-
-**Success Criteria**:
-- [x] Configurable parallelism (default: num_cpus)
-- [x] Per-domain rate limiting preserved (thread-safe with DashMap + parking_lot::Mutex)
-- [x] Graceful shutdown waits for in-flight deliveries (JoinSet auto-waits)
-- [x] Expected throughput improvement 5-8x (based on architecture)
-- [x] Thread-safe implementation (all shared state uses concurrent data structures)
-
-**Implementation**:
-- Modified `serve()` signature to accept `Arc<Self>` for cloning into parallel tasks
-- Rewrote `process_queue_internal()` to use `JoinSet` for parallel task spawning
-- Spawns up to `max_concurrent_deliveries` tasks concurrently (default: num_cpus)
-- Dynamic work distribution: as tasks complete, new tasks spawn for remaining messages
-- All shared state thread-safe: DeliveryQueue, RateLimiter, DnsResolver, Spool
-- JoinSet automatically waits for all tasks before returning (graceful shutdown)
-- Comprehensive documentation in CLAUDE.md with architecture, performance, monitoring
-
-**Files Changed**:
-- `empath-delivery/src/processor/mod.rs`: Added `max_concurrent_deliveries` field, changed `serve()` signature
-- `empath-delivery/src/processor/process.rs`: Implemented parallel processing with JoinSet
-- `empath-delivery/Cargo.toml`: Added `num_cpus` and `rt` feature for tokio
-- `CLAUDE.md`: Added "Parallel Delivery Processing" section with full documentation
-
-**Performance**:
-- Expected throughput: 500-800 messages/sec with 8 workers (5-8x improvement)
-- Scales linearly with worker count up to network/rate limit saturation
-- I/O-bound workload allows workers to exceed CPU count
-
----
-
-### ✅ 3.3 Rate Limiting per Domain **COMPLETED**
-**Priority**: High (DoS Prevention)
-**Effort**: 2-3 days (actual: 1 day)
-**Dependencies**: None
-**Status**: ✅ COMPLETED
-**Completed**: 2025-11-16
-**Risk**: Medium
-**Tags**: security, performance
-
-**Problem**: No rate limiting - can overwhelm recipient servers, causing blacklisting. DoS vulnerability.
-
-**Solution**: Implemented per-domain rate limiting with token bucket algorithm.
-
-**Success Criteria**:
-- [x] Configurable rate limits per domain (messages/second, burst size)
-- [x] Default global rate limit (10 msg/sec, burst 20)
-- [x] Override limits for specific domains via config
-- [x] Metrics: rate_limited_total, rate_limit_delay_seconds
-- [x] Tests verify rate limiting behavior (5 unit tests passing)
-
-**Implementation**:
-- `empath-delivery/src/rate_limiter.rs`: 350-line token bucket implementation
-- Per-domain token buckets with DashMap for concurrency
-- parking_lot::Mutex for individual bucket synchronization
-- Automatic token refill based on elapsed time
-- Rate-limited messages rescheduled (not failed)
-- Comprehensive metrics and structured logging
-- Full documentation in CLAUDE.md with examples and best practices
-
-**Metrics**:
-- `empath.delivery.rate_limited.total{domain}` - Total rate limited deliveries
-- `empath.delivery.rate_limit.delay.seconds` - Distribution of delay durations
-
----
-
-### ✅ 3.4 Delivery Status Notifications (RFC 3464) **COMPLETED**
-**Priority**: Medium
-**Effort**: 1 week (actual: 1 day)
-**Dependencies**: None
-**Status**: ✅ COMPLETED
-**Completed**: 2025-11-16
-**Tags**: delivery, compliance
-
-**Problem**: No DSN (Delivery Status Notification) support - senders don't know delivery failures.
-
-**Solution**: Implemented RFC 3464 DSN generation for failed deliveries.
-
-**Success Criteria**:
-- [x] DSN generated for permanent failures (5xx errors)
-- [x] DSN generated after max retry attempts
-- [x] DSN includes original message headers
-- [x] DSN complies with RFC 3464 format
-- [x] Configurable: enable/disable DSN globally
-- [x] Bounce loop prevention (null sender detection)
-- [x] Comprehensive documentation in CLAUDE.md
-
-**Implementation**: New module `empath-delivery/src/dsn.rs` (375 lines) with 4 unit tests
-
----
-
-### ✅ 3.6 Comprehensive Audit Logging **COMPLETED**
-**Priority**: High (Compliance)
-**Effort**: 3-4 days (actual: <1 day)
-**Dependencies**: None
-**Status**: ✅ COMPLETED
-**Completed**: 2025-11-17
-**Risk**: Low
-**Tags**: compliance, security, logging
-
-**Problem**: Email systems are compliance-critical (GDPR, HIPAA, SOX). Control commands logged (task 0.17 ✅), but missing message lifecycle auditing.
-
-**Solution**: Implemented structured audit logging for full message lifecycle with PII redaction.
-
-**Success Criteria**:
-- [x] MessageReceived event (timestamp, sender, recipients, message_id, size, from_ip)
-- [x] DeliveryAttempt event (message_id, domain, server, attempt_count)
-- [x] DeliverySuccess event (message_id, domain, server, duration_ms, attempt_count)
-- [x] DeliveryFailure event (message_id, domain, error, status, attempt_count)
-- [x] PII redaction configurable (sender, recipients, message content)
-- [x] SIEM integration via structured JSON logs (via existing tracing infrastructure)
-- [x] Configuration integrated into empath.config.ron
-
-**Implementation**:
-- `empath-common/src/audit.rs`: New audit logging module (263 lines)
-- `empath-smtp/src/session/events.rs`: MessageReceived event after spooling
-- `empath-delivery/src/processor/delivery.rs`: DeliveryAttempt, Success, Failure events
-- `empath/src/controller.rs`: Audit config field and init_audit() method
-- `empath/bin/empath.rs`: Audit system initialization on startup
-- `empath.config.ron`: Audit configuration section
-
-**Features**:
-- Email redaction: `user@example.com` → `[REDACTED]@example.com`
-- Configurable per-field redaction (sender, recipients, content)
-- Thread-safe global configuration via `OnceLock`
-- All events logged via tracing with structured fields
-- 4 test functions with 15+ test cases
 
 ---
 
@@ -537,288 +251,287 @@ See task 0.14 - merged/duplicate.
 
 ---
 
-### ✅ 4.2 Mock SMTP Server for Testing **COMPLETED**
-**Status**: ✅ COMPLETED
-**Effort**: 1-2 days (actual: completed)
-**Owner**: Previous contributor
-**Completed**: 2025-11-16 (verified 527-line implementation)
-
-**Implementation**: Comprehensive MockSmtpServer exists at `/home/user/empath/empath-delivery/tests/mock_smtp.rs` (527 lines)
-
-**Next Steps**:
-- Integrate MockSmtpServer into E2E test suite (task 0.13 / NEW-04)
-- Ready for use in local E2E test harness
-
----
-
 ## Phase 5: Production Readiness
 
-### ✅ 5.1 Circuit Breakers per Domain **COMPLETED**
-**Priority**: High
-**Effort**: 2-3 days (actual: 1 day)
-**Dependencies**: None
-**Status**: ✅ COMPLETED
-**Completed**: 2025-11-16
-**Risk**: Medium
-**Tags**: reliability, delivery
+### 🔴 NEW-05 Production Alerting Rules and Runbooks [UPGRADED TO CRITICAL]
+**Priority**: Critical (was Low - upgraded for production readiness)
+**Effort**: 2-3 days
+**Dependencies**: Metrics exist
+**Owner**: Unassigned
+**Status**: Ready to start
+**Risk**: Low
+**Tags**: observability, alerting, documentation, production
+**Added**: 2025-11-16 (OTel Expert Review)
+**Updated**: 2025-11-20
 
-**Problem**: Retry storms to failing domains waste resources and delay queue processing.
+**Problem**:
+- Users have no guidance on what to alert on
+- Pre-calculated metrics (error_rate, success_rate) exist but unused
+- No AlertManager configuration examples
+- No runbooks for responding to alerts
 
-**Solution**: Implemented circuit breaker pattern per destination domain.
+**Solution**: Provide production-ready alerting configuration with runbooks
 
 **Success Criteria**:
-- [x] Circuit states: Closed, Open, Half-Open
-- [x] Configurable failure threshold (default: 5 failures in 60 seconds)
-- [x] Configurable timeout (default: 5 minutes open state)
-- [x] Configurable success threshold for recovery (default: 1)
-- [x] Per-domain configuration overrides
-- [x] Metrics: circuit_breaker_state{domain}, circuit_breaker_trips_total, circuit_breaker_recoveries_total
-- [x] Tests verify state transitions (6 tests passing)
-- [x] Only temporary failures trip circuit (permanent failures ignored)
-- [x] Comprehensive documentation in CLAUDE.md
-
-**Implementation**:
-- `empath-delivery/src/circuit_breaker.rs`: 400-line circuit breaker with FSM
-- `empath-metrics/src/delivery.rs`: Circuit breaker metrics (state gauge, trips counter, recoveries counter)
-- `empath-delivery/src/processor/mod.rs`: Circuit breaker initialization
-- `empath-delivery/src/processor/process.rs`: Circuit check before delivery attempt
-- `empath-delivery/src/processor/delivery.rs`: Success/failure recording with metrics
-
-**Metrics**:
-- `empath.delivery.circuit_breaker.state` - Current state by domain (0=Closed, 1=Open, 2=HalfOpen)
-- `empath.delivery.circuit_breaker.trips.total` - Total circuit trips by domain
-- `empath.delivery.circuit_breaker.recoveries.total` - Total recoveries by domain
-
-**Key Features**:
-- DashMap for lock-free domain lookup
-- Sliding failure window with automatic expiration
-- Half-open state for recovery testing
-- Integration with existing metrics infrastructure
-- Rejected deliveries don't consume rate limiter tokens
+- [ ] `docs/observability/prometheus-alerts.yml` with 12+ alert rules:
+  - **Critical Alerts** (page immediately):
+    - DeliverySuccessRateLow: success_rate < 0.95 for 5m
+    - QueueBacklogCritical: queue_size{status="pending"} > 10000
+    - SpoolDiskSpaceLow: <10% remaining
+    - CircuitBreakerStormDetected: 5+ domains tripped in 5m
+  - **Warning Alerts** (ticket):
+    - DeliveryLatencyHigh: p95 queue_age > 10m
+    - DnsCacheHitRateLow: <70%
+    - RateLimitingExcessive: >100 delays/min per domain
+    - OldestMessageAgeHigh: >1 hour
+- [ ] `docs/observability/alertmanager.yml` with routing and templates
+- [ ] `docs/observability/RUNBOOKS.md` with remediation steps for each alert
+- [ ] SLO definitions documented: 99.5% delivery success, p95 age <5min
+- [ ] Alert severity levels aligned with on-call rotation
 
 ---
 
 ### 🟢 5.2 Configuration Hot Reload
-**Priority**: Medium
-**Effort**: 2-3 days
-**Dependencies**: None
-**Status**: Not Started
-**Tags**: operations, configuration
+**Priority**: Medium (Moved to [BACKLOG.md](docs/BACKLOG.md))
+**Status**: Deferred until post-Phase 4
 
-**Problem**: Configuration changes require full restart - downtime and queue state loss.
-
-**Solution**: Implement configuration hot reload via control socket or file watcher.
-
-**Success Criteria**:
-- [ ] Reload via `empathctl config reload`
-- [ ] Validate config before applying (rollback on error)
-- [ ] Log all config changes with diff
-- [ ] Tests verify reload without service disruption
+See BACKLOG.md for details.
 
 ---
 
 ### 🟢 5.3 TLS Policy Enforcement
-**Priority**: Medium
-**Effort**: 2-3 days
-**Dependencies**: None
-**Status**: Not Started
-**Tags**: security, delivery
-
-**Problem**: No TLS policy enforcement - can deliver via plaintext to sensitive domains.
-
-**Solution**: Implement configurable TLS policies per domain (Opportunistic, Required, Disabled).
-
-**Success Criteria**:
-- [ ] TLS policy: Opportunistic (try TLS, fall back to plaintext)
-- [ ] TLS policy: Required (fail if TLS unavailable)
-- [ ] TLS policy: Disabled (never use TLS - testing only)
-- [ ] Per-domain policy overrides
-- [ ] Metrics: tls_handshake_failures_total{domain,policy}
-
----
-
-### 🟡 5.4 Enhanced Tracing with Spans
-**Priority**: Medium
-**Effort**: 2-3 days
-**Dependencies**: 0.35+0.36 (trace pipeline must exist first)
-**Owner**: Unassigned
-**Status**: Blocked
-**Tags**: observability, tracing
-
-**Problem**: `#[traced]` macro generates logs, not OpenTelemetry spans. Cannot see delivery pipeline phases in traces.
-
-**Solution**: Migrate #[traced] macro from logs to actual OTel span instrumentation.
-
-**Success Criteria**:
-- [ ] Span hierarchy: SMTP session → Data command → Spool → Delivery → DNS → TLS → SMTP handshake
-- [ ] Span attributes: message_id, sender, recipient, domain, server
-- [ ] Span events: Command received, FSM transition, Module validation
-- [ ] Flamegraph visualization in Jaeger shows full pipeline
-- [ ] #[traced] macro generates both spans and logs
-
----
-
-## Phase 6: Advanced Features (Future)
-
-### 🔵 6.1 Message Data Streaming
-**Priority**: Low
-**Effort**: 1 week
+**Priority**: Medium (Moved to [BACKLOG.md](docs/BACKLOG.md))
 **Status**: Deferred to post-1.0
 
-Stream large message bodies instead of loading into memory. Reduces memory pressure for large attachments.
-
----
-
-### 🔵 6.2 DKIM Signing Support
-**Priority**: Low
-**Effort**: 1 week
-**Status**: Deferred to post-1.0
-
-Implement DKIM signing for outbound messages to improve deliverability.
-
----
-
-### 🔵 6.3 Priority Queuing
-**Priority**: Low
-**Effort**: 3-5 days
-**Status**: Deferred to post-1.0
-
-Implement message priority levels for expedited delivery of high-priority messages.
-
----
-
-### 🔵 6.4 Batch Processing and SMTP Pipelining
-**Priority**: Low
-**Effort**: 1 week
-**Status**: Deferred to post-1.0
-
-Implement SMTP pipelining (RFC 2920) for improved throughput to supporting servers.
-
----
-
-### 🔵 6.7 Property-Based Testing with proptest
-**Priority**: Low
-**Effort**: 2-3 days
-**Status**: Deferred
-
-See NEW-13 (merged duplicate, expanded scope).
+See BACKLOG.md for details.
 
 ---
 
 ## Phase 7: Developer Experience
 
-### ✅ 7.16 CI/CD Pipeline **ALREADY EXISTS**
-**Status**: ✅ **COMPLETED** (Gitea CI in `.gitea/workflows/`)
-**Infrastructure**: Comprehensive CI pipeline already deployed
-
-**Existing Workflows**:
-- ✅ `test.yml` - clippy, fmt, MIRI tests, nextest, doc tests
-- ✅ `coverage.yml` - cargo-tarpaulin coverage generation
-- ✅ `release.yml` - Docker image building and registry push
-- ✅ `changelog.yml` - git-cliff changelog automation
-- ✅ `commit.yml` - commit validation
-- ✅ Renovate - Dependency updates (configured externally)
-
-**Location**: `.gitea/workflows/` (Gitea Actions, not GitHub Actions)
-
-**Note**: CI infrastructure is excellent. See NEW-03a for coverage badge publishing.
-
----
-
-### 🟡 7.17 Fix Onboarding Documentation Flow
-**Priority**: Medium (downgraded from Critical)
-**Effort**: 2-3 hours
+### 🟡 NEW-DX-01 Add Missing Justfile Commands
+**Priority**: High
+**Effort**: 30 minutes
 **Dependencies**: None
-**Status**: Mostly addressed by 7.2, 7.18, 7.19
-**Tags**: documentation, dx
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: dx, tooling
+**Added**: 2025-11-20 (DX Expert Review)
 
-**Problem**: No single "5-minute setup" guide. New developers spend 4-6 hours on setup.
+**Problem**: Common workflows not automated (E2E tests, profiling, test discovery). Developers must remember complex cargo commands.
 
-**Solution**: Create QUICKSTART.md with minimal setup path.
+**Solution**: Add missing justfile commands for common workflows.
 
 **Success Criteria**:
-- [ ] QUICKSTART.md created
-- [ ] Setup time <5 minutes for experienced developers
-- [ ] Links to ONBOARDING.md for deeper dive
-- [ ] Covers: clone, install Rust nightly, `just setup`, `just dev`
+- [ ] `just test-e2e` - runs E2E suite with --test-threads=1
+- [ ] `just test-fast` - unit + integration only (no E2E)
+- [ ] `just test-smoke` - fast smoke tests subset
+- [ ] `just test-list` - list all test names
+- [ ] `just test-match PATTERN` - run matching tests
+- [ ] `just changelog` - generate CHANGELOG.md locally
+- [ ] `just profile-cpu BENCH` - CPU profiling with flamegraph
+- [ ] `just docs-serve` - serve docs with auto-reload
 
 ---
 
-### 🔵 7.13 sccache for Distributed Build Caching
-**Priority**: Low
-**Effort**: 1 hour
-**Dependencies**: 7.16 (CI/CD pipeline)
-**Status**: Not Started
-**Tags**: dx, performance
-
-**Problem**: CI builds compile from scratch - slow and wasteful.
-
-**Solution**: Implement sccache for distributed build caching in CI.
-
-**Success Criteria**:
-- [ ] sccache configured in GitHub Actions
-- [ ] CI build time reduced >50% on cache hit
-- [ ] Local sccache setup documented in CONTRIBUTING.md
-
----
-
-### 🔵 7.14 Documentation Tests
-**Priority**: Low
-**Effort**: 1-2 days
-**Status**: Not Started
-**Tags**: documentation, testing
-
-**Problem**: Code examples in documentation may be outdated/broken.
-
-**Solution**: Enable `#![doc = include_str!("../README.md")]` and documentation tests.
-
-**Success Criteria**:
-- [ ] All code examples in docs tested via `cargo test --doc`
-- [ ] CI runs documentation tests
-- [ ] Examples in CLAUDE.md, README.md, CONTRIBUTING.md tested
-
----
-
-### 🟢 7.24 Performance Profiling Guide
-**Priority**: Medium (upgrade from Low)
-**Effort**: 1-2 hours
+### 🟢 NEW-DX-04 Create docs/PROFILING.md
+**Priority**: High (upgrade from 7.24)
+**Effort**: 2 hours
 **Dependencies**: None
-**Status**: Not Started
-**Tags**: dx, performance
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: dx, performance, documentation
+**Added**: 2025-11-20 (DX Expert Review)
 
-**Problem**: No documentation on how to profile and optimize. Performance claims (90% reduction) not reproducible by contributors.
+**Problem**: Performance claims ("90% reduction") not reproducible. No profiling workflow docs.
 
-**Solution**: Create docs/PROFILING.md with comprehensive profiling guide.
+**Solution**: Create comprehensive profiling guide.
 
 **Success Criteria**:
-- [ ] CPU profiling with flamegraph (cargo flamegraph)
+- [ ] CPU profiling with flamegraph documented
+- [ ] Benchmark baseline workflow (save/compare)
 - [ ] Memory profiling with dhat
-- [ ] Benchmark baseline comparison workflow
-- [ ] Common hot paths documented
-- [ ] justfile commands added (profile-cpu, profile-mem)
+- [ ] Common optimization patterns
+- [ ] justfile commands for profiling
+- [ ] Interpreting results guide
 
 ---
 
-### 🔵 7.25 Changelog Automation
-**Priority**: Low
-**Effort**: 1-2 hours
-**Dependencies**: 7.16 (CI/CD)
-**Status**: Not Started
-**Tags**: dx, releases
+### 🟢 NEW-03a Publish Coverage Reports and Badge
+**Priority**: Medium
+**Effort**: 1 hour
+**Dependencies**: None (coverage generation exists)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: testing, ci-cd, dx
+**Added**: 2025-11-16 (DX Expert Review)
 
-**Problem**: No CHANGELOG.md - manual release notes are error-prone.
+**Problem**: Coverage is generated by CI but not published or displayed.
 
-**Solution**: Use git-cliff for automated changelog generation from conventional commits.
+**Solution**: Publish coverage reports and add badge to README.
 
 **Success Criteria**:
-- [ ] .cliff.toml configuration
-- [ ] `just changelog` generates CHANGELOG.md
-- [ ] CI creates GitHub releases with changelogs
-- [ ] Conventional commits enforced in CI
+- [ ] Coverage report uploaded to Codecov/Coveralls from CI
+- [ ] Coverage badge in README.md
+- [ ] PR comments show coverage diff (optional)
 
 ---
 
-## NEW TASKS (Identified by Expert Review)
+## NEW TASKS (Identified by Expert Reviews - 2025-11-16 to 2025-11-20)
+
+### 🔴 NEW-18 Load and Stress Testing
+**Priority**: Critical (Production Readiness)
+**Effort**: 3-5 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: testing, performance, production
+**Added**: 2025-11-20 (General Purpose Review)
+
+**Problem**: No load testing exists. Unknown throughput limits, resource requirements, or breaking points.
+
+**Solution**: Implement comprehensive load and stress testing.
+
+**Success Criteria**:
+- [ ] Load testing with k6 or Locust (sustained load)
+- [ ] Stress testing (find breaking point)
+- [ ] Measure throughput at 1k, 10k, 100k msg/day
+- [ ] Resource profiling (CPU, memory, disk I/O at scale)
+- [ ] Document capacity limits and scaling guidance
+- [ ] CI integration for regression testing (optional)
+
+---
+
+### 🟡 NEW-19 Disaster Recovery Procedures
+**Priority**: High (Operations)
+**Effort**: 2-3 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: operations, documentation, reliability
+**Added**: 2025-11-20 (General Purpose Review)
+
+**Problem**: No backup/restore procedures. Unknown recovery path if spool corrupts.
+
+**Solution**: Document disaster recovery procedures and implement backup tooling.
+
+**Success Criteria**:
+- [ ] Spool backup/restore procedures documented
+- [ ] Queue state recovery after corruption
+- [ ] Configuration backup and restore
+- [ ] RTO/RPO definitions
+- [ ] `empathctl backup` and `empathctl restore` commands
+- [ ] Tested recovery scenarios (spool corruption, data loss, etc.)
+
+---
+
+### 🟡 NEW-21 Trace Context Propagation Verification
+**Priority**: High (Observability)
+**Effort**: 2-3 days
+**Dependencies**: 5.4 (span instrumentation)
+**Owner**: Unassigned
+**Status**: Blocked (waiting for 5.4)
+**Tags**: observability, tracing
+**Added**: 2025-11-20 (OTel Expert Review)
+
+**Problem**:
+- Trace context propagation not verified across async boundaries
+- Context may be lost at: SMTP → spool → queue, delivery queue → parallel tasks (JoinSet), control socket → system actions
+- No end-to-end trace correlation tests
+
+**Solution**: Verify and document trace propagation across all async boundaries.
+
+**Success Criteria**:
+- [ ] SMTP trace_id preserved in spooled Context struct
+- [ ] Delivery processor restores trace_id from spool on queue load
+- [ ] JoinSet parallel tasks inherit parent trace context
+- [ ] E2E test: Submit message via SMTP, verify same trace_id in delivery logs
+- [ ] Test case: Parallel deliveries maintain separate trace contexts
+- [ ] Documentation: TRACE_PROPAGATION.md explaining async context handling
+
+---
+
+### 🟢 NEW-22 System Resource and Capacity Planning Metrics
+**Priority**: High (Observability)
+**Effort**: 1-2 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: observability, capacity-planning, operations
+**Added**: 2025-11-20 (OTel Expert Review)
+
+**Problem**: Application metrics exist but no system resource metrics. Cannot predict when to scale.
+
+**Solution**: Add system resource metrics to observability stack.
+
+**Success Criteria**:
+- [ ] Process metrics: CPU%, memory MB, file descriptors
+- [ ] Spool disk metrics: total bytes, file count, oldest file age
+- [ ] Network metrics: bytes in/out, connections/sec
+- [ ] GC metrics (if applicable): pause time, heap size
+- [ ] Grafana dashboard: "Empath MTA - Capacity Planning"
+- [ ] Integration with existing OTLP exporter
+
+---
+
+### 🟢 NEW-20 Security Scanning and SBOM
+**Priority**: Medium (Security)
+**Effort**: 1-2 days
+**Dependencies**: None
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: security, ci-cd, compliance
+**Added**: 2025-11-20 (General Purpose Review)
+
+**Problem**: Renovate handles updates but no security vulnerability scanning. No SBOM for compliance.
+
+**Solution**: Add cargo-audit to CI and generate SBOM.
+
+**Success Criteria**:
+- [ ] cargo-audit runs in CI (fails on HIGH/CRITICAL vulns)
+- [ ] SBOM generation (CycloneDX or SPDX format)
+- [ ] SBOM published with releases
+- [ ] Security advisory monitoring
+- [ ] Documentation: Security update process
+
+---
+
+### Previously Completed NEW Tasks
+
+See [COMPLETED.md](docs/COMPLETED.md) for:
+- ✅ NEW-01 - FFI Safety Hardening
+- ✅ NEW-04 - E2E Test Harness
+- ✅ NEW-06 - JSON Structured Logging
+- ✅ NEW-07 - Loki Log Aggregation
+- ✅ NEW-08 - Unsafe Code Audit
+- ✅ NEW-11 - Panic Safety Audit
+- ✅ NEW-12 - Dependency Updates (already existed)
+- ✅ NEW-13 - Property-Based Testing
+- ✅ NEW-14 - Changelog Automation (already existed)
+- ✅ NEW-16 - DNS Trait Abstraction
+
+---
+
+### Deferred NEW Tasks
+
+See [BACKLOG.md](docs/BACKLOG.md) for:
+- NEW-09 - Newtype Pattern Extension
+- NEW-10 - Nightly Feature Stability Plan
+- NEW-20 (TLS) - TLS Upgrade Abstraction
+
+---
+
+### Remaining Active NEW Tasks Below
+
+### 🔴 NEW-02 Production Unwrap/Expect Audit **[SEE PHASE 0]**
+Moved to Phase 0 (Production Blockers section) - see line 59.
+
+---
+
+### 🔴 NEW-05 Production Alerting Rules **[SEE PHASE 5]**
+Moved to Phase 5 (Production Readiness section) - see line 293.
+
+---
 
 ### ✅ NEW-01 FFI Safety Hardening (Null Byte Validation) **COMPLETED**
 **Priority**: Critical (Production Blocker)
@@ -1376,13 +1089,28 @@ domains.insert(
 
 ## Recently Completed (Last 7 Days)
 
-**Full Archive**: [docs/COMPLETED.md](docs/COMPLETED.md) - 40 completed tasks
+**Full Archive**: [docs/COMPLETED.md](docs/COMPLETED.md) - 52 completed tasks
 
-- ✅ 0.39 - Metrics Cardinality Limits (2025-11-16)
-- ✅ 2.4 - Health Check Endpoints (2025-11-16)
-- ✅ 7.23 - Architecture Diagram (2025-11-15)
-- ✅ 7.22 - Development Environment Health Check (2025-11-15)
-- ✅ 7.21 - justfile Discoverability (2025-11-15)
+**Week of 2025-11-16 to 2025-11-20:**
+- ✅ 5.4 - OpenTelemetry Span Instrumentation (2025-11-20)
+- ✅ NEW-16 - DNS Trait Abstraction (2025-11-19)
+- ✅ 4.0 Phase 1-3 - Error types, Config consolidation, Policy abstractions (2025-11-17)
+- ✅ NEW-13 - Property-Based Testing (2025-11-17)
+- ✅ NEW-11 - Panic Safety Audit (2025-11-17)
+- ✅ 3.6 - Comprehensive Audit Logging (2025-11-17)
+- ✅ NEW-08 - Unsafe Code Documentation Audit (2025-11-16)
+- ✅ NEW-01 - FFI Safety Hardening (2025-11-16)
+- ✅ 1.1 - Persistent Delivery Queue (2025-11-16)
+- ✅ 0.35+0.36 - Distributed Tracing Pipeline (2025-11-16)
+- ✅ NEW-06 - JSON Structured Logging (2025-11-16)
+- ✅ NEW-07 - Loki Log Aggregation (2025-11-16)
+- ✅ 0.27+0.28 - Authentication Infrastructure (2025-11-16)
+- ✅ 0.13/NEW-04 - E2E Test Suite + Harness (2025-11-16)
+- ✅ 4.2 - Mock SMTP Server (2025-11-16)
+- ✅ 5.1 - Circuit Breakers (2025-11-16)
+- ✅ 3.4 - DSN (RFC 3464) (2025-11-16)
+- ✅ 3.3 - Rate Limiting (2025-11-16)
+- ✅ 3.1 - Parallel Delivery (2025-11-16)
 
 ---
 
@@ -1425,19 +1153,29 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, coding standard
 
 ## Roadmap to 1.0
 
-**Phase 1 (Weeks 1-2): Security & Testing Foundation**
-- Authentication (0.27+0.28, NEW-01, NEW-02, NEW-08)
-- E2E Tests (0.13, NEW-04)
+**Current Status: 90% Production Ready** (updated 2025-11-20)
 
-**Phase 2 (Weeks 2-3): Observability**
-- Distributed Tracing (0.35+0.36, NEW-06, NEW-07)
-- SLO Dashboards (NEW-15)
+### Week 1 (Current): Critical Blockers
+1. ✅ **5.4** - Span Instrumentation (COMPLETED 2025-11-20)
+2. **NEW-02** - Unwrap Audit (3-5 days) - Eliminate panic risks
+3. **NEW-05** - Alerting Rules (2-3 days) - Production operational readiness
 
-**Phase 3 (Week 3-4): Durability & Architecture**
-- Queue State Restoration (1.1)
-- Code Structure Refactoring (4.0, NEW-09, NEW-11)
-- Stability Planning (NEW-10)
+**Parallel Work**:
+- NEW-18 - Load Testing (background, can run concurrent)
+- NEW-DX-01 - Justfile commands (30 min quick win)
 
-**Estimated Timeline to Production:** 3-4 weeks following critical path
+### Week 2: Observability & Operations
+1. **NEW-21** - Trace Propagation Verification (2-3 days)
+2. **NEW-22** - Capacity Planning Metrics (1-2 days)
+3. **NEW-19** - Disaster Recovery Procedures (2-3 days)
+4. NEW-17 - Migrate tests to MockDnsResolver (2 days)
 
-**Note**: CI/CD, coverage tracking, Renovate dependency updates, and release automation already exist (`.gitea/workflows/` + external Renovate)
+### Week 3 (Pending): Architecture & Validation
+1. **4.0 Phase 4** - SMTP FSM Separation (4 days, highest risk)
+2. Final E2E validation across all systems
+3. Production deployment dry-run
+4. Documentation review and updates
+
+**Estimated Timeline to Production:** 1-2 weeks
+
+**Post-1.0 Priorities**: See [BACKLOG.md](docs/BACKLOG.md) for Phase 6 features, performance optimizations, and enhancements.

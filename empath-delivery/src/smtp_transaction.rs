@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use empath_common::{context::Context, tracing};
 use empath_smtp::client::SmtpClient;
+use empath_tracing::traced;
 
 use crate::{
     SmtpTimeouts,
@@ -128,6 +129,7 @@ impl<'a> SmtpTransaction<'a> {
     ///
     /// # Errors
     /// Returns an error if any part of the SMTP transaction fails
+    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(server = %self.server_address, message_id = %self.context.id)), timing(precision = "ms"))]
     pub async fn execute(self) -> Result<(), DeliveryError> {
         // Log security warning if certificate validation is disabled
         if self.accept_invalid_certs {

@@ -26,6 +26,7 @@ use std::{
 use dashmap::DashMap;
 use empath_common::context::Context;
 use empath_ffi::modules;
+use empath_tracing::traced;
 use hickory_resolver::{
     TokioResolver,
     config::{ResolverConfig, ResolverOpts},
@@ -33,7 +34,7 @@ use hickory_resolver::{
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{self, debug, warn};
 
 /// Errors that can occur during DNS resolution.
 #[derive(Debug, Clone, Error)]
@@ -319,6 +320,7 @@ impl HickoryDnsResolver {
     /// - The domain does not exist
     /// - No mail servers (MX, A, or AAAA) are found
     /// - The DNS query fails or times out
+    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(domain = %domain)), timing(precision = "ms"))]
     pub async fn resolve_mail_servers(
         &self,
         domain: &str,
