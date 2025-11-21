@@ -1,17 +1,14 @@
 [package]
 name = "empath"
 version = "0.0.2"
-edition = "2024"
-authors = ["Pyxxil"]
 description = "An MTA written in Rust"
-documentation = "https://docs.rs/empath"
-repository = "https://github.com/Pyxxilated-Studios/empath"
-homepage = "https://github.com/Pyxxilated-Studios/empath"
-license = "Apache-2.0"
-readme = "README.md"
-categories = ["command-line-utilities", "email", "network-programming"]
-keywords = ["email"]
 build = "build.rs"
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
@@ -30,43 +27,28 @@ name = "empathctl"
 path = "bin/empathctl.rs"
 
 [dependencies]
-anyhow = "1.0.93"
-async-trait = "0.1"
-bincode = { version = "2", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
-empath-common = { path = "../empath-common", version = "*" }
-empath-control = { path = "../empath-control", version = "*" }
-empath-delivery = { path = "../empath-delivery", version = "*" }
-empath-ffi = { path = "../empath-ffi", version = "*" }
-empath-health = { path = "../empath-health", version = "*" }
-empath-metrics = { path = "../empath-metrics", version = "*" }
-empath-smtp = { path = "../empath-smtp", version = "*" }
-empath-spool = { path = "../empath-spool", version = "*" }
-empath-tracing = { path = "../empath-tracing", version = "*" }
-futures-util = "0.3"
-libc = "0.2"
-mailparse = "0.16"
-ron = "0.12"
-rustls-pemfile = "2.2"
-serde = { version = "1", features = ["derive", "rc"] }
-thiserror = "2"
-tokio = { version = "1", default-features = false, features = [
-    "fs",
-    "io-util",
-    "net",
-    "macros",
-    "parking_lot",
-    "rt-multi-thread",
-    "signal",
-    "sync",
-    "time",
-] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+empath-common.workspace = true
+empath-control.workspace = true
+empath-delivery.workspace = true
+empath-ffi.workspace = true
+empath-health.workspace = true
+empath-metrics.workspace = true
+empath-smtp.workspace = true
+empath-spool.workspace = true
+empath-tracing.workspace = true
+libc.workspace = true
+ron.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 [build-dependencies]
-anyhow = "1.0.93"
-cbindgen = { version = "0.29.0", default-features = false }
+anyhow.workspace = true
+cbindgen.workspace = true

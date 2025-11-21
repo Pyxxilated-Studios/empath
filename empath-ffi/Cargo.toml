@@ -1,16 +1,12 @@
 [package]
 name = "empath-ffi"
 version = "0.0.2"
-edition = "2024"
-authors = ["Pyxxil"]
-description = "An MTA written in Rust"
-documentation = "https://docs.rs/empath"
-repository = "https://github.com/Pyxxilated-Studios/empath"
-homepage = "https://github.com/Pyxxilated-Studios/empath"
-license = "Apache-2.0"
-readme = "README.md"
-categories = ["command-line-utilities", "email", "network-programming"]
-keywords = ["email"]
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
@@ -21,22 +17,18 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-empath-common = { path = "../empath-common", version = "*" }
-empath-metrics = { path = "../empath-metrics", version = "*", optional = true }
-empath-tracing = { path = "../empath-tracing", version = "*" }
-libc = "0.2"
-libloading = "0.9"
-mailparse = "0.16"
-serde = { version = "1", features = ["derive", "rc"] }
-thiserror = "2"
-tracing = { version = "0.1", default-features = false, features = [
-    "attributes",
-    "std",
-] }
+empath-common.workspace = true
+empath-metrics = { workspace = true, optional = true }
+empath-tracing.workspace = true
+libc.workspace = true
+libloading.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [features]
 default = ["metrics"]
 metrics = ["dep:empath-metrics"]
 
 [build-dependencies]
-cbindgen = { version = "0.29.0", default-features = false }
+cbindgen.workspace = true

@@ -1,16 +1,12 @@
 [package]
 name = "empath-smtp"
 version = "0.0.2"
-edition = "2024"
-authors = ["Pyxxil"]
-description = "An MTA written in Rust"
-documentation = "https://docs.rs/empath"
-repository = "https://github.com/Pyxxilated-Studios/empath"
-homepage = "https://github.com/Pyxxilated-Studios/empath"
-license = "Apache-2.0"
-readme = "README.md"
-categories = ["command-line-utilities", "email", "network-programming"]
-keywords = ["email"]
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
@@ -21,38 +17,25 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ahash = { version = "0.8", features = ["serde"] }
-arrayvec = "0.7"
-async-trait = "0.1"
-empath-common = { path = "../empath-common", version = "*" }
-empath-ffi = { path = "../empath-ffi", version = "*" }
-empath-spool = { path = "../empath-spool", version = "*" }
-empath-tracing = { path = "../empath-tracing", version = "*" }
-futures-util = "0.3"
-mailparse = "0.16"
-phf = { version = "0.13", features = ["macros"] }
-rustls-native-certs = "0.8"
-rustls-pemfile = "2.2"
-serde = { version = "1", features = ["derive", "rc"] }
-thiserror = "2.0"
-tokio = { version = "1", default-features = false, features = [
-    "io-util",
-    "net",
-    "macros",
-    "parking_lot",
-    "rt-multi-thread",
-    "signal",
-    "sync",
-] }
-tokio-rustls = "0.26"
-tracing = { version = "0.1", default-features = false, features = [
-    "attributes",
-    "std",
-] }
+ahash.workspace = true
+arrayvec.workspace = true
+async-trait.workspace = true
+empath-common.workspace = true
+empath-ffi.workspace = true
+empath-spool.workspace = true
+empath-tracing.workspace = true
+phf.workspace = true
+rustls-native-certs.workspace = true
+rustls-pemfile.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-criterion = { version = "0.7", features = ["html_reports"] }
-proptest = "1.5"
+criterion.workspace = true
+proptest.workspace = true
 
 [[bench]]
 name = "smtp_benchmarks"

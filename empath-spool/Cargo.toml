@@ -1,16 +1,12 @@
 [package]
 name = "empath-spool"
 version = "0.0.1"
-edition = "2024"
-authors = ["Pyxxil"]
-description = "An MTA written in Rust"
-documentation = "https://docs.rs/empath"
-repository = "https://github.com/Pyxxilated-Studios/empath"
-homepage = "https://github.com/Pyxxilated-Studios/empath"
-license = "Apache-2.0"
-readme = "README.md"
-categories = ["command-line-utilities", "email", "network-programming"]
-keywords = ["email"]
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
@@ -22,7 +18,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 ahash = { version = "0.8", features = ["serde"] }
-anyhow = "1.0.93"
 async-trait = "0.1"
 bincode = { version = "2", features = ["serde"] }
 dashmap = "6.1"
@@ -31,7 +26,11 @@ empath-tracing = { path = "../empath-tracing", version = "*" }
 notify = "8"
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
-tokio = { version = "1", default-features = false, features = ["sync", "fs", "time"] }
+tokio = { version = "1", default-features = false, features = [
+  "sync",
+  "fs",
+  "time",
+] }
 tracing = { version = "0.1", default-features = false }
 ulid = "1.1"
 

@@ -1,40 +1,28 @@
 [package]
 name = "empath-control"
 version = "0.1.0"
-edition = "2024"
-authors = ["Pyxxil <pyxxil@pyxxil.tech>"]
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-chrono = "0.4"
-# Serialization
-serde = { version = "1", features = ["derive"] }
-bincode = { version = "2", features = ["serde"] }
-
-# Async runtime
-tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "rt"] }
-async-trait = "0.1"
-
-# Error handling
-thiserror = "2"
-anyhow = "1"
-
-# Empath crates
-empath-common = { path = "../empath-common" }
-empath-delivery = { path = "../empath-delivery" }
-
-# Tracing
-tracing = "0.1"
-
-# Cryptography (for token hashing)
-sha2 = "0.10"
-hex = "0.4"
-
-# System (for Unix UID in audit logging)
-libc = "0.2"
+async-trait.workspace = true
+bincode.workspace = true
+chrono.workspace = true
+empath-common.workspace = true
+hex.workspace = true
+libc.workspace = true
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
 tempfile = "3"

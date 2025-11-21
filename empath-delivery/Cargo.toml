@@ -1,16 +1,12 @@
 [package]
 name = "empath-delivery"
 version = "0.0.1"
-edition = "2024"
-authors = ["Pyxxil"]
-description = "Delivery processor for empath MTA"
-documentation = "https://docs.rs/empath"
-repository = "https://github.com/Pyxxilated-Studios/empath"
-homepage = "https://github.com/Pyxxilated-Studios/empath"
-license = "Apache-2.0"
-readme = "README.md"
-categories = ["command-line-utilities", "email", "network-programming"]
-keywords = ["email"]
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true
@@ -21,29 +17,25 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ahash = "0.8"
-bincode = { version = "2", features = ["serde"] }
-chrono = "0.4"
-dashmap = "6"
-empath-common = { path = "../empath-common", version = "*" }
-empath-ffi = { path = "../empath-ffi", version = "*" }
-empath-metrics = { path = "../empath-metrics", version = "*" }
-empath-smtp = { path = "../empath-smtp", version = "*" }
-empath-spool = { path = "../empath-spool", version = "*" }
-empath-tracing = { path = "../empath-tracing", version = "*" }
-hickory-resolver = "0.25"
-mailparse = "0.16"
-num_cpus = "1"
-parking_lot = "0.12"
-rand = "0.9"
-serde = { version = "1", features = ["derive", "rc"] }
-thiserror = "2"
-tokio = { version = "1", default-features = false, features = ["sync", "fs", "time", "rt"] }
-tracing = { version = "0.1", default-features = false }
-ulid = "1"
+ahash.workspace = true
+chrono.workspace = true
+dashmap.workspace = true
+empath-common.workspace = true
+empath-ffi.workspace = true
+empath-metrics.workspace = true
+empath-smtp.workspace = true
+empath-spool.workspace = true
+empath-tracing.workspace = true
+hickory-resolver.workspace = true
+num_cpus.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+ulid.workspace = true
 
 [dev-dependencies]
 mailparse = "0.16"
-ron = "0.12"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-ulid = "1"
+ron.workspace = true
