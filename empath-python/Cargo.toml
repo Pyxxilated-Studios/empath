@@ -1,0 +1,31 @@
+[package]
+name = "empath-python"
+version = "0.0.1"
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "empath_python"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+empath-common.workspace = true
+empath-tracing.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+pyo3.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+ahash.workspace = true
+tempfile.workspace = true

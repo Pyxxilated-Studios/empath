@@ -10,6 +10,7 @@ use super::{Event, validate};
 /// All validation logic reads from Context fields, making core module
 /// completely decoupled from Session implementation. The core module
 /// accesses the same data available to all validation modules.
+#[derive(Debug)]
 pub struct CoreValidators;
 
 impl CoreValidators {

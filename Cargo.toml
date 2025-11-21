@@ -8,6 +8,7 @@ members = [
     "empath-ffi",
     "empath-health",
     "empath-metrics",
+    "empath-python",
     "empath-smtp",
     "empath-spool",
     "empath-tracing",
@@ -39,7 +40,7 @@ unreachable = "deny"
 dead_code = "deny"
 
 [workspace.dependencies]
-ahash = { version = "0.8", default-features = false, features = ["serde"] }
+ahash = { version = "0.8", default-features = false, features = ["serde", "std", "compile-time-rng"] }
 anyhow = "1.0"
 arrayvec = "0.7"
 async-trait = "0.1"
@@ -57,6 +58,7 @@ empath-delivery = { path = "empath-delivery", version = "*" }
 empath-ffi = { path = "empath-ffi", version = "*" }
 empath-health = { path = "empath-health", version = "*" }
 empath-metrics = { path = "empath-metrics", version = "*" }
+empath-python = { path = "empath-python", version = "*" }
 empath-smtp = { path = "empath-smtp", version = "*" }
 empath-spool = { path = "empath-spool", version = "*" }
 empath-tracing = { path = "empath-tracing", version = "*" }
@@ -81,6 +83,7 @@ opentelemetry-otlp = "0.31"
 parking_lot = "0.12"
 phf = { version = "0.13", default-features = false, features = ["macros"] }
 proptest = "1.9"
+pyo3 = { version = "0.25", default-features = false, features = ["auto-initialize", "macros"] }
 rand = "0.9"
 ron = "0.12"
 rustls-native-certs = "0.8"

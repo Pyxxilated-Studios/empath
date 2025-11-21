@@ -17,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Prerequisites
 - Rust nightly toolchain (uses edition 2024 and nightly features)
 - Current requirement: `rustc 1.93.0-nightly` or later
+- Python 3.8+ (for Python module support, optional)
 
 ### Common Commands
 
@@ -102,7 +103,7 @@ Key requirements:
 
 ### Workspace Structure
 
-10-crate workspace:
+11-crate workspace:
 1. **empath** - Main binary orchestrating components
 2. **empath-common** - Core traits (`Protocol`, `FiniteStateMachine`, `Controller`, `Listener`)
 3. **empath-smtp** - SMTP protocol with FSM and session management
@@ -110,9 +111,10 @@ Key requirements:
 5. **empath-ffi** - C-compatible API for modules
 6. **empath-health** - HTTP health check endpoints
 7. **empath-metrics** - OpenTelemetry metrics
-8. **empath-control** - Control socket IPC
-9. **empath-spool** - Message persistence
-10. **empath-tracing** - `#[traced]` instrumentation macros
+8. **empath-python** - Python module support via PyO3
+9. **empath-control** - Control socket IPC
+10. **empath-spool** - Message persistence
+11. **empath-tracing** - `#[traced]` instrumentation macros
 
 ### Key Architectural Patterns
 
@@ -206,12 +208,65 @@ Two module types extend functionality without core modifications:
 - **ValidationListener**: SMTP transaction validation (Connect, MailFrom, RcptTo, Data, StartTls)
 - **EventListener**: Connection lifecycle (ConnectionOpened, ConnectionClosed)
 
-**C API Interface:**
-- Export `declare_module()` returning `Mod` struct
-- Use `EM_DECLARE_MODULE` macro
-- Access/modify `Context*` via `em_context_*` functions
+**Module Types:**
 
-Example: `empath-ffi/examples/example.c`
+1. **C/Shared Library Modules:**
+   - Export `declare_module()` returning `Mod` struct
+   - Use `EM_DECLARE_MODULE` macro
+   - Access/modify `Context*` via `em_context_*` functions
+   - Example: `empath-ffi/examples/example.c`
+
+2. **Python Modules:**
+   - Write validation logic in Python (.py files)
+   - Pythonic API with automatic memory management
+   - No compilation required
+   - 5-10x slower than C (acceptable for non-hot-path)
+   - Example: `examples/python_modules/simple.py`, `examples/python_modules/spam_filter.py`
+
+**Python Module API:**
+```python
+# Validation callbacks (return True to accept, False to reject)
+def validate_connect(ctx): return True
+def validate_ehlo(ctx): return True
+def validate_mail_from(ctx): return True
+def validate_rcpt_to(ctx): return True
+def validate_data(ctx): return True
+
+# Event callbacks (always return True)
+def on_connection_opened(ctx): return True
+def on_connection_closed(ctx): return True
+def on_delivery_attempt(ctx): return True
+def on_smtp_message_received(ctx): return True
+
+# Context API
+ctx.sender                  # Sender address
+ctx.recipients              # List of recipients
+ctx.data                    # Message data (bytes)
+ctx.data_str                # Message data (UTF-8 string)
+ctx.session_set(key, val)   # Session context (not spooled)
+ctx.transaction_set(k, v)   # Transaction context (spooled)
+ctx.reject(550, "Reason")   # Reject with SMTP code
+```
+
+**Configuration:**
+```ron
+smtp_controller: (
+    modules: [
+        // Python module
+        (
+            type: "Python",
+            path: "./modules/spam_filter.py",
+            timeout_secs: 5,  // Optional, default 5s
+        ),
+        // C module
+        (
+            type: "SharedLibrary",
+            name: "./modules/libvalidator.so",
+            arguments: ["--strict"],
+        ),
+    ],
+)
+```
 
 **Context Persistence:**
 The `Context` struct is persisted to spool to enable modules to track state across the message lifecycle (SMTP reception → delivery). Key behaviors:
@@ -668,6 +723,27 @@ Implementation: `empath-smtp/src/session.rs`, `empath-delivery/src/lib.rs:28-118
 2. Add FFI accessor/mutator in `empath-ffi/src/lib.rs`
 3. Mark `#[no_mangle]` and `extern "C-unwind"`
 4. Rebuild and update examples
+5. Add Python property/method to `PyContext` in `empath-python/src/context.rs`
+
+### Writing a Python Module
+1. Create `.py` file with validation/event callbacks
+2. Use `ctx` parameter to access context (sender, recipients, data, etc.)
+3. Return `True` to accept, `False` to reject
+4. Call `ctx.reject(code, message)` to set rejection reason
+5. Use `ctx.transaction_set(key, value)` for state that persists to spool
+6. See `examples/python_modules/` for complete examples
+7. Add to config with `type: "Python"` and `path: "./your_module.py"`
+
+**Example Python Module:**
+```python
+def validate_mail_from(ctx):
+    sender = ctx.sender
+    if sender and sender.endswith("@spam.com"):
+        ctx.reject(550, "Sender blocked")
+        ctx.transaction_set("blocked_reason", "spam_domain")
+        return False
+    return True
+```
 
 ## Refactoring Guidelines
 

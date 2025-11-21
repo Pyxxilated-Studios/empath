@@ -14,6 +14,7 @@ pub enum Event {
     StartTls,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 #[allow(clippy::struct_field_names)]
 pub struct Validators {
@@ -25,6 +26,7 @@ pub struct Validators {
     pub validate_starttls: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 #[allow(clippy::module_name_repetitions)]
 pub struct Validation {

@@ -29,6 +29,26 @@ Empath (
             },
         ],
     ),
+    modules: [
+        (
+            type: "Python",
+            path: "./examples/python_modules/simple.py",
+        ),
+        (
+            type: "Python",
+            path: "./examples/python_modules/spam_filter.py",
+        ),
+        (
+            type: "SharedLibrary",
+            name: "libevent.so",
+            args: [],
+        ),
+        (
+            type: "SharedLibrary",
+            name: "libexample.so",
+            args: [],
+        )
+    ],
     spool: (
         type: "File",
         path: "/tmp/spool/empath",

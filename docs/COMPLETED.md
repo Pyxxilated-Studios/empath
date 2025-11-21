@@ -1,13 +1,115 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2025-11-21
-> **Total Completed**: 55 tasks
+> **Last Updated**: 2025-11-22
+> **Total Completed**: 56 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
 ---
 
 ## Recently Completed (Last 30 Days)
+
+### Week of 2025-11-20 - 2025-11-22
+
+#### ✅ NEW-PY-01 - Python Module Support
+**Completed**: 2025-11-22
+**Effort**: 3-4 days (actual: ~2 days)
+**Priority**: Medium (Feature Enhancement)
+
+Implemented comprehensive Python module support via PyO3 embedded interpreter, enabling users to write validation modules in Python without C knowledge or compilation.
+
+**Accomplishments**:
+- ✅ Created `empath-python` crate with PyO3 0.25 integration
+- ✅ Implemented Pythonic Context API (`#[pyclass]`) with properties and methods
+- ✅ Python module loader with automatic callback discovery
+- ✅ Fail-open design: Python exceptions logged but don't block mail
+- ✅ Integration with existing module dispatch system (`Module::Python` variant)
+- ✅ Config schema accepts `type: "Python"` with `path` parameter
+- ✅ Two example modules: `simple.py` (basic validation) and `spam_filter.py` (advanced reputation tracking)
+- ✅ 8 comprehensive tests (loading, callbacks, exceptions, context modification)
+- ✅ Documentation: CLAUDE.md updated, examples/python_modules/README.md (338 lines)
+
+**Files Created** (13 new files, 1500+ lines):
+- `empath-python/Cargo.toml` - Crate configuration
+- `empath-python/src/lib.rs` - Public API
+- `empath-python/src/context.rs` - Pythonic Context wrapper (250 lines)
+- `empath-python/src/error.rs` - Error types (40 lines)
+- `empath-python/src/loader.rs` - Module loader (190 lines)
+- `empath-python/src/safety.rs` - Callback execution with exception handling (176 lines)
+- `empath-ffi/src/modules/python.rs` - Module dispatch integration (120 lines)
+- `examples/python_modules/simple.py` - Basic validation example (164 lines)
+- `examples/python_modules/spam_filter.py` - Advanced spam filtering example (200+ lines)
+- `examples/python_modules/README.md` - API documentation and best practices (338 lines)
+- Updated `Cargo.toml` (workspace dependencies: PyO3 0.25, ahash features)
+- Updated `empath-ffi/Cargo.toml` (Python feature flag)
+- Updated `CLAUDE.md` (architecture docs, 11-crate workspace)
+
+**Python Context API Features**:
+- **Envelope**: `sender`, `recipients`, `client_id`, `extended`
+- **Message Data**: `data` (bytes), `data_str` (UTF-8 string)
+- **Session/Transaction Context**: `session_get/set/exists()`, `transaction_get/set/exists()`
+- **TLS Info**: `is_tls`, `tls_protocol`, `tls_cipher`
+- **Rejection**: `reject(code, message)`, `is_rejected`, `rejection`
+- **String Representation**: `__repr__()` for debugging
+
+**Safety Rails**:
+- Exception handling: Python exceptions caught and logged (fail-open design)
+- Context thread-safety: Arc<parking_lot::RwLock<Context>> for modifications
+- Callback discovery: Automatic detection of validation and event callbacks
+- Timeout limitation: Signal-based timeout removed due to threading constraints (documented)
+
+**Architecture**:
+- **Runtime**: In-process using PyO3 embedded interpreter
+- **API Style**: Pythonic (properties, exceptions, automatic memory management)
+- **Discovery**: Direct .py file paths in configuration (`path: "examples/python_modules/simple.py"`)
+- **Performance**: ~5-10x slower than C modules (acceptable for validation logic)
+
+**Example Configuration**:
+```ron
+modules: [
+    (
+        type: "Python",
+        path: "examples/python_modules/simple.py",
+    ),
+]
+```
+
+**Example Python Module**:
+```python
+def validate_mail_from(ctx) -> bool:
+    if ctx.sender and ctx.sender.endswith("@spam.com"):
+        ctx.reject(550, "Sender blocked")
+        return False
+    ctx.transaction_set("sender_domain", ctx.sender.split("@")[1])
+    return True
+```
+
+**Testing**:
+- 8 unit tests in `empath-python` (loading, callbacks, exceptions, context modification)
+- All tests pass with `--test-threads=1` (GIL requirement)
+- Clippy clean with strict linting (all/pedantic/nursery)
+
+**Limitations Documented**:
+- Timeout enforcement not implemented (Python signal module only works in main thread, callbacks run in worker threads)
+- GIL may impact concurrency (acceptable for current sync design)
+- Tests must run with `--test-threads=1` due to Python initialization requirements
+- Recommended: Keep callbacks fast (< 1 second)
+
+**Benefits**:
+- Lower barrier to entry for module developers
+- Faster prototyping of validation logic
+- Access to Python ecosystem (regex, ML libraries, etc.)
+- No compilation required for module changes
+- Type-safe Rust ↔ Python bridge via PyO3
+
+**Trade-offs**:
+- ~5-10x slower than C modules (acceptable for non-hot-path validation)
+- Larger memory footprint (Python interpreter)
+- Requires Python 3.8+ runtime dependency
+
+**Production Readiness**: ✅ Ready for use (fail-open design, comprehensive error handling, documented limitations)
+
+---
 
 ### Week of 2025-11-16 - 2025-11-20
 

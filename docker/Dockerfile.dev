@@ -29,8 +29,8 @@ RUN apt update && apt install -y gcc && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 
 # Copy example module source files
-COPY empath-ffi/examples/*.c ./
-COPY empath-ffi/examples/*.h ./
+COPY /examples/modules/*.c ./
+COPY examples/modules/*.h ./
 
 # Copy empath library and headers from the build stage
 COPY --from=empath /empath/target/release/libempath.so /usr/local/lib/

@@ -19,6 +19,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 empath-common.workspace = true
 empath-metrics = { workspace = true, optional = true }
+empath-python = { workspace = true, optional = true }
 empath-tracing.workspace = true
 libc.workspace = true
 libloading.workspace = true
@@ -27,8 +28,9 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["metrics"]
+default = ["metrics", "python"]
 metrics = ["dep:empath-metrics"]
+python = ["dep:empath-python"]
 
 [build-dependencies]
 cbindgen.workspace = true

@@ -10,9 +10,10 @@ use serde::Deserialize;
     clippy::unsafe_derive_deserialize,
     reason = "The unsafe aspects have nothing to do with the struct"
 )]
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Shared {
     pub name: String,
+    #[serde(alias = "args")]
     pub arguments: Arc<[Arc<str>]>,
     #[serde(skip)]
     module: Option<super::Mod>,
