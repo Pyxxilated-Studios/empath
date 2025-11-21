@@ -388,14 +388,46 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
     Ok(())
 }
 
-/// Handle queue management commands
-#[allow(clippy::too_many_lines)]
-async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> anyhow::Result<()> {
+/// Handle queue stats watch mode
+async fn handle_queue_stats_watch(client: &ControlClient, interval: u64) -> anyhow::Result<()> {
     use empath_control::{QueueCommand, protocol::ResponseData};
 
-    let request = match action {
+    loop {
+        // Clear screen
+        print!("\x1B[2J\x1B[1;1H");
+
+        let response = client
+            .send_request(Request::new(RequestCommand::Queue(QueueCommand::Stats)))
+            .await?;
+
+        match response.payload {
+            ResponsePayload::Data(d) => match *d {
+                ResponseData::QueueStats(stats) => {
+                    display_queue_stats(&stats);
+                }
+                _ => {
+                    anyhow::bail!("Expected QueueStats response, got different data type");
+                }
+            },
+            ResponsePayload::Error(err) => {
+                anyhow::bail!("Server error: {err}");
+            }
+            ResponsePayload::Ok => {
+                anyhow::bail!("Unexpected Ok response for stats command");
+            }
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+    }
+}
+
+/// Build queue command request from action
+fn build_queue_request(action: &QueueAction) -> anyhow::Result<Request> {
+    use empath_control::QueueCommand;
+
+    let command = match action {
         QueueAction::List { status, format: _ } => {
-            let status_filter = status.map(|s| {
+            let status_filter = status.as_ref().map(|s| {
                 match s {
                     StatusFilter::Pending => PENDING_STR,
                     StatusFilter::InProgress => IN_PROGRESS_STR,
@@ -406,17 +438,15 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
                 }
                 .to_string()
             });
-            Request::new(RequestCommand::Queue(QueueCommand::List { status_filter }))
+            QueueCommand::List { status_filter }
         }
-        QueueAction::View { message_id } => {
-            Request::new(RequestCommand::Queue(QueueCommand::View { message_id }))
-        }
-        QueueAction::Retry { message_id, force } => {
-            Request::new(RequestCommand::Queue(QueueCommand::Retry {
-                message_id,
-                force,
-            }))
-        }
+        QueueAction::View { message_id } => QueueCommand::View {
+            message_id: message_id.clone(),
+        },
+        QueueAction::Retry { message_id, force } => QueueCommand::Retry {
+            message_id: message_id.clone(),
+            force: *force,
+        },
         QueueAction::Delete { message_id, yes } => {
             // Confirmation prompt if not --yes
             if !yes {
@@ -428,53 +458,25 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
 
                 if !input.trim().eq_ignore_ascii_case("y") {
                     println!("Aborted.");
-                    return Ok(());
+                    anyhow::bail!("Delete cancelled by user");
                 }
             }
-            Request::new(RequestCommand::Queue(QueueCommand::Delete { message_id }))
-        }
-        QueueAction::Stats { watch, interval } => {
-            if watch {
-                // Watch mode - continuously update
-                loop {
-                    // Clear screen
-                    print!("\x1B[2J\x1B[1;1H");
-
-                    let response = client
-                        .send_request(Request::new(RequestCommand::Queue(QueueCommand::Stats)))
-                        .await?;
-
-                    match response.payload {
-                        ResponsePayload::Data(d) => match *d {
-                            ResponseData::QueueStats(stats) => {
-                                display_queue_stats(&stats);
-                            }
-                            _ => {
-                                anyhow::bail!(
-                                    "Expected QueueStats response, got different data type"
-                                );
-                            }
-                        },
-                        ResponsePayload::Error(err) => {
-                            anyhow::bail!("Server error: {err}");
-                        }
-                        ResponsePayload::Ok => {
-                            anyhow::bail!("Unexpected Ok response for stats command");
-                        }
-                    }
-
-                    tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
-                }
-            } else {
-                Request::new(RequestCommand::Queue(QueueCommand::Stats))
+            QueueCommand::Delete {
+                message_id: message_id.clone(),
             }
         }
-        QueueAction::ProcessNow => Request::new(RequestCommand::Queue(QueueCommand::ProcessNow)),
+        QueueAction::Stats { .. } => QueueCommand::Stats,
+        QueueAction::ProcessNow => QueueCommand::ProcessNow,
     };
 
-    let response = client.send_request(request).await?;
+    Ok(Request::new(RequestCommand::Queue(command)))
+}
 
-    match response.payload {
+/// Handle queue command response
+fn handle_queue_response(payload: ResponsePayload) -> anyhow::Result<()> {
+    use empath_control::protocol::ResponseData;
+
+    match payload {
         ResponsePayload::Ok => {
             println!("✓ Command completed successfully");
         }
@@ -515,20 +517,35 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
     Ok(())
 }
 
+/// Handle queue management commands
+async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> anyhow::Result<()> {
+    // Handle watch mode separately
+    if let QueueAction::Stats {
+        watch: true,
+        interval,
+    } = action
+    {
+        return handle_queue_stats_watch(client, interval).await;
+    }
+
+    let request = build_queue_request(&action)?;
+    let response = client.send_request(request).await?;
+    handle_queue_response(response.payload)
+}
+
 /// Handle spool commands directly
 async fn handle_spool_command_direct(socket_path: &str, action: SpoolAction) -> anyhow::Result<()> {
     let client = check_control_socket(socket_path)?;
     handle_spool_command(&client, action).await
 }
 
-/// Handle spool management commands
-#[allow(clippy::too_many_lines)]
-async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> anyhow::Result<()> {
-    use empath_control::{SpoolCommand, protocol::ResponseData};
+/// Build spool command request from action
+fn build_spool_request(action: &SpoolAction) -> Request {
+    use empath_control::SpoolCommand;
 
-    let request = match action {
+    let command = match action {
         SpoolAction::List { status, format: _ } => {
-            let status_filter = status.map(|s| {
+            let status_filter = status.as_ref().map(|s| {
                 match s {
                     StatusFilter::Pending => PENDING_STR,
                     StatusFilter::InProgress => IN_PROGRESS_STR,
@@ -539,20 +556,23 @@ async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> an
                 }
                 .to_string()
             });
-            Request::new(RequestCommand::Spool(SpoolCommand::List { status_filter }))
+            SpoolCommand::List { status_filter }
         }
-        SpoolAction::View { message_id } => {
-            Request::new(RequestCommand::Spool(SpoolCommand::View { message_id }))
-        }
-        SpoolAction::CleanupCompleted => {
-            Request::new(RequestCommand::Spool(SpoolCommand::CleanupCompleted))
-        }
-        SpoolAction::Stats => Request::new(RequestCommand::Spool(SpoolCommand::Stats)),
+        SpoolAction::View { message_id } => SpoolCommand::View {
+            message_id: message_id.clone(),
+        },
+        SpoolAction::CleanupCompleted => SpoolCommand::CleanupCompleted,
+        SpoolAction::Stats => SpoolCommand::Stats,
     };
 
-    let response = client.send_request(request).await?;
+    Request::new(RequestCommand::Spool(command))
+}
 
-    match response.payload {
+/// Handle spool command response
+fn handle_spool_response(payload: ResponsePayload) -> anyhow::Result<()> {
+    use empath_control::protocol::ResponseData;
+
+    match payload {
         ResponsePayload::Ok => {
             println!("✓ Command completed successfully");
         }
@@ -592,6 +612,13 @@ async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> an
     }
 
     Ok(())
+}
+
+/// Handle spool management commands
+async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> anyhow::Result<()> {
+    let request = build_spool_request(&action);
+    let response = client.send_request(request).await?;
+    handle_spool_response(response.payload)
 }
 
 /// Display spool statistics

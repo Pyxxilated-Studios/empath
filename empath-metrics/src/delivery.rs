@@ -74,7 +74,7 @@ pub struct DeliveryMetrics {
 
     // Cardinality limiting for domain labels
     /// Maximum number of unique domains to track
-    max_domains: usize,
+    max_domains: u64,
     /// Domains that always bypass the cardinality limit
     high_priority_domains: HashSet<String>,
     /// Currently tracked domains (up to `max_domains`)
@@ -99,10 +99,7 @@ impl DeliveryMetrics {
     ///
     /// Returns an error if metric instruments cannot be created.
     #[allow(clippy::too_many_lines)]
-    pub fn new(
-        max_domains: usize,
-        high_priority_domains: Vec<String>,
-    ) -> Result<Self, MetricsError> {
+    pub fn new(max_domains: u64, high_priority_domains: Vec<String>) -> Result<Self, MetricsError> {
         let meter = meter();
 
         let attempts_total = meter
@@ -411,8 +408,7 @@ impl DeliveryMetrics {
         let mut current = self.tracked_domains_count.load(Ordering::Acquire);
         loop {
             // Check if we've reached the limit
-            #[allow(clippy::cast_possible_truncation)]
-            if current >= self.max_domains as u64 {
+            if current >= self.max_domains {
                 // Limit reached - bucket into "other"
                 self.bucketed_domains_count.fetch_add(1, Ordering::Relaxed);
                 return "other".to_string();

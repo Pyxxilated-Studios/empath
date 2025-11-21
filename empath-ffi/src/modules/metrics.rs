@@ -21,12 +21,10 @@ pub(super) fn emit(event: Event, context: &Context) {
         return;
     };
 
-    // Skip if metrics not enabled
-    if !empath_metrics::is_enabled() {
+    // Get metrics instance, skip if not enabled
+    let Some(metrics) = empath_metrics::try_metrics() else {
         return;
-    }
-
-    let metrics = empath_metrics::metrics();
+    };
 
     match ev {
         // SMTP Events

@@ -147,9 +147,11 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
 ///
 /// Panics if metrics have not been initialized via `init_metrics()`.
 ///
-/// # Recommended Usage
+/// # Deprecated
 ///
-/// Prefer checking `is_enabled()` before calling this function, or use `try_metrics()` for safer access:
+/// Use `try_metrics()` instead for safer access without panics.
+///
+/// # Recommended Usage
 ///
 /// ```ignore
 /// if let Some(m) = try_metrics() {
@@ -157,11 +159,13 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
 /// }
 /// ```
 #[must_use]
-#[allow(clippy::expect_used)]
+#[deprecated(since = "0.0.2", note = "use `try_metrics()` instead to avoid panics")]
+#[allow(
+    clippy::expect_used,
+    reason = "Panicking is intentional - this function is deprecated in favor of try_metrics()"
+)]
 pub fn metrics() -> &'static Metrics {
-    METRICS_INSTANCE
-        .get()
-        .expect("Metrics not initialized. Call init_metrics() first.")
+    try_metrics().expect("Metrics not initialized. Call init_metrics() first.")
 }
 
 /// Try to get a reference to the global metrics instance

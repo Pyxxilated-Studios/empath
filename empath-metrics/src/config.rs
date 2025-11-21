@@ -39,7 +39,7 @@ pub struct MetricsConfig {
     ///
     /// Default: 1000
     #[serde(default = "default_max_domain_cardinality")]
-    pub max_domain_cardinality: usize,
+    pub max_domain_cardinality: u64,
 
     /// Domains that should always be tracked individually
     ///
@@ -91,7 +91,7 @@ fn default_endpoint() -> String {
     "http://localhost:4318/v1/metrics".to_string()
 }
 
-const fn default_max_domain_cardinality() -> usize {
+const fn default_max_domain_cardinality() -> u64 {
     1000
 }
 
