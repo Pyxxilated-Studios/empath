@@ -46,6 +46,7 @@ mod dns;
 mod error;
 mod exporter;
 mod smtp;
+mod system;
 
 pub use config::MetricsConfig;
 pub use delivery::DeliveryMetrics;
@@ -53,6 +54,7 @@ pub use dns::DnsMetrics;
 pub use error::MetricsError;
 use once_cell::sync::OnceCell;
 pub use smtp::SmtpMetrics;
+pub use system::SystemMetrics;
 
 /// Global metrics instance
 static METRICS_INSTANCE: OnceCell<Metrics> = OnceCell::new();
@@ -63,6 +65,7 @@ pub struct Metrics {
     pub smtp: SmtpMetrics,
     pub delivery: DeliveryMetrics,
     pub dns: DnsMetrics,
+    pub system: SystemMetrics,
 }
 
 /// Initialize the metrics system
@@ -119,11 +122,13 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
         config.high_priority_domains.clone(),
     )?;
     let dns = DnsMetrics::new()?;
+    let system = SystemMetrics::new()?;
 
     let metrics = Metrics {
         smtp,
         delivery,
         dns,
+        system,
     };
 
     // Store the global metrics instance

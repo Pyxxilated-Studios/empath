@@ -18,7 +18,7 @@
 #   cargo install just cargo-nextest cargo-watch cargo-outdated cargo-audit cargo-deny
 #   System packages: mold (optional, speeds up builds)
 #
-# Run `just` or `just --list` to see all 50+ available commands.
+# Run `just` or `just --list` to see all 58+ available commands.
 
 # =============================================================================
 # QUICK START - New Developer Commands
@@ -46,6 +46,8 @@ help:
     @echo "🧪 Testing:"
     @echo "  just test           - Run all tests"
     @echo "  just test-nextest   - Run tests with nextest (faster)"
+    @echo "  just test-e2e       - Run E2E tests"
+    @echo "  just test-fast      - Run fast tests only"
     @echo "  just bench          - Run benchmarks"
     @echo ""
     @echo "🔍 Code Quality:"
@@ -62,7 +64,7 @@ help:
     @echo "  just docker-logs    - View logs"
     @echo "  just docker-grafana - Open Grafana"
     @echo ""
-    @echo "Run 'just --list' to see all 50+ commands"
+    @echo "Run 'just --list' to see all 58+ commands"
 
 # Setup development environment (install tools)
 setup:
@@ -241,6 +243,26 @@ test-one TEST:
 test-crate CRATE:
     cargo test -p {{CRATE}}
 
+# Run E2E tests only
+test-e2e:
+    cargo test --test e2e_basic -- --test-threads=1
+
+# Run fast tests only (unit/integration, skip slow tests)
+test-fast:
+    cargo test --lib --bins
+
+# Run minimal smoke tests (quick validation)
+test-smoke:
+    cargo test --lib -- --test-threads=1 --nocapture test_protocol_default
+
+# List all available tests
+test-list:
+    cargo test -- --list
+
+# Run tests matching a pattern
+test-match PATTERN:
+    cargo test {{PATTERN}}
+
 # =============================================================================
 # BENCHMARKING
 # =============================================================================
@@ -393,6 +415,12 @@ docs:
 docs-all:
     cargo doc --open
 
+# Serve documentation locally with live reload
+docs-serve:
+    @echo "Building and serving documentation at http://localhost:8000"
+    @cargo doc --no-deps --document-private-items
+    @cd target/doc && python3 -m http.server 8000
+
 # Generate C headers from FFI crate (happens automatically during build)
 gen-headers:
     cargo build
@@ -411,6 +439,23 @@ stats:
     @echo ""
     @echo "Dependency tree:"
     @cargo tree --depth 1
+
+# Generate changelog from git commits
+changelog:
+    @echo "=== Recent Changes ==="
+    @git log --oneline --decorate --graph -20
+
+# Profile CPU performance with flamegraph
+profile-cpu:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Installing flamegraph if needed..."
+    cargo install flamegraph --quiet 2>/dev/null || true
+    echo "Running CPU profiling (requires sudo for perf)..."
+    echo "Press Ctrl+C to stop profiling"
+    sudo cargo flamegraph --bin empath -- empath.config.ron
+    echo "✅ Flamegraph generated at flamegraph.svg"
+    xdg-open flamegraph.svg 2>/dev/null || open flamegraph.svg 2>/dev/null || echo "Open flamegraph.svg to view results"
 
 # ============================================================================
 # Docker Development Stack
