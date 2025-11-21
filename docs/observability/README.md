@@ -23,7 +23,15 @@ open http://localhost:9090/alerts
 
 # View Grafana dashboards
 open http://localhost:3000  # (admin/admin)
+
+# View SLO Compliance Dashboard
+# Navigate to: Dashboards → Empath MTA - SLO Compliance
 ```
+
+**Available Dashboards:**
+- **Empath MTA - SLO Compliance** - Real-time SLO tracking, error budgets, and burn rates
+- **Empath MTA - Overview** - General system metrics
+- **Empath MTA - Log Exploration** - Structured log analysis
 
 ### Production Deployment
 
@@ -131,8 +139,15 @@ rate(empath_smtp_connections_total[5m]) > 0 OR empath_smtp_connections_active > 
 ### SLO Measurement and Reporting
 
 **Compliance Dashboard**:
-- Grafana dashboard "Empath MTA - SLO Compliance"
-- Shows real-time SLO adherence and error budget burn rate
+- Grafana dashboard "Empath MTA - SLO Compliance" (`docker/grafana/provisioning/dashboards/slo-dashboard.json`)
+- **14 panels** showing:
+  - Real-time SLO adherence (3 gauges for Success Rate, Latency, Availability)
+  - Error budget tracking (30-day windows with remaining budget %)
+  - Burn rate indicators (1-hour and 6-hour fast/medium burn detection)
+  - Historical trends (7-day time series for all 3 SLOs)
+  - Supporting metrics (queue health, delivery outcomes, oldest message age)
+- Auto-refreshes every 30 seconds
+- Includes links to alerting rules and documentation
 
 **Weekly SLO Report**:
 ```promql
