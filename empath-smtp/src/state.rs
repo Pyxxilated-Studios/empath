@@ -324,9 +324,10 @@ impl State {
         // Extract session state from business context
         let mut session_state = SessionState::from_context(ctx);
 
-        // Clear metadata for RSET command (business logic side effect)
+        // Clear transaction context for RSET command (business logic side effect)
+        // Session context (e.g., TLS state) is preserved
         if matches!(command, Command::Rset) {
-            ctx.metadata.clear();
+            ctx.transaction.clear();
         }
 
         // Perform pure FSM transition
@@ -526,5 +527,88 @@ mod test {
         if let State::Invalid(invalid) = state {
             assert!(invalid.reason.contains("not implemented"));
         }
+    }
+
+    #[test]
+    fn rset_preserves_session_clears_transaction() {
+        use std::borrow::Cow;
+
+        let mut ctx = Context {
+            extended: true,
+            id: "client.example.com".to_string(),
+            ..Context::default()
+        };
+
+        // Set session context (e.g., TLS state, connection properties)
+        ctx.session.insert(Cow::Borrowed("tls"), "true".to_string());
+        ctx.session
+            .insert(Cow::Borrowed("protocol"), "TLSv1.3".to_string());
+        ctx.session.insert(
+            Cow::Borrowed("cipher"),
+            "TLS_AES_256_GCM_SHA384".to_string(),
+        );
+        ctx.session
+            .insert(Cow::Borrowed("client_ip"), "192.0.2.1".to_string());
+
+        // Set transaction context (e.g., spam score, declared size, per-transaction state)
+        ctx.transaction
+            .insert(Cow::Borrowed("declared_size"), "1024".to_string());
+        ctx.transaction
+            .insert(Cow::Borrowed("spam_score"), "3.5".to_string());
+        ctx.transaction
+            .insert(Cow::Borrowed("recipient_count"), "2".to_string());
+
+        // Set up a mail transaction
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_addr = Address::from(sender_mailbox);
+        *ctx.envelope.sender_mut() = Some(sender_addr.clone());
+
+        let state = State::MailFrom(MailFrom {
+            sender: Some(sender_addr),
+            params: MailParameters::new(),
+        });
+
+        // Verify context is set before RSET
+        assert_eq!(ctx.session.len(), 4);
+        assert_eq!(ctx.transaction.len(), 3);
+        assert_eq!(ctx.session.get("tls"), Some(&"true".to_string()));
+        assert_eq!(ctx.transaction.get("spam_score"), Some(&"3.5".to_string()));
+
+        // Issue RSET command
+        let state = state.transition(Command::Rset, &mut ctx);
+
+        // Verify state transitioned back to EHLO
+        assert!(matches!(state, State::Ehlo(_)));
+
+        // Verify envelope is cleared
+        assert!(ctx.envelope.sender().is_none());
+
+        // CRITICAL: Session context should persist across RSET
+        assert_eq!(
+            ctx.session.len(),
+            4,
+            "Session context should persist across RSET - this is needed for TLS state, connection properties, etc."
+        );
+        assert_eq!(
+            ctx.session.get("tls"),
+            Some(&"true".to_string()),
+            "TLS session state must persist"
+        );
+        assert_eq!(ctx.session.get("protocol"), Some(&"TLSv1.3".to_string()));
+        assert_eq!(
+            ctx.session.get("cipher"),
+            Some(&"TLS_AES_256_GCM_SHA384".to_string())
+        );
+        assert_eq!(ctx.session.get("client_ip"), Some(&"192.0.2.1".to_string()));
+
+        // CRITICAL: Transaction context should be cleared on RSET
+        assert_eq!(
+            ctx.transaction.len(),
+            0,
+            "Transaction context should be cleared on RSET - this prevents leakage between transactions in the same session"
+        );
+        assert_eq!(ctx.transaction.get("declared_size"), None);
+        assert_eq!(ctx.transaction.get("spam_score"), None);
+        assert_eq!(ctx.transaction.get("recipient_count"), None);
     }
 }

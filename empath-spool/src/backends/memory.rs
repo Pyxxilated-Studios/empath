@@ -107,7 +107,13 @@ impl BackingStore for MemoryBackingStore {
             )));
         }
 
-        self.messages.insert(id.clone(), context.clone());
+        // Clear session context before storing (it's not persisted)
+        // This ensures consistent behavior with file-backed spool where
+        // session has #[serde(skip)] and won't be serialized
+        let mut context_to_store = context.clone();
+        context_to_store.session.clear();
+
+        self.messages.insert(id.clone(), context_to_store);
 
         Ok(id)
     }
@@ -165,7 +171,8 @@ mod tests {
             data: Some(Arc::from(data.as_bytes())),
             id: "test.example.com".to_string(),
             extended: false,
-            metadata: AHashMap::new(),
+            session: AHashMap::new(),
+            transaction: AHashMap::new(),
             ..Default::default()
         }
     }

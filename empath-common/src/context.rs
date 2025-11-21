@@ -143,8 +143,23 @@ pub struct Context {
     pub id: String,
     pub data: Option<Arc<[u8]>>,
     pub response: Option<(Status, Cow<'static, str>)>,
-    /// Session metadata and custom attributes
-    pub metadata: AHashMap<Cow<'static, str>, String>,
+    /// Session-level context (persists across RSET, tied to connection lifetime)
+    ///
+    /// Examples: TLS state ("tls", "protocol", "cipher"), connection properties,
+    /// client authentication state, session-wide tracking info
+    ///
+    /// **Not persisted to spool** - session context is ephemeral and only relevant
+    /// during active SMTP sessions. Spooled messages only need transaction-level data.
+    #[serde(skip)]
+    pub session: AHashMap<Cow<'static, str>, String>,
+    /// Transaction-level context (cleared on RSET, specific to current mail transaction)
+    ///
+    /// Examples: declared SIZE parameter, spam scores, per-message validation results,
+    /// recipient-specific data, DNS lookup results
+    ///
+    /// **Persisted to spool** - this data travels with the message through delivery
+    /// and is available to delivery modules via the FFI API.
+    pub transaction: AHashMap<Cow<'static, str>, String>,
     /// Server banner/hostname for greeting messages
     pub banner: Arc<str>,
     /// Maximum message size in bytes (0 = unlimited)
@@ -164,7 +179,8 @@ impl Default for Context {
             id: String::new(),
             data: None,
             response: None,
-            metadata: AHashMap::new(),
+            session: AHashMap::new(),
+            transaction: AHashMap::new(),
             banner: Arc::from(""),
             max_message_size: 0,
             capabilities: Vec::new(),

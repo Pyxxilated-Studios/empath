@@ -113,14 +113,16 @@ pub unsafe extern "C" fn em_context_set_response(
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_is_tls(validate_context: &Context) -> bool {
-    validate_context.metadata.contains_key("tls")
+    // TLS state is session context
+    validate_context.session.contains_key("tls")
 }
 
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::string::String {
+    // TLS protocol is session context
     validate_context
-        .metadata
+        .session
         .get("protocol")
         .map_or_default(crate::string::String::from)
 }
@@ -128,8 +130,9 @@ pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::
 #[unsafe(no_mangle)]
 #[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::string::String {
+    // TLS cipher is session context
     validate_context
-        .metadata
+        .session
         .get("cipher")
         .map_or_default(crate::string::String::from)
 }
@@ -151,7 +154,8 @@ pub unsafe extern "C" fn em_context_exists(
         unsafe {
             CStr::from_ptr(key)
                 .to_str()
-                .is_ok_and(|key| validate_context.metadata.contains_key(key))
+                // Default to transaction context for backward compatibility
+                .is_ok_and(|key| validate_context.transaction.contains_key(key))
         }
     }
 }
@@ -174,8 +178,9 @@ pub unsafe extern "C" fn em_context_set(
         unsafe {
             CStr::from_ptr(key).to_str().is_ok_and(|key| {
                 let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
+                // Default to transaction context for backward compatibility
                 *validate_context
-                    .metadata
+                    .transaction
                     .entry(Cow::Owned(key.to_string()))
                     .or_default() = value;
                 true
@@ -202,8 +207,164 @@ pub unsafe extern "C" fn em_context_get(
             CStr::from_ptr(key)
                 .to_str()
                 .ok()
-                .and_then(|key| validate_context.metadata.get(key))
+                .and_then(|key| validate_context.transaction.get(key))
                 .map_or_else(crate::string::String::default, std::convert::Into::into)
+        }
+    }
+}
+
+// ============================================================================
+// Session Context Functions
+// ============================================================================
+
+/// Set session context (persists across RSET)
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_session_set(
+    validate_context: &mut Context,
+    key: *const libc::c_char,
+    value: *const libc::c_char,
+) -> bool {
+    if key.is_null() || value.is_null() {
+        false
+    } else {
+        unsafe {
+            CStr::from_ptr(key).to_str().is_ok_and(|key| {
+                let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
+                *validate_context
+                    .session
+                    .entry(Cow::Owned(key.to_string()))
+                    .or_default() = value;
+                true
+            })
+        }
+    }
+}
+
+/// Get session context
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return a default value
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_session_get(
+    validate_context: &Context,
+    key: *const libc::c_char,
+) -> crate::string::String {
+    if key.is_null() {
+        crate::string::String::default()
+    } else {
+        unsafe {
+            CStr::from_ptr(key)
+                .to_str()
+                .ok()
+                .and_then(|key| validate_context.session.get(key))
+                .map_or_else(crate::string::String::default, std::convert::Into::into)
+        }
+    }
+}
+
+/// Check if session context key exists
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_session_exists(
+    validate_context: &Context,
+    key: *const libc::c_char,
+) -> bool {
+    if key.is_null() {
+        false
+    } else {
+        unsafe {
+            CStr::from_ptr(key)
+                .to_str()
+                .is_ok_and(|key| validate_context.session.contains_key(key))
+        }
+    }
+}
+
+// ============================================================================
+// Transaction Context Functions
+// ============================================================================
+
+/// Set transaction context (cleared on RSET)
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_transaction_set(
+    validate_context: &mut Context,
+    key: *const libc::c_char,
+    value: *const libc::c_char,
+) -> bool {
+    if key.is_null() || value.is_null() {
+        false
+    } else {
+        unsafe {
+            CStr::from_ptr(key).to_str().is_ok_and(|key| {
+                let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
+                *validate_context
+                    .transaction
+                    .entry(Cow::Owned(key.to_string()))
+                    .or_default() = value;
+                true
+            })
+        }
+    }
+}
+
+/// Get transaction context
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return a default value
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_transaction_get(
+    validate_context: &Context,
+    key: *const libc::c_char,
+) -> crate::string::String {
+    if key.is_null() {
+        crate::string::String::default()
+    } else {
+        unsafe {
+            CStr::from_ptr(key)
+                .to_str()
+                .ok()
+                .and_then(|key| validate_context.transaction.get(key))
+                .map_or_else(crate::string::String::default, std::convert::Into::into)
+        }
+    }
+}
+
+/// Check if transaction context key exists
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_transaction_exists(
+    validate_context: &Context,
+    key: *const libc::c_char,
+) -> bool {
+    if key.is_null() {
+        false
+    } else {
+        unsafe {
+            CStr::from_ptr(key)
+                .to_str()
+                .is_ok_and(|key| validate_context.transaction.contains_key(key))
         }
     }
 }

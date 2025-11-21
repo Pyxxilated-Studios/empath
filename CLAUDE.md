@@ -214,12 +214,25 @@ Two module types extend functionality without core modifications:
 Example: `empath-ffi/examples/example.c`
 
 **Context Persistence:**
-The `Context` struct persists ALL fields to spool (including session metadata) to enable modules to track state across the entire message lifecycle (SMTP reception → delivery). This allows plugins to:
-- Set metadata during reception, access during delivery events
-- Maintain coherent state without external storage
-- Use spool as single source of truth
+The `Context` struct is persisted to spool to enable modules to track state across the message lifecycle (SMTP reception → delivery). Key behaviors:
 
-Location: `empath-common/src/context.rs`
+- **`transaction`** (persisted to spool): Spam scores, validation results, per-message tracking data
+  - Available to delivery modules via FFI API
+  - Travels with the message through its lifecycle
+  - Cleared on RSET command to isolate transactions within a session
+  - Example: spam scores set during reception used in delivery decisions
+
+- **`session`** (NOT persisted): TLS state, connection properties, client authentication
+  - Ephemeral and only relevant during active SMTP session
+  - Persists across RSET (stays for entire connection lifetime)
+  - Example: TLS cipher/protocol, client IP address
+
+This separation ensures:
+- Session state doesn't leak into spooled messages
+- Transaction context doesn't leak between multiple messages in same connection
+- Modules can set persistent context without worrying about session pollution
+
+Location: `empath-common/src/context.rs`, `empath-spool/src/backends/memory.rs:110-116`
 
 #### 4. Controller/Listener Pattern
 
@@ -521,6 +534,42 @@ em_free_string(id);  // Always free!
 Null bytes removed to prevent crashes from malicious modules.
 
 Location: `empath-ffi/src/string.rs`
+
+#### FFI Context Functions
+
+Modules can set and retrieve context at two levels:
+
+**Session context** (persists across RSET, NOT spooled):
+```c
+// Set session context (e.g., auth state, connection tracking)
+em_context_session_set(ctx, "authenticated_user", "alice");
+em_context_session_set(ctx, "connection_id", "conn-12345");
+
+// Check and retrieve
+if (em_context_session_exists(ctx, "authenticated_user")) {
+    String user = em_context_session_get(ctx, "authenticated_user");
+    // ... use user ...
+    em_free_string(user);
+}
+```
+
+**Transaction context** (cleared on RSET, persisted to spool):
+```c
+// Set transaction context (e.g., spam scores, validation results)
+em_context_transaction_set(ctx, "spam_score", "3.5");
+em_context_transaction_set(ctx, "dkim_verified", "true");
+
+// Check and retrieve (also available during delivery)
+if (em_context_transaction_exists(ctx, "spam_score")) {
+    String score = em_context_transaction_get(ctx, "spam_score");
+    // ... use score ...
+    em_free_string(score);
+}
+```
+
+**Backward compatibility**: `em_context_set()` / `em_context_get()` default to transaction context.
+
+Location: `empath-ffi/src/lib.rs:216-370`
 
 ### Testing Patterns
 

@@ -168,7 +168,8 @@ mod tests {
             data: Some(Arc::from(data.as_bytes())),
             id: "test.example.com".to_string(),
             extended: false,
-            metadata: AHashMap::new(),
+            session: AHashMap::new(),
+            transaction: AHashMap::new(),
             ..Default::default()
         }
     }
@@ -216,5 +217,85 @@ mod tests {
 
         let read_msg = store.read(&id).await.expect("Failed to read");
         assert_eq!(read_msg.data.as_ref(), expected_data.as_ref());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    async fn test_session_not_persisted() {
+        use std::borrow::Cow;
+
+        let store = MemoryBackingStore::new();
+        let spool = Spool::new(store);
+
+        let mut message = create_test_context("test message");
+
+        // Set session context (TLS state, connection properties)
+        // These should NOT be persisted to spool
+        message
+            .session
+            .insert(Cow::Borrowed("tls"), "true".to_string());
+        message
+            .session
+            .insert(Cow::Borrowed("protocol"), "TLSv1.3".to_string());
+        message
+            .session
+            .insert(Cow::Borrowed("client_ip"), "192.0.2.1".to_string());
+
+        // Set transaction context (spam scores, validation results)
+        // These SHOULD be persisted to spool
+        message
+            .transaction
+            .insert(Cow::Borrowed("spam_score"), "2.5".to_string());
+        message
+            .transaction
+            .insert(Cow::Borrowed("dkim_verified"), "true".to_string());
+        message
+            .transaction
+            .insert(Cow::Borrowed("sender_reputation"), "good".to_string());
+
+        // Verify context is set before spooling
+        assert_eq!(message.session.len(), 3);
+        assert_eq!(message.transaction.len(), 3);
+
+        // Spool the message
+        let id = spool
+            .spool_message(&mut message)
+            .await
+            .expect("Failed to spool");
+
+        // Read message back from spool
+        let read_msg = spool.read_message(&id).await.expect("Failed to read");
+
+        // CRITICAL: Session context should NOT be persisted
+        assert_eq!(
+            read_msg.session.len(),
+            0,
+            "Session context (TLS state, connection properties) should not be persisted to spool - it's only relevant during active SMTP sessions"
+        );
+        assert_eq!(read_msg.session.get("tls"), None);
+        assert_eq!(read_msg.session.get("protocol"), None);
+        assert_eq!(read_msg.session.get("client_ip"), None);
+
+        // CRITICAL: Transaction context SHOULD be persisted
+        assert_eq!(
+            read_msg.transaction.len(),
+            3,
+            "Transaction context (spam scores, validation results) should be persisted to spool for delivery modules"
+        );
+        assert_eq!(
+            read_msg.transaction.get("spam_score"),
+            Some(&"2.5".to_string())
+        );
+        assert_eq!(
+            read_msg.transaction.get("dkim_verified"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            read_msg.transaction.get("sender_reputation"),
+            Some(&"good".to_string())
+        );
+
+        // Verify message data is intact
+        assert_eq!(read_msg.data, message.data);
     }
 }

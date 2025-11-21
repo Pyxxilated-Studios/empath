@@ -287,14 +287,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
                     session.connection = conn;
 
+                    // TLS state is session context (persists across RSET)
                     validate_context
-                        .metadata
+                        .session
                         .insert(Cow::Borrowed("tls"), "true".to_string());
                     validate_context
-                        .metadata
+                        .session
                         .insert(Cow::Borrowed("protocol"), info.proto());
                     validate_context
-                        .metadata
+                        .session
                         .insert(Cow::Borrowed("cipher"), info.cipher());
 
                     session.context = Context {
@@ -336,7 +337,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 .collect(),
             // Fast path: if init_context is empty, use default. Otherwise copy entries.
             // This avoids HashMap clone in the common case (empty init_context)
-            metadata: if self.init_context.is_empty() {
+            // init_context is session context (persists across RSET)
+            session: if self.init_context.is_empty() {
                 AHashMap::new()
             } else {
                 self.init_context

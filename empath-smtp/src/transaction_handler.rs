@@ -180,7 +180,8 @@ impl DefaultSmtpTransactionHandler {
         };
 
         // Clear transaction state after successful acceptance
-        ctx.metadata.remove("declared_size");
+        // declared_size is transaction context
+        ctx.transaction.remove("declared_size");
 
         // Set success response with tracking ID
         ctx.response = Some((

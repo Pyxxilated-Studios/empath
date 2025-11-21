@@ -51,7 +51,10 @@ impl HealthServer {
             .route("/health/ready", get(readiness_handler))
             .with_state(health_checker)
             // Add timeout layer to ensure probes respond within 1 second
-            .layer(TimeoutLayer::new(Duration::from_secs(1)));
+            .layer(TimeoutLayer::with_status_code(
+                StatusCode::REQUEST_TIMEOUT,
+                Duration::from_secs(1),
+            ));
 
         Ok(Self { listener, router })
     }

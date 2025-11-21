@@ -91,8 +91,8 @@ pub(super) fn emit(event: Event, context: &Context) {
 
         // DNS Events
         Ev::DnsLookup => {
-            // Extract cache hit/miss from context.metadata
-            if let Some(cache_status) = context.metadata.get("dns_cache_status") {
+            // Extract cache hit/miss from context.transaction (DNS lookups are per-transaction)
+            if let Some(cache_status) = context.transaction.get("dns_cache_status") {
                 match cache_status.as_str() {
                     "hit" => {
                         metrics.dns.record_cache_hit("mx");
@@ -101,7 +101,7 @@ pub(super) fn emit(event: Event, context: &Context) {
                         metrics.dns.record_cache_miss("mx");
 
                         // Record lookup duration for cache misses
-                        if let Some(duration_ms) = context.metadata.get("dns_lookup_duration_ms")
+                        if let Some(duration_ms) = context.transaction.get("dns_lookup_duration_ms")
                             && let Ok(duration_ms) = duration_ms.parse::<u128>()
                         {
                             #[allow(
@@ -117,7 +117,7 @@ pub(super) fn emit(event: Event, context: &Context) {
             }
 
             // Update cache size metric
-            if let Some(cache_size) = context.metadata.get("dns_cache_size")
+            if let Some(cache_size) = context.transaction.get("dns_cache_size")
                 && let Ok(size) = cache_size.parse::<u64>()
             {
                 metrics.dns.set_cache_size(size);

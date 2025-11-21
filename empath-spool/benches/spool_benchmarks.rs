@@ -20,9 +20,10 @@ use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
 
 fn create_test_message(data_size: usize) -> Context {
     let data = vec![b'X'; data_size];
-    let mut context = AHashMap::new();
-    context.insert(Cow::Borrowed("protocol"), "SMTP".to_string());
-    context.insert(Cow::Borrowed("tls_version"), "TLSv1.3".to_string());
+    let mut session = AHashMap::new();
+    // Protocol and TLS version are session context
+    session.insert(Cow::Borrowed("protocol"), "SMTP".to_string());
+    session.insert(Cow::Borrowed("tls_version"), "TLSv1.3".to_string());
 
     let mut envelope = Envelope::default();
     *envelope.sender_mut() = Some(
@@ -41,7 +42,7 @@ fn create_test_message(data_size: usize) -> Context {
         envelope,
         data: Some(Arc::from(data.into_boxed_slice())),
         extended: true,
-        metadata: context,
+        session,
         ..Default::default()
     }
 }

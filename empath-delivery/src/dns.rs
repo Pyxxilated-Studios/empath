@@ -334,11 +334,12 @@ impl HickoryDnsResolver {
 
                 // Dispatch DNS cache hit event
                 let mut ctx = Context::default();
-                ctx.metadata
+                // DNS lookup results are transaction context
+                ctx.transaction
                     .insert(Cow::Borrowed("dns_cache_status"), "hit".to_string());
-                ctx.metadata
+                ctx.transaction
                     .insert(Cow::Borrowed("dns_domain"), domain.to_string());
-                ctx.metadata.insert(
+                ctx.transaction.insert(
                     Cow::Borrowed("dns_cache_size"),
                     self.cache.len().to_string(),
                 );
@@ -375,15 +376,16 @@ impl HickoryDnsResolver {
 
         // Dispatch DNS cache miss event
         let mut ctx = Context::default();
-        ctx.metadata
+        // DNS lookup results are transaction context
+        ctx.transaction
             .insert(Cow::Borrowed("dns_cache_status"), "miss".to_string());
-        ctx.metadata
+        ctx.transaction
             .insert(Cow::Borrowed("dns_domain"), domain.to_string());
-        ctx.metadata.insert(
+        ctx.transaction.insert(
             Cow::Borrowed("dns_lookup_duration_ms"),
             lookup_duration.as_millis().to_string(),
         );
-        ctx.metadata.insert(
+        ctx.transaction.insert(
             Cow::Borrowed("dns_cache_size"),
             self.cache.len().to_string(),
         );
