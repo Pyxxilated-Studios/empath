@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
 > **Last Updated**: 2025-11-21
-> **Total Active**: 15 tasks | **Completed**: 54 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
+> **Total Active**: 14 tasks | **Completed**: 55 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -950,29 +950,6 @@ domains.insert(
 - **Faster Tests**: No DNS resolver initialization or network overhead
 - **Miri Compatible**: 17 more tests can potentially run under Miri
 - **Infrastructure Usage**: Actually dogfooding the trait abstraction from NEW-16
-
----
-
-### 🟡 NEW-15 Production SLO Dashboard
-**Priority**: High
-**Effort**: 1 day
-**Dependencies**: Queue age metrics (completed)
-**Owner**: Unassigned
-**Status**: Not Started
-**Risk**: Low
-**Tags**: observability, monitoring
-**Added**: 2025-11-16 (OTel Expert Review)
-
-**Problem**: Raw metrics exist but no SLO definitions. Cannot measure reliability objectively.
-
-**Solution**: Define SLOs and create Grafana dashboard.
-
-**Success Criteria**:
-- [ ] SLO definitions documented (99.5% delivery success, p95 queue age <5min)
-- [ ] SLO compliance gauge (Green/Yellow/Red based on error budget)
-- [ ] Error budget remaining (days until budget exhausted)
-- [ ] Burn rate alerts (fast burn triggers escalation)
-- [ ] Historical SLO compliance (30-day trend)
 
 ---
 

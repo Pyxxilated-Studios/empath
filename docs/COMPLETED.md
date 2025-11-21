@@ -1,7 +1,7 @@
 # Empath MTA - Completed Tasks Archive
 
 > **Last Updated**: 2025-11-21
-> **Total Completed**: 54 tasks
+> **Total Completed**: 55 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
@@ -51,6 +51,43 @@ Completed the final critical blocker for 100% production readiness. Created comp
 - **Observability**: 80% → 100% ✅
 - **Overall**: 95% → 100% ✅
 - **PRODUCTION READY** 🎉
+
+---
+
+#### ✅ NEW-15 - Production SLO Compliance Dashboard
+**Completed**: 2025-11-21
+**Effort**: 1 day (actual: ~2 hours)
+**Priority**: High
+**Dependencies**: NEW-05 (SLO definitions)
+
+Created comprehensive Grafana dashboard for real-time SLO monitoring, error budget tracking, and burn rate detection.
+
+**Accomplishments**:
+- ✅ Created `docker/grafana/provisioning/dashboards/slo-dashboard.json` (1289 lines, 14 panels)
+- ✅ Updated `docs/observability/README.md` with dashboard documentation
+- ✅ Auto-provisioned in Docker stack (no additional configuration needed)
+
+**Dashboard Features**:
+- **SLO Compliance Gauges (3 panels)**: Success Rate (99.5%), Latency p95 (5 min), Availability (99.9%) with color-coded thresholds
+- **Error Budget Tracking (3 panels)**: 30-day windows showing remaining budget before SLO violation
+- **Burn Rate Indicators (2 panels)**: 1-hour fast burn and 6-hour medium burn detection (>1.0 = unsustainable)
+- **Time Series Trends (3 panels)**: 7-day historical trends for all 3 SLOs with threshold lines
+- **Supporting Metrics (3 panels)**: Delivery outcomes pie chart, queue health stacked area, oldest message age
+
+**PromQL Queries**:
+- Pre-calculated gauges: `empath_delivery_success_rate`
+- Histogram percentiles: `histogram_quantile(0.95, rate(empath_delivery_queue_age_seconds_bucket[5m]))`
+- Error budgets: `1 - ((1 - avg_over_time(metric[30d])) / (1 - target))`
+- Burn rates: Average error rate over time window / error budget
+
+**Dashboard Details**:
+- 14 panels total
+- Auto-refresh: 30 seconds
+- Default time range: 7 days
+- Links to Prometheus alerts and SLO documentation
+- File: `docker/grafana/provisioning/dashboards/slo-dashboard.json`
+
+**Access**: http://localhost:3000 → Dashboards → "Empath MTA - SLO Compliance"
 
 ---
 
