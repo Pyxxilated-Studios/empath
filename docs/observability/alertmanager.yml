@@ -1,0 +1,189 @@
+# Empath MTA - AlertManager Configuration
+#
+# This file configures AlertManager routing, receivers, and templates.
+# Deploy to AlertManager by mounting as /etc/alertmanager/alertmanager.yml
+#
+# Configuration Philosophy:
+#   - Critical alerts (severity: critical) → Page immediately via PagerDuty/phone
+#   - Warning alerts (severity: warning) → Create ticket via Slack/email
+#   - Inhibit warnings when critical alerts are firing for same component
+#
+# Customize receiver configurations below for your environment.
+
+global:
+  # Global configuration
+  resolve_timeout: 5m
+  # SMTP configuration for email notifications (customize for your environment)
+  smtp_smarthost: 'localhost:25'
+  smtp_from: 'alertmanager@empath.example.com'
+  smtp_require_tls: false
+
+# Templates for alert notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Routing tree
+route:
+  # Default receiver for all alerts
+  receiver: 'default'
+
+  # Group alerts by alertname and component to reduce noise
+  group_by: ['alertname', 'component']
+
+  # Wait 30 seconds before sending first notification (allows grouping)
+  group_wait: 30s
+
+  # Wait 5 minutes before sending notification about new alerts in existing group
+  group_interval: 5m
+
+  # Wait 4 hours before re-sending notification for same alert
+  repeat_interval: 4h
+
+  # Child routes (more specific)
+  routes:
+    # Critical alerts → page immediately
+    - match:
+        severity: critical
+      receiver: 'pagerduty'
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 15m
+      continue: true  # Also send to default receiver
+
+    # Warning alerts → create ticket
+    - match:
+        severity: warning
+      receiver: 'slack-tickets'
+      group_wait: 5m
+      group_interval: 10m
+      repeat_interval: 12h
+
+    # Component-specific routing (optional, uncomment as needed)
+    # - match:
+    #     component: smtp
+    #   receiver: 'smtp-team'
+    # - match:
+    #     component: delivery
+    #   receiver: 'delivery-team'
+
+# Inhibition rules: silence warnings when critical alerts are firing
+inhibit_rules:
+  # Inhibit DeliveryErrorRateElevated warning when DeliverySuccessRateLow critical is firing
+  - source_match:
+      severity: 'critical'
+      alertname: 'DeliverySuccessRateLow'
+    target_match:
+      severity: 'warning'
+      alertname: 'DeliveryErrorRateElevated'
+    equal: ['component']
+
+  # Inhibit QueueSizeGrowing warning when QueueBacklogCritical is firing
+  - source_match:
+      severity: 'critical'
+      alertname: 'QueueBacklogCritical'
+    target_match:
+      severity: 'warning'
+      alertname: 'QueueSizeGrowing'
+    equal: ['component']
+
+  # Inhibit CircuitBreakerOpen warning when CircuitBreakerStormDetected is firing
+  - source_match:
+      severity: 'critical'
+      alertname: 'CircuitBreakerStormDetected'
+    target_match:
+      severity: 'warning'
+      alertname: 'CircuitBreakerOpen'
+    equal: ['component']
+
+# Receiver configurations
+receivers:
+  # Default receiver (catch-all)
+  - name: 'default'
+    email_configs:
+      - to: 'ops-team@example.com'
+        headers:
+          Subject: '[Empath MTA] {{ .GroupLabels.alertname }}'
+        html: |
+          <h2>Alert: {{ .GroupLabels.alertname }}</h2>
+          <p><strong>Severity:</strong> {{ .CommonLabels.severity }}</p>
+          <p><strong>Component:</strong> {{ .CommonLabels.component }}</p>
+          {{ range .Alerts }}
+          <h3>{{ .Annotations.summary }}</h3>
+          <p>{{ .Annotations.description }}</p>
+          <p><a href="{{ .Annotations.runbook_url }}">Runbook</a> | <a href="{{ .Annotations.dashboard_url }}">Dashboard</a></p>
+          {{ end }}
+
+  # PagerDuty receiver for critical alerts
+  - name: 'pagerduty'
+    pagerduty_configs:
+      - service_key: '<YOUR-PAGERDUTY-SERVICE-KEY>'  # Replace with actual key
+        description: '{{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+        details:
+          firing: '{{ .Alerts.Firing | len }}'
+          resolved: '{{ .Alerts.Resolved | len }}'
+          summary: '{{ .CommonAnnotations.summary }}'
+          description: '{{ .CommonAnnotations.description }}'
+          runbook_url: '{{ .CommonAnnotations.runbook_url }}'
+          dashboard_url: '{{ .CommonAnnotations.dashboard_url }}'
+
+  # Slack receiver for warning alerts (creates tickets)
+  - name: 'slack-tickets'
+    slack_configs:
+      - api_url: '<YOUR-SLACK-WEBHOOK-URL>'  # Replace with actual webhook
+        channel: '#empath-alerts'
+        title: '{{ .GroupLabels.alertname }}'
+        text: |
+          *Severity:* {{ .CommonLabels.severity }}
+          *Component:* {{ .CommonLabels.component }}
+          {{ range .Alerts }}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          *Dashboard:* {{ .Annotations.dashboard_url }}
+          {{ end }}
+        send_resolved: true
+
+  # Example: Email receiver for specific team
+  # - name: 'smtp-team'
+  #   email_configs:
+  #     - to: 'smtp-team@example.com'
+
+  # Example: Webhook receiver for custom integrations
+  # - name: 'webhook'
+  #   webhook_configs:
+  #     - url: 'http://internal-alerting-system/webhook'
+  #       send_resolved: true
+
+# ================================================
+# CUSTOMIZATION GUIDE
+# ================================================
+#
+# To integrate with your alerting infrastructure:
+#
+# 1. PagerDuty Integration:
+#    - Replace '<YOUR-PAGERDUTY-SERVICE-KEY>' with your PagerDuty integration key
+#    - Obtain from: PagerDuty > Services > Your Service > Integrations > Prometheus
+#
+# 2. Slack Integration:
+#    - Replace '<YOUR-SLACK-WEBHOOK-URL>' with your Slack incoming webhook
+#    - Create at: https://api.slack.com/messaging/webhooks
+#    - Customize '#empath-alerts' channel as needed
+#
+# 3. Email Configuration:
+#    - Update smtp_smarthost in global section
+#    - Update smtp_from address
+#    - Enable smtp_require_tls for production
+#    - Update receiver email addresses
+#
+# 4. Custom Receivers:
+#    - Uncomment and configure component-specific receivers
+#    - Add webhook receivers for custom integrations
+#    - Add Opsgenie, VictorOps, or other supported receivers
+#
+# 5. Routing Customization:
+#    - Adjust group_wait, group_interval, repeat_interval
+#    - Add component-specific routes
+#    - Add time-based routing for business hours
+#
+# For full AlertManager configuration reference:
+# https://prometheus.io/docs/alerting/latest/configuration/

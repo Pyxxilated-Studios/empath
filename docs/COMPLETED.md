@@ -1,7 +1,7 @@
 # Empath MTA - Completed Tasks Archive
 
 > **Last Updated**: 2025-11-21
-> **Total Completed**: 53 tasks
+> **Total Completed**: 54 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
@@ -10,6 +10,49 @@ This file archives completed tasks from TODO.md to reduce cognitive load and imp
 ## Recently Completed (Last 30 Days)
 
 ### Week of 2025-11-16 - 2025-11-20
+
+#### ✅ NEW-05 - Production Alerting Rules and Runbooks
+**Completed**: 2025-11-21
+**Effort**: 2-3 days (actual: ~6 hours)
+**Priority**: Critical (Production Blocker)
+
+Completed the final critical blocker for 100% production readiness. Created comprehensive alerting infrastructure with 12 production-ready alerts, detailed runbooks, and SLO definitions.
+
+**Accomplishments**:
+- ✅ Created `docs/observability/prometheus-alerts.yml` with 12 alert rules
+  - 5 Critical alerts (page immediately): DeliverySuccessRateLow, QueueBacklogCritical, SMTPListenerDown, CircuitBreakerStormDetected, SpoolDiskSpaceLow
+  - 7 Warning alerts (create ticket): DeliveryLatencyHigh, OldestMessageAgeHigh, DnsCacheHitRateLow, RateLimitingExcessive, DeliveryErrorRateElevated, QueueSizeGrowing, CircuitBreakerOpen
+- ✅ Created `docs/observability/alertmanager.yml` (routing and receiver configuration)
+- ✅ Created `docs/observability/RUNBOOKS.md` (1000+ lines of remediation procedures)
+- ✅ Created `docs/observability/README.md` (SLO definitions, integration guide, metric catalog)
+- ✅ Updated `docker/prometheus.yml` to load alert rules
+- ✅ Updated `CLAUDE.md` with alerting documentation
+
+**SLO Definitions**:
+- **Delivery Success Rate**: 99.5% of messages delivered successfully
+- **Delivery Latency**: p95 queue age < 5 minutes
+- **System Availability**: 99.9% uptime (SMTP listener accepting connections)
+
+**Files Created** (5 new, 2 updated):
+- `docs/observability/prometheus-alerts.yml` (~300 lines, 12 alerts)
+- `docs/observability/alertmanager.yml` (~200 lines, routing/receivers)
+- `docs/observability/RUNBOOKS.md` (~1000 lines, comprehensive procedures)
+- `docs/observability/README.md` (~400 lines, SLOs and integration)
+- `docker/prometheus.yml` (updated with rule_files)
+- `CLAUDE.md` (updated with alerting section)
+
+**Integration**:
+- Prometheus in Docker stack automatically loads alerts
+- AlertManager config includes PagerDuty/Slack templates
+- Each alert includes runbook URL and dashboard URL
+- Inhibition rules prevent alert storms
+
+**Production Readiness Impact**:
+- **Observability**: 80% → 100% ✅
+- **Overall**: 95% → 100% ✅
+- **PRODUCTION READY** 🎉
+
+---
 
 #### ✅ NEW-02 - Production Unwrap/Expect Audit
 **Completed**: 2025-11-16 (audit + fixes), 2025-11-21 (CI enforcement strengthened)

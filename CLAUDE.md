@@ -435,6 +435,43 @@ Configuration: `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable
 
 Implementation: `empath-common/src/logging.rs` (OTLP HTTP exporter)
 
+#### Production Alerting
+
+**Alerting Rules**: `docs/observability/prometheus-alerts.yml` - 12 production-ready alerts
+
+**Alert Severity Levels:**
+- **Critical** (5 alerts): Page immediately - user-facing impact or service outage
+- **Warning** (7 alerts): Create ticket - investigate during business hours
+
+**SLO Definitions:**
+- Delivery Success Rate: 99.5% of messages delivered successfully
+- Delivery Latency: p95 queue age < 5 minutes
+- System Availability: 99.9% uptime (SMTP listener accepting connections)
+
+**Critical Alerts:**
+1. DeliverySuccessRateLow: success_rate < 95% for 5m
+2. QueueBacklogCritical: queue > 10,000 pending messages
+3. SMTPListenerDown: no connections for 3 minutes
+4. CircuitBreakerStormDetected: 5+ domains tripped in 5m
+5. SpoolDiskSpaceLow: spool disk < 10% free (requires node_exporter)
+
+**Warning Alerts:**
+1. DeliveryLatencyHigh: p95 queue age > 10 minutes
+2. OldestMessageAgeHigh: oldest message > 1 hour
+3. DnsCacheHitRateLow: cache hit rate < 70%
+4. RateLimitingExcessive: > 100 rate limit delays/min per domain
+5. DeliveryErrorRateElevated: error rate > 5%
+6. QueueSizeGrowing: queue growing > 10 msgs/min
+7. CircuitBreakerOpen: single domain circuit breaker open > 10m
+
+**Runbooks**: `docs/observability/RUNBOOKS.md` - comprehensive remediation procedures with diagnostic steps
+
+**Integration**: `docs/observability/README.md` - deployment guide, metric reference, customization guide
+
+**AlertManager Config**: `docs/observability/alertmanager.yml` - routing, PagerDuty/Slack integration templates
+
+**Local Testing**: Prometheus in Docker stack loads alert rules automatically (`just docker-up`)
+
 ### Data Flow
 
 1. **Startup**: Load config → init modules → start controllers

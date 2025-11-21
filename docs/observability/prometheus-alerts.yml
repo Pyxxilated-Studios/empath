@@ -1,0 +1,186 @@
+# Empath MTA - Production Alerting Rules
+#
+# This file defines Prometheus alerting rules for Empath MTA.
+# Deploy to Prometheus by referencing in prometheus.yml:
+#   rule_files:
+#     - "prometheus-alerts.yml"
+#
+# Alert Severity Levels:
+#   - Critical (severity: critical): Page immediately, requires urgent action
+#   - Warning (severity: warning): Create ticket, investigate within business hours
+#
+# For remediation procedures, see RUNBOOKS.md
+
+groups:
+  - name: empath_critical
+    interval: 30s
+    rules:
+      # ========================================
+      # CRITICAL ALERTS (Page Immediately)
+      # ========================================
+
+      - alert: DeliverySuccessRateLow
+        expr: empath_delivery_success_rate < 0.95
+        for: 5m
+        labels:
+          severity: critical
+          component: delivery
+        annotations:
+          summary: "Delivery success rate below SLO ({{ $value | humanizePercentage }})"
+          description: "Delivery success rate has been below 95% for 5 minutes. Current rate: {{ $value | humanizePercentage }}. SLO is 99.5%."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#deliverysuccessratelow"
+          dashboard_url: "http://grafana:3000/d/empath-delivery"
+
+      - alert: QueueBacklogCritical
+        expr: empath_delivery_queue_size{status="pending"} > 10000
+        for: 2m
+        labels:
+          severity: critical
+          component: delivery
+        annotations:
+          summary: "Queue backlog critical ({{ $value }} pending messages)"
+          description: "Delivery queue has {{ $value }} pending messages, exceeding critical threshold of 10,000. System may be overloaded or delivery processor stalled."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#queuebacklogcritical"
+          dashboard_url: "http://grafana:3000/d/empath-queue"
+
+      - alert: SMTPListenerDown
+        expr: |
+          (
+            empath_smtp_connections_active == 0
+            and
+            rate(empath_smtp_connections_total[5m]) == 0
+          )
+        for: 3m
+        labels:
+          severity: critical
+          component: smtp
+        annotations:
+          summary: "SMTP listener appears to be down"
+          description: "No active SMTP connections and zero new connections in the past 5 minutes. SMTP listener may have crashed."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#smtplistenerdown"
+          dashboard_url: "http://grafana:3000/d/empath-smtp"
+
+      - alert: CircuitBreakerStormDetected
+        expr: sum(increase(empath_delivery_circuit_breaker_trips_total[5m])) > 5
+        for: 1m
+        labels:
+          severity: critical
+          component: delivery
+        annotations:
+          summary: "Circuit breaker storm detected ({{ $value }} domains tripped)"
+          description: "{{ $value }} domains have tripped circuit breakers in the past 5 minutes. This indicates a systemic delivery issue."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#circuitbreakerstormdetected"
+          dashboard_url: "http://grafana:3000/d/empath-delivery"
+
+      - alert: SpoolDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint=~".*/spool.*"}
+            /
+            node_filesystem_size_bytes{mountpoint=~".*/spool.*"}
+          ) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+          component: spool
+        annotations:
+          summary: "Spool disk space critically low ({{ $value | humanizePercentage }} remaining)"
+          description: "Spool filesystem has less than 10% free space. Empath will fail to spool new messages when disk is full."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#spooldiskspacelow"
+          note: "Requires node_exporter to be deployed. See README.md for integration details."
+
+  - name: empath_warning
+    interval: 1m
+    rules:
+      # ========================================
+      # WARNING ALERTS (Create Ticket)
+      # ========================================
+
+      - alert: DeliveryLatencyHigh
+        expr: histogram_quantile(0.95, rate(empath_delivery_queue_age_seconds_bucket[5m])) > 600
+        for: 10m
+        labels:
+          severity: warning
+          component: delivery
+        annotations:
+          summary: "Delivery latency high (p95: {{ $value | humanizeDuration }})"
+          description: "95th percentile queue age is {{ $value | humanizeDuration }}, exceeding target of 5 minutes. Messages are experiencing delays."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#deliverylatencyhigh"
+          dashboard_url: "http://grafana:3000/d/empath-queue"
+
+      - alert: OldestMessageAgeHigh
+        expr: empath_delivery_queue_oldest_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+          component: delivery
+        annotations:
+          summary: "Oldest message in queue is {{ $value | humanizeDuration }} old"
+          description: "The oldest message in the delivery queue is {{ $value | humanizeDuration }} old, exceeding 1 hour. Message may be stuck in retry loop."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#oldestmessageagehigh"
+          dashboard_url: "http://grafana:3000/d/empath-queue"
+
+      - alert: DnsCacheHitRateLow
+        expr: |
+          (
+            rate(empath_dns_cache_hits_total[5m])
+            /
+            (rate(empath_dns_cache_hits_total[5m]) + rate(empath_dns_cache_misses_total[5m]))
+          ) < 0.70
+        for: 15m
+        labels:
+          severity: warning
+          component: dns
+        annotations:
+          summary: "DNS cache hit rate low ({{ $value | humanizePercentage }})"
+          description: "DNS cache hit rate is {{ $value | humanizePercentage }}, below target of 70%. High DNS query load may impact delivery performance."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#dnscachehitratelow"
+          dashboard_url: "http://grafana:3000/d/empath-dns"
+
+      - alert: RateLimitingExcessive
+        expr: sum by (domain) (rate(empath_delivery_rate_limited_total[1m])) > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: delivery
+        annotations:
+          summary: "Excessive rate limiting for domain {{ $labels.domain }} ({{ $value }}/min)"
+          description: "Domain {{ $labels.domain }} is experiencing {{ $value }} rate limit delays per minute. Rate limit configuration may be too aggressive."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#ratelimitingexcessive"
+          dashboard_url: "http://grafana:3000/d/empath-delivery"
+
+      - alert: DeliveryErrorRateElevated
+        expr: empath_delivery_error_rate > 0.05
+        for: 15m
+        labels:
+          severity: warning
+          component: delivery
+        annotations:
+          summary: "Delivery error rate elevated ({{ $value | humanizePercentage }})"
+          description: "Delivery error rate is {{ $value | humanizePercentage }}, above 5%. Not yet critical (< 5% success rate threshold) but warrants investigation."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#deliveryerrorrateele vated"
+          dashboard_url: "http://grafana:3000/d/empath-delivery"
+
+      - alert: QueueSizeGrowing
+        expr: deriv(empath_delivery_queue_size{status="pending"}[10m]) > 10
+        for: 15m
+        labels:
+          severity: warning
+          component: delivery
+        annotations:
+          summary: "Queue size growing ({{ $value }}/min increase)"
+          description: "Pending queue size is growing at {{ $value }} messages per minute. May indicate delivery processor falling behind or increased load."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#queuesizegrowing"
+          dashboard_url: "http://grafana:3000/d/empath-queue"
+
+      - alert: CircuitBreakerOpen
+        expr: empath_delivery_circuit_breaker_state == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: delivery
+        annotations:
+          summary: "Circuit breaker open for domain {{ $labels.domain }}"
+          description: "Circuit breaker for domain {{ $labels.domain }} has been in Open state for 10 minutes. Deliveries to this domain are being rejected."
+          runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#circuitbreakeropen"
+          dashboard_url: "http://grafana:3000/d/empath-delivery"

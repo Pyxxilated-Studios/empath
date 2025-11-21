@@ -7,6 +7,10 @@ global:
   external_labels:
     monitor: 'empath-mta'
 
+# Alerting rules
+rule_files:
+  - "../docs/observability/prometheus-alerts.yml"
+
 scrape_configs:
   # Scrape Empath MTA metrics from OpenTelemetry Collector
   - job_name: 'empath-mta'
