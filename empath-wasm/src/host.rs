@@ -7,9 +7,16 @@
 //! - Log messages
 //! - Set response codes
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, Mutex},
+};
+
+use bincode::{Decode, Encode};
 use empath_common::{context::Context, internal};
 use serde::{Deserialize, Serialize};
-use wasmtime::{Caller, ResourceLimiter};
+use wasmtime::ResourceLimiter;
+use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
 
 use crate::error::{Result, WasmError};
 
@@ -18,7 +25,7 @@ use crate::error::{Result, WasmError};
 /// This is a simplified view of Context that only includes fields
 /// needed by WASM modules. The session field is intentionally excluded
 /// as it's ephemeral and not persisted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct SerializableContext {
     pub extended: bool,
     pub id: String,
@@ -53,10 +60,12 @@ impl From<&Context> for SerializableContext {
 
 /// Store data for WASM instance
 ///
-/// This holds the serialized Context and other runtime state that
-/// WASM modules can access via host functions.
+/// This holds the Context and runtime state that WASM modules can access
+/// via host functions (Component Model) or serialized access (core modules).
 pub struct WasmStore {
-    /// Serialized context bytes (allocated in host memory)
+    /// Shared mutable context for component model host functions
+    pub context: Arc<Mutex<Context>>,
+    /// Serialized context bytes (for backward compatibility with core modules)
     pub context_bytes: Vec<u8>,
     /// Return code from WASM callback (0 = accept, non-zero = reject)
     pub return_code: i32,
@@ -64,32 +73,61 @@ pub struct WasmStore {
     pub log_buffer: Vec<String>,
     /// Maximum memory in bytes
     max_memory_bytes: usize,
+    /// WASI context (if WASI is enabled)
+    pub wasi_ctx: WasiCtx,
+    /// Resource table for component model
+    pub resource_table: ResourceTable,
+}
+
+impl WasiView for WasmStore {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi_ctx,
+            table: &mut self.resource_table,
+        }
+    }
 }
 
 impl WasmStore {
-    /// Create a new store with serialized context
+    /// Create a new store with context reference
+    ///
+    /// # Arguments
+    /// * `context` - Shared mutable context wrapped in Arc<Mutex<>>
+    /// * `max_memory_bytes` - Maximum memory limit for WASM module
+    /// * `wasi_ctx` - WASI context for filesystem/network access
     ///
     /// # Errors
     /// Returns error if context serialization fails
-    pub fn new(context: &Context, max_memory_bytes: usize) -> Result<Self> {
-        let serializable = SerializableContext::from(context);
-        // Use bincode with serde feature for serialization
-        let context_bytes =
-            bincode::serde::encode_to_vec(&serializable, bincode::config::standard()).map_err(
-                |e| {
-                    internal!(level = INFO, "Error creating WasmStore: {e}");
-                    match e {
-                        bincode::error::EncodeError::Io { inner, .. } => WasmError::Io(inner),
-                        e => WasmError::Serialization(e),
-                    }
-                },
-            )?;
+    ///
+    /// # Panics
+    /// Panics if the context mutex is poisoned (i.e., a thread panicked while holding the lock)
+    #[allow(
+        clippy::expect_used,
+        reason = "Host functions allowed to panic on poisoned mutex"
+    )]
+    pub fn new(
+        context: Arc<Mutex<Context>>,
+        max_memory_bytes: usize,
+        wasi_ctx: WasiCtx,
+    ) -> Result<Self> {
+        let context_bytes = {
+            let serializable = {
+                let ctx_lock = context.lock().expect("Failed to lock context");
+                SerializableContext::from(&*ctx_lock)
+            };
+            // Use bincode for serialization (for backward compat with core modules)
+            bincode::encode_to_vec(serializable, bincode::config::standard())
+                .map_err(WasmError::Serialization)?
+        };
 
         Ok(Self {
+            context,
             context_bytes,
             return_code: 0,
             log_buffer: Vec::new(),
             max_memory_bytes,
+            wasi_ctx,
+            resource_table: ResourceTable::new(),
         })
     }
 }
@@ -117,134 +155,46 @@ impl ResourceLimiter for WasmStore {
     }
 }
 
-/// Add host import functions to the linker
+/// Implement the Host trait from generated WIT bindings
 ///
-/// These functions are available to WASM modules for accessing Context
-/// data and interacting with the host runtime.
-///
-/// # Errors
-/// Returns error if any host function fails to link
-pub fn add_host_imports(linker: &mut wasmtime::Linker<WasmStore>) -> Result<()> {
-    internal!(level = INFO, "Adding Host Imports ...");
-
-    // Memory management functions
-    linker.func_wrap("env", "em_alloc", _em_alloc)?;
-    linker.func_wrap("env", "em_free", _em_free)?;
-
-    // Context access functions
-    linker.func_wrap("env", "em_get_context", _em_get_context)?;
-    linker.func_wrap("env", "em_get_context_size", _em_get_context_size)?;
-
-    // Logging functions
-    linker.func_wrap("env", "em_log", _em_log)?;
-
-    internal!(level = INFO, "Host Imports Added");
-    Ok(())
-}
-
-/// Allocate memory in WASM linear memory
-///
-/// # Arguments
-/// * `size` - Number of bytes to allocate
-///
-/// # Returns
-/// Pointer to allocated memory (offset in WASM linear memory)
-fn _em_alloc(mut caller: Caller<'_, WasmStore>, size: u32) -> u32 {
-    let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
-        tracing::error!("WASM module does not export 'memory'");
-        return 0;
-    };
-
-    // Get current memory size in bytes
-    let current_size = memory.data_size(&caller);
-
-    // Simple bump allocator: return current end as allocation pointer
-    // WASM module is responsible for tracking allocations
-    let ptr = u32::try_from(current_size).unwrap_or_default();
-
-    // Grow memory if needed
-    let pages_needed = u64::from(size.div_ceil(65536));
-    if pages_needed > 0 && memory.grow(&mut caller, pages_needed).is_err() {
-        tracing::error!("Failed to grow WASM memory by {pages_needed} pages");
-        return 0;
+/// This provides the host functions that WASM component modules can import.
+#[allow(
+    clippy::expect_used,
+    reason = "Host functions allowed to panic on poisoned mutex"
+)]
+impl crate::bindings::empath::validator::host::Host for WasmStore {
+    fn log(&mut self, message: String) {
+        internal!(level = INFO, "[WASM] {}", message);
+        self.log_buffer.push(message);
     }
 
-    ptr
-}
-
-/// Free memory in WASM linear memory
-///
-/// # Arguments
-/// * `ptr` - Pointer to memory to free (currently a no-op)
-///
-/// Note: This is a placeholder. Real implementation would need a proper allocator.
-#[allow(clippy::needless_pass_by_value)]
-const fn _em_free(_caller: Caller<'_, WasmStore>, _ptr: u32) {
-    // No-op for now - WASM modules use simple bump allocation
-    // Real implementation would need a proper allocator (e.g., wee_alloc)
-}
-
-/// Get serialized Context data
-///
-/// # Arguments
-/// * `ptr` - Pointer in WASM memory where Context bytes should be written
-/// * `max_len` - Maximum bytes to write
-///
-/// # Returns
-/// Number of bytes written (0 on error)
-fn _em_get_context(mut caller: Caller<'_, WasmStore>, ptr: u32, max_len: u32) -> u32 {
-    let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
-        tracing::error!("WASM module does not export 'memory'");
-        return 0;
-    };
-
-    // Clone the bytes to avoid holding immutable borrow during mutable write
-    let context_bytes = caller.data().context_bytes.clone();
-    let len = context_bytes.len().min(max_len as usize);
-
-    // Write context bytes to WASM memory
-    if let Err(e) = memory.write(&mut caller, ptr as usize, &context_bytes[..len]) {
-        tracing::error!("Failed to write context to WASM memory: {e}");
-        return 0;
+    fn session_set(&mut self, key: String, value: String) {
+        let mut ctx = self.context.lock().expect("Failed to lock context");
+        ctx.session.insert(Cow::Owned(key), value);
     }
 
-    u32::try_from(len).unwrap_or_default()
-}
-
-/// Get size of serialized Context in bytes
-///
-/// # Returns
-/// Size of context data in bytes
-#[allow(clippy::needless_pass_by_value)]
-fn _em_get_context_size(caller: Caller<'_, WasmStore>) -> u32 {
-    u32::try_from(caller.data().context_bytes.len()).unwrap_or_default()
-}
-
-/// Log a message from WASM module
-///
-/// # Arguments
-/// * `ptr` - Pointer to null-terminated string in WASM memory
-/// * `len` - Length of string (excluding null terminator)
-fn _em_log(mut caller: Caller<'_, WasmStore>, ptr: u32, len: u32) {
-    let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
-        tracing::error!("WASM module does not export 'memory'");
-        return;
-    };
-
-    // Read string from WASM memory
-    let mut buf = vec![0u8; len as usize];
-    if let Err(e) = memory.read(&caller, ptr as usize, &mut buf) {
-        tracing::error!("Failed to read log message from WASM memory: {e}");
-        return;
+    fn session_get(&mut self, key: String) -> Option<String> {
+        let ctx = self.context.lock().expect("Failed to lock context");
+        ctx.session.get(key.as_str()).cloned()
     }
 
-    match String::from_utf8(buf) {
-        Ok(msg) => {
-            tracing::info!("[WASM] {msg}");
-            caller.data_mut().log_buffer.push(msg);
-        }
-        Err(e) => {
-            tracing::error!("Invalid UTF-8 in WASM log message: {e}");
-        }
+    fn session_exists(&mut self, key: String) -> bool {
+        let ctx = self.context.lock().expect("Failed to lock context");
+        ctx.session.contains_key(key.as_str())
+    }
+
+    fn transaction_set(&mut self, key: String, value: String) {
+        let mut ctx = self.context.lock().expect("Failed to lock context");
+        ctx.transaction.insert(Cow::Owned(key), value);
+    }
+
+    fn transaction_get(&mut self, key: String) -> Option<String> {
+        let ctx = self.context.lock().expect("Failed to lock context");
+        ctx.transaction.get(key.as_str()).cloned()
+    }
+
+    fn transaction_exists(&mut self, key: String) -> bool {
+        let ctx = self.context.lock().expect("Failed to lock context");
+        ctx.transaction.contains_key(key.as_str())
     }
 }

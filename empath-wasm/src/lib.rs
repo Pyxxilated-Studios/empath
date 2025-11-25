@@ -8,10 +8,13 @@
 //! - Multi-language support via WASM compilation
 //! - Integration with the existing module dispatch system
 
+mod bindings;
 mod error;
 mod host;
 mod loader;
 
+// Re-export generated bindings
+pub use bindings::*;
 pub use error::{Result, WasmError};
 pub use host::{SerializableContext, WasmStore};
 pub use loader::WasmModule;

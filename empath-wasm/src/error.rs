@@ -47,4 +47,8 @@ pub enum WasmError {
     /// Execution timeout
     #[error("Callback '{0}' timed out after {1}s")]
     Timeout(String, u64),
+
+    /// WASI context build error
+    #[error("WASI build error: {0}")]
+    WasiBuild(String),
 }

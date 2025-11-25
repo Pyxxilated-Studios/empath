@@ -18,14 +18,14 @@ COPY --from=planner /empath/recipe.json recipe.json
 RUN cargo +nightly chef cook --release --recipe-path recipe.json
 
 ENV RUSTUP_PERMIT_COPY_RENAME=true
-RUN rustup target add wasm32-unknown-unknown
+RUN rustup target add wasm32-wasip2
 
 RUN apt-get update && apt-get install -y libpython3.13-dev
 
 COPY . .
 RUN RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=/usr/bin/mold" cargo +nightly build --release
 
-RUN cargo -Z unstable-options -C examples/modules/wasm build --release --target wasm32-unknown-unknown
+RUN cargo -Z unstable-options -C examples/modules/wasm build --release --target wasm32-wasip2
 
 FROM debian:trixie-slim AS modules
 

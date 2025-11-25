@@ -6,6 +6,7 @@ edition = "2024"
 [workspace]
 
 [dependencies]
+wit-bindgen = "0.48.1"
 
 [lib]
 crate-type = ["cdylib"]

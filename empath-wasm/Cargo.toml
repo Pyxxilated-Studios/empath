@@ -18,12 +18,10 @@ crate-type = ["rlib"]
 
 [dependencies]
 empath-common.workspace = true
-empath-tracing.workspace = true
 anyhow.workspace = true
 bincode.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 

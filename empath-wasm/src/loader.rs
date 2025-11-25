@@ -3,14 +3,23 @@
 //! This module handles loading WASM modules, managing the Wasmtime engine and store,
 //! and executing callbacks with resource limits and timeouts.
 
-use std::{path::Path, time::Duration};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use empath_common::{context::Context, internal};
-use wasmtime::{Config, Engine, Linker, Module, Store};
+use wasmtime::{
+    Config, Engine, Store,
+    component::{Component, Linker},
+};
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder, p2::add_to_linker_sync};
 
 use crate::{
+    bindings::{Validator, exports::empath::validator::validation as wit},
     error::{Result, WasmError},
-    host::{WasmStore, add_host_imports},
+    host::WasmStore,
 };
 
 /// Default timeout for callback execution (5 seconds)
@@ -19,19 +28,39 @@ const DEFAULT_TIMEOUT_SECS: u64 = 5;
 /// Default maximum memory for WASM modules (10 MB)
 const DEFAULT_MAX_MEMORY_BYTES: usize = 10 * 1024 * 1024;
 
-/// WebAssembly module wrapper
+/// Convert Empath Context to WIT context record
 ///
-/// Manages the lifecycle of a WASM module including loading, initialization,
+/// This creates the typed context structure that component validation functions expect.
+fn context_to_wit(ctx: &Context) -> wit::Context {
+    wit::Context {
+        extended: ctx.extended,
+        id: ctx.id.clone(),
+        sender: Some(ctx.sender()),
+        recipients: ctx.recipients(),
+        data: ctx.data.as_ref().map(|arc| arc.to_vec()),
+        max_message_size: ctx.max_message_size as u64,
+        transaction: ctx
+            .transaction
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect(),
+        tracking_id: ctx.tracking_id.clone(),
+    }
+}
+
+/// WebAssembly component wrapper
+///
+/// Manages the lifecycle of a WASM component including loading, initialization,
 /// and callback execution with resource limits.
 pub struct WasmModule {
-    /// Path to the WASM module file
+    /// Path to the WASM component file
     path: String,
 
     /// Wasmtime engine (shared across instances)
     engine: Engine,
 
-    /// Compiled WASM module
-    module: Module,
+    /// Compiled WASM component
+    component: Component,
 
     /// Execution timeout
     timeout: Duration,
@@ -39,18 +68,21 @@ pub struct WasmModule {
     /// Maximum memory in bytes
     max_memory_bytes: usize,
 
-    /// Whether WASI is enabled
-    enable_wasi: bool,
+    /// WASI preopened directories: (`host_path`, `guest_name`, readonly)
+    wasi_dirs: Vec<(String, String, bool)>,
+
+    /// Inherit host environment variables
+    wasi_inherit_env: bool,
 }
 
 impl WasmModule {
-    /// Load a WASM module from a file
+    /// Load a WASM component from a file
     ///
     /// # Arguments
-    /// * `path` - Path to the .wasm file
+    /// * `path` - Path to the .wasm component file
     ///
     /// # Errors
-    /// Returns error if the module cannot be loaded or compiled
+    /// Returns error if the component cannot be loaded or compiled
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
 
@@ -59,24 +91,26 @@ impl WasmModule {
             return Err(WasmError::ModuleNotFound(path_str));
         }
 
-        // Create Wasmtime engine with default configuration
+        // Create Wasmtime engine with component model enabled
         // Note: We don't enable epoch interruption here because it would require
         // incrementing epochs in a background thread, which adds complexity.
         // Instead, we rely on OS-level timeouts for now.
-        let config = Config::new();
+        let mut config = Config::new();
+        config.wasm_component_model(true);
 
         let engine = Engine::new(&config)?;
 
-        // Load and compile the WASM module
-        let module = Module::from_file(&engine, &path)?;
+        // Load and compile the WASM component
+        let component = Component::from_file(&engine, &path)?;
 
         Ok(Self {
             path: path_str,
             engine,
-            module,
+            component,
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
-            enable_wasi: false,
+            wasi_dirs: Vec::new(),
+            wasi_inherit_env: false,
         })
     }
 
@@ -94,59 +128,56 @@ impl WasmModule {
         self
     }
 
-    /// Enable or disable WASI
+    /// Set WASI preopened directories
+    ///
+    /// # Arguments
+    /// * `dirs` - Vector of (`host_path`, `guest_name`, readonly) tuples
     #[must_use]
-    pub const fn with_wasi(mut self, enable_wasi: bool) -> Self {
-        self.enable_wasi = enable_wasi;
+    pub fn with_wasi_dirs(mut self, dirs: Vec<(String, String, bool)>) -> Self {
+        self.wasi_dirs = dirs;
         self
     }
 
-    /// Initialize the module (call `init()` if it exists)
+    /// Enable or disable inheriting host environment variables
+    #[must_use]
+    pub const fn with_wasi_env(mut self, inherit_env: bool) -> Self {
+        self.wasi_inherit_env = inherit_env;
+        self
+    }
+
+    /// Initialize the component (call `init()` if it exists)
     ///
     /// # Errors
     /// Returns error if initialization fails
     pub fn initialize(&self) -> Result<()> {
-        internal!(level = INFO, "Initializing wasm module ...");
+        internal!(level = INFO, "Initializing wasm component ...");
+
+        // Build WASI context
+        let wasi_ctx = self.build_wasi_ctx()?;
+
         // Create a dummy context for initialization
-        let dummy_context = Context::default();
-        let wasm_store = WasmStore::new(&dummy_context, self.max_memory_bytes)?;
+        let dummy_context = Arc::new(Mutex::new(Context::default()));
+        let wasm_store = WasmStore::new(dummy_context, self.max_memory_bytes, wasi_ctx)?;
         let mut store = Store::new(&self.engine, wasm_store);
         store.limiter(|s| s);
 
-        // Create linker with host imports
+        // Create component linker with WASI support
         let mut linker = Linker::new(&self.engine);
-        add_host_imports(&mut linker)?;
 
-        // TODO: Add WASI support if enabled
-        // if self.enable_wasi {
-        //     wasmtime_wasi::add_to_linker_sync(&mut linker)?;
-        // }
+        // Add WASI support (always enabled for components)
+        internal!(level = INFO, "Adding WASI support to component linker");
+        add_to_linker_sync(&mut linker)?;
 
-        // Instantiate the module
-        let instance = linker
-            .instantiate(&mut store, &self.module)
-            .inspect_err(|e| internal!(level = INFO, "Linker instantiation error {e}"))?;
+        // Instantiate the component
+        let _instance = linker
+            .instantiate(&mut store, &self.component)
+            .inspect_err(|e| internal!(level = INFO, "Component instantiation error {e}"))?;
 
-        // Try to call `init()` if it exists
-        if let Some(init_func) = instance.get_func(&mut store, "init") {
-            internal!(
-                level = INFO,
-                "Found init function, attempting to type and call it"
-            );
-            let init_typed = init_func.typed::<(), i32>(&store)?;
-            internal!(level = INFO, "Successfully typed init function, calling it");
-            let result = init_typed.call(&mut store, ())?;
-            internal!(level = INFO, "Wasm::init returned {result}");
-            if result != 0 {
-                return Err(WasmError::InitFailed(format!(
-                    "`init()` returned non-zero: {result}"
-                )));
-            }
-        } else {
-            internal!(level = WARN, "No init() function found in WASM module");
-        }
+        // Note: Component model uses typed interfaces defined in WIT files
+        // Initialization and function calling will be handled through generated bindings
+        // For now, we just verify the component loads successfully
 
-        internal!(level = INFO, "Wasm module initialised");
+        internal!(level = INFO, "Wasm component initialised");
 
         Ok(())
     }
@@ -162,35 +193,101 @@ impl WasmModule {
     ///
     /// # Errors
     /// Returns error if callback execution fails or times out
+    ///
+    /// # Panics
+    /// Panics if the context mutex is poisoned or if there are multiple Arc references
+    /// (both should never happen in normal operation)
+    #[allow(clippy::expect_used, reason = "Panic on poisoned mutex is intentional")]
     pub fn execute_callback(&self, callback_name: &str, context: &mut Context) -> Result<i32> {
-        // Create store with serialized context
-        let wasm_store = WasmStore::new(context, self.max_memory_bytes)?;
+        // Build WASI context
+        let wasi_ctx = self.build_wasi_ctx()?;
+
+        // Wrap context in Arc<Mutex<>> for thread-safe access from host functions
+        let context_arc = Arc::new(Mutex::new(std::mem::take(context)));
+
+        // Create store with wrapped context
+        let wasm_store = WasmStore::new(Arc::clone(&context_arc), self.max_memory_bytes, wasi_ctx)?;
         let mut store = Store::new(&self.engine, wasm_store);
         store.limiter(|s| s);
 
-        // Create linker with host imports
+        // Create component linker with WASI support
         let mut linker = Linker::new(&self.engine);
-        add_host_imports(&mut linker)?;
 
-        // TODO: Add WASI support if enabled
-        // if self.enable_wasi {
-        //     wasmtime_wasi::add_to_linker_sync(&mut linker)?;
-        // }
+        // Add WASI support (always enabled for components)
+        add_to_linker_sync(&mut linker)?;
 
-        // Instantiate the module
-        let instance = linker.instantiate(&mut store, &self.module)?;
+        // Instantiate the component using generated bindings
+        let validator = Validator::instantiate(&mut store, &self.component, &linker)?;
 
-        // Get the callback function (if it doesn't exist, return 0/accept)
-        let Some(callback_func) = instance.get_func(&mut store, callback_name) else {
-            tracing::trace!("Callback '{callback_name}' not found in WASM module, allowing");
-            return Ok(0);
+        // Convert context to WIT format
+        let wit_context = {
+            let ctx_lock = context_arc.lock().expect("Failed to lock context");
+            context_to_wit(&ctx_lock)
         };
 
-        // Type the function and execute
-        let callback_typed = callback_func.typed::<(), i32>(&store)?;
-        let result = callback_typed.call(&mut store, ())?;
+        // Call the appropriate validation function based on callback name
+        let validation_result = match callback_name {
+            "validate_connect" => validator
+                .empath_validator_validation()
+                .call_validate_connect(&mut store, &wit_context)?,
+            "validate_ehlo" => validator
+                .empath_validator_validation()
+                .call_validate_ehlo(&mut store, &wit_context)?,
+            "validate_mail_from" => validator
+                .empath_validator_validation()
+                .call_validate_mail_from(&mut store, &wit_context)?,
+            "validate_rcpt_to" => validator
+                .empath_validator_validation()
+                .call_validate_rcpt_to(&mut store, &wit_context)?,
+            "validate_data" => validator
+                .empath_validator_validation()
+                .call_validate_data(&mut store, &wit_context)?,
+            "validate_starttls" => validator
+                .empath_validator_validation()
+                .call_validate_starttls(&mut store, &wit_context)?,
+            _ => {
+                // Unknown callback - log warning and accept
+                internal!(
+                    level = WARN,
+                    "Unknown callback '{}' requested",
+                    callback_name
+                );
+                wit::ValidationResult::Accept
+            }
+        };
 
-        Ok(result)
+        // Extract context back from Arc<Mutex<>> after callback completes
+        // These operations should never fail in practice:
+        // - try_unwrap only fails if there are multiple Arc references (we hold the only one)
+        // - into_inner only fails if the mutex is poisoned (would require a panic in host functions)
+        let result_context = Arc::try_unwrap(context_arc)
+            .expect("Context Arc should have exactly one strong reference")
+            .into_inner()
+            .expect("Context Mutex should not be poisoned");
+
+        // Restore the context with any modifications made by host functions
+        *context = result_context;
+
+        // Convert validation result to return code
+        match validation_result {
+            wit::ValidationResult::Accept => {
+                internal!(
+                    level = DEBUG,
+                    "WASM callback '{callback_name}' returned: Accept"
+                );
+                Ok(0)
+            }
+            wit::ValidationResult::Reject(rejection) => {
+                internal!(
+                    level = INFO,
+                    "WASM callback '{callback_name}' returned: Reject({}, {})",
+                    rejection.code,
+                    rejection.message
+                );
+                // Return the SMTP error code (rejection message handled by caller)
+                Ok(rejection.code.cast_signed())
+            }
+        }
     }
 
     /// Get the path to the WASM module file
@@ -211,10 +308,51 @@ impl WasmModule {
         self.max_memory_bytes
     }
 
-    /// Check if WASI is enabled
-    #[must_use]
-    pub const fn is_wasi_enabled(&self) -> bool {
-        self.enable_wasi
+    /// Build a WASI context from the configuration
+    ///
+    /// # Errors
+    /// Returns error if WASI context creation fails (e.g., invalid directory paths)
+    fn build_wasi_ctx(&self) -> Result<wasmtime_wasi::WasiCtx> {
+        internal!(level = INFO, "Building WASI context");
+
+        let mut builder = WasiCtxBuilder::new();
+
+        // Configure stdin/stdout/stderr (inherit from host)
+        builder.inherit_stdio();
+
+        // Configure environment variables
+        if self.wasi_inherit_env {
+            internal!(level = INFO, "WASI: Inheriting host environment variables");
+            builder.inherit_env();
+        }
+
+        // Configure preopened directories
+        for (host_path, guest_name, readonly) in &self.wasi_dirs {
+            internal!(
+                level = INFO,
+                "WASI: Preopening directory: {} -> {} (readonly: {})",
+                host_path,
+                guest_name,
+                readonly
+            );
+
+            let dir_perms = if *readonly {
+                DirPerms::READ
+            } else {
+                DirPerms::all()
+            };
+            let file_perms = if *readonly {
+                FilePerms::READ
+            } else {
+                FilePerms::all()
+            };
+
+            builder.preopened_dir(host_path, guest_name, dir_perms, file_perms)?;
+        }
+
+        let ctx = builder.build();
+        internal!(level = INFO, "WASI context built successfully");
+        Ok(ctx)
     }
 }
 

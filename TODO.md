@@ -748,16 +748,19 @@ examples/modules/wasm/
 
 ---
 
-### 🔵 NEW-WASM-04 Component Model Support
+### 🔵 NEW-WASM-04 Component Model with WIT Interfaces
 **Priority**: Low (Future-Proofing)
-**Effort**: 4-5 days
+**Effort**: 5-7 days
 **Dependencies**: NEW-WASM-01 (completed)
 **Owner**: Unassigned
 **Status**: Ready to start
 **Tags**: wasm, component-model, wit, architecture
 **Added**: 2025-11-22
+**Updated**: 2025-11-25
 
-**Problem**: Current implementation uses linear memory + bincode serialization. WebAssembly Component Model provides richer type system, better language interop, and standardized interfaces, but requires migration.
+**Problem**: Current WASM implementation uses core modules with linear memory + bincode serialization for context passing. While this works, WebAssembly Component Model provides a more modern approach with WIT-defined typed interfaces, automatic binding generation, better language interop, and standardized interfaces. Additionally, Component Model is required for full WASIp2 support.
+
+**Current Limitation**: Core WASM modules require manual host function imports (`em_get_context`, `em_alloc`, etc.) and manual serialization/deserialization. Context passing requires bincode serialization to linear memory, which is error-prone and language-specific.
 
 **Solution**: Add Component Model support alongside existing core WASM modules, enabling gradual migration path.
 

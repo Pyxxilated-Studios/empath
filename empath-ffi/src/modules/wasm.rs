@@ -28,6 +28,15 @@ pub struct Wasm {
     #[serde(default)]
     enable_wasi: bool,
 
+    /// WASI preopened directories: (`host_path`, `guest_name`, `readonly`)
+    /// Example: [("/etc/empath/rules", "rules", true)]
+    #[serde(default)]
+    wasi_dirs: Vec<(String, String, bool)>,
+
+    /// Inherit host environment variables (optional, default: false)
+    #[serde(default)]
+    wasi_inherit_env: bool,
+
     /// Loaded WASM module (initialized once)
     #[serde(skip)]
     #[allow(clippy::type_complexity)]
@@ -41,6 +50,8 @@ impl Clone for Wasm {
             timeout_secs: self.timeout_secs,
             max_memory_bytes: self.max_memory_bytes,
             enable_wasi: self.enable_wasi,
+            wasi_dirs: self.wasi_dirs.clone(),
+            wasi_inherit_env: self.wasi_inherit_env,
             module: OnceLock::new(), // Cannot clone OnceLock with data
         }
     }
@@ -67,7 +78,13 @@ impl Wasm {
             module = module.with_max_memory(max_memory_bytes);
         }
 
-        module = module.with_wasi(self.enable_wasi);
+        if !self.wasi_dirs.is_empty() {
+            module = module.with_wasi_dirs(self.wasi_dirs.clone());
+        }
+
+        if self.wasi_inherit_env {
+            module = module.with_wasi_env(true);
+        }
 
         module
             .initialize()

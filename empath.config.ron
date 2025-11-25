@@ -50,7 +50,7 @@ Empath (
         ),
         (
             type: "Wasm",
-            path: "./examples/modules/wasm/target/wasm32-unknown-unknown/release/simple_validator.wasm",
+            path: "./examples/modules/wasm/target/wasm32-wasip2/debug/simple_validator.wasm",
             enable_wasi: true,
         )
     ],
