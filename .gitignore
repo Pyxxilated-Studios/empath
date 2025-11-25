@@ -7,3 +7,7 @@
 spool/
 
 .DS_Store
+
+# Example module artifacts
+target/modules/
+empath-examples/wasm/wit/empath.wit

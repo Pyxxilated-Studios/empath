@@ -7,13 +7,17 @@ wit_bindgen::generate!({
 });
 
 // Import the generated types
-use exports::empath::validator::validation::{Context, Guest, Rejection, ValidationResult};
+use exports::empath::validator::{
+    events::Guest as EventsGuest,
+    validation::{Context, Guest as ValidationGuest, Rejection, ValidationResult},
+};
 
 struct Validator;
 
 export!(Validator);
 
-impl Guest for Validator {
+// Implement validation callbacks
+impl ValidationGuest for Validator {
     /// Validate connection - called when client connects
     fn validate_connect(ctx: Context) -> ValidationResult {
         // Use the host log function to output debug information
@@ -165,5 +169,97 @@ impl Guest for Validator {
 
         // Accept STARTTLS (TLS upgrade)
         ValidationResult::Accept
+    }
+}
+
+// Implement event callbacks
+impl EventsGuest for Validator {
+    /// Called when a client connection is opened
+    fn on_connection_opened(ctx: Context) {
+        empath::validator::host::log(&format!(
+            "WASM Event: Connection opened - session ID: {}",
+            ctx.id
+        ));
+
+        // Track connection metrics in session context
+        empath::validator::host::session_set("connection_opened_at", &format!("{}", ctx.id));
+    }
+
+    /// Called when a client connection is closed
+    fn on_connection_closed(ctx: Context) {
+        empath::validator::host::log(&format!(
+            "WASM Event: Connection closed - session ID: {}",
+            ctx.id
+        ));
+
+        // Could log connection duration, bytes transferred, etc.
+        if let Some(_opened_at) = empath::validator::host::session_get("connection_opened_at") {
+            empath::validator::host::log("WASM Event: Connection was previously tracked");
+        }
+    }
+
+    /// Called before attempting delivery to a mail server
+    fn on_delivery_attempt(ctx: Context) {
+        empath::validator::host::log(&format!(
+            "WASM Event: Delivery attempt for message {}",
+            ctx.id
+        ));
+
+        // Could check transaction context for spam scores, etc.
+        if let Some(spam_keyword) = empath::validator::host::transaction_get("spam_keyword") {
+            empath::validator::host::log(&format!(
+                "WASM Event: Delivering message flagged for spam keyword: {}",
+                spam_keyword
+            ));
+        }
+    }
+
+    /// Called when delivery succeeds
+    fn on_delivery_success(ctx: Context) {
+        empath::validator::host::log(&format!(
+            "WASM Event: Delivery succeeded for message {}",
+            ctx.id
+        ));
+
+        // Could update metrics, notify external systems, etc.
+    }
+
+    /// Called when delivery fails
+    fn on_delivery_failure(ctx: Context) {
+        empath::validator::host::log(&format!(
+            "WASM Event: Delivery failed for message {}",
+            ctx.id
+        ));
+
+        // Could implement custom retry logic, alerting, etc.
+    }
+
+    /// Called when an SMTP command returns an error response
+    fn on_smtp_error(ctx: Context) {
+        empath::validator::host::log(&format!(
+            "WASM Event: SMTP error for session {}",
+            ctx.id
+        ));
+    }
+
+    /// Called when a complete message is received
+    fn on_smtp_message_received(ctx: Context) {
+        let data_size = ctx.data.as_ref().map_or(0, |d| d.len());
+
+        empath::validator::host::log(&format!(
+            "WASM Event: Message received - {} bytes from sender: {}",
+            data_size,
+            ctx.sender.as_deref().unwrap_or("<none>")
+        ));
+
+        // Could trigger post-processing, virus scanning, archiving, etc.
+    }
+
+    /// Called after a DNS lookup completes
+    fn on_dns_lookup(ctx: Context) {
+        empath::validator::host::log(&format!(
+            "WASM Event: DNS lookup completed for session {}",
+            ctx.id
+        ));
     }
 }

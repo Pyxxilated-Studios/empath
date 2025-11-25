@@ -25,26 +25,11 @@ RUN apt-get update && apt-get install -y libpython3.13-dev
 COPY . .
 RUN RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=/usr/bin/mold" cargo +nightly build --release
 
-RUN cargo -Z unstable-options -C examples/modules/wasm build --release --target wasm32-wasip2
-
-FROM debian:trixie-slim AS modules
-
-# Install gcc for building FFI modules
+# Install gcc for building example modules
 RUN apt update && apt install -y gcc && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
-
-# Copy example module source files
-COPY examples/modules/shared/*.c ./
-COPY examples/modules/shared/*.h ./
-
-# Copy empath library and headers from the build stage
-COPY --from=empath /empath/target/release/libempath.so /usr/local/lib/
-COPY --from=empath /empath/target/empath.h ./
-
-# Build the example FFI modules
-RUN gcc example.c log.c -fpic -shared -o libexample.so -lempath -L/usr/local/lib -I. && \
-    gcc event.c -fpic -shared -o libevent.so -lempath -L/usr/local/lib -I.
+# Build all example modules (C, WASM, Python) using xtask
+RUN cargo xtask build-all
 
 FROM debian:trixie-slim
 
@@ -59,10 +44,8 @@ COPY --from=empath /empath/target/release/empathctl .
 # Copy empath shared library (required by FFI modules)
 COPY --from=empath /empath/target/release/libempath.so /usr/local/lib/
 
-# Copy built FFI example modules
-COPY --from=modules /build/*.so /empath/modules/
-COPY examples/modules/python/*.py /empath/modules/
-COPY --from=empath /empath/examples/modules/wasm/target/wasm32-unknown-unknown/release/*.wasm /empath/modules/
+# Copy all built example modules from target/modules/
+COPY --from=empath /empath/target/modules/* /empath/modules/
 
 # Update library cache so modules can find libempath.so
 RUN ldconfig /empath/modules/

@@ -18,13 +18,9 @@ crate-type = ["rlib"]
 
 [dependencies]
 empath-common.workspace = true
-empath-tracing.workspace = true
-anyhow.workspace = true
 parking_lot.workspace = true
 pyo3.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 ahash.workspace = true

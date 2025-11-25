@@ -61,6 +61,37 @@ interface validation {
     validate-starttls: func(ctx: context) -> validation-result;
 }
 
+/// Event listener interface for connection lifecycle events
+/// These callbacks don't return validation results - they're for observability and side effects
+interface events {
+    /// Context passed to event callbacks (same as validation context)
+    use validation.{context};
+
+    /// Called when a client connection is opened
+    on-connection-opened: func(ctx: context);
+
+    /// Called when a client connection is closed
+    on-connection-closed: func(ctx: context);
+
+    /// Called before attempting delivery to a mail server
+    on-delivery-attempt: func(ctx: context);
+
+    /// Called when delivery succeeds
+    on-delivery-success: func(ctx: context);
+
+    /// Called when delivery fails (temporary or permanent)
+    on-delivery-failure: func(ctx: context);
+
+    /// Called when an SMTP command returns an error response (4xx/5xx)
+    on-smtp-error: func(ctx: context);
+
+    /// Called when a complete message is received from a client
+    on-smtp-message-received: func(ctx: context);
+
+    /// Called after a DNS lookup completes
+    on-dns-lookup: func(ctx: context);
+}
+
 /// Host functions that guest modules can call
 interface host {
     /// Log a message from the guest module
@@ -95,4 +126,8 @@ world validator {
 
     /// Export validation functions (host will call these)
     export validation;
+
+    /// Optionally export event listener functions
+    /// Modules can implement this to receive lifecycle events
+    export events;
 }

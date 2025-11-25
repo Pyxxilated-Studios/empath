@@ -5,6 +5,7 @@ members = [
     "empath-common",
     "empath-control",
     "empath-delivery",
+    "empath-examples",
     "empath-ffi",
     "empath-health",
     "empath-metrics",
@@ -13,6 +14,7 @@ members = [
     "empath-spool",
     "empath-tracing",
     "empath-wasm",
+    "xtask",
 ]
 
 [workspace.package]
@@ -65,6 +67,7 @@ dashmap = "6"
 empath-common = { path = "empath-common", version = "*" }
 empath-control = { path = "empath-control", version = "*" }
 empath-delivery = { path = "empath-delivery", version = "*" }
+empath-examples = { path = "empath-examples", version = "*" }
 empath-ffi = { path = "empath-ffi", version = "*" }
 empath-health = { path = "empath-health", version = "*" }
 empath-metrics = { path = "empath-metrics", version = "*" }

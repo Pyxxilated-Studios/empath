@@ -109,8 +109,8 @@ doctor:
 dev: fmt lint test
     @echo "✅ Development checks passed"
 
-# Full CI check locally (lint + test)
-ci: lint fmt-check test
+# Full CI check locally (lint + test + examples)
+ci: lint fmt-check test build-examples
     @echo "✅ All CI checks passed!"
 
 # Pre-commit checks (fast)
@@ -141,19 +141,17 @@ check:
 build-empathctl:
     cargo build --bin empathctl
 
-# Build FFI examples (C modules)
+# Build example modules (C + WASM via xtask)
+build-examples:
+    cargo build-examples
+
+# Build FFI examples (deprecated - use build-examples instead)
 build-ffi:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd empath-ffi/examples
-    echo "Building example.c..."
-    gcc example.c -fpic -shared -o libexample.so -l empath -L ../../target/debug
-    echo "Building event.c..."
-    gcc event.c -fpic -shared -o libevent.so -l empath -L ../../target/debug
-    echo "✅ FFI examples built successfully"
+    @echo "⚠️  build-ffi is deprecated, use 'just build-examples' instead"
+    @just build-examples
 
 # Build and check everything (no tests)
-build-all: build build-release build-empathctl build-ffi
+build-all: build build-release build-empathctl build-examples
     @echo "✅ All build targets completed"
 
 # Verbose build with timing information

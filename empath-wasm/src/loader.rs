@@ -48,6 +48,102 @@ fn context_to_wit(ctx: &Context) -> wit::Context {
     }
 }
 
+/// Convert validation result to return code
+///
+/// Returns 0 for Accept, or the SMTP error code for Reject
+fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult) -> i32 {
+    match result {
+        wit::ValidationResult::Accept => {
+            internal!(
+                level = DEBUG,
+                "WASM callback '{callback_name}' returned: Accept"
+            );
+            0
+        }
+        wit::ValidationResult::Reject(rejection) => {
+            internal!(
+                level = INFO,
+                "WASM callback '{callback_name}' returned: Reject({}, {})",
+                rejection.code,
+                rejection.message
+            );
+            // Return the SMTP error code (rejection message handled by caller)
+            rejection.code.cast_signed()
+        }
+    }
+}
+
+/// Call a validation callback and return the result code
+fn call_validation_callback(
+    callback_name: &str,
+    validator: &Validator,
+    store: &mut Store<WasmStore>,
+    wit_context: &wit::Context,
+) -> Result<i32> {
+    let result = match callback_name {
+        "validate_connect" => validator
+            .empath_validator_validation()
+            .call_validate_connect(store, wit_context)?,
+        "validate_ehlo" => validator
+            .empath_validator_validation()
+            .call_validate_ehlo(store, wit_context)?,
+        "validate_mail_from" => validator
+            .empath_validator_validation()
+            .call_validate_mail_from(store, wit_context)?,
+        "validate_rcpt_to" => validator
+            .empath_validator_validation()
+            .call_validate_rcpt_to(store, wit_context)?,
+        "validate_data" => validator
+            .empath_validator_validation()
+            .call_validate_data(store, wit_context)?,
+        "validate_starttls" => validator
+            .empath_validator_validation()
+            .call_validate_starttls(store, wit_context)?,
+        _ => return Ok(-1), // Unknown callback
+    };
+
+    Ok(validation_result_to_code(callback_name, result))
+}
+
+/// Call an event callback
+fn call_event_callback(
+    callback_name: &str,
+    validator: &Validator,
+    store: &mut Store<WasmStore>,
+    wit_context: &wit::Context,
+) -> Result<()> {
+    match callback_name {
+        "on_connection_opened" => validator
+            .empath_validator_events()
+            .call_on_connection_opened(store, wit_context)?,
+        "on_connection_closed" => validator
+            .empath_validator_events()
+            .call_on_connection_closed(store, wit_context)?,
+        "on_delivery_attempt" => validator
+            .empath_validator_events()
+            .call_on_delivery_attempt(store, wit_context)?,
+        "on_delivery_success" => validator
+            .empath_validator_events()
+            .call_on_delivery_success(store, wit_context)?,
+        "on_delivery_failure" => validator
+            .empath_validator_events()
+            .call_on_delivery_failure(store, wit_context)?,
+        "on_smtp_error" => validator
+            .empath_validator_events()
+            .call_on_smtp_error(store, wit_context)?,
+        "on_smtp_message_received" => validator
+            .empath_validator_events()
+            .call_on_smtp_message_received(store, wit_context)?,
+        "on_dns_lookup" => validator
+            .empath_validator_events()
+            .call_on_dns_lookup(store, wit_context)?,
+        _ => return Ok(()), // Unknown callback
+    }
+
+    internal!(level = DEBUG, "WASM callback '{callback_name}' completed");
+    Ok(())
+}
+
 /// WebAssembly component wrapper
 ///
 /// Manages the lifecycle of a WASM component including loading, initialization,
@@ -150,7 +246,7 @@ impl WasmModule {
     /// # Errors
     /// Returns error if initialization fails
     pub fn initialize(&self) -> Result<()> {
-        internal!(level = INFO, "Initializing wasm component ...");
+        internal!(level = TRACE, "Initializing wasm component ...");
 
         // Build WASI context
         let wasi_ctx = self.build_wasi_ctx()?;
@@ -165,19 +261,26 @@ impl WasmModule {
         let mut linker = Linker::new(&self.engine);
 
         // Add WASI support (always enabled for components)
-        internal!(level = INFO, "Adding WASI support to component linker");
+        internal!(level = TRACE, "Adding WASI support to component linker");
         add_to_linker_sync(&mut linker)?;
+
+        // Add custom host functions from WIT interface
+        internal!(level = TRACE, "Adding custom host functions to linker");
+        crate::bindings::Validator::add_to_linker::<_, wasmtime::component::HasSelf<WasmStore>>(
+            &mut linker,
+            |data| data,
+        )?;
 
         // Instantiate the component
         let _instance = linker
             .instantiate(&mut store, &self.component)
-            .inspect_err(|e| internal!(level = INFO, "Component instantiation error {e}"))?;
+            .inspect_err(|e| internal!(level = TRACE, "Component instantiation error {e}"))?;
 
         // Note: Component model uses typed interfaces defined in WIT files
         // Initialization and function calling will be handled through generated bindings
         // For now, we just verify the component loads successfully
 
-        internal!(level = INFO, "Wasm component initialised");
+        internal!(level = TRACE, "Wasm component initialised");
 
         Ok(())
     }
@@ -185,11 +288,12 @@ impl WasmModule {
     /// Execute a callback function with the given context
     ///
     /// # Arguments
-    /// * `callback_name` - Name of the exported function to call
+    /// * `callback_name` - Name of the exported function to call (validation or event callback)
     /// * `context` - Empath context to pass to the callback
     ///
     /// # Returns
-    /// Returns the callback's return code (0 = accept, non-zero = reject)
+    /// Returns the callback's return code (0 = accept, non-zero = reject for validation callbacks;
+    /// always 0 for event callbacks)
     ///
     /// # Errors
     /// Returns error if callback execution fails or times out
@@ -216,6 +320,12 @@ impl WasmModule {
         // Add WASI support (always enabled for components)
         add_to_linker_sync(&mut linker)?;
 
+        // Add custom host functions from WIT interface
+        crate::bindings::Validator::add_to_linker::<_, wasmtime::component::HasSelf<WasmStore>>(
+            &mut linker,
+            |data| data,
+        )?;
+
         // Instantiate the component using generated bindings
         let validator = Validator::instantiate(&mut store, &self.component, &linker)?;
 
@@ -225,36 +335,34 @@ impl WasmModule {
             context_to_wit(&ctx_lock)
         };
 
-        // Call the appropriate validation function based on callback name
-        let validation_result = match callback_name {
-            "validate_connect" => validator
-                .empath_validator_validation()
-                .call_validate_connect(&mut store, &wit_context)?,
-            "validate_ehlo" => validator
-                .empath_validator_validation()
-                .call_validate_ehlo(&mut store, &wit_context)?,
-            "validate_mail_from" => validator
-                .empath_validator_validation()
-                .call_validate_mail_from(&mut store, &wit_context)?,
-            "validate_rcpt_to" => validator
-                .empath_validator_validation()
-                .call_validate_rcpt_to(&mut store, &wit_context)?,
-            "validate_data" => validator
-                .empath_validator_validation()
-                .call_validate_data(&mut store, &wit_context)?,
-            "validate_starttls" => validator
-                .empath_validator_validation()
-                .call_validate_starttls(&mut store, &wit_context)?,
-            _ => {
-                // Unknown callback - log warning and accept
+        // Call the appropriate validation or event function based on callback name
+        let return_code = if callback_name.starts_with("validate_") {
+            // Validation callback
+            let code =
+                call_validation_callback(callback_name, &validator, &mut store, &wit_context)?;
+            if code == -1 {
                 internal!(
                     level = WARN,
-                    "Unknown callback '{}' requested",
-                    callback_name
+                    "Unknown validation callback '{callback_name}'"
                 );
-                wit::ValidationResult::Accept
+                0
+            } else {
+                code
             }
+        } else if callback_name.starts_with("on_") {
+            // Event callback
+            call_event_callback(callback_name, &validator, &mut store, &wit_context)?;
+            0
+        } else {
+            // Unknown callback - log warning and accept
+            internal!(level = WARN, "Unknown callback '{callback_name}' requested");
+            0
         };
+
+        // Drop the store to release its Arc reference to the context
+        // This is necessary because WasmStore holds Arc<Mutex<Context>>, and we need
+        // exactly one Arc reference to successfully unwrap it below
+        drop(store);
 
         // Extract context back from Arc<Mutex<>> after callback completes
         // These operations should never fail in practice:
@@ -268,26 +376,7 @@ impl WasmModule {
         // Restore the context with any modifications made by host functions
         *context = result_context;
 
-        // Convert validation result to return code
-        match validation_result {
-            wit::ValidationResult::Accept => {
-                internal!(
-                    level = DEBUG,
-                    "WASM callback '{callback_name}' returned: Accept"
-                );
-                Ok(0)
-            }
-            wit::ValidationResult::Reject(rejection) => {
-                internal!(
-                    level = INFO,
-                    "WASM callback '{callback_name}' returned: Reject({}, {})",
-                    rejection.code,
-                    rejection.message
-                );
-                // Return the SMTP error code (rejection message handled by caller)
-                Ok(rejection.code.cast_signed())
-            }
-        }
+        Ok(return_code)
     }
 
     /// Get the path to the WASM module file
@@ -313,7 +402,7 @@ impl WasmModule {
     /// # Errors
     /// Returns error if WASI context creation fails (e.g., invalid directory paths)
     fn build_wasi_ctx(&self) -> Result<wasmtime_wasi::WasiCtx> {
-        internal!(level = INFO, "Building WASI context");
+        internal!(level = TRACE, "Building WASI context");
 
         let mut builder = WasiCtxBuilder::new();
 
@@ -322,14 +411,14 @@ impl WasmModule {
 
         // Configure environment variables
         if self.wasi_inherit_env {
-            internal!(level = INFO, "WASI: Inheriting host environment variables");
+            internal!(level = TRACE, "WASI: Inheriting host environment variables");
             builder.inherit_env();
         }
 
         // Configure preopened directories
         for (host_path, guest_name, readonly) in &self.wasi_dirs {
             internal!(
-                level = INFO,
+                level = TRACE,
                 "WASI: Preopening directory: {} -> {} (readonly: {})",
                 host_path,
                 guest_name,
@@ -351,7 +440,7 @@ impl WasmModule {
         }
 
         let ctx = builder.build();
-        internal!(level = INFO, "WASI context built successfully");
+        internal!(level = TRACE, "WASI context built successfully");
         Ok(ctx)
     }
 }

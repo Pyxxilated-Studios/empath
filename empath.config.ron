@@ -30,27 +30,27 @@ Empath (
         ],
     ),
     modules: [
-        //(
-        //    type: "Python",
-        //    path: "./examples/python/simple.py",
-        //),
-        //(
-        //    type: "Python",
-        //    path: "./examples/python/spam_filter.py",
-        //),
+        (
+            type: "Python",
+            path: "target/modules/simple.py",
+        ),
+        (
+            type: "Python",
+            path: "target/modules/spam_filter.py",
+        ),
         (
             type: "SharedLibrary",
-            name: "libevent.so",
+            name: "target/modules/libevent.so",
             args: [],
         ),
         (
             type: "SharedLibrary",
-            name: "libexample.so",
+            name: "target/modules/libexample.so",
             args: [],
         ),
         (
             type: "Wasm",
-            path: "./examples/modules/wasm/target/wasm32-wasip2/debug/simple_validator.wasm",
+            path: "target/modules/simple_validator.wasm",
             enable_wasi: true,
         )
     ],

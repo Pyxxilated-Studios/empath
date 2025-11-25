@@ -57,3 +57,7 @@ queue-watch = "run --bin empathctl -- queue stats --watch"
 # Control commands (via empathctl)
 status = "run --bin empathctl -- system status"
 ping = "run --bin empathctl -- system ping"
+
+# Example modules (via xtask)
+xtask = "run --package xtask --"
+build-examples = "run --package xtask -- build-all"

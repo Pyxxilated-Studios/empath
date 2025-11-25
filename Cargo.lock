@@ -912,6 +912,7 @@ dependencies = [
  "empath-common",
  "empath-control",
  "empath-delivery",
+ "empath-examples",
  "empath-ffi",
  "empath-health",
  "empath-metrics",
@@ -993,6 +994,10 @@ dependencies = [
  "tracing",
  "ulid",
 ]
+
+[[package]]
+name = "empath-examples"
+version = "0.1.0"
 
 [[package]]
 name = "empath-ffi"
@@ -4826,6 +4831,13 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
 
 [[package]]
 name = "yansi"
