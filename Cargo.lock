@@ -1052,15 +1052,11 @@ name = "empath-python"
 version = "0.0.1"
 dependencies = [
  "ahash",
- "anyhow",
  "empath-common",
- "empath-tracing",
  "parking_lot",
  "pyo3",
  "tempfile",
  "thiserror 2.0.17",
- "tokio",
- "tracing",
 ]
 
 [[package]]
