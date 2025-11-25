@@ -29,6 +29,30 @@ Empath (
             },
         ],
     ),
+    modules: [
+        (
+            type: "Python",
+            path: "/empath/modules/simple.py",
+        ),
+        (
+            type: "Python",
+            path: "/empath/modules/spam_filter.py",
+        ),
+        (
+            type: "SharedLibrary",
+            name: "libevent.so",
+            args: [],
+        ),
+        (
+            type: "SharedLibrary",
+            name: "libexample.so",
+            args: [],
+        ),
+        (
+            type: "Wasm",
+            path: "/empath/modules/simple_validator.wasm",
+        )
+    ],
     spool: (
         type: "File",
         path: "/tmp/spool/empath",

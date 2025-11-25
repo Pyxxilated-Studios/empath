@@ -17,6 +17,8 @@ pub mod metrics;
 #[cfg(feature = "python")]
 pub mod python;
 pub mod validate;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 type Init = unsafe extern "C" fn(StringVector) -> i32;
 type DeclareModule = unsafe extern "C" fn() -> Mod;
@@ -117,7 +119,7 @@ pub struct Test {
     pub validators_called: Vec<validate::Event>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 #[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(library::Shared),
@@ -136,6 +138,9 @@ pub enum Module {
     /// Python module loaded from a .py file
     #[cfg(feature = "python")]
     Python(python::Python),
+    /// WebAssembly module loaded from a .wasm file
+    #[cfg(feature = "wasm")]
+    Wasm(wasm::Wasm),
 }
 
 /// Module store using Arc for lock-free concurrent reads after initialization
@@ -151,6 +156,8 @@ impl Display for Module {
             Self::Metrics => f.write_str("Metrics Module"),
             #[cfg(feature = "python")]
             Self::Python(py) => f.write_fmt(format_args!("Python Module: {}", py.path().display())),
+            #[cfg(feature = "wasm")]
+            Self::Wasm(wasm) => f.write_fmt(format_args!("WASM Module: {}", wasm.path().display())),
         }
     }
 }
@@ -169,6 +176,8 @@ impl Module {
             }
             #[cfg(feature = "python")]
             Self::Python(py) => py.emit(event, validate_context),
+            #[cfg(feature = "wasm")]
+            Self::Wasm(wasm) => wasm.emit(event, validate_context),
         }
     }
 }
@@ -180,7 +189,7 @@ impl Module {
 ///   1. The module is invalid (e.g. the shared library cannot be found/has issues)
 ///   2. The modules init has an issue
 ///
-#[traced(instrument(level = tracing::Level::TRACE, ret, fields(?modules)), timing)]
+#[traced(instrument(level = tracing::Level::TRACE, ret, skip(modules)), timing)]
 pub fn init(modules: Vec<Module>) -> Result<(), Error> {
     internal!(level = INFO, "Initialising modules ...");
 
@@ -211,10 +220,12 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
             Module::Metrics => Ok(()),
             #[cfg(feature = "python")]
             Module::Python(py) => py.init(),
+            #[cfg(feature = "wasm")]
+            Module::Wasm(wasm) => wasm.init(),
         })?;
 
     // Set module store (ignore if already initialized, which can happen in tests)
-    internal!(level = INFO, "Modules initialised: {all_modules:?}");
+    internal!(level = INFO, "Modules initialised");
     let _ = MODULE_STORE.set(all_modules.into());
 
     Ok(())

@@ -32,6 +32,14 @@ fn main() -> anyhow::Result<()> {
             parse_deps: true,
             include: Some(dependencies.clone()),
             extra_bindings: dependencies,
+            // Note: These modules use OnceLock and other types cbindgen can't handle
+            // They're feature-gated and don't expose C-compatible FFI anyway
+            exclude: vec![
+                String::from("empath-ffi/src/modules/python.rs"),
+                String::from("empath-ffi/src/modules/wasm.rs"),
+                String::from("python.rs"),
+                String::from("wasm.rs"),
+            ],
             ..Default::default()
         },
         ..Default::default()

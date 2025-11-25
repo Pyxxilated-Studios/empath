@@ -21,6 +21,7 @@ empath-common.workspace = true
 empath-metrics = { workspace = true, optional = true }
 empath-python = { workspace = true, optional = true }
 empath-tracing.workspace = true
+empath-wasm = { workspace = true, optional = true }
 libc.workspace = true
 libloading.workspace = true
 serde.workspace = true
@@ -28,9 +29,10 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["metrics", "python"]
+default = ["metrics", "python", "wasm"]
 metrics = ["dep:empath-metrics"]
 python = ["dep:empath-python"]
+wasm = ["dep:empath-wasm"]
 
 [build-dependencies]
 cbindgen.workspace = true

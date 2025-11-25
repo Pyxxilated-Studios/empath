@@ -269,15 +269,17 @@ impl ControlServer {
         stream.read_exact(&mut request_bytes).await?;
 
         // Deserialize request
-        let (request, _): (Request, _) =
-            bincode::serde::decode_from_slice(request_bytes.as_slice(), bincode::config::legacy())?;
+        let (request, _): (Request, _) = bincode::serde::decode_from_slice(
+            request_bytes.as_slice(),
+            bincode::config::standard(),
+        )?;
         Ok(request)
     }
 
     /// Write a response to the stream
     async fn write_response(stream: &mut UnixStream, response: &Response) -> Result<()> {
         // Serialize response
-        let response_bytes = bincode::serde::encode_to_vec(response, bincode::config::legacy())?;
+        let response_bytes = bincode::serde::encode_to_vec(response, bincode::config::standard())?;
         let response_len = u32::try_from(response_bytes.len())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 

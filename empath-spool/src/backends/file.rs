@@ -293,7 +293,7 @@ impl BackingStore for FileBackingStore {
         }
 
         // Serialize metadata to bincode
-        let metadata = bincode::serde::encode_to_vec(&context, bincode::config::legacy())
+        let metadata = bincode::serde::encode_to_vec(&context, bincode::config::standard())
             .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
@@ -375,7 +375,7 @@ impl BackingStore for FileBackingStore {
         // Read and deserialize metadata
         let meta_content = fs::read(&meta_path).await?;
         let (mut context, _): (Context, _) =
-            bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
+            bincode::serde::decode_from_slice(&meta_content, bincode::config::standard())
                 .map_err(crate::error::SerializationError::from)?;
 
         // Read message data
@@ -420,7 +420,7 @@ impl BackingStore for FileBackingStore {
         let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
 
         // Serialize metadata to bincode
-        let metadata = bincode::serde::encode_to_vec(context, bincode::config::legacy())
+        let metadata = bincode::serde::encode_to_vec(context, bincode::config::standard())
             .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 

@@ -12,6 +12,7 @@ members = [
     "empath-smtp",
     "empath-spool",
     "empath-tracing",
+    "empath-wasm",
 ]
 
 [workspace.package]
@@ -40,7 +41,11 @@ unreachable = "deny"
 dead_code = "deny"
 
 [workspace.dependencies]
-ahash = { version = "0.8", default-features = false, features = ["serde", "std", "compile-time-rng"] }
+ahash = { version = "0.8", default-features = false, features = [
+    "serde",
+    "std",
+    "compile-time-rng",
+] }
 anyhow = "1.0"
 arrayvec = "0.7"
 async-trait = "0.1"
@@ -62,6 +67,7 @@ empath-python = { path = "empath-python", version = "*" }
 empath-smtp = { path = "empath-smtp", version = "*" }
 empath-spool = { path = "empath-spool", version = "*" }
 empath-tracing = { path = "empath-tracing", version = "*" }
+empath-wasm = { path = "empath-wasm", version = "*" }
 encoding_rs = "0.8.35"
 fs2 = "0.4"
 futures-util = "0.3"
@@ -83,7 +89,10 @@ opentelemetry-otlp = "0.31"
 parking_lot = "0.12"
 phf = { version = "0.13", default-features = false, features = ["macros"] }
 proptest = "1.9"
-pyo3 = { version = "0.25", default-features = false, features = ["auto-initialize", "macros"] }
+pyo3 = { version = "0.25", default-features = false, features = [
+    "auto-initialize",
+    "macros",
+] }
 rand = "0.9"
 ron = "0.12"
 rustls-native-certs = "0.8"
@@ -120,6 +129,8 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "json",
 ] }
 ulid = "1"
+wasmtime = "39.0"
+wasmtime-wasi = "39.0"
 
 [profile.release]
 lto = "thin"

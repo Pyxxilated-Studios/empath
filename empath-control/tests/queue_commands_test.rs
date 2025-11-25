@@ -22,10 +22,10 @@ async fn test_queue_list_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::legacy())
+    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
         .expect("Failed to serialize request");
     let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::legacy())
+        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
             .expect("Failed to deserialize request");
 
     match deserialized.command {
@@ -45,10 +45,10 @@ async fn test_queue_list_with_status_filter() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::legacy())
+    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
         .expect("Failed to serialize request");
     let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::legacy())
+        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
             .expect("Failed to deserialize request");
 
     match deserialized.command {
@@ -97,10 +97,10 @@ async fn test_queue_message_response_serialization() {
     let response = Response::data(ResponseData::QueueList(messages));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(response, bincode::config::legacy())
+    let serialized = bincode::serde::encode_to_vec(response, bincode::config::standard())
         .expect("Failed to serialize response");
     let (deserialized, _): (Response, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::legacy())
+        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
             .expect("Failed to deserialize response");
 
     match deserialized.payload {
@@ -140,10 +140,10 @@ async fn test_queue_stats_command() {
     let request = Request::new(RequestCommand::Queue(QueueCommand::Stats));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::legacy())
+    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
         .expect("Failed to serialize request");
     let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::legacy())
+        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
             .expect("Failed to deserialize request");
 
     match deserialized.command {
@@ -163,10 +163,10 @@ async fn test_queue_view_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::legacy())
+    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
         .expect("Failed to serialize request");
     let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::legacy())
+        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
             .expect("Failed to deserialize request");
 
     match deserialized.command {
@@ -186,10 +186,10 @@ async fn test_queue_delete_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::legacy())
+    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
         .expect("Failed to serialize request");
     let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::legacy())
+        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
             .expect("Failed to deserialize request");
 
     match deserialized.command {
@@ -210,10 +210,10 @@ async fn test_queue_retry_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::legacy())
+    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
         .expect("Failed to serialize request");
     let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::legacy())
+        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
             .expect("Failed to deserialize request");
 
     match deserialized.command {

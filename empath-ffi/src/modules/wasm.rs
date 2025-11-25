@@ -1,0 +1,128 @@
+//! WebAssembly module integration
+//!
+//! This module provides integration between WASM modules and the Empath module system.
+
+use std::{path::PathBuf, sync::OnceLock, time::Duration};
+
+use empath_common::context::Context;
+use empath_wasm::WasmModule;
+use serde::Deserialize;
+
+use super::{Error, Event, validate};
+
+/// WebAssembly module configuration (deserializable from RON)
+#[derive(Deserialize)]
+pub struct Wasm {
+    /// Path to the .wasm file
+    path: PathBuf,
+
+    /// Execution timeout in seconds (optional, default: 5)
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+
+    /// Maximum memory in bytes (optional, default: 10 MB)
+    #[serde(default)]
+    max_memory_bytes: Option<usize>,
+
+    /// Enable WASI (file/network access) (optional, default: false)
+    #[serde(default)]
+    enable_wasi: bool,
+
+    /// Loaded WASM module (initialized once)
+    #[serde(skip)]
+    #[allow(clippy::type_complexity)]
+    module: OnceLock<WasmModule>,
+}
+
+impl Clone for Wasm {
+    fn clone(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            timeout_secs: self.timeout_secs,
+            max_memory_bytes: self.max_memory_bytes,
+            enable_wasi: self.enable_wasi,
+            module: OnceLock::new(), // Cannot clone OnceLock with data
+        }
+    }
+}
+
+impl Wasm {
+    /// Initialize the WASM module
+    ///
+    /// # Errors
+    /// Returns error if the module cannot be loaded or initialized
+    pub fn init(&self) -> Result<(), Error> {
+        let mut module = WasmModule::load(&self.path).map_err(|e| {
+            Error::Init(format!(
+                "Failed to load WASM module {}: {e}",
+                self.path.display()
+            ))
+        })?;
+
+        if let Some(timeout_secs) = self.timeout_secs {
+            module = module.with_timeout(Duration::from_secs(timeout_secs));
+        }
+
+        if let Some(max_memory_bytes) = self.max_memory_bytes {
+            module = module.with_max_memory(max_memory_bytes);
+        }
+
+        module = module.with_wasi(self.enable_wasi);
+
+        module
+            .initialize()
+            .map_err(|e| Error::Init(format!("Failed to initialize WASM module: {e}")))?;
+
+        self.module
+            .set(module)
+            .map_err(|_| Error::Init("Module already initialized".to_string()))?;
+
+        Ok(())
+    }
+
+    /// Emit an event to the WASM module
+    ///
+    /// Returns 0 if the event was handled successfully (or callback doesn't exist),
+    /// non-zero if the callback rejected the operation.
+    pub fn emit(&self, event: Event, context: &mut Context) -> i32 {
+        let Some(module) = self.module.get() else {
+            tracing::error!("WASM module not initialized: {}", self.path.display());
+            return 0;
+        };
+
+        // Map events to WASM callback names (matching Python module naming)
+        let callback_name = match event {
+            Event::Validate(validate::Event::Connect) => "validate_connect",
+            Event::Validate(validate::Event::Ehlo) => "validate_ehlo",
+            Event::Validate(validate::Event::MailFrom) => "validate_mail_from",
+            Event::Validate(validate::Event::RcptTo) => "validate_rcpt_to",
+            Event::Validate(validate::Event::Data) => "validate_data",
+            Event::Validate(validate::Event::StartTls) => "validate_starttls",
+            Event::Event(super::Ev::ConnectionOpened) => "on_connection_opened",
+            Event::Event(super::Ev::ConnectionClosed) => "on_connection_closed",
+            Event::Event(super::Ev::DeliveryAttempt) => "on_delivery_attempt",
+            Event::Event(super::Ev::DeliverySuccess) => "on_delivery_success",
+            Event::Event(super::Ev::DeliveryFailure) => "on_delivery_failure",
+            Event::Event(super::Ev::SmtpError) => "on_smtp_error",
+            Event::Event(super::Ev::SmtpMessageReceived) => "on_smtp_message_received",
+            Event::Event(super::Ev::DnsLookup) => "on_dns_lookup",
+        };
+
+        // Execute the callback
+        match module.execute_callback(callback_name, context) {
+            Ok(return_code) => return_code,
+            Err(e) => {
+                tracing::error!(
+                    "WASM module {} error in {callback_name}: {e}",
+                    self.path.display()
+                );
+                0 // Allow on error (fail open)
+            }
+        }
+    }
+
+    /// Get the path to the WASM module file
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}

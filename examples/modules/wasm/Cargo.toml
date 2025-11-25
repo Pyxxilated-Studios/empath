@@ -1,0 +1,11 @@
+[package]
+name = "simple-validator"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+
+[lib]
+crate-type = ["cdylib"]

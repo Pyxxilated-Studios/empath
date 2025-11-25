@@ -171,7 +171,7 @@ impl ControlClient {
         }
 
         // Serialize request
-        let request_bytes = bincode::serde::encode_to_vec(&request, bincode::config::legacy())?;
+        let request_bytes = bincode::serde::encode_to_vec(&request, bincode::config::standard())?;
         let request_len = u32::try_from(request_bytes.len())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
@@ -205,7 +205,7 @@ impl ControlClient {
         // Deserialize response
         let (response, _): (Response, _) = bincode::serde::decode_from_slice(
             response_bytes.as_slice(),
-            bincode::config::legacy(),
+            bincode::config::standard(),
         )?;
 
         // Validate protocol version

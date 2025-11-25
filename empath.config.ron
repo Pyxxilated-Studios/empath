@@ -30,14 +30,14 @@ Empath (
         ],
     ),
     modules: [
-        (
-            type: "Python",
-            path: "./examples/python_modules/simple.py",
-        ),
-        (
-            type: "Python",
-            path: "./examples/python_modules/spam_filter.py",
-        ),
+        //(
+        //    type: "Python",
+        //    path: "./examples/python/simple.py",
+        //),
+        //(
+        //    type: "Python",
+        //    path: "./examples/python/spam_filter.py",
+        //),
         (
             type: "SharedLibrary",
             name: "libevent.so",
@@ -47,6 +47,11 @@ Empath (
             type: "SharedLibrary",
             name: "libexample.so",
             args: [],
+        ),
+        (
+            type: "Wasm",
+            path: "./examples/modules/wasm/target/wasm32-unknown-unknown/release/simple_validator.wasm",
+            enable_wasi: true,
         )
     ],
     spool: (
