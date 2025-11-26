@@ -5,7 +5,10 @@
 
 use std::{
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -27,6 +30,61 @@ const DEFAULT_TIMEOUT_SECS: u64 = 5;
 
 /// Default maximum memory for WASM modules (10 MB)
 const DEFAULT_MAX_MEMORY_BYTES: usize = 10 * 1024 * 1024;
+
+/// Epoch tick interval in milliseconds (10ms = 100Hz)
+const EPOCH_TICK_MS: u64 = 10;
+
+/// Shared Wasmtime engine across all WASM modules (for efficiency and compiled code sharing)
+static SHARED_ENGINE: OnceLock<Arc<Engine>> = OnceLock::new();
+
+/// Flag to ensure epoch manager task is started only once
+static EPOCH_TASK_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Get or initialize the shared Wasmtime engine
+///
+/// This function ensures only one Engine is created and shared across all WASM modules.
+/// The Engine is configured with epoch interruption enabled for timeout enforcement.
+fn get_or_init_engine() -> Arc<Engine> {
+    Arc::clone(SHARED_ENGINE.get_or_init(|| {
+        internal!(
+            level = TRACE,
+            "Creating shared Wasmtime engine with epoch interruption"
+        );
+
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        config.epoch_interruption(true); // Enable timeout enforcement
+
+        #[allow(
+            clippy::expect_used,
+            reason = "Engine creation is critical and cannot proceed without it"
+        )]
+        let engine = Engine::new(&config).expect("Failed to create Wasmtime engine");
+        Arc::new(engine)
+    }))
+}
+
+/// Start the epoch manager task if not already running
+///
+/// This spawns a tokio task that increments the engine's epoch counter every 10ms.
+/// The task runs indefinitely but uses minimal resources (just incrementing a counter).
+fn start_epoch_manager(engine: Arc<Engine>) {
+    // Only start the task once using atomic compare-and-swap
+    if !EPOCH_TASK_STARTED.swap(true, Ordering::SeqCst) {
+        internal!(level = TRACE, "Starting epoch manager task (10ms interval)");
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(EPOCH_TICK_MS));
+            // Skip missed ticks if the runtime is overloaded
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+                engine.increment_epoch();
+            }
+        });
+    }
+}
 
 /// Convert Empath Context to WIT context record
 ///
@@ -73,32 +131,85 @@ fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult)
     }
 }
 
+/// Check if a Wasmtime error is caused by an epoch timeout
+fn is_timeout_error(err: &wasmtime::Error) -> bool {
+    err.to_string().contains("epoch")
+}
+
 /// Call a validation callback and return the result code
+///
+/// # Errors
+/// Returns `WasmError::Timeout` if the callback exceeds the configured timeout
 fn call_validation_callback(
     callback_name: &str,
     validator: &Validator,
     store: &mut Store<WasmStore>,
     wit_context: &wit::Context,
 ) -> Result<i32> {
+    // Capture timeout before calling (to avoid borrow issues)
+    let timeout_secs = store.data().timeout.as_secs();
+
     let result = match callback_name {
         "validate_connect" => validator
             .empath_validator_validation()
-            .call_validate_connect(store, wit_context)?,
+            .call_validate_connect(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "validate_ehlo" => validator
             .empath_validator_validation()
-            .call_validate_ehlo(store, wit_context)?,
+            .call_validate_ehlo(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "validate_mail_from" => validator
             .empath_validator_validation()
-            .call_validate_mail_from(store, wit_context)?,
+            .call_validate_mail_from(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "validate_rcpt_to" => validator
             .empath_validator_validation()
-            .call_validate_rcpt_to(store, wit_context)?,
+            .call_validate_rcpt_to(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "validate_data" => validator
             .empath_validator_validation()
-            .call_validate_data(store, wit_context)?,
+            .call_validate_data(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "validate_starttls" => validator
             .empath_validator_validation()
-            .call_validate_starttls(store, wit_context)?,
+            .call_validate_starttls(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         _ => return Ok(-1), // Unknown callback
     };
 
@@ -106,37 +217,99 @@ fn call_validation_callback(
 }
 
 /// Call an event callback
+///
+/// # Errors
+/// Returns `WasmError::Timeout` if the callback exceeds the configured timeout
 fn call_event_callback(
     callback_name: &str,
     validator: &Validator,
     store: &mut Store<WasmStore>,
     wit_context: &wit::Context,
 ) -> Result<()> {
+    // Capture timeout before calling (to avoid borrow issues)
+    let timeout_secs = store.data().timeout.as_secs();
+
     match callback_name {
         "on_connection_opened" => validator
             .empath_validator_events()
-            .call_on_connection_opened(store, wit_context)?,
+            .call_on_connection_opened(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "on_connection_closed" => validator
             .empath_validator_events()
-            .call_on_connection_closed(store, wit_context)?,
+            .call_on_connection_closed(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "on_delivery_attempt" => validator
             .empath_validator_events()
-            .call_on_delivery_attempt(store, wit_context)?,
+            .call_on_delivery_attempt(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "on_delivery_success" => validator
             .empath_validator_events()
-            .call_on_delivery_success(store, wit_context)?,
+            .call_on_delivery_success(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "on_delivery_failure" => validator
             .empath_validator_events()
-            .call_on_delivery_failure(store, wit_context)?,
+            .call_on_delivery_failure(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "on_smtp_error" => validator
             .empath_validator_events()
-            .call_on_smtp_error(store, wit_context)?,
+            .call_on_smtp_error(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "on_smtp_message_received" => validator
             .empath_validator_events()
-            .call_on_smtp_message_received(store, wit_context)?,
+            .call_on_smtp_message_received(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         "on_dns_lookup" => validator
             .empath_validator_events()
-            .call_on_dns_lookup(store, wit_context)?,
+            .call_on_dns_lookup(store, wit_context)
+            .map_err(|e| {
+                if is_timeout_error(&e) {
+                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                } else {
+                    e.into()
+                }
+            })?,
         _ => return Ok(()), // Unknown callback
     }
 
@@ -152,13 +325,13 @@ pub struct WasmModule {
     /// Path to the WASM component file
     path: String,
 
-    /// Wasmtime engine (shared across instances)
-    engine: Engine,
+    /// Shared Wasmtime engine (with epoch interruption enabled for timeouts)
+    engine: Arc<Engine>,
 
     /// Compiled WASM component
     component: Component,
 
-    /// Execution timeout
+    /// Execution timeout (enforced via epoch deadlines)
     timeout: Duration,
 
     /// Maximum memory in bytes
@@ -187,14 +360,11 @@ impl WasmModule {
             return Err(WasmError::ModuleNotFound(path_str));
         }
 
-        // Create Wasmtime engine with component model enabled
-        // Note: We don't enable epoch interruption here because it would require
-        // incrementing epochs in a background thread, which adds complexity.
-        // Instead, we rely on OS-level timeouts for now.
-        let mut config = Config::new();
-        config.wasm_component_model(true);
+        // Get or create the shared Wasmtime engine (with epoch interruption enabled)
+        let engine = get_or_init_engine();
 
-        let engine = Engine::new(&config)?;
+        // Start the epoch manager task (only runs once across all modules)
+        start_epoch_manager(Arc::clone(&engine));
 
         // Load and compile the WASM component
         let component = Component::from_file(&engine, &path)?;
@@ -253,7 +423,8 @@ impl WasmModule {
 
         // Create a dummy context for initialization
         let dummy_context = Arc::new(Mutex::new(Context::default()));
-        let wasm_store = WasmStore::new(dummy_context, self.max_memory_bytes, wasi_ctx)?;
+        let wasm_store =
+            WasmStore::new(dummy_context, self.max_memory_bytes, self.timeout, wasi_ctx)?;
         let mut store = Store::new(&self.engine, wasm_store);
         store.limiter(|s| s);
 
@@ -310,9 +481,29 @@ impl WasmModule {
         let context_arc = Arc::new(Mutex::new(std::mem::take(context)));
 
         // Create store with wrapped context
-        let wasm_store = WasmStore::new(Arc::clone(&context_arc), self.max_memory_bytes, wasi_ctx)?;
+        let wasm_store = WasmStore::new(
+            Arc::clone(&context_arc),
+            self.max_memory_bytes,
+            self.timeout,
+            wasi_ctx,
+        )?;
         let mut store = Store::new(&self.engine, wasm_store);
         store.limiter(|s| s);
+
+        // Set epoch deadline for timeout enforcement
+        // Convert timeout to epoch ticks (10ms per tick)
+        let timeout_ticks = self.timeout.as_millis() / u128::from(EPOCH_TICK_MS);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "Timeouts are expected to be reasonable (<584 years)"
+        )]
+        store.set_epoch_deadline(timeout_ticks as u64);
+        internal!(
+            level = TRACE,
+            "Set epoch deadline: {} ticks ({:?} timeout)",
+            timeout_ticks,
+            self.timeout
+        );
 
         // Create component linker with WASI support
         let mut linker = Linker::new(&self.engine);

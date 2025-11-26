@@ -10,6 +10,7 @@
 use std::{
     borrow::Cow,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use bincode::{Decode, Encode};
@@ -73,6 +74,8 @@ pub struct WasmStore {
     pub log_buffer: Vec<String>,
     /// Maximum memory in bytes
     max_memory_bytes: usize,
+    /// Execution timeout for callbacks
+    pub timeout: Duration,
     /// WASI context (if WASI is enabled)
     pub wasi_ctx: WasiCtx,
     /// Resource table for component model
@@ -108,6 +111,7 @@ impl WasmStore {
     pub fn new(
         context: Arc<Mutex<Context>>,
         max_memory_bytes: usize,
+        timeout: Duration,
         wasi_ctx: WasiCtx,
     ) -> Result<Self> {
         let context_bytes = {
@@ -126,6 +130,7 @@ impl WasmStore {
             return_code: 0,
             log_buffer: Vec::new(),
             max_memory_bytes,
+            timeout,
             wasi_ctx,
             resource_table: ResourceTable::new(),
         })

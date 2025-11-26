@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
-> **Last Updated**: 2025-11-22
-> **Total Active**: 17 tasks | **Completed**: 57 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
+> **Last Updated**: 2025-11-26
+> **Total Active**: 27 tasks | **Completed**: 58 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -26,10 +26,10 @@
 ### 📈 Metrics
 
 **Priority Distribution** (Active Tasks Only):
-- 🔴 Critical: 0 tasks - **ALL PRODUCTION BLOCKERS COMPLETE** ✅
-- 🟡 High: 3 tasks (~5-8 days effort)
-- 🟢 Medium: 5 tasks (~7-10 days effort)
-- 🔵 Low: 6 tasks (~8-12 days effort)
+- 🔴 Critical: 1 task (NEW-WASM-08) - **WASM security** (~1-2 days effort)
+- 🟡 High: 6 tasks (~8-13 days effort) - includes 3 new WASM safety improvements
+- 🟢 Medium: 11 tasks (~14-22 days effort) - includes 5 new WASM quality/performance improvements
+- 🔵 Low: 9 tasks (~10-17 days effort) - includes 3 new WASM maintainability improvements
 
 **Production Readiness: 100%** ✅ **READY FOR PRODUCTION DEPLOYMENT**
 
@@ -975,6 +975,706 @@ modules: [
 - Increased attack surface (controlled by permissions)
 - More complex configuration
 - Requires security review of modules
+
+---
+
+## WASM Event Support - Code Review Findings (2025-11-26)
+
+The following tasks were identified by comprehensive code review (code-reviewer, rust-expert, architect-review agents) of the WASM event support implementation (NEW-WASM-01, NEW-WASM-02).
+
+**Overall Assessment**: Implementation is production-ready with no critical bugs. These tasks address important safety, performance, and maintainability improvements.
+
+### ✅ NEW-WASM-07 Implement Epoch-Based Timeout Enforcement
+**Priority**: Critical (Security/Reliability)
+**Effort**: 1-2 days
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Completed
+**Status**: ✅ COMPLETED (2025-11-26)
+**Tags**: wasm, security, timeout, reliability
+**Added**: 2025-11-26 (Code Review)
+**Completed**: 2025-11-26
+
+**Problem**: WASM modules have `timeout` field but it's never enforced (noted in `loader.rs:191-196`). Infinite loops in malicious WASM modules can hang the server indefinitely. OS-level timeouts are unreliable for WASM execution.
+
+**Solution Implemented**: Epoch-based timeout mechanism with tokio background task.
+
+**Implementation Details**:
+1. ✅ Shared Engine with `epoch_interruption(true)` enabled (`OnceLock<Arc<Engine>>`)
+2. ✅ Tokio background task incrementing epochs every 10ms (EPOCH_TICK_MS constant)
+3. ✅ Epoch deadline set before each callback: `store.set_epoch_deadline(timeout_ticks)`
+4. ✅ Graceful task lifecycle with `AtomicBool` (ensures single task across all modules)
+5. ✅ Timeout detection via `is_timeout_error()` helper
+6. ✅ Proper error conversion to `WasmError::Timeout(callback_name, timeout_secs)`
+7. ✅ Added `timeout: Duration` field to `WasmStore` for error reporting
+
+**Success Criteria**:
+- [x] Background epoch task spawned on first WASM module load (via `start_epoch_manager()`)
+- [x] Task increments epochs every 10ms using `tokio::time::interval`
+- [x] Task uses `MissedTickBehavior::Skip` to prevent catch-up overhead
+- [x] All modules share same Engine instance (Wasmtime best practice)
+- [x] Timeout errors include callback name and configured timeout duration
+- [x] Both validation and event callbacks protected
+- [x] All tests pass (existing + new timeout handling)
+- [x] Clippy clean with no warnings
+
+**Benefits Delivered**:
+- 10ms timeout precision (configurable via EPOCH_TICK_MS)
+- Prevents DoS attacks via infinite loops in WASM modules
+- Clear error messages: "WASM callback 'validate_data' exceeded timeout (5s)"
+- Better integration with existing async runtime (tokio)
+- Shared engine reduces memory overhead
+
+**Files Modified**:
+- `empath-wasm/src/loader.rs` - Shared engine, epoch manager task, timeout detection
+- `empath-wasm/src/host.rs` - Added timeout field to WasmStore
+- `empath-wasm/Cargo.toml` - Added tokio dependency
+
+**Reference**: Wasmtime docs: https://docs.wasmtime.dev/api/wasmtime/struct.Store.html#method.set_epoch_deadline
+
+---
+
+### 🔴 NEW-WASM-08 Add Configurable Fail-Mode per Event Type
+**Priority**: Critical (Security)
+**Effort**: 1-2 days
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, security, error-handling
+**Added**: 2025-11-26 (Code Review)
+
+**Problem**: Currently all WASM module errors fail-open (accept), even for critical validation. This means module crashes disable spam/malware filtering.
+
+**Current Behavior** (`wasm.rs:129-138`):
+```rust
+Err(e) => {
+    tracing::error!("WASM module {} error: {e}", self.path.display());
+    0  // Always accepts on error!
+}
+```
+
+**Security Risk**:
+- Module crash → accepts all connections
+- Python module error → accepts all spam
+- DNS lookup timeout in module → no SPF/DKIM checks
+
+**Solution**: Configurable fail-mode with intelligent defaults.
+
+**Implementation**:
+1. Add `FailureMode` enum to module config
+2. Default fail-mode based on event type:
+   - Validation callbacks: `fail_closed` (reject on error)
+   - Event callbacks: `fail_open` (allow on error - observability shouldn't block)
+3. Per-module override via config
+4. Metrics for fail-open vs fail-closed decisions
+
+**Configuration**:
+```ron
+modules: [
+    (
+        type: "Wasm",
+        path: "spam_filter.wasm",
+        failure_mode: "closed",  // Reject on module error
+    ),
+    (
+        type: "Wasm",
+        path: "metrics_collector.wasm",
+        failure_mode: "open",    // Allow on module error
+    ),
+]
+```
+
+**Success Criteria**:
+- [ ] `FailureMode` enum (Open, Closed)
+- [ ] Validation events default to fail-closed
+- [ ] Event callbacks default to fail-open
+- [ ] Per-module configuration override
+- [ ] Tests for both fail modes
+- [ ] Metrics: `module_error_fail_open`, `module_error_fail_closed`
+- [ ] Documentation: Security implications
+
+**Files to Modify**:
+- `empath-ffi/src/modules/wasm.rs` - Failure mode logic
+- `empath-ffi/src/modules/mod.rs` - Config struct
+- `empath-wasm/src/loader.rs` - Return error vs 0
+
+---
+
+### 🟡 NEW-WASM-09 Replace .expect() with Proper Error Handling
+**Priority**: High (Safety)
+**Effort**: 1 day
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, safety, error-handling
+**Added**: 2025-11-26 (Rust Expert Review)
+
+**Problem**: Multiple uses of `.expect()` that could panic in production if assumptions are violated.
+
+**Panic Risks** (`loader.rs:276-280`):
+```rust
+let result_context = Arc::try_unwrap(context_arc)
+    .expect("Context Arc should have exactly one strong reference")
+    .into_inner()
+    .expect("Context Mutex should not be poisoned");
+```
+
+**Scenarios Where This Fails**:
+1. WasmStore is cloned/shared elsewhere (Arc count > 1)
+2. Host function panics (poisoned mutex)
+3. Future refactoring introduces Arc clones
+
+**Solution**: Return `Result` with proper error types instead of panicking.
+
+**Implementation**:
+```rust
+// Replace expect with proper error handling
+let result_context = Arc::try_unwrap(context_arc)
+    .map_err(|arc| WasmError::Internal(format!(
+        "Context Arc has {} strong references (expected 1)",
+        Arc::strong_count(&arc)
+    )))?
+    .into_inner()
+    .map_err(|e| WasmError::Internal(format!("Context Mutex poisoned: {e}")))?;
+```
+
+**Success Criteria**:
+- [ ] All `.expect()` in `loader.rs` replaced with `?` operator
+- [ ] All `.expect()` in `host.rs` replaced with graceful error handling
+- [ ] Add `WasmError::Internal(String)` variant
+- [ ] Tests verify error propagation
+- [ ] No panics in WASM execution path
+- [ ] Clear error messages for debugging
+
+**Files to Modify**:
+- `empath-wasm/src/loader.rs` - Replace 4 expect calls
+- `empath-wasm/src/host.rs` - Replace 12 expect calls in host functions
+- `empath-wasm/src/error.rs` - Add Internal variant
+
+**Benefits**:
+- No production panics
+- Better error messages
+- Testable error cases
+- Graceful degradation
+
+---
+
+### 🟡 NEW-WASM-10 Fix Context Ownership Pattern (Replace mem::take)
+**Priority**: High (Safety)
+**Effort**: 1 day
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, safety, ownership
+**Added**: 2025-11-26 (Rust Expert Review)
+
+**Problem**: `std::mem::take(context)` temporarily leaves caller's context in invalid state. If execution fails between take and restoration, caller is left with corrupted state.
+
+**Current Code** (`loader.rs:213`):
+```rust
+let context_arc = Arc::new(Mutex::new(std::mem::take(context)));
+// If error occurs here, caller's context is DEFAULT/EMPTY!
+// ... execute callback ...
+*context = result_context;  // Restore (but may never reach here on error)
+```
+
+**Memory Safety Issue**: Caller's context is temporarily in undefined state.
+
+**Solution**: Clone instead of take, merge changes back.
+
+**Recommended Implementation**:
+```rust
+pub fn execute_callback(&self, callback_name: &str, context: &mut Context) -> Result<i32> {
+    // SAFER: Clone instead of take
+    let context_arc = Arc::new(Mutex::new(context.clone()));
+
+    // ... execution ...
+
+    drop(store);
+
+    // Extract and merge back only changed fields
+    if let Ok(mutex) = Arc::try_unwrap(context_arc) {
+        if let Ok(modified_ctx) = mutex.into_inner() {
+            // Merge back only transaction/session changes
+            context.transaction = modified_ctx.transaction;
+            context.session = modified_ctx.session;
+        }
+    }
+
+    Ok(return_code)
+}
+```
+
+**Alternative**: Add helper method to `Context`:
+```rust
+impl Context {
+    pub fn with_shared_access<F, R>(&mut self, f: F) -> R
+    where F: FnOnce(Arc<Mutex<Self>>) -> R
+    {
+        let clone = self.clone();
+        let arc = Arc::new(Mutex::new(clone));
+        let result = f(Arc::clone(&arc));
+
+        if let Ok(mutex) = Arc::try_unwrap(arc) {
+            if let Ok(modified) = mutex.into_inner() {
+                self.merge_changes_from(modified);
+            }
+        }
+        result
+    }
+}
+```
+
+**Success Criteria**:
+- [ ] Replace `std::mem::take()` with clone pattern
+- [ ] Add `Context::merge_changes_from()` helper
+- [ ] Test: Error during execution doesn't corrupt caller's context
+- [ ] All existing tests still pass
+- [ ] No performance regression (clone is acceptable)
+
+**Files to Modify**:
+- `empath-wasm/src/loader.rs` - Replace mem::take pattern
+- `empath-common/src/context.rs` - Add merge helper (optional)
+
+---
+
+### 🟢 NEW-WASM-11 Optimize Context Copying with Arc/CoW
+**Priority**: Medium (Performance)
+**Effort**: 1-2 days
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, performance, optimization
+**Added**: 2025-11-26 (Rust Expert Review)
+
+**Problem**: Context is cloned/serialized on every WASM callback, including large message data (up to 10MB).
+
+**Performance Impact** (`loader.rs:34-49`):
+```rust
+fn context_to_wit(ctx: &Context) -> wit::Context {
+    wit::Context {
+        sender: Some(ctx.sender()),           // String clone
+        recipients: ctx.recipients(),          // Vec<String> clone
+        data: ctx.data.as_ref().map(|arc| arc.to_vec()),  // 10MB clone!
+        transaction: ctx.transaction.iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect(),                        // HashMap clone
+    }
+}
+```
+
+**Cost**: 5 validation callbacks × 10MB message = 50MB copied per message
+
+**Solution**: Use copy-on-write (Arc) for large/immutable fields.
+
+**Implementation**:
+```rust
+// In empath-common/src/context.rs
+pub struct Context {
+    data: Option<Arc<[u8]>>,           // Already Arc (good!)
+    envelope: Arc<Envelope>,            // Should be Arc
+    transaction: Arc<RwLock<HashMap>>,  // Mutable via interior mutability
+}
+```
+
+**WIT Interface** (Component Model future):
+```wit
+// Use resource handles instead of copying
+resource context {
+    get-sender: func() -> option<string>;
+    get-data: func() -> option<list<u8>>;  // Lazy access, no copy
+}
+```
+
+**Success Criteria**:
+- [ ] Envelope wrapped in Arc (cheap clone)
+- [ ] Transaction uses Arc<RwLock<>> for shared mutability
+- [ ] Benchmark: 10-50x performance improvement for large messages
+- [ ] All tests pass unchanged
+- [ ] No behavior changes (only performance)
+
+**Files to Modify**:
+- `empath-common/src/context.rs` - Add Arc wrappers
+- `empath-wasm/src/loader.rs` - Adjust serialization
+- Benchmarks to verify improvement
+
+---
+
+### 🟢 NEW-WASM-12 Validate SMTP Error Codes in Rejections
+**Priority**: Medium (Correctness)
+**Effort**: 0.5 days
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, smtp, validation
+**Added**: 2025-11-26 (Code Review)
+
+**Problem**: WASM modules can return invalid SMTP codes (e.g., 999, 200, -1). No validation in WIT interface or host.
+
+**Current Code** (`example.rs:58-62`):
+```rust
+ValidationResult::Reject(Rejection {
+    code: 550,  // Nothing validates this is valid!
+    message: "...".to_string(),
+})
+```
+
+**Issue**: Malicious/buggy module could return:
+- `code: 999` (not a valid SMTP code)
+- `code: 200` (success code used as rejection)
+- `code: 0` (meaningless)
+
+**Solution**: Validate rejection codes in host before returning to SMTP layer.
+
+**Implementation**:
+```rust
+// In validation_result_to_code
+fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult) -> i32 {
+    match result {
+        wit::ValidationResult::Accept => 0,
+        wit::ValidationResult::Reject(rejection) => {
+            // Validate SMTP code
+            let code = rejection.code;
+            if !(400..=599).contains(&code) {
+                internal!(
+                    level = WARN,
+                    "WASM module returned invalid SMTP code {code} - using 550"
+                );
+                return 550;  // Generic permanent failure
+            }
+            rejection.code.cast_signed()
+        }
+    }
+}
+```
+
+**Success Criteria**:
+- [ ] Rejection codes validated (400-599 range)
+- [ ] Invalid codes logged and replaced with 550
+- [ ] Tests for invalid code handling
+- [ ] Documentation: Valid SMTP code ranges
+
+**Files to Modify**:
+- `empath-wasm/src/loader.rs` - Add validation in `validation_result_to_code`
+
+---
+
+### 🟢 NEW-WASM-13 Add Comprehensive Test Coverage
+**Priority**: Medium (Quality)
+**Effort**: 1-2 days
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, testing
+**Added**: 2025-11-26 (Code Review)
+
+**Problem**: WASM tests are minimal compared to Python module tests.
+
+**Current Coverage**:
+- ❌ Only negative test (nonexistent module)
+- ❌ No event callback execution tests
+- ❌ No context modification tests
+- ❌ No error handling tests
+
+**Python Coverage** (reference):
+- ✅ Positive and negative tests
+- ✅ Context modification tests
+- ✅ Rejection tests
+- ✅ Default behavior tests
+
+**Solution**: Add comprehensive test suite matching Python module coverage.
+
+**Test Suite**:
+```rust
+#[test]
+fn test_validation_callback_accept() { /* ... */ }
+
+#[test]
+fn test_validation_callback_reject() { /* ... */ }
+
+#[test]
+fn test_event_callback_execution() { /* NEW */ }
+
+#[test]
+fn test_event_callback_error_handling() { /* NEW */ }
+
+#[test]
+fn test_context_transaction_modifications() { /* NEW */ }
+
+#[test]
+fn test_context_session_modifications() { /* NEW */ }
+
+#[test]
+fn test_memory_limit_enforcement() { /* NEW */ }
+
+#[test]
+fn test_timeout_enforcement() { /* Requires NEW-WASM-07 */ }
+
+#[test]
+fn test_invalid_smtp_code_handling() { /* NEW */ }
+
+#[test]
+fn test_poisoned_mutex_recovery() { /* NEW */ }
+```
+
+**Success Criteria**:
+- [ ] 10+ new tests matching Python coverage
+- [ ] Event callback execution tests
+- [ ] Context modification tests (session + transaction)
+- [ ] Error handling tests (all error paths)
+- [ ] Resource limit tests (memory, timeout)
+- [ ] All tests pass in CI
+
+**Files to Create/Modify**:
+- `empath-wasm/tests/validation.rs` - New file
+- `empath-wasm/tests/events.rs` - New file
+- `empath-wasm/tests/context.rs` - New file
+- `empath-wasm/tests/limits.rs` - New file
+
+---
+
+### 🟢 NEW-WASM-14 Graceful Poisoned Mutex Recovery
+**Priority**: Medium (Reliability)
+**Effort**: 0.5 days
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, safety, concurrency
+**Added**: 2025-11-26 (Rust Expert Review)
+
+**Problem**: Host functions use `.expect()` on mutex locks. If a host function panics, it poisons the mutex and all future callbacks fail.
+
+**Current Code** (`host.rs:163-199`):
+```rust
+#[allow(clippy::expect_used, reason = "Host functions allowed to panic on poisoned mutex")]
+impl Host for WasmStore {
+    fn session_set(&mut self, key: String, value: String) {
+        let mut ctx = self.context.lock().expect("Failed to lock context");
+        // If this panics, mutex is poisoned forever!
+        ctx.session.insert(Cow::Owned(key), value);
+    }
+}
+```
+
+**Issue**: Panic in host function → poisoned mutex → all future callbacks fail
+
+**Solution**: Gracefully handle poisoned mutexes instead of panicking.
+
+**Implementation**:
+```rust
+impl Host for WasmStore {
+    fn session_set(&mut self, key: String, value: String) {
+        match self.context.lock() {
+            Ok(mut ctx) => {
+                ctx.session.insert(Cow::Owned(key), value);
+            }
+            Err(e) => {
+                internal!(level = ERROR, "Poisoned mutex in session_set: {e}");
+                // Don't panic - validation will fail but won't crash server
+            }
+        }
+    }
+
+    fn session_get(&mut self, key: String) -> Option<String> {
+        self.context.lock().ok()?.session.get(key.as_str()).cloned()
+    }
+}
+```
+
+**Success Criteria**:
+- [ ] All host functions handle poisoned mutexes gracefully
+- [ ] No panics in host function error paths
+- [ ] Tests: Poisoned mutex doesn't crash execution
+- [ ] Errors logged but execution continues
+
+**Files to Modify**:
+- `empath-wasm/src/host.rs` - Replace all `.expect()` with match/`ok()?`
+
+---
+
+### 🔵 NEW-WASM-15 Event Registration Macro (Reduce Duplication)
+**Priority**: Low (Maintainability)
+**Effort**: 1-2 days
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, dx, maintainability
+**Added**: 2025-11-26 (Architecture Review)
+
+**Problem**: Adding new events requires four-place edits across multiple files.
+
+**Current Process**:
+1. Add to `Ev` enum (`empath-ffi/src/modules/mod.rs:28-46`)
+2. Add to WIT interface (`empath-wasm/wit/empath.wit:64-93`)
+3. Add to event mapping (`empath-ffi/src/modules/wasm.rs:110-126`)
+4. Add callback handler (`empath-wasm/src/loader.rs:108-145`)
+
+**Issue**: Easy to miss a location, causes inconsistencies
+
+**Solution**: Macro-based event registration to centralize definitions.
+
+**Proposed Design**:
+```rust
+// In empath-common/src/events.rs
+define_events! {
+    ConnectionOpened => "on_connection_opened",
+    ConnectionClosed => "on_connection_closed",
+    DeliveryAttempt => "on_delivery_attempt",
+    // ... all events in one place
+}
+
+// Auto-generates:
+// - Ev enum
+// - Event name mapping function
+// - WIT interface stub
+```
+
+**Success Criteria**:
+- [ ] Single-place event definition
+- [ ] Auto-generated Ev enum
+- [ ] Auto-generated callback name mapping
+- [ ] WIT stub generation (optional)
+- [ ] Compile-time validation
+- [ ] Documentation of macro usage
+
+**Benefits**:
+- ✅ Single place to add events
+- ✅ Compile-time consistency checks
+- ✅ Easier to maintain
+
+**Trade-offs**:
+- ⚠️ Increased macro complexity
+- ⚠️ Harder to understand for newcomers
+
+**Files to Create/Modify**:
+- `empath-common/src/events.rs` - New macro module
+- `empath-ffi/src/modules/mod.rs` - Use macro
+- `empath-ffi/src/modules/wasm.rs` - Use generated mapping
+
+---
+
+### 🔵 NEW-WASM-16 Split WIT Context (Read-Only vs Mutable)
+**Priority**: Low (API Design)
+**Effort**: 1-2 days
+**Dependencies**: NEW-WASM-01 (completed), ideally NEW-WASM-04 (Component Model)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, api-design, wit
+**Added**: 2025-11-26 (Architecture Review)
+
+**Problem**: WIT `context` record exposes all fields to all callbacks, violating Interface Segregation Principle.
+
+**Current Design** (`empath.wit:10-27`):
+```wit
+record context {
+    // Delivery callbacks don't need these
+    sender: option<string>,
+    recipients: list<string>,
+
+    // SMTP callbacks don't need this
+    tracking-id: option<string>,
+}
+```
+
+**Issue**: Modules can access/modify fields they shouldn't.
+
+**Solution**: Split into read-only and mutable contexts, or event-specific views.
+
+**Proposed Design**:
+```wit
+// Option 1: Read-only vs Mutable
+record read-only-context {
+    extended: bool,
+    id: string,
+    sender: option<string>,
+    tracking-id: option<string>,
+}
+
+record mutable-context {
+    transaction: list<tuple<string, string>>,
+}
+
+// Option 2: Event-specific contexts
+record smtp-context {
+    sender: option<string>,
+    recipients: list<string>,
+}
+
+record delivery-context {
+    domain: string,
+    server: string,
+}
+
+validate-connect: func(ctx: smtp-context) -> validation-result;
+on-delivery-attempt: func(ctx: delivery-context);
+```
+
+**Success Criteria**:
+- [ ] Clear separation of read-only vs mutable fields
+- [ ] Event callbacks receive only relevant context
+- [ ] Backward compatibility (via Component Model versioning)
+- [ ] Documentation: Context field usage by callback type
+
+**Files to Modify**:
+- `empath-wasm/wit/empath.wit` - Split context definitions
+- `empath-wasm/src/loader.rs` - Adjust serialization
+
+**Note**: Consider doing this as part of NEW-WASM-04 (Component Model migration).
+
+---
+
+### 🔵 NEW-WASM-17 Add Module Error Metrics
+**Priority**: Low (Observability)
+**Effort**: 1 hour
+**Dependencies**: NEW-WASM-01 (completed)
+**Owner**: Unassigned
+**Status**: Ready to start
+**Tags**: wasm, observability, metrics
+**Added**: 2025-11-26 (Architecture Review)
+
+**Problem**: Module errors are logged but not tracked in metrics. Operations teams can't detect module failures in production.
+
+**Current Code** (`wasm.rs:131-137`):
+```rust
+Err(e) => {
+    tracing::error!("WASM module {} error: {e}", self.path.display());
+    0  // Logged but no metrics!
+}
+```
+
+**Solution**: Add module error counters to observability system.
+
+**Implementation**:
+```rust
+Err(e) => {
+    tracing::error!("WASM module {} error: {e}", self.path.display());
+
+    // Add metrics
+    empath_metrics::increment_counter(
+        "module_errors_total",
+        &[("module_type", "wasm"), ("module_path", self.path().display())]
+    );
+
+    0
+}
+```
+
+**Metrics to Add**:
+- `module_errors_total{module_type, module_path}` - Total errors
+- `module_execution_duration_seconds{module_type, callback}` - Latency
+- `module_memory_bytes{module_path}` - Memory usage
+- `module_timeout_total{module_path}` - Timeout count
+
+**Success Criteria**:
+- [ ] Error counter incremented on module failures
+- [ ] Execution duration histogram
+- [ ] Memory usage gauge
+- [ ] Timeout counter
+- [ ] Grafana dashboard update: "Module Health"
+
+**Files to Modify**:
+- `empath-ffi/src/modules/wasm.rs` - Add metrics
+- `empath-metrics/src/modules.rs` - New module metrics module
+- Grafana dashboard JSON
 
 ---
 
