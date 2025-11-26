@@ -5,6 +5,8 @@
 //! This is separate from the business context (validation, metadata, etc.)
 //! to enable clean separation of concerns.
 
+use std::sync::Arc;
+
 use empath_common::{context::Context, envelope::Envelope};
 use serde::{Deserialize, Serialize};
 
@@ -43,7 +45,7 @@ pub struct SessionState {
     /// - Recipient addresses (RCPT TO)
     /// - MAIL FROM parameters (SIZE, BODY, etc.)
     /// - RCPT TO parameters (NOTIFY, ORCPT, etc.)
-    pub envelope: Envelope,
+    pub envelope: Arc<Envelope>,
 }
 
 impl SessionState {
@@ -53,7 +55,7 @@ impl SessionState {
         Self {
             id: String::new(),
             extended: false,
-            envelope: Envelope::default(),
+            envelope: Arc::new(Envelope::default()),
         }
     }
 
@@ -63,7 +65,7 @@ impl SessionState {
         Self {
             id,
             extended,
-            envelope: Envelope::default(),
+            envelope: Arc::new(Envelope::default()),
         }
     }
 
@@ -73,7 +75,7 @@ impl SessionState {
     /// transaction-specific metadata, but keeps the client ID and
     /// ESMTP mode flag. Used when handling RSET command.
     pub fn reset_transaction(&mut self) {
-        self.envelope = Envelope::default();
+        self.envelope = Arc::new(Envelope::default());
     }
 
     /// Returns a reference to the client identifier
@@ -93,14 +95,14 @@ impl SessionState {
     /// Returns a reference to the mail envelope
     #[inline]
     #[must_use]
-    pub const fn envelope(&self) -> &Envelope {
+    pub fn envelope(&self) -> &Envelope {
         &self.envelope
     }
 
     /// Returns a mutable reference to the mail envelope
     #[inline]
-    pub const fn envelope_mut(&mut self) -> &mut Envelope {
-        &mut self.envelope
+    pub fn envelope_mut(&mut self) -> &mut Envelope {
+        Arc::make_mut(&mut self.envelope)
     }
 
     /// Extracts session state from a business context
@@ -125,7 +127,7 @@ impl SessionState {
     pub fn sync_to_context(&self, ctx: &mut Context) {
         ctx.id.clone_from(&self.id);
         ctx.extended = self.extended;
-        ctx.envelope.clone_from(&self.envelope);
+        ctx.envelope = Arc::clone(&self.envelope);
     }
 }
 
@@ -184,7 +186,8 @@ mod tests {
         };
 
         let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
-        *business_ctx.envelope.sender_mut() = Some(Address::from(sender_mailbox));
+        *Arc::make_mut(&mut business_ctx.envelope).sender_mut() =
+            Some(Address::from(sender_mailbox));
 
         let session_state = SessionState::from_context(&business_ctx);
 
@@ -217,7 +220,8 @@ mod tests {
         };
 
         let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
-        *original_ctx.envelope.sender_mut() = Some(Address::from(sender_mailbox));
+        *Arc::make_mut(&mut original_ctx.envelope).sender_mut() =
+            Some(Address::from(sender_mailbox));
 
         // Convert to session state
         let session_state = SessionState::from_context(&original_ctx);

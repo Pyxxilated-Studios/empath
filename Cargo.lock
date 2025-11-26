@@ -912,7 +912,6 @@ dependencies = [
  "empath-common",
  "empath-control",
  "empath-delivery",
- "empath-examples",
  "empath-ffi",
  "empath-health",
  "empath-metrics",
@@ -998,6 +997,10 @@ dependencies = [
 [[package]]
 name = "empath-examples"
 version = "0.1.0"
+dependencies = [
+ "empath",
+ "empath-ffi",
+]
 
 [[package]]
 name = "empath-ffi"

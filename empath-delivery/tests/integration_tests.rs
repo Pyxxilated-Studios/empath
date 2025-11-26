@@ -44,7 +44,7 @@ fn create_test_context(from: &str, to: &str) -> Context {
     }
 
     Context {
-        envelope,
+        envelope: Arc::new(envelope),
         id: "test-session".to_string(),
         data: Some(Arc::from(b"Test message content".as_slice())),
         ..Default::default()
@@ -171,7 +171,7 @@ async fn test_delivery_queue_domain_grouping() {
     let mut context = create_test_context("sender@example.org", "user1@domain1.com");
 
     // Add more recipients to different domains
-    if let Some(recipients) = context.envelope.recipients_mut() {
+    if let Some(recipients) = Arc::make_mut(&mut context.envelope).recipients_mut() {
         if let Ok(mailbox2) =
             empath_common::address_parser::parse_forward_path("<user2@domain2.com>")
         {

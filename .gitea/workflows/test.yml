@@ -63,6 +63,10 @@ jobs:
 
       - uses: rui314/setup-mold@v1
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:

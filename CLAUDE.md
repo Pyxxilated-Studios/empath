@@ -257,6 +257,7 @@ smtp_controller: (
             type: "Python",
             path: "./modules/spam_filter.py",
             timeout_secs: 5,  // Optional, default 5s
+            failure_mode: "closed",  // Optional: "open" or "closed"
         ),
         // C module
         (
@@ -264,9 +265,66 @@ smtp_controller: (
             name: "./modules/libvalidator.so",
             arguments: ["--strict"],
         ),
+        // WASM module
+        (
+            type: "Wasm",
+            path: "./modules/validator.wasm",
+            timeout_secs: 5,  // Optional, default 5s
+            max_memory_bytes: 10485760,  // Optional, default 10 MB
+            failure_mode: "closed",  // Optional: "open" or "closed"
+        ),
     ],
 )
 ```
+
+**Module Failure Modes:**
+
+Modules can be configured with a `failure_mode` that determines behavior when the module encounters an error (crash, timeout, panic):
+
+- **`"open"`** (fail-open): Allow operations to proceed despite module errors
+  - Default for: Event callbacks (observability shouldn't block traffic)
+  - Use case: Metrics collection, audit logging, non-critical validation
+  - Risk: Module failures won't be detected immediately
+
+- **`"closed"`** (fail-closed): Reject operations when module errors occur
+  - Default for: Validation callbacks (security-critical)
+  - Use case: Spam filters, malware detection, policy enforcement
+  - Risk: Module bugs can cause false positives (legitimate mail rejected)
+
+**Security Implications:**
+
+- **Validation modules should use fail-closed**: A crash in your spam filter shouldn't accept all spam
+- **Event modules should use fail-open**: A crash in your metrics collector shouldn't block mail
+- **Default is intelligent**: Validation callbacks fail-closed, event callbacks fail-open
+- **Override when needed**: Explicitly set `failure_mode` to override the default
+
+**Example Scenarios:**
+
+```ron
+// Spam filter - fail closed (security-critical)
+(
+    type: "Wasm",
+    path: "./modules/spam_filter.wasm",
+    failure_mode: "closed",  // Reject on module error
+)
+
+// Metrics collector - fail open (observability, non-critical)
+(
+    type: "Python",
+    path: "./modules/metrics.py",
+    failure_mode: "open",  // Allow on module error
+)
+
+// No explicit failure_mode - uses intelligent default
+(
+    type: "Wasm",
+    path: "./modules/validator.wasm",
+    // Defaults to "closed" for validation callbacks
+    // Defaults to "open" for event callbacks
+)
+```
+
+Implementation: `empath-ffi/src/modules/mod.rs` (FailureMode enum), `empath-ffi/src/modules/wasm.rs:119-167` (error handling)
 
 **Context Persistence:**
 The `Context` struct is persisted to spool to enable modules to track state across the message lifecycle (SMTP reception → delivery). Key behaviors:

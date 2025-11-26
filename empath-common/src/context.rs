@@ -139,7 +139,7 @@ impl Default for DeliveryContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Context {
     pub extended: bool,
-    pub envelope: Envelope,
+    pub envelope: Arc<Envelope>,
     pub id: String,
     pub data: Option<Arc<[u8]>>,
     pub response: Option<(Status, Cow<'static, str>)>,
@@ -175,7 +175,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             extended: false,
-            envelope: Envelope::default(),
+            envelope: Arc::new(Envelope::default()),
             id: String::new(),
             data: None,
             response: None,

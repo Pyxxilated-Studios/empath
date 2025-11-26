@@ -348,7 +348,7 @@ fn bench_context_operations(c: &mut Criterion) {
 
             let ctx = Context {
                 id: "example.com".to_string(),
-                envelope,
+                envelope: Arc::new(envelope),
                 data: Some(Arc::from(
                     b"Subject: Test\r\n\r\nTest message body" as &[u8],
                 )),

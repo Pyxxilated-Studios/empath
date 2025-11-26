@@ -4,7 +4,7 @@
 
 use std::{path::PathBuf, sync::OnceLock, time::Duration};
 
-use empath_common::context::Context;
+use empath_common::{context::Context, internal};
 use empath_python::PythonModule;
 use serde::Deserialize;
 
@@ -53,9 +53,17 @@ impl Python {
     pub fn emit(&self, event: Event, context: &mut Context) -> i32 {
         // Get the loaded module
         let Some(module) = self.module.get() else {
-            tracing::error!("Python module not initialized: {}", self.path.display());
+            internal!(
+                level = ERROR,
+                "Python module not initialized: {}",
+                self.path.display()
+            );
             return 0; // Fail open
         };
+
+        // Determine log severity based on event type
+        // Validation = ERROR (security-critical), Events = WARN (observability)
+        let is_validation = matches!(event, Event::Validate(_));
 
         // Map events to Python callback names
         let callback_name = match event {
@@ -79,11 +87,44 @@ impl Python {
             Ok(true) => 0,  // Accept
             Ok(false) => 1, // Reject
             Err(e) => {
-                tracing::error!(
+                internal!(
+                    level = ERROR,
                     "Python module {} error in {callback_name}: {e}",
                     self.path.display()
                 );
-                0 // Allow on error (fail open)
+
+                // If the module set a rejection before crashing, honor it
+                // This handles the case where a module validates, calls reject(), and then errors
+                if let Some((status, message)) = &context.response {
+                    let code = u32::from(*status);
+                    if code >= 400 {
+                        internal!(
+                            level = WARN,
+                            "Python module {} crashed after rejecting with {}: {} - honoring rejection",
+                            self.path.display(),
+                            code,
+                            message
+                        );
+                        return code.try_into().unwrap_or(550);
+                    }
+                }
+
+                // No prior rejection - return temporary failure for transparency
+                // Log at ERROR for validation (security-critical), WARN for events (observability)
+                if is_validation {
+                    internal!(
+                        level = ERROR,
+                        "Python validation module {} failed - returning 451",
+                        self.path.display()
+                    );
+                } else {
+                    internal!(
+                        level = WARN,
+                        "Python event module {} failed - returning 451",
+                        self.path.display()
+                    );
+                }
+                451 // Temporary failure - be transparent about module errors
             }
         }
     }

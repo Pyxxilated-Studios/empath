@@ -164,7 +164,7 @@ mod tests {
 
     fn create_test_context(data: &str) -> Context {
         Context {
-            envelope: Envelope::default(),
+            envelope: Arc::new(Envelope::default()),
             data: Some(Arc::from(data.as_bytes())),
             id: "test.example.com".to_string(),
             extended: false,

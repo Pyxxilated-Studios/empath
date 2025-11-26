@@ -7,8 +7,9 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-# No runtime dependencies - this crate exists only to trigger build.rs
 [dependencies]
+empath-ffi.workspace = true
+empath.workspace = true
 
 [build-dependencies]
 # No build dependencies - just runs cargo commands

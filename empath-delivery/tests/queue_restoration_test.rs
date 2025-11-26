@@ -77,7 +77,7 @@ fn create_test_context_with_delivery_state(
     };
 
     Context {
-        envelope,
+        envelope: Arc::new(envelope),
         id: "test-session".to_string(),
         data: Some(Arc::from(
             b"Test message content for queue restoration".as_slice(),

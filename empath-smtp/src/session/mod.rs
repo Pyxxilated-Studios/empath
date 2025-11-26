@@ -548,14 +548,12 @@ mod test {
         });
         let sender_mailbox =
             empath_common::address_parser::parse_forward_path("<test@example.com>").unwrap();
-        context
-            .envelope
+        Arc::make_mut(&mut context.envelope)
             .sender_mut()
             .replace(Address::from(sender_mailbox));
         let recipient_mailbox =
             empath_common::address_parser::parse_forward_path("<recipient@example.com>").unwrap();
-        context
-            .envelope
+        Arc::make_mut(&mut context.envelope)
             .recipients_mut()
             .replace(AddressList::from(vec![Address::from(recipient_mailbox)]));
 

@@ -199,7 +199,7 @@ mod tests {
         use std::sync::Arc;
 
         Context {
-            envelope: Envelope::default(),
+            envelope: Arc::new(Envelope::default()),
             data: None,
             id: "test.example.com".to_string(),
             extended: false,
@@ -215,12 +215,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_load_nonexistent_module() {
         let result = PythonModule::load("/nonexistent/module.py");
         assert!(result.is_err());
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_execute_simple_callback() {
         use std::io::Write;
 
@@ -242,6 +244,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_execute_reject_callback() {
         use std::io::Write;
 
@@ -269,6 +272,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_execute_context_modification() {
         use std::io::Write;
 
@@ -295,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_callback_not_found_allows() {
         use std::io::Write;
 

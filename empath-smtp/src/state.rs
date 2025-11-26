@@ -1,4 +1,5 @@
 use core::fmt::{self, Display, Formatter};
+use std::sync::Arc;
 
 use empath_common::{address::Address, context::Context};
 use serde::{Deserialize, Serialize};
@@ -226,9 +227,12 @@ impl State {
                 | Self::PostDot(_),
                 Command::MailFrom(sender, params),
             ) => {
-                session_state.envelope.sender_mut().clone_from(&sender);
+                Arc::make_mut(&mut session_state.envelope)
+                    .sender_mut()
+                    .clone_from(&sender);
                 // Store all MAIL FROM parameters in envelope for module access
-                *session_state.envelope.mail_params_mut() = Some(params.clone().into());
+                *Arc::make_mut(&mut session_state.envelope).mail_params_mut() =
+                    Some(params.clone().into());
                 Self::MailFrom(MailFrom { sender, params })
             }
 
@@ -241,10 +245,10 @@ impl State {
 
             // Recipient collection (can add multiple recipients)
             (Self::MailFrom(state), Command::RcptTo(recipients)) => {
-                if let Some(rcpts) = session_state.envelope.recipients_mut() {
+                if let Some(rcpts) = Arc::make_mut(&mut session_state.envelope).recipients_mut() {
                     rcpts.extend_from_slice(&recipients[..]);
                 } else {
-                    *session_state.envelope.recipients_mut() = Some(recipients);
+                    *Arc::make_mut(&mut session_state.envelope).recipients_mut() = Some(recipients);
                 }
                 Self::RcptTo(RcptTo {
                     sender: state.sender,
@@ -252,10 +256,10 @@ impl State {
                 })
             }
             (Self::RcptTo(state), Command::RcptTo(recipients)) => {
-                if let Some(rcpts) = session_state.envelope.recipients_mut() {
+                if let Some(rcpts) = Arc::make_mut(&mut session_state.envelope).recipients_mut() {
                     rcpts.extend_from_slice(&recipients[..]);
                 } else {
-                    *session_state.envelope.recipients_mut() = Some(recipients);
+                    *Arc::make_mut(&mut session_state.envelope).recipients_mut() = Some(recipients);
                 }
                 Self::RcptTo(state) // Stay in RcptTo, accumulating recipients
             }
@@ -269,9 +273,9 @@ impl State {
             // RSET clears transaction state and returns to ready state (EHLO or HELO)
             (_, Command::Rset) => {
                 // Clear transaction state (envelope only, no business logic metadata)
-                *session_state.envelope.sender_mut() = None;
-                *session_state.envelope.recipients_mut() = None;
-                *session_state.envelope.mail_params_mut() = None;
+                *Arc::make_mut(&mut session_state.envelope).sender_mut() = None;
+                *Arc::make_mut(&mut session_state.envelope).recipients_mut() = None;
+                *Arc::make_mut(&mut session_state.envelope).mail_params_mut() = None;
                 if session_state.extended {
                     Self::Ehlo(Ehlo {
                         id: session_state.id.clone(),
@@ -495,7 +499,7 @@ mod test {
         // Start with MailFrom state
         let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
         let sender_addr = Address::from(sender_mailbox);
-        *ctx.envelope.sender_mut() = Some(sender_addr.clone());
+        *Arc::make_mut(&mut ctx.envelope).sender_mut() = Some(sender_addr.clone());
 
         let state = State::MailFrom(MailFrom {
             sender: Some(sender_addr),
@@ -561,7 +565,7 @@ mod test {
         // Set up a mail transaction
         let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
         let sender_addr = Address::from(sender_mailbox);
-        *ctx.envelope.sender_mut() = Some(sender_addr.clone());
+        *Arc::make_mut(&mut ctx.envelope).sender_mut() = Some(sender_addr.clone());
 
         let state = State::MailFrom(MailFrom {
             sender: Some(sender_addr),

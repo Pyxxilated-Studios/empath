@@ -51,4 +51,8 @@ pub enum WasmError {
     /// WASI context build error
     #[error("WASI build error: {0}")]
     WasiBuild(String),
+
+    /// Engine creation failed
+    #[error("Failed to create Wasmtime engine: {0}")]
+    EngineCreation(String),
 }

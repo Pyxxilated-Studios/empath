@@ -39,7 +39,7 @@ fn create_test_message(data_size: usize) -> Context {
     );
 
     Context {
-        envelope,
+        envelope: Arc::new(envelope),
         data: Some(Arc::from(data.into_boxed_slice())),
         extended: true,
         session,

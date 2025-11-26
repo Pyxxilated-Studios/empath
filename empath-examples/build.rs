@@ -44,10 +44,6 @@ fn main() {
         let mut cmd = Command::new("cargo");
         cmd.args(["run", "--package", "xtask"]);
 
-        if profile != "release" {
-            cmd.arg("--release=false");
-        }
-
         cmd.current_dir(&workspace_root) // Run from workspace root
             .arg("--")
             .arg("build-all")

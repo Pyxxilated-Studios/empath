@@ -1,7 +1,7 @@
 #![feature(bstr, slice_pattern, result_option_map_or_default)]
 
 use core::slice::SlicePattern;
-use std::{borrow::Cow, ffi::CStr};
+use std::{borrow::Cow, ffi::CStr, sync::Arc};
 
 use empath_common::{address::Address, context::Context, status::Status};
 
@@ -53,7 +53,7 @@ pub unsafe extern "C" fn em_context_set_sender(
     sender: *const libc::c_char,
 ) -> bool {
     if sender.is_null() {
-        *validate_context.envelope.sender_mut() = None;
+        *Arc::make_mut(&mut validate_context.envelope).sender_mut() = None;
         return true;
     }
 
@@ -62,7 +62,8 @@ pub unsafe extern "C" fn em_context_set_sender(
     match sender.to_str() {
         Ok(sender) => match empath_common::address_parser::parse_forward_path(sender) {
             Ok(mailbox) => {
-                *validate_context.envelope.sender_mut() = Some(Address::from(mailbox));
+                *Arc::make_mut(&mut validate_context.envelope).sender_mut() =
+                    Some(Address::from(mailbox));
                 true
             }
             Err(_err) => false,
@@ -449,6 +450,7 @@ mod test {
         borrow::Cow,
         ffi::{CStr, CString},
         ptr::null,
+        sync::Arc,
     };
 
     use empath_common::{
@@ -494,7 +496,7 @@ mod test {
             empath_common::address_parser::parse_forward_path("<test@gmail.com>").unwrap();
         let recipient2 =
             empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
-        *validate_context.envelope.recipients_mut() = Some(AddressList(vec![
+        *Arc::make_mut(&mut validate_context.envelope).recipients_mut() = Some(AddressList(vec![
             Address::from(recipient1),
             Address::from(recipient2),
         ]));
@@ -525,7 +527,7 @@ mod test {
     fn test_set_sender() {
         let mut validate_context = Context {
             id: String::from("Testing"),
-            envelope: Envelope::default(),
+            envelope: Arc::new(Envelope::default()),
             ..Default::default()
         };
 
@@ -551,7 +553,7 @@ mod test {
 
         let mut validate_context = Context {
             id: String::from("Testing"),
-            envelope,
+            envelope: Arc::new(envelope),
             ..Default::default()
         };
 
@@ -570,7 +572,7 @@ mod test {
 
         let mut validate_context = Context {
             id: String::from("Testing"),
-            envelope,
+            envelope: Arc::new(envelope),
             ..Default::default()
         };
 

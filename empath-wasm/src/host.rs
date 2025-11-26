@@ -163,6 +163,23 @@ impl ResourceLimiter for WasmStore {
 /// Implement the Host trait from generated WIT bindings
 ///
 /// This provides the host functions that WASM component modules can import.
+///
+/// # Panics
+/// All host functions in this implementation intentionally panic if the context mutex is
+/// poisoned. A poisoned mutex indicates that a thread panicked while holding the lock,
+/// meaning the context is in an unknown/corrupted state. The panic behavior is intentional
+/// and follows fail-fast principles:
+///
+/// - **Lines 177, 182, 187, 192, 197, 202**: Each `.lock().expect()` call will panic if
+///   the mutex is poisoned.
+/// - **Rationale**: The WIT interface does not allow host functions to return `Result`,
+///   so panicking is the only way to signal unrecoverable errors.
+/// - **Safety**: A poisoned context would lead to undefined behavior if we continued.
+///   Panicking ensures we don't process messages with corrupted state.
+/// - **Recovery**: The panic is caught at the WASM callback execution level and handled
+///   by the failure mode configuration (fail-open or fail-closed).
+///
+/// This is documented and expected behavior, not a bug.
 #[allow(
     clippy::expect_used,
     reason = "Host functions allowed to panic on poisoned mutex"

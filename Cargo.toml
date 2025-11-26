@@ -16,6 +16,20 @@ members = [
     "empath-wasm",
     "xtask",
 ]
+default-members = [
+    "empath",
+    "empath-common",
+    "empath-control",
+    "empath-delivery",
+    "empath-ffi",
+    "empath-health",
+    "empath-metrics",
+    "empath-python",
+    "empath-smtp",
+    "empath-spool",
+    "empath-tracing",
+    "empath-wasm",
+]
 
 [workspace.package]
 edition = "2024"
@@ -64,6 +78,7 @@ chrono = "0.4"
 clap = { version = "4", default-features = false, features = ["derive", "std"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 dashmap = "6"
+empath = { path = "empath", version = "*" }
 empath-common = { path = "empath-common", version = "*" }
 empath-control = { path = "empath-control", version = "*" }
 empath-delivery = { path = "empath-delivery", version = "*" }

@@ -101,6 +101,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_call_callback_success() {
         pyo3::prepare_freethreaded_python();
 
@@ -126,6 +127,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_call_callback_not_found() {
         pyo3::prepare_freethreaded_python();
 
@@ -141,6 +143,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_call_callback_exception() {
         pyo3::prepare_freethreaded_python();
 

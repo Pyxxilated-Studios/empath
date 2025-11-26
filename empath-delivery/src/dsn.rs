@@ -58,7 +58,7 @@ impl Default for DsnConfig {
 /// - Messages from null sender (MAIL FROM:<>) - prevents bounce loops
 /// - System errors (internal errors that don't indicate delivery failure)
 #[must_use]
-pub const fn should_generate_dsn(
+pub fn should_generate_dsn(
     original_context: &Context,
     delivery_info: &DeliveryInfo,
     error: &DeliveryError,
@@ -182,7 +182,7 @@ pub fn generate_dsn(
     // Create a new Context for the DSN message
     let mut dsn_context = Context {
         extended: false,
-        envelope: Envelope::default(),
+        envelope: Arc::new(Envelope::default()),
         id: ulid::Ulid::new().to_string(),
         data: Some(Arc::from(dsn_body.as_bytes())),
         response: None,
@@ -212,10 +212,12 @@ pub fn generate_dsn(
         ))
     })?;
 
-    *dsn_context.envelope.sender_mut() = Some(Address::from(postmaster_mailbox));
+    *Arc::make_mut(&mut dsn_context.envelope).sender_mut() =
+        Some(Address::from(postmaster_mailbox));
 
     // Set recipient to original sender
-    *dsn_context.envelope.recipients_mut() = Some(AddressList::from(vec![original_sender.clone()]));
+    *Arc::make_mut(&mut dsn_context.envelope).recipients_mut() =
+        Some(AddressList::from(vec![original_sender.clone()]));
 
     Ok(dsn_context)
 }
@@ -371,7 +373,7 @@ mod tests {
             local_part: "sender".to_string(),
             domain: "example.com".to_string(),
         };
-        *context.envelope.sender_mut() = Some(Address::from(sender_mailbox));
+        *Arc::make_mut(&mut context.envelope).sender_mut() = Some(Address::from(sender_mailbox));
 
         let info = DeliveryInfo {
             message_id: SpooledMessageId::new(ulid::Ulid::new()),
@@ -396,7 +398,7 @@ mod tests {
     fn test_should_not_generate_dsn_null_sender() {
         let mut context = Context::default();
         // Null sender (bounce message) - MAIL FROM:<> results in None
-        *context.envelope.sender_mut() = None;
+        *Arc::make_mut(&mut context.envelope).sender_mut() = None;
 
         let info = DeliveryInfo {
             message_id: SpooledMessageId::new(ulid::Ulid::new()),
@@ -424,7 +426,7 @@ mod tests {
             local_part: "sender".to_string(),
             domain: "example.com".to_string(),
         };
-        *context.envelope.sender_mut() = Some(Address::from(sender_mailbox));
+        *Arc::make_mut(&mut context.envelope).sender_mut() = Some(Address::from(sender_mailbox));
 
         let info = DeliveryInfo {
             message_id: SpooledMessageId::new(ulid::Ulid::new()),
@@ -453,13 +455,13 @@ mod tests {
             local_part: "sender".to_string(),
             domain: "example.com".to_string(),
         };
-        *context.envelope.sender_mut() = Some(Address::from(sender_mailbox));
+        *Arc::make_mut(&mut context.envelope).sender_mut() = Some(Address::from(sender_mailbox));
 
         let recipient_mailbox = Mailbox {
             local_part: "recipient".to_string(),
             domain: "example.com".to_string(),
         };
-        *context.envelope.recipients_mut() =
+        *Arc::make_mut(&mut context.envelope).recipients_mut() =
             Some(AddressList::from(vec![Address::from(recipient_mailbox)]));
 
         context.data = Some(Arc::from(

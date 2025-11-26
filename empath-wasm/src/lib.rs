@@ -8,6 +8,8 @@
 //! - Multi-language support via WASM compilation
 //! - Integration with the existing module dispatch system
 
+#![feature(once_cell_try)]
+
 mod bindings;
 mod error;
 mod host;

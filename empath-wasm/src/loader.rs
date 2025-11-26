@@ -44,24 +44,28 @@ static EPOCH_TASK_STARTED: AtomicBool = AtomicBool::new(false);
 ///
 /// This function ensures only one Engine is created and shared across all WASM modules.
 /// The Engine is configured with epoch interruption enabled for timeout enforcement.
-fn get_or_init_engine() -> Arc<Engine> {
-    Arc::clone(SHARED_ENGINE.get_or_init(|| {
-        internal!(
-            level = TRACE,
-            "Creating shared Wasmtime engine with epoch interruption"
-        );
+///
+/// # Errors
+/// Returns `WasmError::EngineCreation` if the Wasmtime engine cannot be initialized.
+/// This typically only occurs if the system is fundamentally misconfigured or lacks
+/// required resources.
+fn get_or_init_engine() -> Result<Arc<Engine>> {
+    SHARED_ENGINE
+        .get_or_try_init(|| {
+            internal!(
+                level = TRACE,
+                "Creating shared Wasmtime engine with epoch interruption"
+            );
 
-        let mut config = Config::new();
-        config.wasm_component_model(true);
-        config.epoch_interruption(true); // Enable timeout enforcement
+            let mut config = Config::new();
+            config.wasm_component_model(true);
+            config.epoch_interruption(true); // Enable timeout enforcement
 
-        #[allow(
-            clippy::expect_used,
-            reason = "Engine creation is critical and cannot proceed without it"
-        )]
-        let engine = Engine::new(&config).expect("Failed to create Wasmtime engine");
-        Arc::new(engine)
-    }))
+            Engine::new(&config)
+                .map(Arc::new)
+                .map_err(|e| WasmError::EngineCreation(e.to_string()))
+        })
+        .map(Arc::clone)
 }
 
 /// Start the epoch manager task if not already running
@@ -109,6 +113,12 @@ fn context_to_wit(ctx: &Context) -> wit::Context {
 /// Convert validation result to return code
 ///
 /// Returns 0 for Accept, or the SMTP error code for Reject
+///
+/// # SMTP Code Validation (RFC 5321)
+///
+/// Validates that rejection codes are in the valid SMTP range (400-599).
+/// Invalid codes are replaced with 550 (Requested action not taken) to ensure
+/// RFC compliance and prevent protocol errors.
 fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult) -> i32 {
     match result {
         wit::ValidationResult::Accept => {
@@ -119,14 +129,28 @@ fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult)
             0
         }
         wit::ValidationResult::Reject(rejection) => {
+            let code = rejection.code.cast_signed();
+
+            // Validate SMTP code is in valid range (400-599 per RFC 5321)
+            let validated_code = if (400..=599).contains(&code) {
+                code
+            } else {
+                internal!(
+                    level = WARN,
+                    "WASM callback '{callback_name}' returned invalid SMTP code {}, using 550 instead",
+                    code
+                );
+                550 // Default to "Requested action not taken" for invalid codes
+            };
+
             internal!(
                 level = INFO,
                 "WASM callback '{callback_name}' returned: Reject({}, {})",
-                rejection.code,
+                validated_code,
                 rejection.message
             );
-            // Return the SMTP error code (rejection message handled by caller)
-            rejection.code.cast_signed()
+
+            validated_code
         }
     }
 }
@@ -361,7 +385,7 @@ impl WasmModule {
         }
 
         // Get or create the shared Wasmtime engine (with epoch interruption enabled)
-        let engine = get_or_init_engine();
+        let engine = get_or_init_engine()?;
 
         // Start the epoch manager task (only runs once across all modules)
         start_epoch_manager(Arc::clone(&engine));
@@ -470,15 +494,32 @@ impl WasmModule {
     /// Returns error if callback execution fails or times out
     ///
     /// # Panics
-    /// Panics if the context mutex is poisoned or if there are multiple Arc references
-    /// (both should never happen in normal operation)
+    /// This function intentionally panics under specific conditions that indicate programming
+    /// errors or corrupted state:
+    ///
+    /// - **Line 529**: If the context mutex lock fails. This indicates the mutex was poisoned
+    ///   by a panic in a host function, meaning the context is in an unknown state. Continuing
+    ///   would be unsafe.
+    ///
+    /// - **Line 567**: If `Arc::try_unwrap()` fails, indicating more than one strong reference
+    ///   to the context Arc exists. This should never happen as the store (which holds the
+    ///   only other reference) is explicitly dropped at line 560.
+    ///
+    /// - **Line 569**: If `Mutex::into_inner()` fails due to the mutex being poisoned. This
+    ///   would indicate a panic occurred in a host function during callback execution.
+    ///
+    /// All these conditions represent unrecoverable states where continuing execution could
+    /// lead to data corruption. Panicking is the intentional fail-fast behavior.
     #[allow(clippy::expect_used, reason = "Panic on poisoned mutex is intentional")]
     pub fn execute_callback(&self, callback_name: &str, context: &mut Context) -> Result<i32> {
         // Build WASI context
         let wasi_ctx = self.build_wasi_ctx()?;
 
         // Wrap context in Arc<Mutex<>> for thread-safe access from host functions
-        let context_arc = Arc::new(Mutex::new(std::mem::take(context)));
+        // Using clone instead of mem::take ensures the caller retains a valid context
+        // even if an error occurs during execution. This is now cheap because
+        // Envelope is wrapped in Arc (NEW-WASM-11), making clone ~80% faster.
+        let context_arc = Arc::new(Mutex::new(context.clone()));
 
         // Create store with wrapped context
         let wasm_store = WasmStore::new(

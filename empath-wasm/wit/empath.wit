@@ -29,6 +29,8 @@ interface validation {
     /// Rejection details
     record rejection {
         /// SMTP error code (e.g., 550)
+        /// Must be in range 400-599 per RFC 5321.
+        /// Invalid codes are replaced with 550 (Requested action not taken).
         code: u32,
         /// Human-readable rejection message
         message: string,
