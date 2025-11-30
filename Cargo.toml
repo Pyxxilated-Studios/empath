@@ -49,7 +49,7 @@ cbindgen = { version = "0.29", default-features = false }
 charset = "0.1.5"
 chrono = "0.4"
 clap = { version = "4", default-features = false, features = ["derive", "std"] }
-criterion = { version = "0.7", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 dashmap = "6"
 empath-common = { path = "empath-common", version = "*" }
 empath-control = { path = "empath-control", version = "*" }
