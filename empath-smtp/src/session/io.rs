@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use empath_common::{context, error::SessionError, incoming, internal, status::Status, tracing};
+use empath_common::{
+    context, error::SessionError, incoming, internal, status::Status, tracing,
+    traits::fsm::FiniteStateMachine,
+};
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -8,6 +11,7 @@ use crate::{
     State,
     command::Command,
     session::{Context, Session},
+    session_state::SessionState,
     state,
 };
 
@@ -100,15 +104,29 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
         incoming!("{command}");
 
+        // Handle RSET transaction clearing before transition (business logic side effect)
+        // RSET clears transaction context but preserves session context
+        let is_rset = matches!(command, Command::Rset);
+        if is_rset {
+            validate_context.transaction.clear();
+        }
+
+        // Extract protocol state from business context
+        let mut session_state = SessionState::from_context(validate_context);
+
+        // Pure FSM transition using the FiniteStateMachine trait
+        let new_state =
+            FiniteStateMachine::transition(self.context.state.clone(), command, &mut session_state);
+
+        // Update session state
         self.context = Context {
-            state: self
-                .context
-                .state
-                .clone()
-                .transition(command, validate_context),
+            state: new_state,
             message,
             sent: false,
         };
+
+        // Sync protocol state back to business context
+        session_state.sync_to_context(validate_context);
 
         tracing::debug!("Transitioned to {:#?}", self.context);
     }
