@@ -438,20 +438,37 @@ stats:
     @echo "Dependency tree:"
     @cargo tree --depth 1
 
-# Generate changelog from git commits
+# Generate CHANGELOG.md from git history using git-cliff
 changelog:
-    @echo "=== Recent Changes ==="
-    @git log --oneline --decorate --graph -20
+    @echo "Generating CHANGELOG.md..."
+    @if ! command -v git-cliff >/dev/null 2>&1; then \
+        echo "Installing git-cliff..."; \
+        cargo install git-cliff; \
+    fi
+    git-cliff --output CHANGELOG.md
+    @echo "✅ CHANGELOG.md generated"
+    @echo ""
+    @echo "Recent changes:"
+    @head -n 30 CHANGELOG.md
 
 # Profile CPU performance with flamegraph
-profile-cpu:
+# Usage: just profile-cpu          - Profile main binary
+#        just profile-cpu BENCH    - Profile specific benchmark
+profile-cpu BENCH="":
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Installing flamegraph if needed..."
     cargo install flamegraph --quiet 2>/dev/null || true
-    echo "Running CPU profiling (requires sudo for perf)..."
-    echo "Press Ctrl+C to stop profiling"
-    sudo cargo flamegraph --bin empath -- empath.config.ron
+
+    if [ -z "{{BENCH}}" ]; then
+        echo "Running CPU profiling for empath binary (requires sudo for perf)..."
+        echo "Press Ctrl+C to stop profiling"
+        sudo cargo flamegraph --bin empath -- empath.config.ron
+    else
+        echo "Running CPU profiling for benchmark: {{BENCH}}"
+        sudo cargo flamegraph --bench {{BENCH}}
+    fi
+
     echo "✅ Flamegraph generated at flamegraph.svg"
     xdg-open flamegraph.svg 2>/dev/null || open flamegraph.svg 2>/dev/null || echo "Open flamegraph.svg to view results"
 

@@ -1,13 +1,374 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2025-11-22
-> **Total Completed**: 57 tasks
+> **Last Updated**: 2025-12-04
+> **Total Completed**: 69 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
 ---
 
 ## Recently Completed (Last 30 Days)
+
+### Week of 2025-12-04
+
+#### ✅ NEW-DX-01 - Add Missing Justfile Commands
+**Completed**: 2025-12-04
+**Effort**: 30 minutes (actual: 15 minutes)
+**Priority**: High (Developer Experience)
+
+Enhanced justfile with missing developer workflow commands for testing, profiling, and changelog generation.
+
+**Accomplishments**:
+- ✅ Verified all requested test commands already existed (`test-e2e`, `test-fast`, `test-smoke`, `test-list`, `test-match`)
+- ✅ Updated `changelog` command to generate CHANGELOG.md using git-cliff (previously only showed git log)
+- ✅ Enhanced `profile-cpu` to accept optional BENCH parameter for profiling specific benchmarks
+- ✅ Verified `docs-serve` already existed for serving documentation with live reload
+- ✅ All 8 requested commands now available in justfile
+
+**Implementation Details**:
+- **changelog command** (line 442): Auto-installs git-cliff, generates CHANGELOG.md, shows preview
+- **profile-cpu command** (line 457): Accepts optional benchmark name for targeted profiling
+- **Existing commands**: test-e2e, test-fast, test-smoke, test-list, test-match, docs-serve (lines 245-421)
+
+**Benefits Delivered**:
+- **Improved DX**: Common workflows now have simple `just` commands
+- **Changelog Generation**: Developers can generate CHANGELOG.md locally before releases
+- **Targeted Profiling**: Can profile specific benchmarks without editing justfile
+- **Documentation**: All commands documented in justfile with usage examples
+
+**Files Modified** (2 files):
+- `justfile` - Updated 2 commands (changelog, profile-cpu)
+- `TODO.md` - Marked task as completed
+
+---
+
+#### ✅ NEW-WASM-08 - Module Failure Handling Review
+**Completed**: 2025-12-04
+**Effort**: N/A (code review only)
+**Priority**: ~~Critical~~ → Not Required
+
+Reviewed WASM module failure handling and determined current implementation is already correct.
+
+**Resolution**:
+- **Original claim**: Module errors fail-open (accept) - **INCORRECT**
+- **Actual behavior**: Module errors return 451 (temporary failure) - **CORRECT**
+- **Implementation**: `empath-ffi/src/modules/wasm.rs:139-178`
+
+**Why Current Behavior is Correct**:
+- Spam filter crash → Message temporarily rejected (451), not accepted
+- Metrics collector crash → Message temporarily rejected (safe, slight inconvenience)
+- Transparent about failures to operators (451 indicates system issue)
+- Simple, predictable behavior without configuration complexity
+- Module failures should be rare (non-production environments)
+
+**Task Outcome**: No implementation needed - existing behavior is secure and appropriate.
+
+---
+
+#### ✅ NEW-17 - Migrate Tests to MockDnsResolver
+**Completed**: 2025-11-21
+**Effort**: 1-2 days (actual: 1.5 days)
+**Priority**: Medium (Testing Infrastructure)
+**Dependencies**: NEW-16 (DNS Trait Abstraction)
+
+Replaced MX override workarounds with proper `MockDnsResolver` injection across all test suites, enabling DNS failure scenario testing and improving Miri compatibility.
+
+**Accomplishments**:
+- ✅ Updated `DeliveryProcessor::init()` with optional DNS resolver parameter
+- ✅ Enhanced E2ETestHarness with `.with_dns_resolver()` method
+- ✅ Migrated all 7 E2E tests from MX overrides to MockDnsResolver
+- ✅ Added 3 new DNS failure scenario tests (timeout, NXDOMAIN, infrastructure)
+- ✅ Migrated integration tests and 8 pipeline tests
+- ✅ Removed 17 `#[cfg_attr(miri, ignore)]` attributes
+- ✅ All 348+ tests passing with improved Miri compatibility
+
+**Benefits Delivered**:
+- **Cleaner Tests**: Eliminated MX override workarounds
+- **Better Coverage**: Can now test DNS timeout and NXDOMAIN scenarios
+- **Faster Tests**: 5-10% faster E2E tests, 20-30% faster pipeline tests
+- **Miri Compatible**: 7+ tests now Miri-compatible, potentially 20+ on Linux/CI
+- **Infrastructure Usage**: Proper utilization of trait abstraction from NEW-16
+
+**Files Modified** (11 files):
+- `empath-delivery/src/processor/mod.rs` - DNS resolver injection
+- `empath/src/controller.rs` - Updated init call
+- `empath/tests/support/harness.rs` - DNS injection infrastructure
+- `empath/tests/e2e_basic.rs` - Migrated 7 tests + added 3 new
+- `empath-delivery/tests/integration_tests.rs` - Migrated 2 tests
+- `empath-delivery/tests/queue_restoration_test.rs` - Updated init calls
+- `empath-delivery/src/policy/pipeline.rs` - Migrated 8 tests
+
+---
+
+#### ✅ NEW-16 - DNS Trait Abstraction for Testing
+**Completed**: 2025-11-19
+**Effort**: 2-3 days (actual: 3 days)
+**Priority**: High (Testing Infrastructure)
+**Dependencies**: 4.0 Phase 3 (DeliveryPipeline)
+
+Created `DnsResolver` trait abstraction with async methods, enabling testable DNS resolution without network dependencies.
+
+**Accomplishments**:
+- ✅ Created `DnsResolver` trait with Pin<Box<dyn Future>> for async methods
+- ✅ Renamed production `DnsResolver` struct to `HickoryDnsResolver`
+- ✅ Created `MockDnsResolver` with configurable responses (165 lines)
+- ✅ Updated `DeliveryPipeline` to accept `&dyn DnsResolver`
+- ✅ Updated `DeliveryProcessor` to use `Arc<dyn DnsResolver>`
+- ✅ Added `DnsFuture<'a, T>` type alias for complex return types
+- ✅ Made `DnsError` cloneable for mock resolver
+- ✅ Re-exported all types in public API
+- ✅ Added comprehensive doctests with examples
+- ✅ All 75 delivery tests + 185+ workspace tests passing
+- ✅ Zero clippy warnings, zero breaking changes
+
+**Files Changed** (8 files, 450+ lines):
+- `empath-delivery/src/dns.rs` - Trait definition + implementations
+- `empath-delivery/src/lib.rs` - Public API re-exports
+- `empath-delivery/src/policy/pipeline.rs` - Accept trait object
+- `empath-delivery/src/processor/mod.rs` - Use Arc<dyn DnsResolver>
+- `empath-delivery/src/processor/delivery.rs` - Deref trait object
+- `empath-delivery/src/service.rs` - Update service trait
+
+**Performance**: Zero overhead (trait dispatch <1%, within measurement noise)
+
+---
+
+#### ✅ NEW-14 - Release Automation with Changelog
+**Completed**: 2025-11-17 (Documentation of existing infrastructure)
+**Effort**: N/A (Already existed)
+**Priority**: Medium
+
+Documented existing release automation infrastructure using git-cliff and Docker workflows.
+
+**Existing Infrastructure**:
+- ✅ `changelog.yml` - git-cliff changelog generation on tags
+- ✅ `release.yml` - Docker image building and registry push
+- ✅ `cliff.toml` - Changelog configuration
+- ✅ Automatic release uploads with generated changelog
+
+**Locations**:
+- `.gitea/workflows/changelog.yml`
+- `.gitea/workflows/release.yml`
+- `cliff.toml` (root)
+
+---
+
+#### ✅ NEW-13 - Property-Based Testing for Core Protocols
+**Completed**: 2025-11-17
+**Effort**: 1-2 days
+**Priority**: Medium
+
+Implemented comprehensive property-based testing for SMTP command parsing using proptest.
+
+**Accomplishments**:
+- ✅ Created `empath-smtp/tests/proptest_commands.rs` (188 lines)
+- ✅ 10 property tests covering all SMTP commands
+- ✅ Roundtrip testing (parse → display → parse)
+- ✅ Case-insensitivity verification
+- ✅ Invalid command handling (panic prevention)
+- ✅ Email address character validation
+- ✅ Whitespace handling tests
+- ✅ CI integration in `.gitea/workflows/test.yml`
+- ✅ All tests passing in 0.08s
+
+**Tests Implemented**:
+- Simple commands: QUIT, RSET, DATA, HELP, STARTTLS, AUTH
+- HELO/EHLO with domain generation
+- MAIL FROM with email address generation
+- RCPT TO with email address generation
+
+**Dependency**: Added `proptest = "1.5"` to empath-smtp
+
+---
+
+#### ✅ NEW-12 - Dependency Update Automation
+**Completed**: 2025-11-17 (Documentation of existing infrastructure)
+**Effort**: N/A (Already existed)
+**Priority**: Medium
+
+Documented existing Renovate bot configuration for automated dependency updates.
+
+**Existing Infrastructure**:
+- ✅ Renovate bot configured externally
+- ✅ Automated PRs for Cargo ecosystem updates
+- ✅ Running and functional
+
+---
+
+#### ✅ NEW-11 - Panic Safety Audit for Production
+**Completed**: 2025-11-17
+**Effort**: 2-3 days (actual: <1 day)
+**Priority**: High (Production Readiness)
+**Dependencies**: NEW-02 (Unwrap audit)
+
+Eliminated all production panic calls and enforced panic-safety via strict clippy lints.
+
+**Accomplishments**:
+- ✅ Audited all 27 panic-related calls (25 in tests, 2 in production)
+- ✅ Refactored 2 `unreachable!` calls to use proper error handling
+- ✅ Added workspace-level clippy lints (deny: panic, todo, unimplemented, unreachable)
+- ✅ Added `#[allow]` attributes to test modules for legitimate test panics
+- ✅ All clippy checks pass with strict lints
+- ✅ Zero production panics remain
+
+**Audit Results**:
+- **Total panic-related calls**: 27 initial scan
+- Test code: 25 panic! calls (acceptable - test assertions)
+- Production code: 2 unreachable! calls (refactored)
+- **Zero** `todo!` calls
+- **Zero** `unimplemented!` calls
+- **Zero** lazy panic! calls
+
+**Files Modified**:
+- `empath/bin/empathctl.rs` - Replaced unreachable with explicit error handling
+- `empath-smtp/src/lib.rs` - Simplified pattern matching
+- `Cargo.toml` - Added workspace-level panic/todo/unreachable lints
+
+---
+
+#### ✅ NEW-08 - Unsafe Code Documentation Audit
+**Completed**: 2025-11-16
+**Effort**: 1-2 days (actual: <1 day)
+**Priority**: High (Before Production)
+
+Created comprehensive formal audit of all 88 unsafe occurrences across 11 files with documented safety invariants.
+
+**Accomplishments**:
+- ✅ Created `docs/UNSAFE_AUDIT.md` (350 lines)
+- ✅ Categorized by safety risk level (FFI, raw pointers, Send/Sync, system calls)
+- ✅ Documented safety invariants for each category
+- ✅ Confirmed MIRI testing coverage
+- ✅ Risk assessment and recommendations
+- ✅ Per-file breakdown with occurrence counts
+
+**Key Findings**:
+- 95% of unsafe code in FFI layer (expected and necessary)
+- All unsafe code covered by MIRI tests in CI
+- No critical safety issues found
+- Category breakdown: FFI (38), raw pointers (23), unsafe trait impls (6), FFI calls (18), UTF-8 (1), other (2)
+
+**Files Audited** (11 files, 88 unsafe occurrences):
+- `empath-ffi/src/lib.rs`: 44 occurrences
+- `empath-ffi/src/modules/validate.rs`: 14 occurrences
+- `empath-ffi/src/modules/mod.rs`: 8 occurrences
+- `empath-ffi/src/modules/library.rs`: 5 occurrences
+- `empath-ffi/src/string.rs`: 4 occurrences
+- `empath-common/src/listener.rs`: 4 occurrences
+- `empath/src/control_handler.rs`: 3 occurrences
+- `empath/src/controller.rs`: 2 occurrences
+- `empath-delivery/src/processor/mod.rs`: 2 occurrences
+- `empath-smtp/src/command.rs`: 1 occurrence
+- `empath-control/src/server.rs`: 1 occurrence
+
+---
+
+#### ✅ NEW-01 - FFI Safety Hardening (Null Byte Validation)
+**Completed**: 2025-11-16
+**Effort**: 1-2 days (actual: 1 day)
+**Priority**: Critical (Production Blocker)
+
+Implemented null byte sanitization in FFI string handling to prevent malicious module crashes.
+
+**Accomplishments**:
+- ✅ Created `sanitize_null_bytes()` helper function
+- ✅ Updated all 3 `From` implementations for CString
+- ✅ 4 test functions with 15+ test cases verify null byte handling
+- ✅ Updated CLAUDE.md with security documentation
+- ✅ Consistent DRY implementation across all From impls
+
+**Files Modified**:
+- `empath-ffi/src/string.rs` - Added sanitization helper, updated From implementations
+- `CLAUDE.md` - Added FFI null byte sanitization security documentation
+
+**Commits**:
+- `1147fb3` - Initial null byte sanitization implementation
+- `11ddbb7` - Extracted helper function for DRY principle
+
+---
+
+#### ✅ NEW-WASM-07 - Implement Epoch-Based Timeout Enforcement
+**Completed**: 2025-11-26
+**Effort**: 1-2 days
+**Priority**: Critical (Security/Reliability)
+**Dependencies**: NEW-WASM-01
+
+Implemented epoch-based timeout mechanism for WASM modules to prevent DoS attacks via infinite loops.
+
+**Accomplishments**:
+- ✅ Shared Engine with `epoch_interruption(true)` enabled
+- ✅ Tokio background task incrementing epochs every 10ms
+- ✅ Epoch deadline set before each callback
+- ✅ Graceful task lifecycle with `AtomicBool`
+- ✅ Timeout detection via `is_timeout_error()` helper
+- ✅ Proper error conversion to `WasmError::Timeout(callback_name, timeout_secs)`
+- ✅ All tests passing with zero clippy warnings
+
+**Benefits Delivered**:
+- 10ms timeout precision (configurable via EPOCH_TICK_MS)
+- Prevents DoS attacks via infinite loops
+- Clear error messages: "WASM callback 'validate_data' exceeded timeout (5s)"
+- Better integration with tokio runtime
+- Shared engine reduces memory overhead
+
+**Files Modified**:
+- `empath-wasm/src/loader.rs` - Shared engine, epoch manager task, timeout detection
+- `empath-wasm/src/host.rs` - Added timeout field to WasmStore
+- `empath-wasm/Cargo.toml` - Added tokio dependency
+
+**Reference**: Wasmtime docs on epoch interruption
+
+---
+
+#### ✅ NEW-WASM-01 - WebAssembly Module Support
+**Completed**: 2025-11-22
+**Effort**: 3-4 days (actual: 1 day)
+**Priority**: Medium (Feature Enhancement)
+
+Implemented comprehensive WebAssembly module support via Wasmtime 39.0, enabling high-performance validation modules in any WASM-compilable language.
+
+**Accomplishments**:
+- ✅ Created `empath-wasm` crate with Wasmtime 39.0 integration
+- ✅ Context serialization via bincode for WASM interop
+- ✅ Host import functions for Context access, memory management, logging
+- ✅ ResourceLimiter implementation for memory caps (10 MB default)
+- ✅ Epoch-based timeout enforcement (5 seconds default)
+- ✅ Callback discovery and dispatch for all 14 events
+- ✅ Integration with module dispatch system (`Module::Wasm` variant)
+- ✅ Config schema: `type: "Wasm"` with `path`, `timeout_secs`, `max_memory_bytes`, `enable_wasi`
+- ✅ Example module: `simple_validator.rs` with compilation instructions
+- ✅ Documentation: README.md (200+ lines), inline docs, examples
+- ✅ All 336 tests passing
+
+**Files Created** (7 new files, 900+ lines):
+- `empath-wasm/Cargo.toml` - Crate configuration
+- `empath-wasm/src/lib.rs` - Public API (60 lines)
+- `empath-wasm/src/error.rs` - Error types (51 lines)
+- `empath-wasm/src/loader.rs` - Module loader with resource limits (215 lines)
+- `empath-wasm/src/host.rs` - Host import functions and Context serialization (250 lines)
+- `empath-wasm/examples/simple_validator.rs` - Example WASM module (100 lines)
+- `empath-wasm/README.md` - Complete documentation (200+ lines)
+
+**Files Modified**:
+- `Cargo.toml` - Added wasmtime dependencies, empath-wasm workspace member
+- `empath-ffi/Cargo.toml` - Added wasm feature flag
+- `empath-ffi/src/modules/mod.rs` - Added Wasm variant integration
+- `empath-ffi/src/modules/wasm.rs` - Module dispatch integration (128 lines)
+- `empath/build.rs` - Excluded wasm.rs from cbindgen
+
+**Architecture**:
+- **Runtime**: Wasmtime 39.0 (faster and more secure than Wasmer)
+- **Communication**: Linear memory + bincode serialization (~35ns)
+- **Sandboxing**: Full WASM isolation + ResourceLimiter + epoch timeouts
+- **Performance**: ~1-2ms overhead (vs ~5-10ms Python, ~50ns C)
+- **Languages**: Rust, C, Go, AssemblyScript, Zig, TinyGo, C++
+
+**Benefits**:
+- Near-native performance with full sandboxing
+- 2-5x faster than Python modules
+- Multi-language support (any WASM-capable language)
+- Strict resource limits (memory + CPU)
+- Portable across architectures
+- No external runtime dependencies
 
 ### Week of 2025-11-20 - 2025-11-22
 
