@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly-bookworm-slim AS chef
+FROM rustlang/rust:nightly-trixie-slim AS chef
 WORKDIR /empath
 
 RUN apt update && apt install -y git clang mold
@@ -18,10 +18,14 @@ FROM chef AS empath
 COPY --from=planner /empath/recipe.json recipe.json
 RUN cargo +nightly chef cook --release --recipe-path recipe.json
 
+RUN apt-get update && apt-get install -y libpython3.13-dev
+
 COPY . .
 RUN cargo +nightly build --release
 
-FROM debian:stable-slim
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y libpython3.13-dev
 
 WORKDIR /empath
 
@@ -30,7 +34,8 @@ COPY --from=empath /empath/target/release .
 VOLUME /config
 
 ENV LOG_LEVEL="info"
+ENV LD_LIBRARY_PATH="/empath/modules:${LD_LIBRARY_PATH}"
 
-ENTRYPOINT [ "bash", "-l", "-c" ]
+ENTRYPOINT [ "bash", "--login", "-c" ]
 
 CMD [ "/empath/empath" ]

@@ -322,6 +322,9 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                     return Err(SessionError::Timeout(session.timeouts.connection_secs));
                 }
 
+                // First, perform validation and business logic
+                session.emit(validate_context).await;
+
                 // Then generate the response based on what emit() set
                 let (response, ev) = session.response(validate_context).await;
 
@@ -629,6 +632,7 @@ mod test {
         session.context.state = State::PostDot(state::PostDot);
         context.data = Some(test_data.to_vec().into());
 
+        session.emit(&mut context).await;
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
 
@@ -683,6 +687,7 @@ mod test {
         assert!(!response.unwrap());
 
         // After receive, state should be MailFrom - need to emit before response
+        session.emit(&mut context).await;
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(

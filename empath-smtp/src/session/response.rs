@@ -13,16 +13,13 @@ use crate::{
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// Format and return the response to send to the client
     ///
-    /// This is a pure formatter - all validation and work happens in `emit()`.
+    /// This is a pure formatter - all validation and work happens in `emit()` which is called before this.
     /// Just formats the response based on state and what `emit()` set in the context.
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "ns"))]
     pub(super) async fn response(&mut self, validate_context: &mut context::Context) -> Response {
         if self.context.sent {
             return (None, Event::ConnectionKeepAlive);
         }
-
-        // Emit events, do validation and work first
-        self.emit(validate_context).await;
 
         // If emit() set a response in the context, use it
         // Only close connection for Reject state, not all permanent errors
@@ -53,7 +50,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// Provide default responses for states not handled by `emit()`
     fn default_response(&mut self, validate_context: &context::Context) -> Response {
         match &self.context.state {
-            State::Helo(_) => (
+            State::Connect(_) => (
+                Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
+                Event::ConnectionKeepAlive,
+            ),
+            State::Helo(_) | State::Ehlo(_) => (
                 Some(vec![format!(
                     "{} {} says hello to {}",
                     Status::Ok,
@@ -63,6 +64,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
                 Event::ConnectionKeepAlive,
             ),
             State::StartTls(_) => self.starttls_response(),
+            State::MailFrom(_) | State::RcptTo(_) | State::PostDot(_) => (
+                Some(vec![format!("{} Ok", Status::Ok)]),
+                Event::ConnectionKeepAlive,
+            ),
             State::Data(_) => self.data_response(validate_context),
             State::Quit(_) => (
                 Some(vec![format!("{} Bye", Status::GoodBye)]),
