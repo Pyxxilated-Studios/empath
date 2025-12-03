@@ -211,84 +211,99 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             // Check if connection should close
             if Event::ConnectionClose == ev {
                 return Ok(());
-            } else if let Some(tls_context) = &self.tls_context
+            } else if self.tls_context.is_some()
                 && matches!(self.session.context.state, State::StartTls(_))
             {
-                // Handle TLS upgrade inline to avoid borrowing issues
-                // SAFETY: Temporarily take ownership of connection for upgrade.
-                // Connection is immediately replaced after upgrade completes.
-                // This is safe because upgrade() consumes the connection and returns a new one.
-                #[allow(unsafe_code)]
-                let temp_connection = match self.connection {
-                    Connection::Plain {
-                        ref stream,
-                        ref read_buf,
-                        read_pos,
-                        read_len,
-                    } => Connection::Plain {
-                        stream: unsafe { std::ptr::read(stream) },
-                        read_buf: read_buf.clone(),
-                        read_pos,
-                        read_len,
-                    },
-                    Connection::Tls {
-                        ref stream,
-                        ref read_buf,
-                        read_pos,
-                        read_len,
-                    } => Connection::Tls {
-                        stream: unsafe { std::ptr::read(stream) },
-                        read_buf: read_buf.clone(),
-                        read_pos,
-                        read_len,
-                    },
-                };
-
-                let (conn, info) = temp_connection
-                    .upgrade(tls_context)
-                    .await
-                    .map_err(|e| SessionError::Protocol(e.to_string()))?;
-
-                self.connection = conn;
-
-                // TLS state is session context (persists across RSET)
-                validate_context
-                    .session
-                    .insert(Cow::Borrowed("tls"), "true".to_string());
-                validate_context
-                    .session
-                    .insert(Cow::Borrowed("protocol"), info.proto());
-                validate_context
-                    .session
-                    .insert(Cow::Borrowed("cipher"), info.cipher());
-
-                self.session.context = Context {
-                    sent: true,
-                    ..Default::default()
-                };
-
-                if empath_ffi::modules::dispatch(
-                    empath_ffi::modules::Event::Validate(
-                        empath_ffi::modules::validate::Event::StartTls,
-                    ),
-                    validate_context,
-                ) {
-                    internal!(
-                        level = DEBUG,
-                        "Connection successfully upgraded with {info:#?}"
-                    );
-                } else {
-                    self.session.context.sent = false;
-                    self.session.context.state = State::Reject(state::Reject);
-                    validate_context.response =
-                        Some((Status::Error, Cow::Borrowed("STARTTLS failed")));
-                }
+                // Handle TLS upgrade
+                self.handle_tls_upgrade(validate_context).await?;
             } else {
                 // Handle regular command
                 self.handle_command_loop(validate_context, &mut signal)
                     .await?;
             }
         }
+    }
+
+    /// Handle TLS upgrade when in `StartTls` state
+    ///
+    /// # Errors
+    /// Returns `SessionError` if TLS upgrade fails or protocol error occurs.
+    async fn handle_tls_upgrade(
+        &mut self,
+        validate_context: &mut context::Context,
+    ) -> Result<(), SessionError> {
+        let tls_context = self
+            .tls_context
+            .as_ref()
+            .ok_or_else(|| SessionError::Protocol("TLS context not available".to_string()))?;
+
+        // SAFETY: Temporarily take ownership of connection for upgrade.
+        // Connection is immediately replaced after upgrade completes.
+        // This is safe because upgrade() consumes the connection and returns a new one.
+        #[allow(unsafe_code)]
+        let temp_connection = match self.connection {
+            Connection::Plain {
+                ref stream,
+                ref read_buf,
+                read_pos,
+                read_len,
+            } => Connection::Plain {
+                stream: unsafe { std::ptr::read(stream) },
+                read_buf: read_buf.clone(),
+                read_pos,
+                read_len,
+            },
+            Connection::Tls {
+                ref stream,
+                ref read_buf,
+                read_pos,
+                read_len,
+            } => Connection::Tls {
+                stream: unsafe { std::ptr::read(stream) },
+                read_buf: read_buf.clone(),
+                read_pos,
+                read_len,
+            },
+        };
+
+        let (conn, info) = temp_connection
+            .upgrade(tls_context)
+            .await
+            .map_err(|e| SessionError::Protocol(e.to_string()))?;
+
+        self.connection = conn;
+
+        // TLS state is session context (persists across RSET)
+        validate_context
+            .session
+            .insert(Cow::Borrowed("tls"), "true".to_string());
+        validate_context
+            .session
+            .insert(Cow::Borrowed("protocol"), info.proto());
+        validate_context
+            .session
+            .insert(Cow::Borrowed("cipher"), info.cipher());
+
+        self.session.context = Context {
+            sent: true,
+            ..Default::default()
+        };
+
+        if empath_ffi::modules::dispatch(
+            empath_ffi::modules::Event::Validate(empath_ffi::modules::validate::Event::StartTls),
+            validate_context,
+        ) {
+            internal!(
+                level = DEBUG,
+                "Connection successfully upgraded with {info:#?}"
+            );
+        } else {
+            self.session.context.sent = false;
+            self.session.context.state = State::Reject(state::Reject);
+            validate_context.response = Some((Status::Error, Cow::Borrowed("STARTTLS failed")));
+        }
+
+        Ok(())
     }
 
     /// Handle the main command receive loop with timeout and shutdown handling
