@@ -8,12 +8,76 @@ This guide covers profiling techniques for optimizing Empath MTA performance.
 # CPU profiling with flamegraph
 just profile-cpu
 
-# Memory profiling with dhat
-just profile-memory  # (to be added)
+# Profile specific benchmark
+just profile-cpu smtp_benchmarks
 
 # Benchmark with baseline comparison
 just bench-baseline-save main
 # ... make changes ...
+just bench-baseline-compare main
+
+# View benchmark results
+just bench-view
+```
+
+---
+
+## Justfile Commands Reference
+
+Empath provides convenient `just` commands for all profiling and benchmarking workflows:
+
+### Benchmarking Commands
+
+| Command | Description |
+|---------|-------------|
+| `just bench` | Run all benchmarks across all crates |
+| `just bench-smtp` | Run SMTP protocol benchmarks only |
+| `just bench-spool` | Run spool operation benchmarks only |
+| `just bench-delivery` | Run delivery processor benchmarks only |
+| `just bench-group GROUP` | Run specific benchmark group (e.g., `fsm_transitions`) |
+| `just bench-view` | Open HTML benchmark report in browser |
+
+### Baseline Management
+
+| Command | Description |
+|---------|-------------|
+| `just bench-baseline-save NAME` | Save current performance as baseline |
+| `just bench-baseline-compare NAME` | Compare current run vs saved baseline |
+| `just bench-baseline-list` | List all saved baselines |
+| `just bench-baseline-delete NAME` | Delete a specific baseline |
+| `just bench-ci` | CI workflow (creates baseline, compares, fails on regression) |
+
+### Profiling Commands
+
+| Command | Description |
+|---------|-------------|
+| `just profile-cpu` | Profile main binary with flamegraph (auto-opens SVG) |
+| `just profile-cpu BENCH` | Profile specific benchmark (e.g., `smtp_benchmarks`) |
+| `just changelog` | Generate CHANGELOG.md (useful after performance work) |
+
+### Example Workflows
+
+**Pre-optimization Baseline**:
+```bash
+git checkout main
+just bench-baseline-save before-optimization
+```
+
+**Post-optimization Comparison**:
+```bash
+git checkout feat/my-optimization
+just bench-baseline-compare before-optimization
+```
+
+**Profile Hot Path**:
+```bash
+# Find hot functions
+just profile-cpu
+
+# Profile specific benchmark
+just profile-cpu smtp_benchmarks
+
+# Compare performance
 just bench-baseline-compare main
 ```
 
@@ -48,16 +112,19 @@ echo 0 | sudo tee /proc/sys/kernel/perf_event_paranoid
 
 **Usage**:
 ```bash
-# Profile the main binary
+# Profile the main binary (recommended - uses justfile)
+just profile-cpu
+
+# Profile specific benchmark
+just profile-cpu smtp_benchmarks
+just profile-cpu spool_benchmarks
+
+# Or manually with cargo
 sudo cargo flamegraph --bin empath -- empath.config.ron
-
-# Profile with release optimizations
 sudo cargo flamegraph --release --bin empath -- empath.config.ron
-
-# Profile specific crate's benchmarks
 sudo cargo flamegraph --bench smtp_benchmarks
 
-# Open result
+# Result opens automatically, or manually open:
 open flamegraph.svg  # macOS
 xdg-open flamegraph.svg  # Linux
 ```
@@ -377,13 +444,13 @@ just docker-grafana
 **Diagnosis**:
 ```bash
 # 1. Generate flamegraph
-sudo cargo flamegraph --release --bin empath -- empath.config.ron
+just profile-cpu
 
 # 2. Identify hot functions (widest bars)
 # Common culprits: DNS lookups, regex parsing, serialization
 
 # 3. Profile specific operation
-cargo bench -- <suspected-operation>
+just bench-group <suspected-operation>
 ```
 
 **Example Fix**:
@@ -443,6 +510,340 @@ cargo bench -p empath-delivery
 - TLS handshake overhead (connection pooling - task 2.2)
 - Sequential delivery (already parallelized via `JoinSet`)
 - Rate limiting too aggressive (tune `messages_per_second`)
+
+---
+
+## Common Optimization Patterns
+
+### 1. Reduce Allocations with `Cow`
+
+**Problem**: Unnecessary string allocations in hot paths
+
+**Before** (allocates String):
+```rust
+fn process_command(cmd: &str) -> String {
+    cmd.to_uppercase()  // Always allocates
+}
+```
+
+**After** (zero-copy when possible):
+```rust
+use std::borrow::Cow;
+
+fn process_command(cmd: &str) -> Cow<str> {
+    if cmd.chars().all(|c| c.is_uppercase()) {
+        Cow::Borrowed(cmd)  // No allocation!
+    } else {
+        Cow::Owned(cmd.to_uppercase())
+    }
+}
+```
+
+**Impact**: Flamegraph width of `alloc::` functions shrinks.
+
+**Empath Example**: `empath-smtp/src/command.rs` uses this pattern for SMTP commands.
+
+---
+
+### 2. Preallocate Collections
+
+**Problem**: `Vec` reallocations during growth
+
+**Before**:
+```rust
+let mut recipients = Vec::new();
+for addr in addresses {
+    recipients.push(addr);  // May reallocate 3-4 times
+}
+```
+
+**After**:
+```rust
+let mut recipients = Vec::with_capacity(addresses.len());
+for addr in addresses {
+    recipients.push(addr);  // No reallocations
+}
+```
+
+**Impact**: dhat shows fewer heap allocations, flamegraph shows less time in `Vec::grow`.
+
+---
+
+### 3. Use `Arc` for Shared Data
+
+**Problem**: Expensive clones of large structs
+
+**Before** (clones entire Context):
+```rust
+fn validate(ctx: Context) -> bool {
+    // ctx is moved, caller must clone
+}
+
+let result = validate(ctx.clone());  // Expensive!
+```
+
+**After** (reference-counted sharing):
+```rust
+fn validate(ctx: &Arc<Context>) -> bool {
+    // Cheap Arc clone when needed
+}
+
+let ctx = Arc::new(context);
+let result = validate(&ctx);  // Arc clone is just pointer + refcount
+```
+
+**Impact**: Flamegraph shows significantly less time in `Context::clone`.
+
+**Empath Example**: `empath-common/src/context.rs` uses `Arc<Envelope>` and `Arc<[u8]>` for shared data.
+
+---
+
+### 4. Cache Expensive Computations
+
+**Problem**: Regex recompilation on every call
+
+**Before**:
+```rust
+fn is_valid_domain(domain: &str) -> bool {
+    let regex = Regex::new(r"^[a-z0-9.-]+$").unwrap();  // Recompiled!
+    regex.is_match(domain)
+}
+```
+
+**After** (cached regex):
+```rust
+use once_cell::sync::Lazy;
+
+static DOMAIN_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^[a-z0-9.-]+$").unwrap()
+});
+
+fn is_valid_domain(domain: &str) -> bool {
+    DOMAIN_REGEX.is_match(domain)  // Reuse compiled regex
+}
+```
+
+**Impact**: Flamegraph shows `Regex::new` only once at startup.
+
+---
+
+### 5. Perfect Hash Maps for Known Keys
+
+**Problem**: Hash function overhead for static keys
+
+**Before** (runtime hashing):
+```rust
+let mut params: HashMap<String, String> = HashMap::new();
+params.insert("SIZE".to_string(), value);
+```
+
+**After** (compile-time perfect hash):
+```rust
+use phf::phf_map;
+
+static PARAM_IDS: phf::Map<&'static str, u8> = phf_map! {
+    "SIZE" => 0,
+    "BODY" => 1,
+    "AUTH" => 2,
+};
+```
+
+**Impact**: Constant-time lookups, no hash function calls in flamegraph.
+
+**Empath Example**: `empath-smtp/src/mail_parameters.rs` uses perfect hashing for ESMTP parameters.
+
+---
+
+### 6. Byte String Literals
+
+**Problem**: String → bytes conversion overhead
+
+**Before**:
+```rust
+let quit_response = "221 Goodbye\r\n".as_bytes();  // Runtime conversion
+```
+
+**After**:
+```rust
+let quit_response = b"221 Goodbye\r\n";  // Compile-time &[u8]
+```
+
+**Impact**: Removes allocation/conversion from flamegraph.
+
+**Empath Example**: `empath-smtp/src/response.rs` uses byte string literals throughout.
+
+---
+
+### 7. Minimize Lock Scope
+
+**Problem**: Holding lock during expensive operations
+
+**Before** (lock held during processing):
+```rust
+let mut queue = QUEUE.lock().unwrap();
+for msg in &queue.messages {
+    process_expensive(msg);  // Blocks other threads!
+}
+```
+
+**After** (minimize critical section):
+```rust
+let messages = {
+    let queue = QUEUE.lock().unwrap();
+    queue.messages.clone()  // Clone IDs only, release lock
+};
+for msg in messages {
+    process_expensive(&msg);  // Process outside lock
+}
+```
+
+**Impact**: Flamegraph shows less lock contention, better parallelism.
+
+**Empath Example**: `empath-ffi/src/modules/mod.rs` uses `Arc<[Module]>` for lock-free reads after initialization.
+
+---
+
+### 8. Avoid Redundant UTF-8 Validation
+
+**Problem**: Multiple UTF-8 checks on same data
+
+**Before**:
+```rust
+fn process(data: &[u8]) -> String {
+    String::from_utf8(data.to_vec()).unwrap()  // Validates UTF-8
+}
+
+let text = process(data);
+let upper = text.to_uppercase();  // Re-validates UTF-8
+```
+
+**After** (unsafe, but proven invariant):
+```rust
+fn process(data: &[u8]) -> String {
+    // SAFETY: Data is ASCII (0x00-0x7F), which is valid UTF-8
+    unsafe { String::from_utf8_unchecked(data.to_vec()) }
+}
+```
+
+**Impact**: Removes UTF-8 validation from flamegraph (when safe).
+
+**Empath Example**: `empath-smtp/src/command.rs:374` uses this for parsed SMTP commands (proven ASCII).
+
+---
+
+### 9. Use `parking_lot` Instead of `std::sync`
+
+**Problem**: Slower standard library mutexes
+
+**Before**:
+```rust
+use std::sync::Mutex;
+
+static COUNTER: Mutex<u64> = Mutex::new(0);
+```
+
+**After** (faster, smaller locks):
+```rust
+use parking_lot::Mutex;
+
+static COUNTER: Mutex<u64> = Mutex::const_new(parking_lot::lock_api::RawMutex::INIT, 0);
+```
+
+**Impact**: 2-5x faster lock/unlock in microbenchmarks, smaller memory footprint.
+
+**Empath Example**: `Cargo.toml` uses `parking_lot` workspace-wide.
+
+---
+
+### 10. Batch I/O Operations
+
+**Problem**: Many small writes to disk/network
+
+**Before** (one write per message):
+```rust
+for message in messages {
+    file.write_all(message.as_bytes())?;  // Many syscalls
+}
+```
+
+**After** (buffered writing):
+```rust
+use std::io::BufWriter;
+
+let mut writer = BufWriter::new(file);
+for message in messages {
+    writer.write_all(message.as_bytes())?;  // Batched
+}
+writer.flush()?;
+```
+
+**Impact**: Flamegraph shows fewer syscalls, faster I/O.
+
+---
+
+### 11. Inline Hot Functions
+
+**Problem**: Function call overhead in tight loops
+
+**Before**:
+```rust
+fn is_whitespace(c: char) -> bool {
+    c == ' ' || c == '\t'
+}
+
+// Called millions of times
+for c in data.chars() {
+    if is_whitespace(c) { ... }  // Function call overhead
+}
+```
+
+**After**:
+```rust
+#[inline]
+fn is_whitespace(c: char) -> bool {
+    c == ' ' || c == '\t'
+}
+```
+
+**Impact**: Compiler inlines the function, removing call overhead from flamegraph.
+
+**Note**: Use `#[inline]` sparingly - only for hot, small functions (< 10 lines). Over-inlining increases binary size and reduces instruction cache efficiency.
+
+---
+
+### 12. Use `ahash` for HashMap
+
+**Problem**: `std::collections::HashMap` uses SipHash (crypto-secure, slow)
+
+**Before**:
+```rust
+use std::collections::HashMap;
+
+let mut map: HashMap<String, String> = HashMap::new();
+```
+
+**After** (non-cryptographic, faster):
+```rust
+use ahash::AHashMap;
+
+let mut map: AHashMap<String, String> = AHashMap::new();
+```
+
+**Impact**: 2-3x faster hashing in flamegraph.
+
+**Empath Example**: `empath-common/src/context.rs` uses `AHashMap` for context metadata.
+
+---
+
+### Verification Checklist
+
+After applying optimizations:
+
+- [ ] Run benchmarks: `just bench-baseline-compare before`
+- [ ] Check flamegraph: `just profile-cpu`
+- [ ] Verify correctness: `cargo test`
+- [ ] Check memory: Use dhat to ensure no regressions
+- [ ] Document changes: Update comments with performance rationale
 
 ---
 
