@@ -1,7 +1,7 @@
 # Empath MTA - Completed Tasks Archive
 
 > **Last Updated**: 2025-12-04
-> **Total Completed**: 69 tasks
+> **Total Completed**: 70 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
@@ -10,6 +10,52 @@ This file archives completed tasks from TODO.md to reduce cognitive load and imp
 ## Recently Completed (Last 30 Days)
 
 ### Week of 2025-12-04
+
+#### ✅ NEW-DX-04 - Create docs/PROFILING.md
+**Completed**: 2025-12-04
+**Effort**: 2 hours (actual: 2 hours)
+**Priority**: High (Developer Experience)
+
+Enhanced profiling documentation with comprehensive optimization patterns and justfile command reference for developers optimizing Empath performance.
+
+**Accomplishments**:
+- ✅ Added comprehensive "Common Optimization Patterns" section with 12 patterns (Cow, Arc, caching, perfect hash maps, byte literals, lock scope, parking_lot, ahash, etc.)
+- ✅ Created Justfile Commands Reference table for easy lookup of all profiling/benchmarking commands
+- ✅ Updated all examples to use new `just profile-cpu [BENCH]` command format
+- ✅ Added practical example workflows for optimization scenarios
+- ✅ Included Empath-specific code examples for each pattern
+- ✅ All 6 success criteria met (CPU profiling, benchmarks, memory, patterns, commands, interpreting results)
+
+**Implementation Details**:
+- **Common Optimization Patterns** (lines 452-783): 12 patterns with before/after examples, impact analysis, and Empath-specific usage
+- **Justfile Commands Reference** (lines 25-82): Comprehensive tables for benchmarking, baseline management, and profiling commands
+- **Updated flamegraph usage** (lines 49-66): References new `just profile-cpu` and `just profile-cpu BENCH` commands
+- **Enhanced workflows** (lines 440-462): Updated profiling scenarios to use justfile commands
+
+**Patterns Documented**:
+1. Reduce allocations with `Cow` (zero-copy strings)
+2. Preallocate collections (`Vec::with_capacity`)
+3. Use `Arc` for shared data (cheap ref-counting)
+4. Cache expensive computations (`Lazy` static)
+5. Perfect hash maps for known keys (compile-time hashing)
+6. Byte string literals (`b"..."` vs `"...".as_bytes()`)
+7. Minimize lock scope (reduce contention)
+8. Avoid redundant UTF-8 validation (`from_utf8_unchecked` when safe)
+9. Use `parking_lot` instead of `std::sync` (2-5x faster)
+10. Batch I/O operations (`BufWriter`)
+11. Inline hot functions (`#[inline]`)
+12. Use `ahash` for HashMap (2-3x faster hashing)
+
+**Benefits Delivered**:
+- **Actionable Guidance**: Developers can now reproduce performance optimizations
+- **Empath-Specific Examples**: All patterns show actual usage in the codebase
+- **Easy Reference**: Justfile commands table for quick lookup
+- **Complete Coverage**: All success criteria met (CPU, memory, benchmarks, patterns, commands, interpretation)
+
+**Files Modified** (1 file, +411 lines):
+- `docs/PROFILING.md` - Enhanced with patterns, commands, and updated examples
+
+---
 
 #### ✅ NEW-DX-01 - Add Missing Justfile Commands
 **Completed**: 2025-12-04

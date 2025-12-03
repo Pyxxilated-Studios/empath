@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
 > **Last Updated**: 2025-12-04
-> **Total Active**: 32 tasks | **Completed**: 69 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
+> **Total Active**: 31 tasks | **Completed**: 70 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -245,27 +245,6 @@ See BACKLOG.md for details.
 ---
 
 ## Phase 7: Developer Experience
-
-### 🟢 NEW-DX-04 Create docs/PROFILING.md
-**Priority**: High (upgrade from 7.24)
-**Effort**: 2 hours
-**Dependencies**: None
-**Owner**: Unassigned
-**Status**: Ready to start
-**Tags**: dx, performance, documentation
-**Added**: 2025-11-20 (DX Expert Review)
-
-**Problem**: Performance claims ("90% reduction") not reproducible. No profiling workflow docs.
-
-**Solution**: Create comprehensive profiling guide.
-
-**Success Criteria**:
-- [ ] CPU profiling with flamegraph documented
-- [ ] Benchmark baseline workflow (save/compare)
-- [ ] Memory profiling with dhat
-- [ ] Common optimization patterns
-- [ ] justfile commands for profiling
-- [ ] Interpreting results guide
 
 ---
 
