@@ -2,7 +2,7 @@ use empath_common::{context, tracing};
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{State, session::Session, state, transaction_handler::SmtpTransactionHandler};
+use crate::{State, session::Session, state};
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     /// Handle validation and work for each state using SMTP transaction handler

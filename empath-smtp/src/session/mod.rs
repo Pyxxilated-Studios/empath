@@ -9,8 +9,11 @@ use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    State, connection::Connection, extensions::Extension, state,
-    transaction_handler::DefaultSmtpTransactionHandler,
+    State,
+    connection::Connection,
+    extensions::Extension,
+    state,
+    transaction_handler::{DefaultSmtpTransactionHandler, SmtpTransactionHandler},
 };
 
 // Submodules containing implementation details
@@ -49,6 +52,7 @@ pub struct SessionConfig {
     pub timeouts: crate::SmtpServerTimeouts,
     pub spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
     pub spf_config: crate::spf::SpfConfig,
+    pub transaction_handler: Option<Box<dyn SmtpTransactionHandler>>,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -65,6 +69,10 @@ impl std::fmt::Debug for SessionConfig {
                 &self.spf_dns_resolver.as_ref().map(|_| "<resolver>"),
             )
             .field("spf_config", &self.spf_config)
+            .field(
+                "transaction_handler",
+                &self.transaction_handler.as_ref().map(|_| "<handler>"),
+            )
             .finish()
     }
 }
@@ -87,6 +95,7 @@ pub struct SessionConfigBuilder {
     timeouts: crate::SmtpServerTimeouts,
     spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
     spf_config: crate::spf::SpfConfig,
+    transaction_handler: Option<Box<dyn SmtpTransactionHandler>>,
 }
 
 impl std::fmt::Debug for SessionConfigBuilder {
@@ -103,6 +112,10 @@ impl std::fmt::Debug for SessionConfigBuilder {
                 &self.spf_dns_resolver.as_ref().map(|_| "<resolver>"),
             )
             .field("spf_config", &self.spf_config)
+            .field(
+                "transaction_handler",
+                &self.transaction_handler.as_ref().map(|_| "<handler>"),
+            )
             .finish()
     }
 }
@@ -118,6 +131,7 @@ impl Default for SessionConfigBuilder {
             timeouts: crate::SmtpServerTimeouts::default(),
             spf_dns_resolver: None,
             spf_config: crate::spf::SpfConfig::default(),
+            transaction_handler: None,
         }
     }
 }
@@ -182,6 +196,18 @@ impl SessionConfigBuilder {
         self
     }
 
+    /// Set the transaction handler for this session
+    ///
+    /// If not provided, `DefaultSmtpTransactionHandler` will be used.
+    #[must_use]
+    pub fn with_transaction_handler(
+        mut self,
+        handler: Option<Box<dyn SmtpTransactionHandler>>,
+    ) -> Self {
+        self.transaction_handler = handler;
+        self
+    }
+
     /// Build the final `SessionConfig`
     #[must_use]
     pub fn build(self) -> SessionConfig {
@@ -194,6 +220,7 @@ impl SessionConfigBuilder {
             timeouts: self.timeouts,
             spf_dns_resolver: self.spf_dns_resolver,
             spf_config: self.spf_config,
+            transaction_handler: self.transaction_handler,
         }
     }
 }
@@ -222,7 +249,7 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     /// Start time for tracking connection lifetime
     start_time: std::time::Instant,
     /// SMTP transaction handler for validation and spooling
-    transaction_handler: DefaultSmtpTransactionHandler,
+    transaction_handler: Box<dyn SmtpTransactionHandler>,
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
@@ -248,6 +275,16 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             _ => None,
         });
 
+        // Use provided transaction handler or create default
+        let transaction_handler = config.transaction_handler.unwrap_or_else(|| {
+            Box::new(DefaultSmtpTransactionHandler::new(
+                config.spool,
+                peer,
+                config.spf_dns_resolver,
+                config.spf_config,
+            ))
+        });
+
         Self {
             peer,
             connection: Connection::Plain {
@@ -270,12 +307,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             max_message_size,
             timeouts: config.timeouts,
             start_time: std::time::Instant::now(),
-            transaction_handler: DefaultSmtpTransactionHandler::new(
-                config.spool,
-                peer,
-                config.spf_dns_resolver,
-                config.spf_config,
-            ),
+            transaction_handler,
         }
     }
 
@@ -496,6 +528,7 @@ mod test {
         State,
         session::{Session, SessionConfig},
         state,
+        transaction_handler::SmtpTransactionHandler,
     };
 
     #[tokio::test]
@@ -713,5 +746,84 @@ mod test {
         }
 
         panic!("Expected TestModule to exist");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_injectable_transaction_handler() {
+        use std::{
+            borrow::Cow,
+            sync::{
+                Arc,
+                atomic::{AtomicUsize, Ordering},
+            },
+        };
+
+        use async_trait::async_trait;
+
+        // Mock transaction handler that rejects all connections
+        struct RejectAllHandler {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl SmtpTransactionHandler for RejectAllHandler {
+            async fn validate_connect(&mut self, ctx: &mut Context) -> bool {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                ctx.response = Some((Status::Unavailable, Cow::Borrowed("Connection rejected")));
+                false
+            }
+
+            async fn validate_ehlo(&mut self, _ctx: &mut Context) -> bool {
+                false
+            }
+
+            async fn validate_mail_from(&mut self, _ctx: &mut Context) -> bool {
+                false
+            }
+
+            async fn validate_rcpt_to(&mut self, _ctx: &mut Context) -> bool {
+                false
+            }
+
+            async fn handle_message(&mut self, _ctx: &mut Context) -> bool {
+                false
+            }
+        }
+
+        let banner = "testing";
+        let mut context = Context {
+            banner: banner.into(),
+            max_message_size: 0,
+            ..Default::default()
+        };
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let handler = RejectAllHandler {
+            call_count: Arc::clone(&call_count),
+        };
+
+        let cursor = std::io::Cursor::<Vec<u8>>::default();
+        let mut session = Session::create(
+            cursor,
+            "[::]:25".parse().unwrap(),
+            SessionConfig::builder()
+                .with_banner(banner.to_string())
+                .with_transaction_handler(Some(Box::new(handler)))
+                .build(),
+        );
+
+        // Test that the mock handler is called
+        session.emit(&mut context).await;
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+        // Test that validation fails
+        assert!(context.response.is_some());
+        let (status, message) = context.response.unwrap();
+        assert_eq!(status, Status::Unavailable);
+        assert_eq!(message, "Connection rejected");
+
+        // Verify state transitioned to Reject
+        assert!(matches!(session.context.state, State::Reject(_)));
     }
 }
