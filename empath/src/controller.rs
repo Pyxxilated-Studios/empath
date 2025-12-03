@@ -134,21 +134,34 @@ impl Empath {
         // Extract the backing store for SMTP and delivery
         let backing_store = spool.backing_store();
 
-        self.smtp_controller
-            .map_args(|args| args.with_spool(backing_store.clone()));
+        // Initialize delivery controller first to get the DNS resolver
+        // Use default DNS resolver (None = HickoryDnsResolver)
+        self.delivery.init(backing_store.clone(), None)?;
+
+        // Mark delivery and DNS as ready after successful initialization
+        health_checker.set_delivery_ready(true);
+        health_checker.set_dns_ready(true);
+
+        // Create SPF DNS adapter from the delivery DNS resolver if available
+        let spf_dns_resolver = self.delivery.dns_resolver().as_ref().map(|resolver| {
+            Arc::new(empath_delivery::SpfDnsAdapter::new(Arc::clone(resolver)))
+                as Arc<dyn empath_smtp::spf::SpfDnsResolver>
+        });
+
+        // Configure SMTP with spool and SPF DNS resolver
+        let spf_resolver_clone = spf_dns_resolver.clone();
+        self.smtp_controller.map_args(|args| {
+            let mut args = args.with_spool(backing_store.clone());
+            if let Some(resolver) = spf_resolver_clone.clone() {
+                args = args.with_spf_dns_resolver(resolver);
+            }
+            args
+        });
 
         self.smtp_controller.init()?;
 
         // Mark SMTP as ready after successful initialization
         health_checker.set_smtp_ready(true);
-
-        // Initialize delivery controller with the same backing store and spool path
-        // Use default DNS resolver (None = HickoryDnsResolver)
-        self.delivery.init(backing_store, None)?;
-
-        // Mark delivery and DNS as ready after successful initialization
-        health_checker.set_delivery_ready(true);
-        health_checker.set_dns_ready(true);
 
         // Create control server
         let delivery_arc = Arc::new(self.delivery);

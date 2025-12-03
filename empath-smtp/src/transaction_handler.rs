@@ -121,11 +121,11 @@ pub trait SmtpTransactionHandler: Send + Sync {
 ///
 /// ```rust
 /// use std::sync::Arc;
-/// use empath_smtp::transaction_handler::DefaultSmtpTransactionHandler;
+/// use empath_smtp::{transaction_handler::DefaultSmtpTransactionHandler, spf::SpfConfig};
 /// use empath_spool::BackingStore;
 ///
 /// # fn example(spool: Arc<dyn BackingStore>, peer: std::net::SocketAddr) {
-/// let handler = DefaultSmtpTransactionHandler::new(Some(spool), peer);
+/// let handler = DefaultSmtpTransactionHandler::new(Some(spool), peer, None, SpfConfig::default());
 /// // Use handler with session orchestrator
 /// # }
 /// ```
@@ -134,6 +134,10 @@ pub struct DefaultSmtpTransactionHandler {
     spool: Option<Arc<dyn BackingStore>>,
     /// Client peer address for audit logging
     peer: SocketAddr,
+    /// Optional SPF DNS resolver for sender validation
+    spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
+    /// SPF configuration
+    spf_config: crate::spf::SpfConfig,
 }
 
 impl DefaultSmtpTransactionHandler {
@@ -143,9 +147,21 @@ impl DefaultSmtpTransactionHandler {
     ///
     /// * `spool` - Optional message spool for persistence
     /// * `peer` - Client peer address for audit logging
+    /// * `spf_dns_resolver` - Optional SPF DNS resolver for sender validation
+    /// * `spf_config` - SPF configuration
     #[must_use]
-    pub const fn new(spool: Option<Arc<dyn BackingStore>>, peer: SocketAddr) -> Self {
-        Self { spool, peer }
+    pub const fn new(
+        spool: Option<Arc<dyn BackingStore>>,
+        peer: SocketAddr,
+        spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
+        spf_config: crate::spf::SpfConfig,
+    ) -> Self {
+        Self {
+            spool,
+            peer,
+            spf_dns_resolver,
+            spf_config,
+        }
     }
 
     /// Spool a message after validation passes.
@@ -234,6 +250,46 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
     }
 
     async fn validate_mail_from(&mut self, ctx: &mut Context) -> bool {
+        // Perform SPF evaluation if DNS resolver is available
+        if let Some(resolver) = &self.spf_dns_resolver {
+            let sender = ctx.sender();
+
+            // Only evaluate if sender is not null
+            if !sender.is_empty() && sender != "<>" {
+                // Extract IP address from peer socket address
+                let client_ip = self.peer.ip();
+
+                // HELO/EHLO hostname is stored in ctx.id
+                // Clone to avoid borrow checker issues when mutating ctx later
+                let helo_domain = ctx.id().to_string();
+
+                // Create SPF evaluator and perform evaluation
+                let evaluator =
+                    crate::spf::SpfEvaluator::new(Arc::clone(resolver), self.spf_config);
+
+                let spf_evaluation = evaluator.evaluate(&sender, client_ip, &helo_domain).await;
+
+                // Store SPF results in transaction context
+                ctx.transaction.insert(
+                    Cow::Borrowed("spf_result"),
+                    spf_evaluation.result.to_string(),
+                );
+                if let Some(explanation) = spf_evaluation.explanation {
+                    ctx.transaction
+                        .insert(Cow::Borrowed("spf_explanation"), explanation);
+                }
+
+                tracing::info!(
+                    sender = %sender,
+                    client_ip = %client_ip,
+                    helo_domain = %helo_domain,
+                    spf_result = %spf_evaluation.result,
+                    "SPF evaluation completed"
+                );
+            }
+        }
+
+        // Dispatch to modules for additional validation
         modules::dispatch(
             modules::Event::Validate(modules::validate::Event::MailFrom),
             ctx,
@@ -305,7 +361,12 @@ mod tests {
 
     #[test]
     fn test_default_handler_creation() {
-        let handler = DefaultSmtpTransactionHandler::new(None, "127.0.0.1:1234".parse().unwrap());
+        let handler = DefaultSmtpTransactionHandler::new(
+            None,
+            "127.0.0.1:1234".parse().unwrap(),
+            None,
+            crate::spf::SpfConfig::default(),
+        );
         assert!(handler.spool.is_none());
         assert_eq!(handler.peer.to_string(), "127.0.0.1:1234");
     }
@@ -315,8 +376,12 @@ mod tests {
         use empath_spool::MemoryBackingStore;
 
         let spool = Arc::new(MemoryBackingStore::default());
-        let handler =
-            DefaultSmtpTransactionHandler::new(Some(spool), "127.0.0.1:1234".parse().unwrap());
+        let handler = DefaultSmtpTransactionHandler::new(
+            Some(spool),
+            "127.0.0.1:1234".parse().unwrap(),
+            None,
+            crate::spf::SpfConfig::default(),
+        );
         assert!(handler.spool.is_some());
     }
 
@@ -343,5 +408,121 @@ mod tests {
         assert!(!requires_validation(&State::Invalid(Invalid {
             reason: String::new()
         })));
+    }
+
+    #[tokio::test]
+    async fn test_spf_evaluation_integration() {
+        use std::{net::IpAddr, sync::Mutex};
+
+        use empath_common::{address::Address, address_parser::Mailbox, envelope::Envelope};
+
+        use crate::spf::{MailServer, SpfConfig, SpfResult, dns::SpfDnsResolver};
+
+        // Mock DNS resolver that returns SPF records
+        #[derive(Debug)]
+        struct MockSpfResolver {
+            txt_records: Mutex<ahash::AHashMap<String, Vec<String>>>,
+        }
+
+        impl MockSpfResolver {
+            fn new() -> Self {
+                Self {
+                    txt_records: Mutex::new(ahash::AHashMap::new()),
+                }
+            }
+
+            fn add_txt(&self, domain: &str, records: Vec<String>) {
+                self.txt_records
+                    .lock()
+                    .unwrap()
+                    .insert(domain.to_string(), records);
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl SpfDnsResolver for MockSpfResolver {
+            async fn txt_lookup(
+                &self,
+                domain: &str,
+            ) -> Result<Arc<Vec<String>>, crate::spf::dns::DnsLookupError> {
+                Ok(Arc::new(
+                    self.txt_records
+                        .lock()
+                        .unwrap()
+                        .get(domain)
+                        .cloned()
+                        .unwrap_or_default(),
+                ))
+            }
+
+            async fn ptr_lookup(
+                &self,
+                _ip: IpAddr,
+            ) -> Result<Arc<Vec<String>>, crate::spf::dns::DnsLookupError> {
+                Ok(Arc::new(Vec::new()))
+            }
+
+            async fn a_lookup(
+                &self,
+                _domain: &str,
+            ) -> Result<Arc<Vec<IpAddr>>, crate::spf::dns::DnsLookupError> {
+                Ok(Arc::new(vec!["192.0.2.100".parse().unwrap()]))
+            }
+
+            async fn mx_lookup(
+                &self,
+                _domain: &str,
+            ) -> Result<Arc<Vec<MailServer>>, crate::spf::dns::DnsLookupError> {
+                Ok(Arc::new(Vec::new()))
+            }
+        }
+
+        // Setup mock resolver with SPF record
+        let resolver = Arc::new(MockSpfResolver::new());
+        resolver.add_txt(
+            "example.com",
+            vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
+        );
+
+        // Create transaction handler with SPF resolver
+        let mut handler = DefaultSmtpTransactionHandler::new(
+            None,
+            "192.0.2.100:1234".parse().unwrap(),
+            Some(resolver),
+            SpfConfig::default(),
+        );
+
+        // Create context with sender from example.com
+        let mut envelope = Envelope::default();
+        let mailbox = Mailbox {
+            local_part: "user".to_string(),
+            domain: "example.com".to_string(),
+        };
+        *envelope.sender_mut() = Some(Address(mailbox));
+
+        let mut ctx = Context {
+            extended: true,
+            envelope: Arc::new(envelope),
+            id: "client.example.com".to_string(),
+            data: None,
+            response: None,
+            session: ahash::AHashMap::new(),
+            transaction: ahash::AHashMap::new(),
+            banner: Arc::from("test.example.com"),
+            max_message_size: 0,
+            capabilities: Vec::new(),
+            delivery: None,
+            tracking_id: None,
+        };
+
+        // Call validate_mail_from which should perform SPF evaluation
+        let _result = handler.validate_mail_from(&mut ctx).await;
+
+        // Check that SPF result was stored in transaction context
+        // (Note: modules::dispatch may return false when no modules loaded,
+        // but SPF evaluation should still have occurred)
+        assert!(ctx.transaction.contains_key("spf_result"));
+        let spf_result = ctx.transaction.get("spf_result").unwrap();
+        assert_eq!(spf_result, SpfResult::Pass.to_string().as_str());
     }
 }

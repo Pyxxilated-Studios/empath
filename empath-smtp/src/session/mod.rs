@@ -40,7 +40,6 @@ pub struct TlsContext {
     pub key: PathBuf,
 }
 
-#[derive(Debug)]
 pub struct SessionConfig {
     pub extensions: Vec<Extension>,
     pub tls_context: Option<TlsContext>,
@@ -48,6 +47,26 @@ pub struct SessionConfig {
     pub banner: String,
     pub init_context: AHashMap<Cow<'static, str>, String>,
     pub timeouts: crate::SmtpServerTimeouts,
+    pub spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
+    pub spf_config: crate::spf::SpfConfig,
+}
+
+impl std::fmt::Debug for SessionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionConfig")
+            .field("extensions", &self.extensions)
+            .field("tls_context", &self.tls_context)
+            .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
+            .field("banner", &self.banner)
+            .field("init_context", &self.init_context)
+            .field("timeouts", &self.timeouts)
+            .field(
+                "spf_dns_resolver",
+                &self.spf_dns_resolver.as_ref().map(|_| "<resolver>"),
+            )
+            .field("spf_config", &self.spf_config)
+            .finish()
+    }
 }
 
 impl SessionConfig {
@@ -59,7 +78,6 @@ impl SessionConfig {
 }
 
 /// Builder for `SessionConfig`
-#[derive(Debug)]
 pub struct SessionConfigBuilder {
     extensions: Vec<Extension>,
     tls_context: Option<TlsContext>,
@@ -67,6 +85,26 @@ pub struct SessionConfigBuilder {
     banner: String,
     init_context: AHashMap<Cow<'static, str>, String>,
     timeouts: crate::SmtpServerTimeouts,
+    spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
+    spf_config: crate::spf::SpfConfig,
+}
+
+impl std::fmt::Debug for SessionConfigBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionConfigBuilder")
+            .field("extensions", &self.extensions)
+            .field("tls_context", &self.tls_context)
+            .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
+            .field("banner", &self.banner)
+            .field("init_context", &self.init_context)
+            .field("timeouts", &self.timeouts)
+            .field(
+                "spf_dns_resolver",
+                &self.spf_dns_resolver.as_ref().map(|_| "<resolver>"),
+            )
+            .field("spf_config", &self.spf_config)
+            .finish()
+    }
 }
 
 impl Default for SessionConfigBuilder {
@@ -78,6 +116,8 @@ impl Default for SessionConfigBuilder {
             banner: String::new(),
             init_context: AHashMap::new(),
             timeouts: crate::SmtpServerTimeouts::default(),
+            spf_dns_resolver: None,
+            spf_config: crate::spf::SpfConfig::default(),
         }
     }
 }
@@ -125,6 +165,23 @@ impl SessionConfigBuilder {
         self
     }
 
+    /// Set the SPF DNS resolver for this session
+    #[must_use]
+    pub fn with_spf_dns_resolver(
+        mut self,
+        resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
+    ) -> Self {
+        self.spf_dns_resolver = resolver;
+        self
+    }
+
+    /// Set the SPF configuration for this session
+    #[must_use]
+    pub const fn with_spf_config(mut self, config: crate::spf::SpfConfig) -> Self {
+        self.spf_config = config;
+        self
+    }
+
     /// Build the final `SessionConfig`
     #[must_use]
     pub fn build(self) -> SessionConfig {
@@ -135,6 +192,8 @@ impl SessionConfigBuilder {
             banner: self.banner,
             init_context: self.init_context,
             timeouts: self.timeouts,
+            spf_dns_resolver: self.spf_dns_resolver,
+            spf_config: self.spf_config,
         }
     }
 }
@@ -211,7 +270,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             max_message_size,
             timeouts: config.timeouts,
             start_time: std::time::Instant::now(),
-            transaction_handler: DefaultSmtpTransactionHandler::new(config.spool, peer),
+            transaction_handler: DefaultSmtpTransactionHandler::new(
+                config.spool,
+                peer,
+                config.spf_dns_resolver,
+                config.spf_config,
+            ),
         }
     }
 

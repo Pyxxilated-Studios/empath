@@ -142,6 +142,24 @@ struct CachedResult {
     expires_at: Instant,
 }
 
+/// Cached TXT record result
+#[derive(Debug, Clone)]
+struct CachedTxtResult {
+    /// TXT records for the domain
+    txt_records: Arc<Vec<String>>,
+    /// When this cache entry expires
+    expires_at: Instant,
+}
+
+/// Cached PTR record result
+#[derive(Debug, Clone)]
+struct CachedPtrResult {
+    /// PTR (reverse DNS) records for the IP
+    ptr_names: Arc<Vec<String>>,
+    /// When this cache entry expires
+    expires_at: Instant,
+}
+
 impl MailServer {
     /// Creates a new mail server entry.
     #[must_use]
@@ -220,6 +238,34 @@ pub trait DnsResolver: Send + Sync + std::fmt::Debug {
     ///
     /// Returns a `HashMap` mapping domain names to their cached mail servers.
     fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>>;
+
+    /// Look up TXT records for a domain (for SPF, DKIM, DMARC evaluation)
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if:
+    /// - The domain does not exist
+    /// - The DNS query fails or times out
+    fn txt_lookup<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<String>>>;
+
+    /// Look up PTR (reverse DNS) records for an IP address (for SPF ptr mechanism)
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if:
+    /// - The IP has no PTR record
+    /// - The DNS query fails or times out
+    fn ptr_lookup(&self, ip: std::net::IpAddr) -> DnsFuture<'_, Arc<Vec<String>>>;
+
+    /// Look up A/AAAA records for a domain (for SPF a/mx mechanism evaluation)
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if:
+    /// - The domain does not exist
+    /// - No A/AAAA records found
+    /// - The DNS query fails or times out
+    fn a_lookup<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<std::net::IpAddr>>>;
 }
 
 /// Production DNS resolver using Hickory DNS with concurrent caching.
@@ -230,6 +276,9 @@ pub trait DnsResolver: Send + Sync + std::fmt::Debug {
 pub struct HickoryDnsResolver {
     resolver: TokioResolver,
     cache: Arc<DashMap<String, CachedResult>>,
+    txt_cache: Arc<DashMap<String, CachedTxtResult>>,
+    ptr_cache: Arc<DashMap<String, CachedPtrResult>>,
+    a_cache: Arc<DashMap<String, CachedPtrResult>>, // Reuse for A/AAAA records (stores IPs as strings)
     config: DnsConfig,
 }
 
@@ -275,10 +324,16 @@ impl HickoryDnsResolver {
         };
 
         let cache = Arc::new(DashMap::new());
+        let txt_cache = Arc::new(DashMap::new());
+        let ptr_cache = Arc::new(DashMap::new());
+        let a_cache = Arc::new(DashMap::new());
 
         Ok(Self {
             resolver,
             cache,
+            txt_cache,
+            ptr_cache,
+            a_cache,
             config: dns_config,
         })
     }
@@ -299,10 +354,16 @@ impl HickoryDnsResolver {
                 .build();
 
         let cache = Arc::new(DashMap::new());
+        let txt_cache = Arc::new(DashMap::new());
+        let ptr_cache = Arc::new(DashMap::new());
+        let a_cache = Arc::new(DashMap::new());
 
         Ok(Self {
             resolver,
             cache,
+            txt_cache,
+            ptr_cache,
+            a_cache,
             config: dns_config,
         })
     }
@@ -667,6 +728,247 @@ impl HickoryDnsResolver {
             capacity: self.config.cache_size,
         }
     }
+
+    /// Look up TXT records for a domain (for SPF, DKIM, DMARC evaluation)
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if the DNS query fails or times out.
+    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(domain = %domain)), timing(precision = "ms"))]
+    pub async fn txt_lookup_impl(&self, domain: &str) -> Result<Arc<Vec<String>>, DnsError> {
+        debug!("Looking up TXT records for domain: {domain}");
+
+        // Check cache first
+        if let Some(cached) = self.txt_cache.get(domain) {
+            if cached.expires_at > Instant::now() {
+                debug!(
+                    "TXT cache hit for {domain}, {} record(s)",
+                    cached.txt_records.len()
+                );
+                return Ok(Arc::clone(&cached.txt_records));
+            }
+            debug!("TXT cache entry expired for {domain}");
+        }
+
+        // Perform DNS lookup
+        match self.resolver.txt_lookup(domain).await {
+            Ok(txt_lookup) => {
+                // Extract minimum TTL
+                let min_ttl = txt_lookup
+                    .as_lookup()
+                    .records()
+                    .iter()
+                    .map(hickory_resolver::proto::rr::Record::ttl)
+                    .min()
+                    .unwrap_or(300);
+
+                // Extract TXT records (concatenate all character strings)
+                let txt_records: Vec<String> = txt_lookup
+                    .iter()
+                    .map(|txt| {
+                        txt.iter()
+                            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                            .collect::<String>()
+                    })
+                    .collect();
+
+                debug!(
+                    "Resolved {} TXT record(s) for {domain} with TTL {min_ttl}s",
+                    txt_records.len()
+                );
+
+                // Apply TTL bounds
+                let ttl_secs = self.config.cache_ttl_secs.unwrap_or_else(|| {
+                    u64::from(min_ttl)
+                        .max(self.config.min_cache_ttl_secs)
+                        .min(self.config.max_cache_ttl_secs)
+                });
+
+                let expires_at = Instant::now() + Duration::from_secs(ttl_secs);
+                let txt_records = Arc::new(txt_records);
+
+                // Cache the result
+                self.txt_cache.insert(
+                    domain.to_string(),
+                    CachedTxtResult {
+                        txt_records: Arc::clone(&txt_records),
+                        expires_at,
+                    },
+                );
+
+                Ok(txt_records)
+            }
+            Err(err) => {
+                warn!("TXT lookup failed for {domain}: {err}");
+                if err.is_no_records_found() {
+                    // No TXT records is not an error for SPF - it means no SPF record
+                    Ok(Arc::new(Vec::new()))
+                } else {
+                    Err(DnsError::LookupFailed(err))
+                }
+            }
+        }
+    }
+
+    /// Look up PTR (reverse DNS) records for an IP address
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if the DNS query fails or times out.
+    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(ip = %ip)), timing(precision = "ms"))]
+    pub async fn ptr_lookup_impl(
+        &self,
+        ip: std::net::IpAddr,
+    ) -> Result<Arc<Vec<String>>, DnsError> {
+        let cache_key = ip.to_string();
+        debug!("Looking up PTR records for IP: {ip}");
+
+        // Check cache first
+        if let Some(cached) = self.ptr_cache.get(&cache_key) {
+            if cached.expires_at > Instant::now() {
+                debug!(
+                    "PTR cache hit for {ip}, {} record(s)",
+                    cached.ptr_names.len()
+                );
+                return Ok(Arc::clone(&cached.ptr_names));
+            }
+            debug!("PTR cache entry expired for {ip}");
+        }
+
+        // Perform reverse DNS lookup
+        match self.resolver.reverse_lookup(ip).await {
+            Ok(ptr_lookup) => {
+                // Extract minimum TTL
+                let min_ttl = ptr_lookup
+                    .as_lookup()
+                    .records()
+                    .iter()
+                    .map(hickory_resolver::proto::rr::Record::ttl)
+                    .min()
+                    .unwrap_or(300);
+
+                // Extract PTR names
+                let ptr_names: Vec<String> = ptr_lookup.iter().map(|name| name.to_utf8()).collect();
+
+                debug!(
+                    "Resolved {} PTR record(s) for {ip} with TTL {min_ttl}s",
+                    ptr_names.len()
+                );
+
+                // Apply TTL bounds
+                let ttl_secs = self.config.cache_ttl_secs.unwrap_or_else(|| {
+                    u64::from(min_ttl)
+                        .max(self.config.min_cache_ttl_secs)
+                        .min(self.config.max_cache_ttl_secs)
+                });
+
+                let expires_at = Instant::now() + Duration::from_secs(ttl_secs);
+                let ptr_names = Arc::new(ptr_names);
+
+                // Cache the result
+                self.ptr_cache.insert(
+                    cache_key,
+                    CachedPtrResult {
+                        ptr_names: Arc::clone(&ptr_names),
+                        expires_at,
+                    },
+                );
+
+                Ok(ptr_names)
+            }
+            Err(err) => {
+                warn!("PTR lookup failed for {ip}: {err}");
+                if err.is_no_records_found() {
+                    // No PTR records - return empty list
+                    Ok(Arc::new(Vec::new()))
+                } else {
+                    Err(DnsError::LookupFailed(err))
+                }
+            }
+        }
+    }
+
+    /// Look up A/AAAA records for a domain (for SPF a/mx mechanism evaluation)
+    ///
+    /// # Errors
+    ///
+    /// Returns `DnsError` if the DNS query fails or times out.
+    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(domain = %domain)), timing(precision = "ms"))]
+    pub async fn a_lookup_impl(
+        &self,
+        domain: &str,
+    ) -> Result<Arc<Vec<std::net::IpAddr>>, DnsError> {
+        debug!("Looking up A/AAAA records for domain: {domain}");
+
+        // Check cache first
+        if let Some(cached) = self.a_cache.get(domain) {
+            if cached.expires_at > Instant::now() {
+                // Parse cached IPs from strings
+                let ips: Vec<std::net::IpAddr> = cached
+                    .ptr_names
+                    .iter()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                debug!("A/AAAA cache hit for {domain}, {} record(s)", ips.len());
+                return Ok(Arc::new(ips));
+            }
+            debug!("A/AAAA cache entry expired for {domain}");
+        }
+
+        // Perform DNS lookup
+        match self.resolver.lookup_ip(domain).await {
+            Ok(ip_lookup) => {
+                // Extract minimum TTL
+                let min_ttl = ip_lookup
+                    .as_lookup()
+                    .records()
+                    .iter()
+                    .map(hickory_resolver::proto::rr::Record::ttl)
+                    .min()
+                    .unwrap_or(300);
+
+                // Extract IP addresses
+                let ips: Vec<std::net::IpAddr> = ip_lookup.iter().collect();
+
+                debug!(
+                    "Resolved {} A/AAAA record(s) for {domain} with TTL {min_ttl}s",
+                    ips.len()
+                );
+
+                // Apply TTL bounds
+                let ttl_secs = self.config.cache_ttl_secs.unwrap_or_else(|| {
+                    u64::from(min_ttl)
+                        .max(self.config.min_cache_ttl_secs)
+                        .min(self.config.max_cache_ttl_secs)
+                });
+
+                let expires_at = Instant::now() + Duration::from_secs(ttl_secs);
+
+                // Store IPs as strings in cache (reusing CachedPtrResult structure)
+                let ip_strings: Vec<String> =
+                    ips.iter().map(std::string::ToString::to_string).collect();
+                let ips_arc = Arc::new(ips);
+
+                self.a_cache.insert(
+                    domain.to_string(),
+                    CachedPtrResult {
+                        ptr_names: Arc::new(ip_strings),
+                        expires_at,
+                    },
+                );
+
+                Ok(ips_arc)
+            }
+            Err(err) => {
+                warn!("A/AAAA lookup failed for {domain}: {err}");
+                if err.is_no_records_found() {
+                    Ok(Arc::new(Vec::new()))
+                } else {
+                    Err(DnsError::LookupFailed(err))
+                }
+            }
+        }
+    }
 }
 
 /// Implement the `DnsResolver` trait for `HickoryDnsResolver`
@@ -699,6 +1001,18 @@ impl DnsResolver for HickoryDnsResolver {
 
     fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
         self.list_cache_impl()
+    }
+
+    fn txt_lookup<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<String>>> {
+        Box::pin(self.txt_lookup_impl(domain))
+    }
+
+    fn ptr_lookup(&self, ip: std::net::IpAddr) -> DnsFuture<'_, Arc<Vec<String>>> {
+        Box::pin(self.ptr_lookup_impl(ip))
+    }
+
+    fn a_lookup<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<std::net::IpAddr>>> {
+        Box::pin(self.a_lookup_impl(domain))
     }
 }
 
@@ -766,8 +1080,14 @@ impl Default for HickoryDnsResolver {
 /// ```
 #[derive(Debug, Default)]
 pub struct MockDnsResolver {
-    /// Configured responses for domain lookups
+    /// Configured responses for MX/A/AAAA lookups
     responses: DashMap<String, Result<Arc<Vec<MailServer>>, DnsError>>,
+    /// Configured responses for TXT record lookups
+    txt_responses: DashMap<String, Result<Arc<Vec<String>>, DnsError>>,
+    /// Configured responses for PTR record lookups
+    ptr_responses: DashMap<String, Result<Arc<Vec<String>>, DnsError>>,
+    /// Configured responses for A/AAAA record lookups
+    a_responses: DashMap<String, Result<Arc<Vec<std::net::IpAddr>>, DnsError>>,
 }
 
 impl MockDnsResolver {
@@ -776,6 +1096,9 @@ impl MockDnsResolver {
     pub fn new() -> Self {
         Self {
             responses: DashMap::new(),
+            txt_responses: DashMap::new(),
+            ptr_responses: DashMap::new(),
+            a_responses: DashMap::new(),
         }
     }
 
@@ -812,9 +1135,37 @@ impl MockDnsResolver {
         self.responses.insert(domain, result);
     }
 
+    /// Add a mock TXT record response for a domain
+    pub fn add_txt(&self, domain: impl Into<String>, result: Result<Vec<String>, DnsError>) {
+        let domain = domain.into();
+        let result = result.map(Arc::new);
+        self.txt_responses.insert(domain, result);
+    }
+
+    /// Add a mock PTR record response for an IP
+    pub fn add_ptr(&self, ip: impl Into<String>, result: Result<Vec<String>, DnsError>) {
+        let ip = ip.into();
+        let result = result.map(Arc::new);
+        self.ptr_responses.insert(ip, result);
+    }
+
+    /// Add a mock A/AAAA record response for a domain
+    pub fn add_a(
+        &self,
+        domain: impl Into<String>,
+        result: Result<Vec<std::net::IpAddr>, DnsError>,
+    ) {
+        let domain = domain.into();
+        let result = result.map(Arc::new);
+        self.a_responses.insert(domain, result);
+    }
+
     /// Clear all configured responses
     pub fn clear(&self) {
         self.responses.clear();
+        self.txt_responses.clear();
+        self.ptr_responses.clear();
+        self.a_responses.clear();
     }
 }
 
@@ -867,6 +1218,106 @@ impl DnsResolver for MockDnsResolver {
     fn list_cache(&self) -> HashMap<String, Vec<(MailServer, Duration)>> {
         // Mock resolver has no cache
         HashMap::new()
+    }
+
+    fn txt_lookup<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<String>>> {
+        let result = self.txt_responses.get(domain).map_or_else(
+            || Ok(Arc::new(Vec::new())), // No TXT records configured - return empty
+            |entry| entry.clone(),
+        );
+
+        Box::pin(async move { result })
+    }
+
+    fn ptr_lookup(&self, ip: std::net::IpAddr) -> DnsFuture<'_, Arc<Vec<String>>> {
+        let ip_str = ip.to_string();
+        let result = self.ptr_responses.get(&ip_str).map_or_else(
+            || Ok(Arc::new(Vec::new())), // No PTR records configured - return empty
+            |entry| entry.clone(),
+        );
+
+        Box::pin(async move { result })
+    }
+
+    fn a_lookup<'a>(&'a self, domain: &'a str) -> DnsFuture<'a, Arc<Vec<std::net::IpAddr>>> {
+        let result = self.a_responses.get(domain).map_or_else(
+            || Ok(Arc::new(Vec::new())), // No A records configured - return empty
+            |entry| entry.clone(),
+        );
+
+        Box::pin(async move { result })
+    }
+}
+
+/// Adapter that implements `SpfDnsResolver` for any `DnsResolver`
+///
+/// This allows SPF evaluation to use the production DNS resolver with caching.
+pub struct SpfDnsAdapter<D: ?Sized> {
+    resolver: Arc<D>,
+}
+
+impl<D: ?Sized> SpfDnsAdapter<D> {
+    /// Create a new SPF DNS resolver adapter
+    #[must_use]
+    pub const fn new(resolver: Arc<D>) -> Self {
+        Self { resolver }
+    }
+}
+
+#[async_trait::async_trait]
+impl<D: ?Sized + DnsResolver> empath_smtp::spf::SpfDnsResolver for SpfDnsAdapter<D> {
+    async fn txt_lookup(
+        &self,
+        domain: &str,
+    ) -> Result<Arc<Vec<String>>, empath_smtp::spf::DnsLookupError> {
+        self.resolver.txt_lookup(domain).await.map_err(|e| match e {
+            DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
+            _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+        })
+    }
+
+    async fn ptr_lookup(
+        &self,
+        ip: std::net::IpAddr,
+    ) -> Result<Arc<Vec<String>>, empath_smtp::spf::DnsLookupError> {
+        self.resolver.ptr_lookup(ip).await.map_err(|e| match e {
+            DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
+            _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+        })
+    }
+
+    async fn a_lookup(
+        &self,
+        domain: &str,
+    ) -> Result<Arc<Vec<std::net::IpAddr>>, empath_smtp::spf::DnsLookupError> {
+        self.resolver.a_lookup(domain).await.map_err(|e| match e {
+            DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
+            _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+        })
+    }
+
+    async fn mx_lookup(
+        &self,
+        domain: &str,
+    ) -> Result<Arc<Vec<empath_smtp::spf::MailServer>>, empath_smtp::spf::DnsLookupError> {
+        self.resolver
+            .resolve_mail_servers(domain)
+            .await
+            .map_err(|e| match e {
+                DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
+                _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+            })
+            .map(|servers| {
+                // Convert empath_delivery::MailServer to empath_smtp::spf::MailServer
+                let spf_servers: Vec<empath_smtp::spf::MailServer> = servers
+                    .iter()
+                    .map(|s| empath_smtp::spf::MailServer {
+                        host: s.host.clone(),
+                        priority: s.priority,
+                    })
+                    .collect();
+                Arc::new(spf_servers)
+            })
     }
 }
 

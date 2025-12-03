@@ -8,8 +8,6 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-empath-ffi.workspace = true
-empath.workspace = true
 
 [build-dependencies]
 # No build dependencies - just runs cargo commands

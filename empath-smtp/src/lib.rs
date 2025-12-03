@@ -8,6 +8,7 @@ pub mod extensions;
 pub mod fsm;
 pub mod session;
 pub mod session_state;
+pub mod spf;
 pub mod state;
 pub mod transaction_handler;
 
@@ -110,7 +111,7 @@ const fn default_connection_timeout() -> u64 {
 #[derive(Default, Deserialize)]
 pub struct Smtp;
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct SmtpArgs {
     #[serde(default)]
     extensions: Vec<Extension>,
@@ -118,6 +119,25 @@ pub struct SmtpArgs {
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     #[serde(default)]
     pub timeouts: SmtpServerTimeouts,
+    #[serde(skip)]
+    spf_dns_resolver: Option<Arc<dyn spf::SpfDnsResolver>>,
+    #[serde(default)]
+    pub spf_config: spf::SpfConfig,
+}
+
+impl std::fmt::Debug for SmtpArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SmtpArgs")
+            .field("extensions", &self.extensions)
+            .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
+            .field("timeouts", &self.timeouts)
+            .field(
+                "spf_dns_resolver",
+                &self.spf_dns_resolver.as_ref().map(|_| "<resolver>"),
+            )
+            .field("spf_config", &self.spf_config)
+            .finish()
+    }
 }
 
 impl SmtpArgs {
@@ -147,6 +167,20 @@ impl SmtpArgs {
         self.timeouts = timeouts;
         self
     }
+
+    /// Set the SPF DNS resolver for this SMTP server
+    #[must_use]
+    pub fn with_spf_dns_resolver(mut self, resolver: Arc<dyn spf::SpfDnsResolver>) -> Self {
+        self.spf_dns_resolver = Some(resolver);
+        self
+    }
+
+    /// Set the SPF configuration for this SMTP server
+    #[must_use]
+    pub const fn with_spf_config(mut self, config: spf::SpfConfig) -> Self {
+        self.spf_config = config;
+        self
+    }
 }
 
 impl Protocol for Smtp {
@@ -172,6 +206,8 @@ impl Protocol for Smtp {
                 .with_extensions(args.extensions)
                 .with_spool(args.spool)
                 .with_timeouts(args.timeouts)
+                .with_spf_dns_resolver(args.spf_dns_resolver)
+                .with_spf_config(args.spf_config)
                 .with_init_context(
                     init_context
                         .into_iter()

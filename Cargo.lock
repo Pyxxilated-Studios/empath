@@ -973,6 +973,7 @@ name = "empath-delivery"
 version = "0.0.1"
 dependencies = [
  "ahash",
+ "async-trait",
  "chrono",
  "dashmap",
  "empath-common",
@@ -997,10 +998,6 @@ dependencies = [
 [[package]]
 name = "empath-examples"
 version = "0.1.0"
-dependencies = [
- "empath",
- "empath-ffi",
-]
 
 [[package]]
 name = "empath-ffi"
@@ -1074,6 +1071,7 @@ dependencies = [
  "empath-ffi",
  "empath-spool",
  "empath-tracing",
+ "ipnetwork",
  "phf",
  "proptest",
  "rustls-native-certs",
@@ -1819,6 +1817,15 @@ name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
+
+[[package]]
+name = "ipnetwork"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "iri-string"

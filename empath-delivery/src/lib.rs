@@ -29,6 +29,7 @@ pub use circuit_breaker::{
 // Re-export DNS types
 pub use dns::{
     CacheStats, DnsConfig, DnsError, DnsResolver, HickoryDnsResolver, MailServer, MockDnsResolver,
+    SpfDnsAdapter,
 };
 // Re-export domain configuration types
 pub use domain_config::{DomainConfig, DomainConfigRegistry};
