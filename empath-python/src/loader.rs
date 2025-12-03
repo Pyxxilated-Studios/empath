@@ -75,9 +75,9 @@ impl PythonModule {
     /// # Errors
     /// Returns error if initialization fails
     pub fn initialize(&self) -> Result<()> {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module = self.get_module_dict(py)?;
 
             // Call init() if it exists
@@ -106,9 +106,9 @@ impl PythonModule {
     /// # Errors
     /// Returns error if callback execution fails
     pub fn execute_callback(&self, callback_name: &str, context: &mut Context) -> Result<bool> {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module = self.get_module_dict(py)?;
 
             // Wrap context for Python

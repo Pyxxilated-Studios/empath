@@ -103,9 +103,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_call_callback_success() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module = PyDict::new(py);
             py.run(
                 std::ffi::CString::new("def test_func(x): return x * 2")
@@ -129,9 +129,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_call_callback_not_found() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module = PyDict::new(py);
             let args = PyTuple::new(py, &[] as &[i32]).unwrap();
 
@@ -145,9 +145,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_call_callback_exception() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module = PyDict::new(py);
             py.run(
                 std::ffi::CString::new("def test_func(): raise ValueError('test error')")

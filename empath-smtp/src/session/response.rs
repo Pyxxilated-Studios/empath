@@ -2,7 +2,6 @@ use core::bstr;
 
 use empath_common::{context, status::Status, tracing};
 use empath_tracing::traced;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     State,
@@ -10,13 +9,13 @@ use crate::{
     state,
 };
 
-impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
+impl Session {
     /// Format and return the response to send to the client
     ///
     /// This is a pure formatter - all validation and work happens in `emit()` which is called before this.
     /// Just formats the response based on state and what `emit()` set in the context.
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "ns"))]
-    pub(super) async fn response(&mut self, validate_context: &mut context::Context) -> Response {
+    pub(crate) async fn response(&mut self, validate_context: &mut context::Context) -> Response {
         if self.context.sent {
             return (None, Event::ConnectionKeepAlive);
         }
@@ -96,7 +95,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
 
     /// Generate response for STARTTLS command
     fn starttls_response(&self) -> Response {
-        if self.tls_context.is_some() {
+        // Check if STARTTLS extension is configured
+        let tls_available = self
+            .extensions
+            .iter()
+            .any(|ext| matches!(ext, crate::extensions::Extension::Starttls(_)));
+
+        if tls_available {
             (
                 Some(vec![format!("{} Ready to begin TLS", Status::ServiceReady)]),
                 Event::ConnectionKeepAlive,

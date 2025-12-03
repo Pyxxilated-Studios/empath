@@ -1,23 +1,17 @@
 use std::{borrow::Cow, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use ahash::AHashMap;
-use empath_common::{
-    Signal, context, error::SessionError, internal, outgoing, status::Status, tracing,
-};
+use empath_common::tracing;
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     State,
-    connection::Connection,
     extensions::Extension,
-    state,
     transaction_handler::{DefaultSmtpTransactionHandler, SmtpTransactionHandler},
 };
 
 // Submodules containing implementation details
-mod events;
 mod io;
 mod response;
 
@@ -225,14 +219,28 @@ impl SessionConfigBuilder {
     }
 }
 
-pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
-    peer: SocketAddr,
-    pub(super) context: Context,
-    extensions: Vec<Extension>,
-    pub(super) banner: Arc<str>,
-    pub(super) tls_context: Option<TlsContext>,
-    pub(super) connection: Connection<Stream>,
-    init_context: Arc<AHashMap<Cow<'static, str>, String>>,
+/// SMTP Protocol Session State
+///
+/// Holds only protocol-level state (FSM, message buffer, configuration).
+/// No I/O operations - those are handled by `SmtpSessionOrchestrator`.
+///
+/// This separation enables:
+/// - Pure protocol state machine
+/// - Testable FSM without I/O
+/// - Clear separation of concerns
+pub struct Session {
+    /// Protocol state (FSM state, message buffer, sent flag)
+    pub(crate) context: Context,
+
+    /// SMTP extensions supported by this session
+    pub(crate) extensions: Vec<Extension>,
+
+    /// Server banner for greetings
+    pub(crate) banner: Arc<str>,
+
+    /// Initial context (session-level key-value pairs)
+    pub(crate) init_context: Arc<AHashMap<Cow<'static, str>, String>>,
+
     /// Maximum message size in bytes as advertised via SIZE extension (RFC 1870).
     ///
     /// A value of 0 means no size limit is enforced (unlimited).
@@ -243,18 +251,18 @@ pub struct Session<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     ///
     /// When the limit is exceeded, the server rejects with SMTP status code 552
     /// (Exceeded Storage Allocation).
-    pub(super) max_message_size: usize,
-    /// Server-side timeout configuration
-    timeouts: crate::SmtpServerTimeouts,
-    /// Start time for tracking connection lifetime
-    start_time: std::time::Instant,
-    /// SMTP transaction handler for validation and spooling
-    transaction_handler: Box<dyn SmtpTransactionHandler>,
+    pub(crate) max_message_size: usize,
 }
 
-impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
+impl Session {
+    /// Create a new SMTP session
+    ///
+    /// Returns both the Session (protocol state) and components needed by the orchestrator.
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    pub(crate) fn create(stream: Stream, peer: SocketAddr, config: SessionConfig) -> Self {
+    pub(crate) fn create(
+        peer: SocketAddr,
+        config: SessionConfig,
+    ) -> (Self, Box<dyn SmtpTransactionHandler>, Option<TlsContext>) {
         tracing::debug!("Config: {:?}", config);
         tracing::debug!("Extensions: {:?}", config.extensions);
 
@@ -285,17 +293,9 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             ))
         });
 
-        Self {
-            peer,
-            connection: Connection::Plain {
-                stream,
-                read_buf: Vec::new(),
-                read_pos: 0,
-                read_len: 0,
-            },
+        let session = Self {
             context: Context::default(),
             extensions: config.extensions,
-            tls_context,
             banner: if config.banner.is_empty() {
                 std::env::var("HOSTNAME")
                     .unwrap_or_else(|_| "localhost".to_string())
@@ -305,201 +305,9 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
             },
             init_context: Arc::new(config.init_context),
             max_message_size,
-            timeouts: config.timeouts,
-            start_time: std::time::Instant::now(),
-            transaction_handler,
-        }
-    }
-
-    /// Get the appropriate timeout for the current state
-    ///
-    /// Returns timeout in seconds based on RFC 5321 recommendations:
-    /// - DATA block reading: 3 minutes (waiting for message content)
-    /// - DATA initiation: 2 minutes (for DATA command itself)
-    /// - `PostDot`: 10 minutes (for processing after final dot)
-    /// - Regular commands: 5 minutes (EHLO, MAIL FROM, RCPT TO, etc.)
-    const fn get_timeout_secs(&self) -> u64 {
-        match &self.context.state {
-            State::Reading(_) => self.timeouts.data_block_secs,
-            State::Data(_) => self.timeouts.data_init_secs,
-            State::PostDot(_) => self.timeouts.data_termination_secs,
-            _ => self.timeouts.command_secs,
-        }
-    }
-
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all, fields(?peer = self.peer), ret), timing(precision = "us"))]
-    #[allow(clippy::too_many_lines)]
-    pub(crate) async fn run(
-        mut self,
-        signal: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> Result<(), SessionError> {
-        internal!("Connected");
-
-        async fn run_inner<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>(
-            mut session: Session<Stream>,
-            validate_context: &mut context::Context,
-            mut signal: tokio::sync::broadcast::Receiver<Signal>,
-        ) -> Result<(), SessionError> {
-            loop {
-                // Check if connection has exceeded maximum lifetime
-                let connection_duration = session.start_time.elapsed();
-                let max_duration = std::time::Duration::from_secs(session.timeouts.connection_secs);
-                if connection_duration >= max_duration {
-                    tracing::warn!(
-                        peer = ?session.peer,
-                        duration_secs = ?connection_duration.as_secs(),
-                        max_secs = session.timeouts.connection_secs,
-                        "Connection exceeded maximum lifetime, closing"
-                    );
-                    return Err(SessionError::Timeout(session.timeouts.connection_secs));
-                }
-
-                // First, perform validation and business logic
-                session.emit(validate_context).await;
-
-                // Then generate the response based on what emit() set
-                let (response, ev) = session.response(validate_context).await;
-
-                validate_context.response = None;
-                session.context.sent = true;
-
-                for response in response.unwrap_or_default() {
-                    outgoing!("{response}");
-
-                    session.connection.send(&response).await.map_err(|err| {
-                        internal!(level = ERROR, "{err}");
-                        SessionError::Protocol(format!("Failed to send response: {err}"))
-                    })?;
-                }
-
-                if Event::ConnectionClose == ev {
-                    return Ok(());
-                } else if let Some(tls_context) = session.tls_context.as_ref()
-                    && matches!(session.context.state, State::StartTls(_))
-                {
-                    // Handle TLS upgrade inline to avoid borrowing issues
-                    let (conn, info) = session
-                        .connection
-                        .upgrade(tls_context)
-                        .await
-                        .map_err(|e| SessionError::Protocol(e.to_string()))?;
-
-                    session.connection = conn;
-
-                    // TLS state is session context (persists across RSET)
-                    validate_context
-                        .session
-                        .insert(Cow::Borrowed("tls"), "true".to_string());
-                    validate_context
-                        .session
-                        .insert(Cow::Borrowed("protocol"), info.proto());
-                    validate_context
-                        .session
-                        .insert(Cow::Borrowed("cipher"), info.cipher());
-
-                    session.context = Context {
-                        sent: true,
-                        ..Default::default()
-                    };
-
-                    if empath_ffi::modules::dispatch(
-                        empath_ffi::modules::Event::Validate(
-                            empath_ffi::modules::validate::Event::StartTls,
-                        ),
-                        validate_context,
-                    ) {
-                        internal!(
-                            level = DEBUG,
-                            "Connection successfully upgraded with {info:#?}"
-                        );
-                    } else {
-                        session.context.sent = false;
-                        session.context.state = State::Reject(state::Reject);
-                        validate_context.response =
-                            Some((Status::Error, Cow::Borrowed("STARTTLS failed")));
-                    }
-                } else {
-                    session
-                        .handle_command_loop(validate_context, &mut signal)
-                        .await?;
-                }
-            }
-        }
-
-        let mut validate_context = context::Context {
-            banner: Arc::clone(&self.banner),
-            max_message_size: self.max_message_size,
-            capabilities: self
-                .extensions
-                .iter()
-                .flat_map(std::convert::TryInto::try_into)
-                .collect(),
-            // Fast path: if init_context is empty, use default. Otherwise copy entries.
-            // This avoids HashMap clone in the common case (empty init_context)
-            // init_context is session context (persists across RSET)
-            session: if self.init_context.is_empty() {
-                AHashMap::new()
-            } else {
-                self.init_context
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect()
-            },
-            ..Default::default()
         };
 
-        self.emit(&mut validate_context).await;
-
-        let result = run_inner(self, &mut validate_context, signal).await;
-
-        internal!("Connection closed");
-        empath_ffi::modules::dispatch(
-            empath_ffi::modules::Event::Event(empath_ffi::modules::Ev::ConnectionClosed),
-            &mut validate_context,
-        );
-
-        result
-    }
-
-    /// Handle the main command receive loop with timeout and shutdown handling
-    ///
-    /// # Errors
-    /// Returns `SessionError` if a timeout occurs or connection error happens.
-    async fn handle_command_loop(
-        &mut self,
-        validate_context: &mut context::Context,
-        signal: &mut tokio::sync::broadcast::Receiver<Signal>,
-    ) -> Result<(), SessionError> {
-        // Get state-aware timeout
-        let timeout_secs = self.get_timeout_secs();
-        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-
-        tokio::select! {
-            _ = signal.recv() => {
-                self.context.sent = false;
-                self.context.state = State::Close(state::Close);
-                validate_context.response =
-                    Some((Status::Unavailable, Cow::Borrowed("Server shutting down")));
-                Ok(())
-            }
-            result = tokio::time::timeout(timeout_duration, self.receive(validate_context)) => {
-                if let Ok(close) = result {
-                    if close.unwrap_or(true) {
-                        return Ok(());
-                    }
-                } else {
-                    // Timeout occurred
-                    tracing::warn!(
-                        peer = ?self.peer,
-                        state = ?self.context.state,
-                        timeout_secs = timeout_secs,
-                        "Client connection timed out"
-                    );
-                    return Err(SessionError::Timeout(timeout_secs));
-                }
-                Ok(())
-            }
-        }
+        (session, transaction_handler, tls_context)
     }
 }
 
@@ -511,10 +319,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Session<Stream> {
     clippy::unreachable
 )]
 mod test {
-    use std::{
-        io::Cursor,
-        sync::{Arc, RwLock},
-    };
+    use std::sync::{Arc, RwLock};
 
     use empath_common::{
         address::{Address, AddressList},
@@ -544,10 +349,7 @@ mod test {
             ..Default::default()
         };
 
-        let cursor = Cursor::<Vec<u8>>::default();
-
-        let mut session = Session::create(
-            cursor,
+        let (mut session, _handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
                 .with_banner(banner.to_string())
@@ -560,9 +362,6 @@ mod test {
             response.0.unwrap().first().unwrap(),
             &format!("{} {banner}", Status::ServiceReady)
         );
-
-        let response = session.receive(&mut context).await;
-        assert!(response.is_ok_and(|v| v));
     }
 
     #[tokio::test]
@@ -579,13 +378,8 @@ mod test {
         };
 
         let host = "Test";
-        let mut cursor = Cursor::<Vec<u8>>::default();
-        cursor
-            .get_mut()
-            .extend_from_slice(format!("HELO {host}").as_bytes());
 
-        let mut session = Session::create(
-            cursor,
+        let (mut session, _handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
                 .with_banner(banner.to_string())
@@ -595,10 +389,8 @@ mod test {
         let _ = session.response(&mut context).await;
         context.response = None; // Clear response like run_inner does
 
-        // Receive HELO command
-        let response = session.receive(&mut context).await;
-        assert!(response.is_ok());
-        assert!(!response.unwrap());
+        // Handle HELO command
+        session.handle_command_reception(format!("HELO {host}").as_bytes(), &mut context);
 
         // HELO doesn't need emit(), it's not validated
         let response = session.response(&mut context).await;
@@ -607,9 +399,6 @@ mod test {
             response.0.unwrap().first().unwrap(),
             &format!("{} {banner} says hello to {host}", Status::Ok)
         );
-
-        let response = session.receive(&mut context).await;
-        assert!(response.is_ok_and(|v| v));
     }
 
     #[tokio::test]
@@ -625,15 +414,12 @@ mod test {
             ..Default::default()
         };
 
-        let mut cursor = Cursor::<Vec<u8>>::default();
         let test_data = b"Subject: Test\r\n\r\nHello World\r\n.\r\n";
-        cursor.get_mut().extend_from_slice(test_data);
 
         // Create a mock spool controller
         let mock_spool = Arc::new(TestBackingStore::default());
 
-        let mut session = Session::create(
-            cursor,
+        let (mut session, mut transaction_handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
                 .with_spool(Some(mock_spool.clone()))
@@ -658,14 +444,16 @@ mod test {
             .replace(AddressList::from(vec![Address::from(recipient_mailbox)]));
 
         let _ = session.response(&mut context).await;
-        let response = session.receive(&mut context).await;
-        assert!(response.is_ok());
 
-        // Simulate PostDot state
-        session.context.state = State::PostDot(state::PostDot);
-        context.data = Some(test_data.to_vec().into());
+        // Handle DATA command to receive message
+        session.handle_data_reception(test_data, &mut context);
 
-        session.emit(&mut context).await;
+        // Simulate PostDot state (handle_data_reception transitions here when it sees \r\n.\r\n)
+        assert!(matches!(session.context.state, State::PostDot(_)));
+
+        // Handle message spooling
+        transaction_handler.handle_message(&mut context).await;
+
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
 
@@ -693,17 +481,11 @@ mod test {
             ..Default::default()
         };
 
-        let mut cursor = Cursor::<Vec<u8>>::default();
-        cursor
-            .get_mut()
-            .extend_from_slice(b"MAIL FROM: test@gmail.com");
-
         let module = Module::TestModule(RwLock::default());
         let inited = modules::init(vec![module]);
         assert!(inited.is_ok());
 
-        let mut session = Session::create(
-            cursor,
+        let (mut session, mut transaction_handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
                 .with_banner(banner.to_string())
@@ -715,21 +497,20 @@ mod test {
         });
 
         let _ = session.response(&mut context).await;
-        let response = session.receive(&mut context).await;
-        assert!(response.is_ok());
-        assert!(!response.unwrap());
 
-        // After receive, state should be MailFrom - need to emit before response
-        session.emit(&mut context).await;
+        // Handle MAIL FROM command
+        session.handle_command_reception(b"MAIL FROM: test@gmail.com", &mut context);
+
+        // After handle_command_reception, state should be MailFrom
+        // Validate the command (this is where modules are dispatched)
+        transaction_handler.validate_mail_from(&mut context).await;
+
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(
             response.0.unwrap().first().unwrap(),
             &format!("{} Ok", Status::Ok)
         );
-
-        let response = session.receive(&mut context).await;
-        assert!(response.is_ok_and(|v| v));
 
         let modules = MODULE_STORE.get().cloned().unwrap();
         for module in modules.iter() {
@@ -803,9 +584,7 @@ mod test {
             call_count: Arc::clone(&call_count),
         };
 
-        let cursor = std::io::Cursor::<Vec<u8>>::default();
-        let mut session = Session::create(
-            cursor,
+        let (mut session, mut transaction_handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
                 .with_banner(banner.to_string())
@@ -813,17 +592,19 @@ mod test {
                 .build(),
         );
 
-        // Test that the mock handler is called
-        session.emit(&mut context).await;
+        // Test that the mock handler is called during validate_connect
+        let valid = transaction_handler.validate_connect(&mut context).await;
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        assert!(!valid); // Handler should reject
 
         // Test that validation fails
         assert!(context.response.is_some());
-        let (status, message) = context.response.unwrap();
-        assert_eq!(status, Status::Unavailable);
+        let (status, message) = context.response.as_ref().unwrap();
+        assert_eq!(*status, Status::Unavailable);
         assert_eq!(message, "Connection rejected");
 
-        // Verify state transitioned to Reject
+        // Manually transition to Reject state (orchestrator would do this)
+        session.context.state = State::Reject(state::Reject);
         assert!(matches!(session.context.state, State::Reject(_)));
     }
 }

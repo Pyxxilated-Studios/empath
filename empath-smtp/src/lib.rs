@@ -6,6 +6,7 @@ pub mod connection;
 pub mod error;
 pub mod extensions;
 pub mod fsm;
+pub mod orchestrator;
 pub mod session;
 pub mod session_state;
 pub mod spf;
@@ -16,21 +17,14 @@ pub mod transaction_handler;
 use std::{borrow::Cow, collections::HashMap, net::SocketAddr, sync::Arc};
 
 pub use command::MailParameters;
-use empath_common::{
-    Signal,
-    error::{ProtocolError, SessionError},
-    traits::protocol::{Protocol, SessionHandler},
-};
+use empath_common::{error::ProtocolError, traits::protocol::Protocol};
 use empath_tracing::traced;
 use serde::Deserialize;
 // Re-export the type-safe state machine from the state module
 pub use state::State;
 use tokio::net::TcpStream;
 
-use crate::{
-    extensions::Extension,
-    session::{Session, SessionConfig},
-};
+use crate::{extensions::Extension, orchestrator::SmtpSessionOrchestrator, session::SessionConfig};
 
 const MAX_MESSAGE_SIZE: usize = 100;
 
@@ -184,7 +178,7 @@ impl SmtpArgs {
 }
 
 impl Protocol for Smtp {
-    type Session = Session<TcpStream>;
+    type Session = SmtpSessionOrchestrator<TcpStream>;
     type Args = SmtpArgs;
 
     fn ty() -> &'static str {
@@ -199,8 +193,8 @@ impl Protocol for Smtp {
         init_context: HashMap<String, String>,
         args: Self::Args,
     ) -> Self::Session {
-        Session::create(
-            stream,
+        let timeouts = args.timeouts.clone();
+        let (session, transaction_handler, tls_context) = crate::session::Session::create(
             peer,
             SessionConfig::builder()
                 .with_extensions(args.extensions)
@@ -215,6 +209,15 @@ impl Protocol for Smtp {
                         .collect(),
                 )
                 .build(),
+        );
+
+        SmtpSessionOrchestrator::new(
+            stream,
+            peer,
+            session,
+            transaction_handler,
+            timeouts,
+            tls_context,
         )
     }
 
@@ -254,14 +257,5 @@ impl Protocol for Smtp {
         }
 
         Ok(())
-    }
-}
-
-impl SessionHandler for Session<TcpStream> {
-    async fn run(
-        self,
-        signal: tokio::sync::broadcast::Receiver<Signal>,
-    ) -> Result<(), SessionError> {
-        Self::run(self, signal).await
     }
 }
