@@ -13,17 +13,21 @@
 
 ### 📅 Current Sprint (Week of 2025-12-04)
 
-**Recent Completions:**
-1. ✅ NEW-DX-01 - Add missing justfile commands (COMPLETED 2025-12-04)
-2. ✅ NEW-WASM-08 - Module failure handling review (COMPLETED 2025-12-04)
-3. ✅ NEW-17 - Migrate tests to MockDnsResolver (COMPLETED 2025-11-21)
-4. ✅ NEW-WASM-07 - Epoch-based timeout enforcement (COMPLETED 2025-11-26)
-5. ✅ NEW-WASM-01 - WebAssembly module support (COMPLETED 2025-11-22)
+**Recent Completions (2025-12-04 Session)**:
+1. ✅ NEW-DX-01 - Add missing justfile commands
+2. ✅ NEW-WASM-08 - Module failure handling review (code review)
+3. ✅ NEW-DX-04 - Create docs/PROFILING.md (comprehensive optimization guide)
+4. ✅ NEW-WASM-09 - Replace .expect() with proper error handling
+5. ✅ NEW-WASM-10 - Fix context ownership pattern (already completed in bc8caff)
+6. ✅ NEW-WASM-12 - Validate SMTP error codes (already completed in bc8caff)
+
+**Removed Tasks**:
+- ❌ NEW-03a - Coverage reports (requires third-party service decision)
 
 **Ready to Start:**
 - 4.0 Phase 4 - SMTP Session/FSM Separation (4 days, highest risk)
-- NEW-DX-04 - Create docs/PROFILING.md (2 hours)
-- NEW-WASM-09 - Replace .expect() with proper error handling (1 day)
+- NEW-19 - Disaster Recovery Procedures (2-3 days)
+- NEW-WASM-02 - empath-wasm-guest Helper Library (3-4 days)
 
 ### 📈 Metrics
 
@@ -881,12 +885,12 @@ resource context {
 
 ---
 
-### 🟢 NEW-WASM-12 Validate SMTP Error Codes in Rejections
+### ✅ NEW-WASM-12 Validate SMTP Error Codes in Rejections
 **Priority**: Medium (Correctness)
 **Effort**: 0.5 days
 **Dependencies**: NEW-WASM-01 (completed)
-**Owner**: Unassigned
-**Status**: Ready to start
+**Owner**: pyxxil
+**Status**: Completed (bc8caff - 2025-11-27)
 **Tags**: wasm, smtp, validation
 **Added**: 2025-11-26 (Code Review)
 
