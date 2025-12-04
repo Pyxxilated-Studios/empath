@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
 > **Last Updated**: 2025-12-04
-> **Total Active**: 31 tasks | **Completed**: 70 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
+> **Total Active**: 30 tasks | **Completed**: 71 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -757,63 +757,6 @@ modules: [
 The following tasks were identified by comprehensive code review (code-reviewer, rust-expert, architect-review agents) of the WASM event support implementation (NEW-WASM-01, NEW-WASM-02).
 
 **Overall Assessment**: Implementation is production-ready with no critical bugs. These tasks address important safety, performance, and maintainability improvements.
-
-### 🟡 NEW-WASM-09 Replace .expect() with Proper Error Handling
-**Priority**: High (Safety)
-**Effort**: 1 day
-**Dependencies**: NEW-WASM-01 (completed)
-**Owner**: Unassigned
-**Status**: Ready to start
-**Tags**: wasm, safety, error-handling
-**Added**: 2025-11-26 (Rust Expert Review)
-
-**Problem**: Multiple uses of `.expect()` that could panic in production if assumptions are violated.
-
-**Panic Risks** (`loader.rs:276-280`):
-```rust
-let result_context = Arc::try_unwrap(context_arc)
-    .expect("Context Arc should have exactly one strong reference")
-    .into_inner()
-    .expect("Context Mutex should not be poisoned");
-```
-
-**Scenarios Where This Fails**:
-1. WasmStore is cloned/shared elsewhere (Arc count > 1)
-2. Host function panics (poisoned mutex)
-3. Future refactoring introduces Arc clones
-
-**Solution**: Return `Result` with proper error types instead of panicking.
-
-**Implementation**:
-```rust
-// Replace expect with proper error handling
-let result_context = Arc::try_unwrap(context_arc)
-    .map_err(|arc| WasmError::Internal(format!(
-        "Context Arc has {} strong references (expected 1)",
-        Arc::strong_count(&arc)
-    )))?
-    .into_inner()
-    .map_err(|e| WasmError::Internal(format!("Context Mutex poisoned: {e}")))?;
-```
-
-**Success Criteria**:
-- [ ] All `.expect()` in `loader.rs` replaced with `?` operator
-- [ ] All `.expect()` in `host.rs` replaced with graceful error handling
-- [ ] Add `WasmError::Internal(String)` variant
-- [ ] Tests verify error propagation
-- [ ] No panics in WASM execution path
-- [ ] Clear error messages for debugging
-
-**Files to Modify**:
-- `empath-wasm/src/loader.rs` - Replace 4 expect calls
-- `empath-wasm/src/host.rs` - Replace 12 expect calls in host functions
-- `empath-wasm/src/error.rs` - Add Internal variant
-
-**Benefits**:
-- No production panics
-- Better error messages
-- Testable error cases
-- Graceful degradation
 
 ---
 

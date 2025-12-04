@@ -1,7 +1,7 @@
 # Empath MTA - Completed Tasks Archive
 
 > **Last Updated**: 2025-12-04
-> **Total Completed**: 70 tasks
+> **Total Completed**: 71 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
@@ -10,6 +10,46 @@ This file archives completed tasks from TODO.md to reduce cognitive load and imp
 ## Recently Completed (Last 30 Days)
 
 ### Week of 2025-12-04
+
+#### ✅ NEW-WASM-09 - Replace .expect() with Proper Error Handling
+**Completed**: 2025-12-04
+**Effort**: 1 day (actual: 3 hours)
+**Priority**: High (Safety)
+
+Replaced all .expect() calls in WASM module system with graceful error handling to prevent production panics and improve diagnostics.
+
+**Accomplishments**:
+- ✅ Added `WasmError::Internal` variant for mutex/Arc errors
+- ✅ Replaced all 3 .expect() calls in loader.rs with proper error propagation
+- ✅ Added `lock_context()` helper method in host.rs for consistent error handling
+- ✅ Replaced all 8 .expect() calls in host.rs with helper method
+- ✅ Updated documentation explaining panic behavior and recovery
+- ✅ Added clippy::panic allow attributes with justification
+- ✅ All tests pass, clippy clean
+
+**Implementation Details**:
+- **WasmError::Internal** (error.rs:60-61): New variant for internal errors (mutex poisoning, Arc unwrap failure)
+- **loader.rs** (lines 566-568, 604-612): Replaced .expect() with .map_err() for Arc::try_unwrap and Mutex::into_inner
+- **host.rs** (lines 100-112): Added lock_context() helper with detailed error logging
+- **host.rs** (lines 218-245): Replaced all .expect() calls in host functions with lock_context()
+
+**Error Handling Strategy**:
+1. **loader.rs**: Proper error propagation with detailed messages (Arc strong count, poisoned mutex)
+2. **host.rs**: Intentional panic with logging (WIT trait doesn't allow Result returns)
+3. **Recovery**: Panics caught at callback execution level, converted to 451 responses
+
+**Benefits Delivered**:
+- **No Unexpected Panics**: loader.rs now returns errors instead of panicking
+- **Better Diagnostics**: Arc::try_unwrap shows strong count, mutex errors logged
+- **Graceful Degradation**: Errors propagated and handled appropriately
+- **Production Safe**: All errors result in 451 temporary failure responses
+
+**Files Modified** (3 files):
+- `empath-wasm/src/error.rs` - Added Internal variant
+- `empath-wasm/src/loader.rs` - Replaced 3 .expect() calls with error propagation
+- `empath-wasm/src/host.rs` - Added helper, replaced 8 .expect() calls, updated docs
+
+---
 
 #### ✅ NEW-DX-04 - Create docs/PROFILING.md
 **Completed**: 2025-12-04
