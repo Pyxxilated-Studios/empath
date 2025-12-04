@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
 > **Last Updated**: 2025-12-04
-> **Total Active**: 29 tasks | **Completed**: 71 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
+> **Total Active**: 28 tasks | **Completed**: 72 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -20,6 +20,7 @@
 4. ✅ NEW-WASM-09 - Replace .expect() with proper error handling
 5. ✅ NEW-WASM-10 - Fix context ownership pattern (already completed in bc8caff)
 6. ✅ NEW-WASM-12 - Validate SMTP error codes (already completed in bc8caff)
+7. ✅ NEW-05 - Example alerting configurations (already completed 2025-11-21)
 
 **Removed Tasks**:
 - ❌ NEW-03a - Coverage reports (requires third-party service decision)
@@ -1316,12 +1317,12 @@ See [BACKLOG.md](docs/BACKLOG.md) for:
 
 ---
 
-### 🔵 NEW-05 Example Alerting Configurations
+### ✅ NEW-05 Example Alerting Configurations
 **Priority**: Low (User-Configurable)
 **Effort**: 4-6 hours
 **Dependencies**: None (metrics exist)
-**Owner**: Unassigned
-**Status**: Not Started
+**Owner**: pyxxil
+**Status**: Completed (2025-11-21)
 **Risk**: Low
 **Tags**: observability, alerting, documentation, examples
 **Added**: 2025-11-16 (OTel Expert Review)
