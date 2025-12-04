@@ -17,28 +17,22 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ahash = { version = "0.8", features = ["serde"] }
-async-trait = "0.1"
-bincode = { version = "2", features = ["serde"] }
-dashmap = "6.1"
-empath-common = { path = "../empath-common", version = "*" }
-empath-tracing = { path = "../empath-tracing", version = "*" }
-notify = "8"
-serde = { version = "1", features = ["derive", "rc"] }
-thiserror = "2"
-tokio = { version = "1", default-features = false, features = [
-  "sync",
-  "fs",
-  "time",
-] }
-tracing = { version = "0.1", default-features = false }
-ulid = "1.1"
+ahash.workspace = true
+async-trait.workspace = true
+bincode.workspace = true
+dashmap.workspace = true
+empath-common.workspace = true
+empath-tracing.workspace = true
+notify.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+ulid.workspace = true
 
 [dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
-mailparse = "0.16"
-ron = "0.12"
-tokio = { version = "1", features = ["rt", "macros"] }
+criterion.workspace = true
+ron.workspace = true
 
 [[bench]]
 name = "spool_benchmarks"

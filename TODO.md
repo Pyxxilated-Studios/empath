@@ -1,7 +1,7 @@
 # Empath MTA - Active Tasks
 
 > **Last Updated**: 2025-12-04
-> **Total Active**: 28 tasks | **Completed**: 72 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
+> **Total Active**: 27 tasks | **Completed**: 73 tasks → [COMPLETED.md](docs/COMPLETED.md) | **Backlog**: 15 tasks → [BACKLOG.md](docs/BACKLOG.md)
 
 ---
 
@@ -21,6 +21,7 @@
 5. ✅ NEW-WASM-10 - Fix context ownership pattern (already completed in bc8caff)
 6. ✅ NEW-WASM-12 - Validate SMTP error codes (already completed in bc8caff)
 7. ✅ NEW-05 - Example alerting configurations (already completed 2025-11-21)
+8. ✅ NEW-20 - Security scanning and SBOM generation
 
 **Removed Tasks**:
 - ❌ NEW-03a - Coverage reports (requires third-party service decision)
@@ -350,12 +351,12 @@ See BACKLOG.md for details.
 
 ---
 
-### 🟢 NEW-20 Security Scanning and SBOM
+### ✅ NEW-20 Security Scanning and SBOM
 **Priority**: Medium (Security)
 **Effort**: 1-2 days
 **Dependencies**: None
-**Owner**: Unassigned
-**Status**: Ready to start
+**Owner**: pyxxil
+**Status**: Completed (2025-12-04)
 **Tags**: security, ci-cd, compliance
 **Added**: 2025-11-20 (General Purpose Review)
 

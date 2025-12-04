@@ -76,21 +76,21 @@ cbindgen = { version = "0.29", default-features = false }
 charset = "0.1.5"
 chrono = "0.4"
 clap = { version = "4", default-features = false, features = ["derive", "std"] }
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 dashmap = "6"
-empath = { path = "empath", version = "*" }
-empath-common = { path = "empath-common", version = "*" }
-empath-control = { path = "empath-control", version = "*" }
-empath-delivery = { path = "empath-delivery", version = "*" }
-empath-examples = { path = "empath-examples", version = "*" }
-empath-ffi = { path = "empath-ffi", version = "*" }
-empath-health = { path = "empath-health", version = "*" }
-empath-metrics = { path = "empath-metrics", version = "*" }
-empath-python = { path = "empath-python", version = "*" }
-empath-smtp = { path = "empath-smtp", version = "*" }
-empath-spool = { path = "empath-spool", version = "*" }
-empath-tracing = { path = "empath-tracing", version = "*" }
-empath-wasm = { path = "empath-wasm", version = "*" }
+empath = { path = "empath", version = "0" }
+empath-common = { path = "empath-common", version = "0" }
+empath-control = { path = "empath-control", version = "0" }
+empath-delivery = { path = "empath-delivery", version = "0" }
+empath-examples = { path = "empath-examples", version = "0" }
+empath-ffi = { path = "empath-ffi", version = "0" }
+empath-health = { path = "empath-health", version = "0" }
+empath-metrics = { path = "empath-metrics", version = "0" }
+empath-python = { path = "empath-python", version = "0" }
+empath-smtp = { path = "empath-smtp", version = "0" }
+empath-spool = { path = "empath-spool", version = "0" }
+empath-tracing = { path = "empath-tracing", version = "0" }
+empath-wasm = { path = "empath-wasm", version = "0" }
 encoding_rs = "0.8.35"
 fs2 = "0.4"
 futures-util = "0.3"
@@ -100,6 +100,7 @@ hyper = "1"
 ipnetwork = { version = "0.21", features = ["serde"] }
 libc = "0.2"
 libloading = "0.9"
+notify = "8"
 num_cpus = "1"
 once_cell = "1"
 opentelemetry = { version = "0.31", default-features = false, features = [
