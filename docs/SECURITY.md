@@ -14,6 +14,8 @@ This document describes the security features, threat model, and best practices 
   - [Audit Logging](#audit-logging)
   - [DNS Security](#dns-security)
 - [Configuration Best Practices](#configuration-best-practices)
+- [Automated Security Scanning](#automated-security-scanning)
+- [Security Update Process](#security-update-process)
 - [Known Limitations](#known-limitations)
 - [Security Roadmap](#security-roadmap)
 
@@ -1017,6 +1019,291 @@ Empath includes security-focused tests:
 
 ---
 
+## Automated Security Scanning
+
+Empath MTA uses multiple automated tools to detect security vulnerabilities in dependencies and maintain supply chain transparency.
+
+### Vulnerability Scanning with cargo-audit
+
+**cargo-audit** scans Rust dependencies against the RustSec Advisory Database for known security vulnerabilities.
+
+**Automated Scanning (CI)**:
+- Runs daily at 00:00 UTC via scheduled workflow
+- Runs on every push/PR that modifies `Cargo.lock`
+- Fails CI on HIGH and CRITICAL vulnerabilities
+- Generates JSON audit reports (available as artifacts for 30 days)
+
+**Local Usage**:
+```bash
+# Run security audit
+just deps-audit
+
+# Or directly with cargo
+cargo audit
+
+# Check specific advisory
+cargo audit --ignore RUSTSEC-YYYY-NNNN
+```
+
+**Configuration**: `.gitea/workflows/security.yml`
+
+### Dependency Policy Enforcement with cargo-deny
+
+**cargo-deny** enforces policies for licenses, sources, and security advisories.
+
+**Automated Checks (CI)**:
+- Runs as part of security workflow
+- Validates license compliance
+- Ensures dependencies come from trusted sources
+- Blocks banned or yanked crates
+
+**Local Usage**:
+```bash
+cargo deny check
+```
+
+**Configuration**: `deny.toml` (if exists)
+
+### Software Bill of Materials (SBOM)
+
+Empath generates CycloneDX-format SBOMs for compliance and supply chain security.
+
+**What is an SBOM?**
+A Software Bill of Materials (SBOM) is a comprehensive inventory of all components, libraries, and dependencies used in the software. It enables:
+- Supply chain transparency
+- Vulnerability tracking
+- Compliance auditing (NIST, EU Cyber Resilience Act)
+- License compliance verification
+
+**SBOM Generation (CI)**:
+- **Security Workflow**: Generated on every run, available as artifacts for 90 days
+- **Release Workflow**: Generated for every tagged release (`v*`), available for 365 days
+- **Formats**: Both JSON and XML (CycloneDX 1.4+)
+- **Checksums**: SHA256 checksums included for integrity verification
+
+**Local Generation**:
+```bash
+# Install cargo-cyclonedx
+cargo install cargo-cyclonedx
+
+# Generate SBOM (JSON format, recommended)
+cargo cyclonedx --format json --all
+
+# Generate SBOM (XML format)
+cargo cyclonedx --format xml --all
+```
+
+**SBOM Artifacts**: `empath-<version>-sbom.{json,xml}`
+
+**Using SBOMs**:
+```bash
+# Download from release artifacts
+wget https://gitea.example.com/pyxxil/empath/releases/download/v1.0.0/empath-1.0.0-sbom.json
+
+# Verify checksum
+sha256sum empath-1.0.0-sbom.json
+cat empath-sbom-checksums.txt
+
+# Analyze with dependency-track or similar tools
+docker run -d -p 8080:8080 dependencytrack/bundled
+# Upload empath-1.0.0-sbom.json via web UI
+```
+
+### Automated Dependency Updates with Renovate
+
+**Renovate Bot** monitors dependencies and creates automated update PRs.
+
+**Features**:
+- Automatic detection of new versions
+- Security patch prioritization
+- Grouped updates by category
+- Automated vulnerability scanning
+
+**Workflow**:
+1. Renovate detects new version
+2. Creates PR with changelog
+3. CI runs cargo-audit on updated dependencies
+4. Review and merge if tests pass
+
+---
+
+## Security Update Process
+
+### For Maintainers
+
+When a security vulnerability is discovered in a dependency:
+
+1. **Identify Vulnerability**:
+   ```bash
+   # Check cargo-audit output
+   cargo audit
+
+   # Check RustSec advisory details
+   # Example: https://rustsec.org/advisories/RUSTSEC-2024-1234
+   ```
+
+2. **Assess Severity** (based on RustSec severity):
+   - **CRITICAL**: Address immediately (within 24 hours)
+     - Remote code execution, privilege escalation
+     - Update deployed systems immediately
+   - **HIGH**: Address urgently (within 48 hours)
+     - Memory safety issues, authentication bypass
+     - Coordinate emergency patch release
+   - **MEDIUM**: Address within 1 week
+     - Denial of service, information disclosure
+     - Include in next scheduled release
+   - **LOW**: Address in next release cycle
+     - Minor security improvements
+     - Bundle with other updates
+
+3. **Update Dependencies**:
+   ```bash
+   # Update specific vulnerable dependency
+   cargo update -p <crate-name>
+
+   # Verify vulnerability is resolved
+   cargo audit
+
+   # Run full test suite
+   just ci
+   ```
+
+4. **Test Changes**:
+   ```bash
+   # Run tests
+   cargo nextest run
+
+   # Run E2E tests
+   cargo nextest run --test e2e_basic --test-threads=1
+
+   # Run security-specific tests (if applicable)
+   cargo test security
+   ```
+
+5. **Document in CHANGELOG**:
+   ```bash
+   # Generate updated changelog
+   just changelog
+
+   # Manually add security advisory details:
+   # - RUSTSEC-YYYY-NNNN advisory reference
+   # - Affected versions
+   # - CVE ID (if assigned)
+   # - Credit to reporter (if applicable)
+   ```
+
+6. **Release Patch**:
+   ```bash
+   # Tag release with version bump
+   git tag v0.0.X
+   git push origin v0.0.X
+
+   # CI will automatically:
+   # - Build release binaries
+   # - Generate SBOM
+   # - Publish Docker images
+   # - Create GitHub/Gitea release
+   ```
+
+7. **Notify Users**:
+   - GitHub/Gitea security advisory (if applicable)
+   - Release notes with security section
+   - Email notification to maintainers mailing list
+   - Update docs/SECURITY.md with resolution
+
+### For Users/Operators
+
+**Monitoring for Vulnerabilities**:
+1. **Watch Repository**: Enable notifications for security advisories
+2. **Subscribe to Renovate PRs**: If you've forked the repository
+3. **Regular Audits**: Run `cargo audit` weekly in your deployment
+4. **Check CI Artifacts**: Security audit reports available in workflow artifacts
+
+**Updating Empath**:
+
+**Source Build**:
+```bash
+# Pull latest changes
+cd /path/to/empath
+git pull origin main
+
+# Verify no vulnerabilities
+cargo audit
+
+# Rebuild with updated dependencies
+cargo build --release
+
+# Run tests (recommended)
+cargo nextest run
+
+# Deploy updated binary
+sudo systemctl stop empath
+sudo cp target/release/empath /usr/local/bin/
+sudo systemctl start empath
+
+# Verify
+empathctl system status
+```
+
+**Docker Deployment**:
+```bash
+# Pull latest image
+docker pull git.pyxxilated.media/pyxxil/empath:latest
+
+# Restart services
+docker-compose down
+docker-compose up -d
+
+# Verify
+docker logs empath --tail 50
+```
+
+**Binary Release** (if available):
+```bash
+# Download latest release
+wget https://gitea.example.com/pyxxil/empath/releases/download/v1.0.0/empath-linux-x86_64
+
+# Verify checksum
+sha256sum empath-linux-x86_64
+cat empath-linux-x86_64.sha256
+
+# Deploy
+sudo systemctl stop empath
+sudo mv empath-linux-x86_64 /usr/local/bin/empath
+sudo chmod +x /usr/local/bin/empath
+sudo systemctl start empath
+```
+
+**Emergency Patching** (critical vulnerabilities):
+1. Subscribe to security advisories
+2. Apply patches within 24 hours
+3. Test in staging environment first (if time permits)
+4. Update production immediately
+5. Monitor logs for exploitation attempts
+
+**Rollback Procedure** (if update causes issues):
+```bash
+# Docker
+docker-compose down
+docker run ... pyxxil/empath:v0.0.X-old  # Previous version
+
+# Source/Binary
+sudo systemctl stop empath
+sudo cp /usr/local/bin/empath.backup /usr/local/bin/empath
+sudo systemctl start empath
+```
+
+### Security Advisory Response SLA
+
+| Severity | Initial Response | Patch Release | User Notification |
+|----------|------------------|---------------|-------------------|
+| CRITICAL | 4 hours          | 24 hours      | Immediate         |
+| HIGH     | 24 hours         | 48 hours      | Within 24h        |
+| MEDIUM   | 48 hours         | 7 days        | Next release notes|
+| LOW      | Best effort      | Next release  | Changelog         |
+
+---
+
 ## Additional Resources
 
 - **CLAUDE.md:** Development guide with security implementation details
@@ -1027,6 +1314,6 @@ Empath includes security-focused tests:
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-11-16
+**Document Version:** 1.1
+**Last Updated:** 2025-12-04
 **Maintainer:** Empath MTA Project
