@@ -563,7 +563,9 @@ impl WasmModule {
 
         // Convert context to WIT format
         let wit_context = {
-            let ctx_lock = context_arc.lock().expect("Failed to lock context");
+            let ctx_lock = context_arc
+                .lock()
+                .map_err(|e| WasmError::Internal(format!("Failed to lock context mutex: {e}")))?;
             context_to_wit(&ctx_lock)
         };
 
@@ -597,13 +599,17 @@ impl WasmModule {
         drop(store);
 
         // Extract context back from Arc<Mutex<>> after callback completes
-        // These operations should never fail in practice:
-        // - try_unwrap only fails if there are multiple Arc references (we hold the only one)
-        // - into_inner only fails if the mutex is poisoned (would require a panic in host functions)
+        // try_unwrap fails if there are multiple Arc references
+        // into_inner fails if the mutex is poisoned (would require a panic in host functions)
         let result_context = Arc::try_unwrap(context_arc)
-            .expect("Context Arc should have exactly one strong reference")
+            .map_err(|arc| {
+                WasmError::Internal(format!(
+                    "Context Arc has {} strong references (expected 1)",
+                    Arc::strong_count(&arc)
+                ))
+            })?
             .into_inner()
-            .expect("Context Mutex should not be poisoned");
+            .map_err(|e| WasmError::Internal(format!("Context mutex poisoned: {e}")))?;
 
         // Restore the context with any modifications made by host functions
         *context = result_context;

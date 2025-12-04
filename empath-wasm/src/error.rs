@@ -55,4 +55,8 @@ pub enum WasmError {
     /// Engine creation failed
     #[error("Failed to create Wasmtime engine: {0}")]
     EngineCreation(String),
+
+    /// Internal error (mutex poisoning, Arc unwrap failure, etc.)
+    #[error("Internal error: {0}")]
+    Internal(String),
 }

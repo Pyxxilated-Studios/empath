@@ -92,6 +92,28 @@ impl WasiView for WasmStore {
 }
 
 impl WasmStore {
+    /// Helper method to lock the context mutex with better error handling
+    ///
+    /// # Panics
+    /// Panics with a detailed error message if the mutex is poisoned.
+    /// This indicates a critical bug (another thread panicked while holding the lock).
+    #[allow(
+        clippy::panic,
+        reason = "Intentional panic on poisoned mutex - documented behavior"
+    )]
+    fn lock_context(&self) -> std::sync::MutexGuard<'_, Context> {
+        self.context.lock().unwrap_or_else(|e| {
+            internal!(
+                level = ERROR,
+                "CRITICAL: Context mutex poisoned in WASM host function. \
+                 This indicates a panic occurred in another thread while modifying context. \
+                 Error: {}",
+                e
+            );
+            panic!("Context mutex poisoned: {e}")
+        })
+    }
+
     /// Create a new store with context reference
     ///
     /// # Arguments
@@ -105,8 +127,8 @@ impl WasmStore {
     /// # Panics
     /// Panics if the context mutex is poisoned (i.e., a thread panicked while holding the lock)
     #[allow(
-        clippy::expect_used,
-        reason = "Host functions allowed to panic on poisoned mutex"
+        clippy::panic,
+        reason = "Intentional panic on poisoned mutex - documented behavior"
     )]
     pub fn new(
         context: Arc<Mutex<Context>>,
@@ -116,7 +138,14 @@ impl WasmStore {
     ) -> Result<Self> {
         let context_bytes = {
             let serializable = {
-                let ctx_lock = context.lock().expect("Failed to lock context");
+                let ctx_lock = context.lock().unwrap_or_else(|e| {
+                    internal!(
+                        level = ERROR,
+                        "CRITICAL: Context mutex poisoned during WasmStore creation: {}",
+                        e
+                    );
+                    panic!("Context mutex poisoned: {e}")
+                });
                 SerializableContext::from(&*ctx_lock)
             };
             // Use bincode for serialization (for backward compat with core modules)
@@ -165,25 +194,23 @@ impl ResourceLimiter for WasmStore {
 /// This provides the host functions that WASM component modules can import.
 ///
 /// # Panics
-/// All host functions in this implementation intentionally panic if the context mutex is
-/// poisoned. A poisoned mutex indicates that a thread panicked while holding the lock,
-/// meaning the context is in an unknown/corrupted state. The panic behavior is intentional
-/// and follows fail-fast principles:
+/// All host functions in this implementation use `lock_context()` which intentionally
+/// panics if the context mutex is poisoned. A poisoned mutex indicates that a thread
+/// panicked while holding the lock, meaning the context is in an unknown/corrupted state.
+/// The panic behavior is intentional and follows fail-fast principles:
 ///
-/// - **Lines 177, 182, 187, 192, 197, 202**: Each `.lock().expect()` call will panic if
-///   the mutex is poisoned.
+/// - **All functions**: Call `self.lock_context()` which logs a critical error and panics
+///   if the mutex is poisoned.
 /// - **Rationale**: The WIT interface does not allow host functions to return `Result`,
 ///   so panicking is the only way to signal unrecoverable errors.
 /// - **Safety**: A poisoned context would lead to undefined behavior if we continued.
 ///   Panicking ensures we don't process messages with corrupted state.
-/// - **Recovery**: The panic is caught at the WASM callback execution level and handled
-///   by the failure mode configuration (fail-open or fail-closed).
+/// - **Diagnostics**: The `lock_context()` helper logs detailed error messages before
+///   panicking, making it easier to diagnose the root cause.
+/// - **Recovery**: The panic is caught at the WASM callback execution level in
+///   `loader.rs` and converted to a 451 temporary failure response.
 ///
 /// This is documented and expected behavior, not a bug.
-#[allow(
-    clippy::expect_used,
-    reason = "Host functions allowed to panic on poisoned mutex"
-)]
 impl crate::bindings::empath::validator::host::Host for WasmStore {
     fn log(&mut self, message: String) {
         internal!(level = INFO, "[WASM] {}", message);
@@ -191,32 +218,32 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
     }
 
     fn session_set(&mut self, key: String, value: String) {
-        let mut ctx = self.context.lock().expect("Failed to lock context");
+        let mut ctx = self.lock_context();
         ctx.session.insert(Cow::Owned(key), value);
     }
 
     fn session_get(&mut self, key: String) -> Option<String> {
-        let ctx = self.context.lock().expect("Failed to lock context");
+        let ctx = self.lock_context();
         ctx.session.get(key.as_str()).cloned()
     }
 
     fn session_exists(&mut self, key: String) -> bool {
-        let ctx = self.context.lock().expect("Failed to lock context");
+        let ctx = self.lock_context();
         ctx.session.contains_key(key.as_str())
     }
 
     fn transaction_set(&mut self, key: String, value: String) {
-        let mut ctx = self.context.lock().expect("Failed to lock context");
+        let mut ctx = self.lock_context();
         ctx.transaction.insert(Cow::Owned(key), value);
     }
 
     fn transaction_get(&mut self, key: String) -> Option<String> {
-        let ctx = self.context.lock().expect("Failed to lock context");
+        let ctx = self.lock_context();
         ctx.transaction.get(key.as_str()).cloned()
     }
 
     fn transaction_exists(&mut self, key: String) -> bool {
-        let ctx = self.context.lock().expect("Failed to lock context");
+        let ctx = self.lock_context();
         ctx.transaction.contains_key(key.as_str())
     }
 }
