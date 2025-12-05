@@ -12,6 +12,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, OnceLock},
+    time::SystemTime,
 };
 
 use ahash::AHashMap;
@@ -39,8 +40,8 @@ fn cargo_profile() -> String {
     env::var("PROFILE").unwrap_or_else(|_| "debug".to_string())
 }
 
-/// Location of the compiled test WASM module, building it via `cargo run -p xtask -- build-wasm`
-/// if it is missing.
+/// Location of the compiled test WASM module, reusing cached artifacts when available and only
+/// invoking `cargo run -p xtask -- build-wasm` if nothing fresh is present.
 fn resolved_module_path() -> &'static Path {
     static MODULE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -59,18 +60,28 @@ fn resolved_module_path() -> &'static Path {
                 .join(&profile)
                 .join("simple_validator.wasm");
 
-            let wasm_stale = needs_rebuild(&workspace_root, &wasm_path);
+            let cached_path = workspace_root
+                .join("target/modules")
+                .join("simple_validator.wasm");
 
-            if wasm_stale {
-                unwrap_result(
-                    build_wasm_example(&workspace_root, &profile),
-                    "failed to build wasm example via xtask",
-                );
+            let source_mtime = latest_source_mtime(&workspace_root);
+
+            if module_fresh(&wasm_path, source_mtime) {
+                return wasm_path;
             }
+
+            if module_fresh(&cached_path, source_mtime) {
+                return cached_path;
+            }
+
+            unwrap_result(
+                build_wasm_example(&workspace_root, &profile),
+                "failed to build wasm example via xtask",
+            );
 
             assert!(
                 wasm_path.exists(),
-                "expected WASM test module at {}, build may have failed",
+                "expected WASM test module at {} after xtask build, build may have failed",
                 wasm_path.display()
             );
 
@@ -94,31 +105,32 @@ fn build_wasm_example(workspace_root: &Path, profile: &str) -> Result<(), String
     }
 }
 
-fn latest_source_mtime(workspace_root: &Path) -> Option<std::time::SystemTime> {
-    let src = workspace_root.join("empath-examples/wasm/src/lib.rs");
-    let cargo = workspace_root.join("empath-examples/wasm/Cargo.toml");
+fn latest_source_mtime(workspace_root: &Path) -> Option<SystemTime> {
     let mut times = Vec::new();
 
-    if let Ok(meta) = std::fs::metadata(src) {
-        times.push(meta.modified().ok()?);
-    }
-    if let Ok(meta) = std::fs::metadata(cargo) {
-        times.push(meta.modified().ok()?);
+    for path in [
+        workspace_root.join("empath-examples/wasm/src/lib.rs"),
+        workspace_root.join("empath-examples/wasm/Cargo.toml"),
+        workspace_root.join("empath-wasm/wit/empath.wit"),
+    ] {
+        if let Ok(meta) = std::fs::metadata(path) {
+            times.push(meta.modified().ok()?);
+        }
     }
 
     times.into_iter().max()
 }
 
-fn needs_rebuild(workspace_root: &Path, wasm_path: &Path) -> bool {
+fn module_fresh(wasm_path: &Path, source_mtime: Option<SystemTime>) -> bool {
     let Ok(wasm_meta) = std::fs::metadata(wasm_path) else {
-        return true;
+        return false;
     };
 
     let Ok(wasm_mtime) = wasm_meta.modified() else {
-        return true;
+        return false;
     };
 
-    latest_source_mtime(workspace_root).is_none_or(|src_mtime| src_mtime > wasm_mtime)
+    source_mtime.is_none_or(|src_mtime| wasm_mtime >= src_mtime)
 }
 
 fn load_test_module() -> WasmModule {

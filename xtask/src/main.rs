@@ -189,12 +189,6 @@ fn needs_rebuild(source: &Path, output: &Path) -> bool {
 fn build_wasm_examples() -> Result<()> {
     println!("Building WASM example module...");
 
-    // Check if wasm32-wasip2 target is installed
-    if !is_target_installed("wasm32-wasip2")? {
-        println!("  wasm32-wasip2 target not installed, installing...");
-        install_wasm_target()?;
-    }
-
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| String::from("debug"));
     let is_release = profile == "release";
 
@@ -206,6 +200,48 @@ fn build_wasm_examples() -> Result<()> {
 
     // Sync WIT file from empath-wasm to example (single source of truth)
     sync_wit_files()?;
+
+    let output_dir = PathBuf::from("target/modules");
+    std::fs::create_dir_all(&output_dir)?;
+
+    let profile_dir = if is_release { "release" } else { "debug" };
+    let wasm_artifact = wasm_dir.join(format!(
+        "target/wasm32-wasip2/{profile_dir}/simple_validator.wasm"
+    ));
+    let dest = output_dir.join("simple_validator.wasm");
+
+    let sources = [
+        wasm_dir.join("src/lib.rs"),
+        wasm_dir.join("Cargo.toml"),
+        PathBuf::from("empath-wasm/wit/empath.wit"),
+    ];
+
+    if artifact_is_fresh(&wasm_artifact, &sources) {
+        println!("  simple_validator.wasm up to date");
+        if needs_rebuild(&wasm_artifact, &dest) {
+            std::fs::copy(&wasm_artifact, &dest)?;
+            println!("  ✅ Copied {}", dest.display());
+        }
+
+        println!("✅ WASM example built successfully");
+        return Ok(());
+    }
+
+    if artifact_is_fresh(&dest, &sources) {
+        if let Some(parent) = wasm_artifact.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&dest, &wasm_artifact)?;
+        println!("  Reused cached WASM artifact");
+        println!("✅ WASM example built successfully");
+        return Ok(());
+    }
+
+    // Check if wasm32-wasip2 target is installed
+    if !is_target_installed("wasm32-wasip2")? {
+        println!("  wasm32-wasip2 target not installed, installing...");
+        install_wasm_target()?;
+    }
 
     // Build the WASM module
     let mut cmd = Command::new("cargo");
@@ -226,15 +262,6 @@ fn build_wasm_examples() -> Result<()> {
     }
 
     // Copy output to target/modules/
-    let output_dir = PathBuf::from("target/modules");
-    std::fs::create_dir_all(&output_dir)?;
-
-    let profile_dir = if is_release { "release" } else { "debug" };
-    let wasm_artifact = wasm_dir.join(format!(
-        "target/wasm32-wasip2/{profile_dir}/simple_validator.wasm"
-    ));
-    let dest = output_dir.join("simple_validator.wasm");
-
     if wasm_artifact.exists() {
         std::fs::copy(&wasm_artifact, &dest)?;
         println!("  ✅ Built {}", dest.display());
@@ -288,6 +315,32 @@ fn sync_wit_files() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn artifact_is_fresh(output: &Path, sources: &[PathBuf]) -> bool {
+    let Ok(output_meta) = std::fs::metadata(output) else {
+        return false;
+    };
+
+    let Ok(output_time) = output_meta.modified() else {
+        return false;
+    };
+
+    for source in sources {
+        let Ok(source_meta) = std::fs::metadata(source) else {
+            return false;
+        };
+
+        let Ok(source_time) = source_meta.modified() else {
+            return false;
+        };
+
+        if source_time > output_time {
+            return false;
+        }
+    }
+
+    true
 }
 
 // =============================================================================

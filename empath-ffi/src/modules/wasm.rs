@@ -9,7 +9,7 @@ use std::{
 };
 
 use empath_common::{context::Context, internal};
-use empath_wasm::WasmModule;
+use empath_wasm::{WasmError, WasmModule};
 use serde::Deserialize;
 
 use super::{Error, Event, validate};
@@ -162,26 +162,39 @@ impl Wasm {
         match result {
             Ok(return_code) => return_code,
             Err(e) => {
+                let timeout = matches!(e, WasmError::Timeout(_, _));
+                let error_kind = match (is_validation, timeout) {
+                    (true, true) => "validation_timeout",
+                    (true, false) => "validation_error",
+                    (false, true) => "timeout",
+                    (false, false) => "error",
+                };
+
                 // Record error metrics
                 if let Some(metrics) = empath_metrics::try_metrics() {
-                    let error_kind =
-                        if e.to_string().contains("timeout") || e.to_string().contains("epoch") {
-                            metrics.modules.record_timeout(&module_path);
-                            "timeout"
-                        } else {
-                            "error"
-                        };
-
+                    if timeout {
+                        metrics.modules.record_timeout(&module_path);
+                    }
                     metrics
                         .modules
                         .record_error_with_kind("wasm", &module_path, error_kind);
                 }
 
-                internal!(
-                    level = ERROR,
-                    "WASM module {} error in {callback_name}: {e}",
-                    self.path.display()
-                );
+                if is_validation {
+                    internal!(
+                        level = ERROR,
+                        "WASM module {} {} in {callback_name}: {e}",
+                        self.path.display(),
+                        if timeout { "timed out" } else { "error" }
+                    );
+                } else {
+                    internal!(
+                        level = WARN,
+                        "WASM module {} {} in {callback_name}: {e}",
+                        self.path.display(),
+                        if timeout { "timed out" } else { "error" }
+                    );
+                }
 
                 // If the module set a rejection before crashing, honor it
                 // This handles the case where a module validates, calls reject(), and then errors

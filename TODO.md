@@ -33,11 +33,11 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-WASM-17: Module error metrics + tests (`empath-ffi` emit path, `empath-metrics` coverage).
 - [x] NEW-WASM-14: Graceful poisoned mutex recovery (host functions log/return defaults) + regression test.
 - [x] NEW-WASM-13 (partial): Invalid SMTP code clamping test; memory growth limit test.
+- [x] IDEA-DX-01: Cache/reuse built `simple_validator.wasm` in tests (skip `xtask build-wasm` if artifact fresh) to speed CI.
+- [x] IDEA-OBS-01: Add log/metric for WASM module validation timeout vs other errors (attribute in module error metrics).
 
 ## New Ideas / Quick Wins
 - [ ] IDEA-WASM-01: Deterministic timeout test harness using a tiny Wasm module that sleeps via busy loop; drive epoch counter to assert host returns timeout code (unblocks NEW-WASM-13 timeout test).
-- [ ] IDEA-DX-01: Cache/reuse built `simple_validator.wasm` in tests (skip `xtask build-wasm` if artifact fresh) to speed CI.
-- [ ] IDEA-OBS-01: Add log/metric for WASM module validation timeout vs other errors (attribute in module error metrics).
 
 ## Notes
 - Prefer `just test-nextest` locally; `just ci` before PRs.
