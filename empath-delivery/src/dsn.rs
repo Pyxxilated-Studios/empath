@@ -359,7 +359,9 @@ fn extract_original_headers(original_context: &Context) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use empath_common::{DeliveryAttempt, address_parser::Mailbox, domain::Domain};
+    use empath_common::{
+        DeliveryAttempt, address_parser::Mailbox, domain::Domain, email::ServerId,
+    };
     use empath_spool::SpooledMessageId;
 
     use super::*;
@@ -476,7 +478,7 @@ mod tests {
             attempts: vec![DeliveryAttempt {
                 timestamp: SystemTime::now(),
                 error: Some("Connection refused".to_string()),
-                server: "mx.example.com:25".to_string(),
+                server: ServerId::new("mx.example.com:25").unwrap(),
             }],
             queued_at: SystemTime::now(),
             next_retry_at: None,

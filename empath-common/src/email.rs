@@ -4,6 +4,8 @@ use std::{
     sync::Arc,
 };
 
+use serde::{Deserialize, Serialize};
+
 /// Errors produced by validated newtypes.
 #[derive(Debug, PartialEq, Eq)]
 pub enum EmailValidationError {
@@ -23,7 +25,8 @@ impl Display for EmailValidationError {
 /// Email address newtype with basic validation.
 ///
 /// Validates the presence of '@' and rejects leading/trailing '@' or whitespace.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct EmailAddress(Arc<str>);
 
@@ -54,6 +57,14 @@ impl EmailAddress {
         }
 
         Ok(Self(s))
+    }
+
+    /// Construct an `EmailAddress` without validation.
+    ///
+    /// Intended for internal use when the input is already validated upstream.
+    #[must_use]
+    pub fn new_unchecked<S: Into<Arc<str>>>(s: S) -> Self {
+        Self(s.into())
     }
 
     /// Borrow the address as `&str`.
@@ -120,7 +131,8 @@ impl From<&EmailAddress> for Arc<str> {
 }
 
 /// Server identifier (e.g., MX host) newtype.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct ServerId(Arc<str>);
 
@@ -144,6 +156,12 @@ impl ServerId {
             ));
         }
         Ok(Self(s))
+    }
+
+    /// Create a `ServerId` without validation (use only with trusted inputs).
+    #[must_use]
+    pub fn new_unchecked<S: Into<Arc<str>>>(s: S) -> Self {
+        Self(s.into())
     }
 
     #[must_use]
@@ -183,7 +201,8 @@ impl TryFrom<&str> for ServerId {
 }
 
 /// Banner hostname newtype for greeting messages.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct BannerHostname(Arc<str>);
 

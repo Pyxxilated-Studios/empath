@@ -5,20 +5,30 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::address_parser::Mailbox;
+use crate::{address_parser::Mailbox, email::EmailAddress};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Address(pub Mailbox);
+#[serde(from = "Mailbox", into = "Mailbox")]
+pub struct Address {
+    mailbox: Mailbox,
+    email: EmailAddress,
+}
 
 impl Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}@{}", self.0.local_part, self.0.domain)
+        Display::fmt(&self.email, f)
     }
 }
 
-impl From<Mailbox> for Address {
-    fn from(value: Mailbox) -> Self {
-        Self(value)
+impl Address {
+    #[must_use]
+    pub const fn email(&self) -> &EmailAddress {
+        &self.email
+    }
+
+    #[must_use]
+    pub const fn mailbox(&self) -> &Mailbox {
+        &self.mailbox
     }
 }
 
@@ -26,13 +36,30 @@ impl Deref for Address {
     type Target = Mailbox;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.mailbox
     }
 }
 
 impl DerefMut for Address {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.mailbox
+    }
+}
+
+impl From<Mailbox> for Address {
+    fn from(value: Mailbox) -> Self {
+        // Mailbox parser guarantees an '@', so EmailAddress validation cannot fail.
+        let email = EmailAddress::new_unchecked(value.to_string());
+        Self {
+            mailbox: value,
+            email,
+        }
+    }
+}
+
+impl From<Address> for Mailbox {
+    fn from(value: Address) -> Self {
+        value.mailbox
     }
 }
 

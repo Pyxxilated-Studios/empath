@@ -414,7 +414,7 @@ mod tests {
     async fn test_spf_evaluation_integration() {
         use std::{net::IpAddr, sync::Mutex};
 
-        use empath_common::{address::Address, address_parser::Mailbox, envelope::Envelope};
+        use empath_common::{address_parser::Mailbox, envelope::Envelope};
 
         use crate::spf::{MailServer, SpfConfig, SpfResult, dns::SpfDnsResolver};
 
@@ -498,7 +498,7 @@ mod tests {
             local_part: "user".to_string(),
             domain: "example.com".to_string(),
         };
-        *envelope.sender_mut() = Some(Address(mailbox));
+        *envelope.sender_mut() = Some(mailbox.into());
 
         let mut ctx = Context {
             extended: true,

@@ -15,6 +15,7 @@ use empath_common::{
     DeliveryAttempt, DeliveryStatus,
     address::{Address, AddressList},
     context::{Context, DeliveryContext},
+    email::ServerId,
     envelope::Envelope,
 };
 use empath_delivery::DeliveryProcessor;
@@ -59,14 +60,14 @@ fn create_test_context_with_delivery_state(
         .map(|i| DeliveryAttempt {
             timestamp: SystemTime::now() - Duration::from_secs(120 * u64::from(attempts - i)),
             error: Some(format!("Attempt {}: Connection refused", i + 1)),
-            server: "mx.example.com:25".to_string(),
+            server: ServerId::new("mx.example.com:25").unwrap(),
         })
         .collect();
 
     let delivery = DeliveryContext {
         message_id: "test-msg-id".to_string(),
         domain: empath_common::Domain::new(domain),
-        server: Some("mx.example.com:25".to_string()),
+        server: Some(ServerId::new("mx.example.com:25").unwrap()),
         error: Some("Connection refused".to_string()),
         attempts: Some(attempts),
         status,

@@ -4,6 +4,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use empath_common::{
     DeliveryStatus,
+    email::ServerId,
     tracing::{debug, error, info, warn},
 };
 use tokio::task::JoinSet;
@@ -11,7 +12,10 @@ use tokio::task::JoinSet;
 use crate::{
     dns::MailServer,
     error::DeliveryError,
-    processor::{DeliveryProcessor, delivery::prepare_message},
+    processor::{
+        DeliveryProcessor,
+        delivery::{prepare_message, server_id_from},
+    },
     types::DeliveryInfo,
 };
 
@@ -63,12 +67,22 @@ async fn process_single_message(
                 .mail_servers
                 .get(info.current_server_index)
                 .map_or_else(|| info.recipient_domain.to_string(), MailServer::address);
+            let server_id = server_id_from(&server).unwrap_or_else(|err| {
+                warn!(
+                    message_id = ?info.message_id,
+                    server = server,
+                    error = %err,
+                    "Failed to validate server id, using placeholder"
+                );
+                // Static value avoids panic while preserving attempt record
+                ServerId::new_unchecked("unknown-server")
+            });
             let _error = super::delivery::handle_delivery_error(
                 &processor,
                 &info.message_id,
                 &mut context,
                 e,
-                server,
+                server_id,
             )
             .await;
         }

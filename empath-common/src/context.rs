@@ -8,7 +8,11 @@ use std::{
 use ahash::AHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{envelope::Envelope, status::Status};
+use crate::{
+    email::{EmailAddress, ServerId},
+    envelope::Envelope,
+    status::Status,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Capability {
@@ -73,7 +77,7 @@ pub struct DeliveryAttempt {
     /// Error message if the attempt failed
     pub error: Option<String>,
     /// SMTP server that was contacted
-    pub server: String,
+    pub server: ServerId,
 }
 
 /// Delivery-specific context information for outbound mail delivery.
@@ -91,7 +95,7 @@ pub struct DeliveryContext {
     /// The recipient domain being delivered to
     pub domain: crate::domain::Domain,
     /// The mail server (MX host:port) being used for delivery
-    pub server: Option<String>,
+    pub server: Option<ServerId>,
     /// Error message if delivery failed
     pub error: Option<String>,
     /// Number of delivery attempts made
@@ -210,15 +214,29 @@ impl Context {
     /// Returns the sender of this [`Context`].
     #[inline]
     pub fn sender(&self) -> String {
-        self.envelope
-            .sender()
+        self.sender_email()
             .map_or_else(String::new, ToString::to_string)
     }
 
-    /// Returns the recipients of this [`Context`].
+    /// Returns the sender as a validated [`EmailAddress`].
+    #[inline]
+    pub fn sender_email(&self) -> Option<&EmailAddress> {
+        self.envelope.sender().map(super::address::Address::email)
+    }
+
+    /// Returns the recipients of this [`Context`] as protocol-formatted strings.
     pub fn recipients(&self) -> Vec<String> {
+        self.recipient_emails()
+            .into_iter()
+            .map(|email| format!("RCPT TO:{email}"))
+            .collect()
+    }
+
+    /// Returns the recipients as validated [`EmailAddress`] values.
+    #[inline]
+    pub fn recipient_emails(&self) -> Vec<EmailAddress> {
         self.envelope.recipients().map_or_else(Vec::new, |addrs| {
-            addrs.iter().map(|addr| format!("RCPT TO:{addr}")).collect()
+            addrs.iter().map(|addr| addr.email().clone()).collect()
         })
     }
 }

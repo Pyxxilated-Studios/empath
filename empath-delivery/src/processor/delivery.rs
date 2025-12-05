@@ -5,6 +5,7 @@ use std::sync::Arc;
 use empath_common::{
     DeliveryStatus,
     context::{Context, DeliveryContext},
+    email::ServerId,
     internal,
     tracing::{error, info, warn},
 };
@@ -12,11 +13,16 @@ use empath_ffi::modules::{self, Ev, Event};
 use empath_spool::SpooledMessageId;
 
 use crate::{
-    dns::MailServer,
     error::{DeliveryError, SystemError},
     processor::DeliveryProcessor,
     types::DeliveryInfo,
 };
+
+pub(super) fn server_id_from(address: &str) -> Result<ServerId, DeliveryError> {
+    ServerId::new(address.to_owned()).map_err(|e| {
+        SystemError::Internal(format!("Invalid server identifier '{address}': {e}")).into()
+    })
+}
 
 /// Prepare a message for delivery using SMTP client (but don't actually send it yet)
 ///
@@ -108,6 +114,7 @@ pub async fn prepare_message(
 
     // Use the primary (highest priority) mail server
     let mx_address = dns_resolution.primary_server.address();
+    let mx_server_id = server_id_from(&mx_address)?;
 
     internal!(
         "Sending message to {:?} with MX host {} (priority {})",
@@ -120,7 +127,7 @@ pub async fn prepare_message(
     context.delivery = Some(DeliveryContext {
         message_id: message_id.to_string(),
         domain: info.recipient_domain.clone(),
-        server: Some(mx_address.clone()),
+        server: Some(mx_server_id.clone()),
         error: None,
         attempts: Some(info.attempt_count()),
         status: info.status.clone(),
@@ -210,7 +217,7 @@ pub async fn prepare_message(
             context.delivery = Some(DeliveryContext {
                 message_id: message_id.to_string(),
                 domain: info.recipient_domain.clone(),
-                server: Some(mx_address.clone()),
+                server: Some(mx_server_id.clone()),
                 error: None,
                 attempts: Some(info.attempt_count()),
                 status: info.status.clone(),
@@ -238,7 +245,7 @@ pub async fn prepare_message(
         }
         Err(e) => {
             let error =
-                handle_delivery_error(processor, message_id, &mut context, e, mx_address).await;
+                handle_delivery_error(processor, message_id, &mut context, e, mx_server_id).await;
             Err(error)
         }
     }
@@ -261,7 +268,7 @@ pub async fn handle_delivery_error(
     message_id: &SpooledMessageId,
     context: &mut Context,
     error: DeliveryError,
-    server: String,
+    server: ServerId,
 ) -> DeliveryError {
     // Record the attempt
     let attempt = empath_common::DeliveryAttempt {
@@ -476,11 +483,16 @@ pub async fn persist_delivery_state(
         .await
         .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
 
+    let current_server = info
+        .current_mail_server()
+        .map(|srv| server_id_from(&srv.address()))
+        .transpose()?;
+
     // Update the delivery field with current queue state
     context.delivery = Some(DeliveryContext {
         message_id: message_id.to_string(),
         domain: info.recipient_domain.clone(),
-        server: info.current_mail_server().map(MailServer::address),
+        server: current_server,
         error: match &info.status {
             DeliveryStatus::Failed(e) | DeliveryStatus::Retry { last_error: e, .. } => {
                 Some(e.clone())
