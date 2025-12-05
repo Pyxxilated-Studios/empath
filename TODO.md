@@ -261,7 +261,7 @@ See BACKLOG.md for details.
 **Effort**: 3-5 days
 **Dependencies**: None
 **Owner**: Unassigned
-**Status**: Ready to start
+**Status**: In Progress
 **Tags**: testing, performance, production
 **Added**: 2025-11-20 (General Purpose Review)
 
@@ -958,10 +958,14 @@ fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult)
 **Problem**: WASM tests are minimal compared to Python module tests.
 
 **Current Coverage**:
-- ❌ Only negative test (nonexistent module)
-- ❌ No event callback execution tests
-- ❌ No context modification tests
-- ❌ No error handling tests
+- ✅ Component integration suite added (`empath-wasm/tests/integration.rs`):
+  - Validation callbacks (accept/reject + context writes)
+  - Event callbacks (connection/delivery/dns/smtp_error)
+  - Context persistence (session + transaction)
+  - Config knobs (timeout/max_memory) and path resolution via `xtask build-wasm`
+- ❌ Resource limit tests (memory/timeout) still needed
+- ❌ Poisoned mutex recovery test still needed
+- ❌ Invalid SMTP code test still needed
 
 **Python Coverage** (reference):
 - ✅ Positive and negative tests

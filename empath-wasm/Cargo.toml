@@ -27,4 +27,5 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 
 [dev-dependencies]
+ahash.workspace = true
 tempfile.workspace = true

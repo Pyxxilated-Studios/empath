@@ -1115,6 +1115,7 @@ dependencies = [
 name = "empath-wasm"
 version = "0.0.1"
 dependencies = [
+ "ahash",
  "anyhow",
  "bincode",
  "empath-common",
