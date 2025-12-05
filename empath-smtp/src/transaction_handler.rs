@@ -251,42 +251,38 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
 
     async fn validate_mail_from(&mut self, ctx: &mut Context) -> bool {
         // Perform SPF evaluation if DNS resolver is available
-        if let Some(resolver) = &self.spf_dns_resolver {
-            let sender = ctx.sender();
+        if let Some(resolver) = &self.spf_dns_resolver
+            && let Some(sender) = ctx.sender_email().cloned()
+        {
+            // Extract IP address from peer socket address
+            let client_ip = self.peer.ip();
 
-            // Only evaluate if sender is not null
-            if !sender.is_empty() && sender != "<>" {
-                // Extract IP address from peer socket address
-                let client_ip = self.peer.ip();
+            // HELO/EHLO hostname is stored in ctx.id
+            // Clone to avoid borrow checker issues when mutating ctx later
+            let helo_domain = ctx.id().to_string();
 
-                // HELO/EHLO hostname is stored in ctx.id
-                // Clone to avoid borrow checker issues when mutating ctx later
-                let helo_domain = ctx.id().to_string();
+            // Create SPF evaluator and perform evaluation
+            let evaluator = crate::spf::SpfEvaluator::new(Arc::clone(resolver), self.spf_config);
 
-                // Create SPF evaluator and perform evaluation
-                let evaluator =
-                    crate::spf::SpfEvaluator::new(Arc::clone(resolver), self.spf_config);
+            let spf_evaluation = evaluator.evaluate(&sender, client_ip, &helo_domain).await;
 
-                let spf_evaluation = evaluator.evaluate(&sender, client_ip, &helo_domain).await;
-
-                // Store SPF results in transaction context
-                ctx.transaction.insert(
-                    Cow::Borrowed("spf_result"),
-                    spf_evaluation.result.to_string(),
-                );
-                if let Some(explanation) = spf_evaluation.explanation {
-                    ctx.transaction
-                        .insert(Cow::Borrowed("spf_explanation"), explanation);
-                }
-
-                tracing::info!(
-                    sender = %sender,
-                    client_ip = %client_ip,
-                    helo_domain = %helo_domain,
-                    spf_result = %spf_evaluation.result,
-                    "SPF evaluation completed"
-                );
+            // Store SPF results in transaction context
+            ctx.transaction.insert(
+                Cow::Borrowed("spf_result"),
+                spf_evaluation.result.to_string(),
+            );
+            if let Some(explanation) = spf_evaluation.explanation {
+                ctx.transaction
+                    .insert(Cow::Borrowed("spf_explanation"), explanation);
             }
+
+            tracing::info!(
+                sender = %sender,
+                client_ip = %client_ip,
+                helo_domain = %helo_domain,
+                spf_result = %spf_evaluation.result,
+                "SPF evaluation completed"
+            );
         }
 
         // Dispatch to modules for additional validation

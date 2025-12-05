@@ -6,6 +6,7 @@
 
 use std::{net::IpAddr, sync::Arc, time::Instant};
 
+use empath_common::email::EmailAddress;
 use ipnetwork::{Ipv4Network, Ipv6Network};
 use tracing::{debug, warn};
 
@@ -42,26 +43,14 @@ impl<D: ?Sized + SpfDnsResolver> SpfEvaluator<D> {
     /// Returns `SpfError` for DNS failures or evaluation errors
     pub async fn evaluate(
         &self,
-        sender: &str,
+        sender: &EmailAddress,
         client_ip: IpAddr,
         helo_hostname: &str,
     ) -> SpfEvaluation {
         let start = Instant::now();
 
         // Parse sender email to extract domain
-        let (sender_local, sender_domain) = match Self::parse_sender(sender) {
-            Ok(parts) => parts,
-            Err(e) => {
-                return SpfEvaluation {
-                    result: SpfResult::PermError,
-                    record: None,
-                    matched_mechanism: None,
-                    explanation: Some(e.to_string()),
-                    lookup_count: 0,
-                    evaluation_time: start.elapsed(),
-                };
-            }
-        };
+        let (sender_local, sender_domain) = Self::parse_sender(sender);
 
         debug!(
             sender = %sender,
@@ -73,7 +62,7 @@ impl<D: ?Sized + SpfDnsResolver> SpfEvaluator<D> {
 
         // Create evaluation context
         let mut ctx = EvaluationContext {
-            _sender: sender.to_string(),
+            _sender: sender.as_str().to_string(),
             _sender_local: sender_local.to_string(),
             sender_domain: sender_domain.to_string(),
             client_ip,
@@ -130,31 +119,14 @@ impl<D: ?Sized + SpfDnsResolver> SpfEvaluator<D> {
     }
 
     /// Parse sender email into local and domain parts
-    fn parse_sender(sender: &str) -> Result<(&str, &str), SpfError> {
-        // Handle null sender (<>)
-        if sender.is_empty() || sender == "<>" {
-            return Err(SpfError::InvalidSender(
-                "Null sender - SPF not applicable".to_string(),
-            ));
-        }
-
-        // Find @ separator
-        let Some(at_pos) = sender.rfind('@') else {
-            return Err(SpfError::InvalidSender(format!(
-                "Invalid email format: {sender}"
-            )));
-        };
-
-        let local = &sender[..at_pos];
-        let domain = &sender[at_pos + 1..];
-
-        if domain.is_empty() {
-            return Err(SpfError::InvalidSender(format!(
-                "Empty domain in sender: {sender}"
-            )));
-        }
-
-        Ok((local, domain))
+    fn parse_sender(sender: &EmailAddress) -> (&str, &str) {
+        let s = sender.as_str();
+        let (local, domain) = s.rsplit_once('@').unwrap_or(("", ""));
+        debug_assert!(
+            !local.is_empty() && !domain.is_empty(),
+            "EmailAddress guarantees a single '@' not at start or end"
+        );
+        (local, domain)
     }
 
     /// Look up SPF record for a domain
@@ -802,6 +774,10 @@ mod tests {
     use super::*;
     use crate::spf::dns::{DnsLookupError, MailServer};
 
+    fn sender(s: &str) -> EmailAddress {
+        EmailAddress::new(s).unwrap()
+    }
+
     /// Mock DNS resolver for testing
     #[allow(clippy::struct_field_names)]
     struct MockDnsResolver {
@@ -912,7 +888,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.100".parse().unwrap(),
                 "mail.example.com",
             )
@@ -936,7 +912,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "198.51.100.1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -957,7 +933,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "2001:db8::1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -975,7 +951,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1001,7 +977,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.10".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1019,7 +995,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "1.2.3.4".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1037,7 +1013,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "1.2.3.4".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1054,7 +1030,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "1.2.3.4".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1078,7 +1054,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.100".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1106,7 +1082,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "198.51.100.1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1133,7 +1109,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.100".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1162,7 +1138,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1198,7 +1174,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, config);
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1215,7 +1191,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1240,7 +1216,7 @@ mod tests {
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.1".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1266,7 +1242,7 @@ mod tests {
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
         let result = evaluator
-            .evaluate("user@example.com", client_ip, "mail.example.com")
+            .evaluate(&sender("user@example.com"), client_ip, "mail.example.com")
             .await;
 
         assert_eq!(result.result, SpfResult::Pass);
@@ -1286,7 +1262,7 @@ mod tests {
         // First IP range
         let result1 = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "192.0.2.50".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1296,7 +1272,7 @@ mod tests {
         // Second IP range
         let result2 = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "198.51.100.50".parse().unwrap(),
                 "mail.example.com",
             )
@@ -1306,7 +1282,7 @@ mod tests {
         // Neither range
         let result3 = evaluator
             .evaluate(
-                "user@example.com",
+                &sender("user@example.com"),
                 "203.0.113.1".parse().unwrap(),
                 "mail.example.com",
             )

@@ -13,7 +13,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] 0.12 Control socket commands. Remaining: config reload, log level adjust, connection stats, rate-limit adjust.
 - [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 - [ ] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard.
-- [wip] NEW-09: Newtype safety. Added validated newtypes (`EmailAddress`, `ServerId`, `BannerHostname`) in `empath-common`; SMTP session now uses `BannerHostname` for config/tests. Remaining: propagate to envelope sender/recipients and delivery identifiers.
+- [wip] NEW-09: Newtype safety. Added validated newtypes (`EmailAddress`, `ServerId`, `BannerHostname`) in `empath-common`; SMTP session now uses `BannerHostname` for config/tests; SPF evaluator now accepts `EmailAddress`. Remaining: propagate to envelope sender/recipients and delivery identifiers.
 - [wip] NEW-10: Nightly feature stability plan. Added `docs/NIGHTLY_FEATURES.md`; stable CI lane (`stable-check`) added; low-friction gates removed (`result_option_map_or_default`, `iter_advance_by`, `ascii_char`, `once_cell_try`, `bstr`); remaining: associated_type_defaults, slice_pattern, fn_traits, unboxed_closures.
 
 ## P2 — Next Up / Blocked
