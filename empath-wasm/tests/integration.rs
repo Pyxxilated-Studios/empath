@@ -59,7 +59,9 @@ fn resolved_module_path() -> &'static Path {
                 .join(&profile)
                 .join("simple_validator.wasm");
 
-            if !wasm_path.exists() {
+            let wasm_stale = needs_rebuild(&workspace_root, &wasm_path);
+
+            if wasm_stale {
                 unwrap_result(
                     build_wasm_example(&workspace_root, &profile),
                     "failed to build wasm example via xtask",
@@ -90,6 +92,33 @@ fn build_wasm_example(workspace_root: &Path, profile: &str) -> Result<(), String
     } else {
         Err(format!("xtask build-wasm exited with status {status}"))
     }
+}
+
+fn latest_source_mtime(workspace_root: &Path) -> Option<std::time::SystemTime> {
+    let src = workspace_root.join("empath-examples/wasm/src/lib.rs");
+    let cargo = workspace_root.join("empath-examples/wasm/Cargo.toml");
+    let mut times = Vec::new();
+
+    if let Ok(meta) = std::fs::metadata(src) {
+        times.push(meta.modified().ok()?);
+    }
+    if let Ok(meta) = std::fs::metadata(cargo) {
+        times.push(meta.modified().ok()?);
+    }
+
+    times.into_iter().max()
+}
+
+fn needs_rebuild(workspace_root: &Path, wasm_path: &Path) -> bool {
+    let Ok(wasm_meta) = std::fs::metadata(wasm_path) else {
+        return true;
+    };
+
+    let Ok(wasm_mtime) = wasm_meta.modified() else {
+        return true;
+    };
+
+    latest_source_mtime(workspace_root).is_none_or(|src_mtime| src_mtime > wasm_mtime)
 }
 
 fn load_test_module() -> WasmModule {
