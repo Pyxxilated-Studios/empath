@@ -480,6 +480,44 @@ fn test_validate_data_memory_limit() {
     }
 }
 
+#[allow(clippy::panic, clippy::expect_used)]
+#[test]
+fn test_event_error_path_returns_err() {
+    let module = init_test_module();
+
+    let mut ctx = create_test_context();
+    ctx.id = "panic-event-123".to_string();
+
+    let result = module.execute_callback("on_delivery_failure", &mut ctx);
+    assert!(result.is_err(), "Expected event callback to error");
+}
+
+#[allow(clippy::panic, clippy::expect_used)]
+#[test]
+fn test_context_survives_event_error() {
+    let module = init_test_module();
+
+    let mut ctx = create_test_context();
+    ctx.id = "panic-event-ctx".to_string();
+    ctx.transaction
+        .insert(Cow::Borrowed("panic_event"), "true".to_string());
+    ctx.session
+        .insert(Cow::Borrowed("existing_session"), "keep".to_string());
+
+    let result = module.execute_callback("on_connection_opened", &mut ctx);
+    assert!(result.is_err(), "Expected event callback to error");
+
+    // Context maps should remain accessible after error
+    assert_eq!(
+        ctx.transaction.get(&Cow::Borrowed("panic_event")),
+        Some(&"true".to_string())
+    );
+    assert_eq!(
+        ctx.session.get(&Cow::Borrowed("existing_session")),
+        Some(&"keep".to_string())
+    );
+}
+
 #[test]
 fn test_validate_starttls_accept() {
     let module = init_test_module();

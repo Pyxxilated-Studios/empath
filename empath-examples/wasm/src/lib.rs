@@ -16,6 +16,15 @@ struct Validator;
 
 export!(Validator);
 
+fn maybe_trigger_event_error(ctx: &Context) {
+    if ctx.id.starts_with("panic-event") {
+        panic!("intentional event panic for testing");
+    }
+    if let Some(flag) = empath::validator::host::transaction_get("panic_event") {
+        panic!("intentional event panic via transaction flag: {flag}");
+    }
+}
+
 // Implement validation callbacks
 impl ValidationGuest for Validator {
     /// Validate connection - called when client connects
@@ -206,6 +215,7 @@ impl ValidationGuest for Validator {
 impl EventsGuest for Validator {
     /// Called when a client connection is opened
     fn on_connection_opened(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         empath::validator::host::log(&format!(
             "WASM Event: Connection opened - session ID: {}",
             ctx.id
@@ -217,6 +227,7 @@ impl EventsGuest for Validator {
 
     /// Called when a client connection is closed
     fn on_connection_closed(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         empath::validator::host::log(&format!(
             "WASM Event: Connection closed - session ID: {}",
             ctx.id
@@ -230,6 +241,7 @@ impl EventsGuest for Validator {
 
     /// Called before attempting delivery to a mail server
     fn on_delivery_attempt(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         empath::validator::host::log(&format!(
             "WASM Event: Delivery attempt for message {}",
             ctx.id
@@ -246,6 +258,7 @@ impl EventsGuest for Validator {
 
     /// Called when delivery succeeds
     fn on_delivery_success(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         empath::validator::host::log(&format!(
             "WASM Event: Delivery succeeded for message {}",
             ctx.id
@@ -256,6 +269,7 @@ impl EventsGuest for Validator {
 
     /// Called when delivery fails
     fn on_delivery_failure(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         empath::validator::host::log(&format!(
             "WASM Event: Delivery failed for message {}",
             ctx.id
@@ -266,6 +280,7 @@ impl EventsGuest for Validator {
 
     /// Called when an SMTP command returns an error response
     fn on_smtp_error(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         empath::validator::host::log(&format!(
             "WASM Event: SMTP error for session {}",
             ctx.id
@@ -274,6 +289,7 @@ impl EventsGuest for Validator {
 
     /// Called when a complete message is received
     fn on_smtp_message_received(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         let data_size = ctx.data.as_ref().map_or(0, |d| d.len());
 
         empath::validator::host::log(&format!(
@@ -287,6 +303,7 @@ impl EventsGuest for Validator {
 
     /// Called after a DNS lookup completes
     fn on_dns_lookup(ctx: Context) {
+        maybe_trigger_event_error(&ctx);
         empath::validator::host::log(&format!(
             "WASM Event: DNS lookup completed for session {}",
             ctx.id
