@@ -95,9 +95,21 @@ impl ModuleMetrics {
     /// * `module_type` - Type of module (e.g., "wasm", "python", "`shared_library`")
     /// * `module_path` - Path to the module file
     pub fn record_error(&self, module_type: &str, module_path: &str) {
+        self.record_error_with_kind(module_type, module_path, "generic");
+    }
+
+    /// Record a module error with an error kind
+    ///
+    /// # Arguments
+    ///
+    /// * `module_type` - Type of module (e.g., "wasm", "python", "`shared_library`")
+    /// * `module_path` - Path to the module file
+    /// * `error_kind` - Optional classification (e.g., "timeout", "error")
+    pub fn record_error_with_kind(&self, module_type: &str, module_path: &str, error_kind: &str) {
         let attributes = [
             KeyValue::new("module_type", module_type.to_string()),
             KeyValue::new("module_path", module_path.to_string()),
+            KeyValue::new("error_kind", error_kind.to_string()),
         ];
         self.errors_total.add(1, &attributes);
     }

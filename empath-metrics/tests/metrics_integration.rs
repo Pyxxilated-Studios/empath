@@ -195,7 +195,7 @@ fn test_dns_lookup_duration() {
 fn test_module_metrics_memory_and_helpers() {
     let metrics = ModuleMetrics::new().expect("Failed to create module metrics");
 
-    metrics.record_error("wasm", "/tmp/module.wasm");
+    metrics.record_error_with_kind("wasm", "/tmp/module.wasm", "error");
     metrics.record_execution("wasm", "validate_mail_from", 0.123);
     metrics.record_timeout("/tmp/module.wasm");
 

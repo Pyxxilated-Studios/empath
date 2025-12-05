@@ -164,12 +164,17 @@ impl Wasm {
             Err(e) => {
                 // Record error metrics
                 if let Some(metrics) = empath_metrics::try_metrics() {
-                    metrics.modules.record_error("wasm", &module_path);
+                    let error_kind =
+                        if e.to_string().contains("timeout") || e.to_string().contains("epoch") {
+                            metrics.modules.record_timeout(&module_path);
+                            "timeout"
+                        } else {
+                            "error"
+                        };
 
-                    // Check if this was a timeout error
-                    if e.to_string().contains("timeout") || e.to_string().contains("epoch") {
-                        metrics.modules.record_timeout(&module_path);
-                    }
+                    metrics
+                        .modules
+                        .record_error_with_kind("wasm", &module_path, error_kind);
                 }
 
                 internal!(
