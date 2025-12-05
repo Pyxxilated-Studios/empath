@@ -1,7 +1,7 @@
 use std::{borrow::Cow, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use ahash::AHashMap;
-use empath_common::tracing;
+use empath_common::{email::BannerHostname, tracing};
 use empath_tracing::traced;
 use serde::Deserialize;
 
@@ -41,7 +41,7 @@ pub struct SessionConfig {
     pub extensions: Vec<Extension>,
     pub tls_context: Option<TlsContext>,
     pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
-    pub banner: String,
+    pub banner: BannerHostname,
     pub init_context: AHashMap<Cow<'static, str>, String>,
     pub timeouts: crate::SmtpServerTimeouts,
     pub spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
@@ -84,7 +84,7 @@ pub struct SessionConfigBuilder {
     extensions: Vec<Extension>,
     tls_context: Option<TlsContext>,
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
-    banner: String,
+    banner: BannerHostname,
     init_context: AHashMap<Cow<'static, str>, String>,
     timeouts: crate::SmtpServerTimeouts,
     spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
@@ -120,7 +120,11 @@ impl Default for SessionConfigBuilder {
             extensions: Vec::new(),
             tls_context: None,
             spool: None,
-            banner: String::new(),
+            banner: BannerHostname::new("localhost").unwrap_or_else(|_| {
+                // Fallback should always succeed; if validation changes, use empty hostname
+                BannerHostname::new("")
+                    .unwrap_or_else(|_| BannerHostname::new_unchecked("localhost"))
+            }),
             init_context: AHashMap::new(),
             timeouts: crate::SmtpServerTimeouts::default(),
             spf_dns_resolver: None,
@@ -154,7 +158,7 @@ impl SessionConfigBuilder {
 
     /// Set the server banner hostname
     #[must_use]
-    pub fn with_banner(mut self, banner: String) -> Self {
+    pub fn with_banner(mut self, banner: BannerHostname) -> Self {
         self.banner = banner;
         self
     }
@@ -296,13 +300,7 @@ impl Session {
         let session = Self {
             context: Context::default(),
             extensions: config.extensions,
-            banner: if config.banner.is_empty() {
-                std::env::var("HOSTNAME")
-                    .unwrap_or_else(|_| "localhost".to_string())
-                    .into()
-            } else {
-                config.banner.into()
-            },
+            banner: Arc::from(config.banner.as_str()),
             init_context: Arc::new(config.init_context),
             max_message_size,
         };
@@ -342,25 +340,23 @@ mod test {
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
 
-        let banner = "testing";
+        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
         let mut context = Context {
-            banner: banner.into(),
+            banner: banner.as_str().into(),
             max_message_size: 0,
             ..Default::default()
         };
 
         let (mut session, _handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
-            SessionConfig::builder()
-                .with_banner(banner.to_string())
-                .build(),
+            SessionConfig::builder().with_banner(banner.clone()).build(),
         );
 
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
         assert_eq!(
             response.0.unwrap().first().unwrap(),
-            &format!("{} {banner}", Status::ServiceReady)
+            &format!("{} {}", Status::ServiceReady, banner)
         );
     }
 
@@ -370,9 +366,9 @@ mod test {
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
 
-        let banner = "testing";
+        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
         let mut context = Context {
-            banner: banner.into(),
+            banner: banner.as_str().into(),
             max_message_size: 0,
             ..Default::default()
         };
@@ -381,9 +377,7 @@ mod test {
 
         let (mut session, _handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
-            SessionConfig::builder()
-                .with_banner(banner.to_string())
-                .build(),
+            SessionConfig::builder().with_banner(banner.clone()).build(),
         );
 
         let _ = session.response(&mut context).await;
@@ -407,9 +401,9 @@ mod test {
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
 
-        let banner = "testing";
+        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
         let mut context = Context {
-            banner: banner.into(),
+            banner: banner.as_str().into(),
             max_message_size: 0,
             ..Default::default()
         };
@@ -423,7 +417,7 @@ mod test {
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
                 .with_spool(Some(mock_spool.clone()))
-                .with_banner(banner.to_string())
+                .with_banner(banner.clone())
                 .build(),
         );
 
@@ -474,9 +468,9 @@ mod test {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn modules() {
-        let banner = "testing";
+        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
         let mut context = Context {
-            banner: banner.into(),
+            banner: banner.as_str().into(),
             max_message_size: 0,
             ..Default::default()
         };
@@ -487,9 +481,7 @@ mod test {
 
         let (mut session, mut transaction_handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
-            SessionConfig::builder()
-                .with_banner(banner.to_string())
-                .build(),
+            SessionConfig::builder().with_banner(banner.clone()).build(),
         );
 
         session.context.state = State::Helo(state::Helo {
@@ -572,9 +564,9 @@ mod test {
             }
         }
 
-        let banner = "testing";
+        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
         let mut context = Context {
-            banner: banner.into(),
+            banner: banner.as_str().into(),
             max_message_size: 0,
             ..Default::default()
         };
@@ -587,7 +579,7 @@ mod test {
         let (mut session, mut transaction_handler, _tls) = Session::create(
             "[::]:25".parse().unwrap(),
             SessionConfig::builder()
-                .with_banner(banner.to_string())
+                .with_banner(banner.clone())
                 .with_transaction_handler(Some(Box::new(handler)))
                 .build(),
         );

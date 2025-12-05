@@ -209,6 +209,11 @@ impl BannerHostname {
         Ok(Self(s))
     }
 
+    /// Create a `BannerHostname` without validation (internal use for fallbacks).
+    pub fn new_unchecked(s: &str) -> Self {
+        Self(Arc::from(s))
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
