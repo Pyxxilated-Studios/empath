@@ -1,4 +1,4 @@
-#![feature(bstr, slice_pattern, result_option_map_or_default)]
+#![feature(bstr, slice_pattern)]
 
 use core::slice::SlicePattern;
 use std::{borrow::Cow, ffi::CStr, sync::Arc};
@@ -125,7 +125,7 @@ pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::
     validate_context
         .session
         .get("protocol")
-        .map_or_default(crate::string::String::from)
+        .map_or_else(crate::string::String::default, crate::string::String::from)
 }
 
 #[unsafe(no_mangle)]
@@ -135,7 +135,7 @@ pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::st
     validate_context
         .session
         .get("cipher")
-        .map_or_default(crate::string::String::from)
+        .map_or_else(crate::string::String::default, crate::string::String::from)
 }
 
 ///
@@ -178,7 +178,9 @@ pub unsafe extern "C" fn em_context_set(
     } else {
         unsafe {
             CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
+                let value = CStr::from_ptr(value)
+                    .to_str()
+                    .map_or_else(|_| String::new(), String::from);
                 // Default to transaction context for backward compatibility
                 *validate_context
                     .transaction
@@ -235,7 +237,9 @@ pub unsafe extern "C" fn em_context_session_set(
     } else {
         unsafe {
             CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
+                let value = CStr::from_ptr(value)
+                    .to_str()
+                    .map_or_else(|_| String::new(), String::from);
                 *validate_context
                     .session
                     .entry(Cow::Owned(key.to_string()))
@@ -313,7 +317,9 @@ pub unsafe extern "C" fn em_context_transaction_set(
     } else {
         unsafe {
             CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                let value = CStr::from_ptr(value).to_str().map_or_default(String::from);
+                let value = CStr::from_ptr(value)
+                    .to_str()
+                    .map_or_else(|_| String::new(), String::from);
                 *validate_context
                     .transaction
                     .entry(Cow::Owned(key.to_string()))

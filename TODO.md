@@ -15,7 +15,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard.
 - [ ] NEW-03a: Publish coverage reports + badge (Codecov/Coveralls) using existing tarpaulin workflow.
 - [ ] NEW-09: Newtype safety (EmailAddress, ServerId, BannerHostname) #[repr(transparent)] with validation.
-- [wip] NEW-10: Nightly feature stability plan. Added `docs/NIGHTLY_FEATURES.md` with inventory/migration steps; stable CI lane (`stable-check`) added but will fail until refactors land.
+- [wip] NEW-10: Nightly feature stability plan. Added `docs/NIGHTLY_FEATURES.md`; stable CI lane (`stable-check`) added; low-friction gates removed (`result_option_map_or_default`, `iter_advance_by`, `ascii_char`, `once_cell_try`), bstr/associated_type_defaults/slice_pattern/fn_traits/unboxed_closures still pending.
 
 ## P2 — Next Up / Blocked
 - [ ] NEW-WASM-15: Event registration macro to centralize event definitions and mappings (Ev enum, WIT names, handlers).

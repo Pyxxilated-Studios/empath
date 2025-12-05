@@ -35,11 +35,16 @@ impl TlsInfo {
     }
 
     pub fn proto(&self) -> String {
-        self.version.as_str().map_or_default(str::to_string)
+        self.version
+            .as_str()
+            .map_or_else(String::new, str::to_string)
     }
 
     pub fn cipher(&self) -> String {
-        self.ciphers.suite().as_str().map_or_default(str::to_string)
+        self.ciphers
+            .suite()
+            .as_str()
+            .map_or_else(String::new, str::to_string)
     }
 }
 

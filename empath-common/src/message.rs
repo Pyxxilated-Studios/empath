@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Deref};
+use std::{fmt::Debug, num::NonZeroUsize, ops::Deref};
 
 use crate::{error::MessageParseError, mime::Mime};
 
@@ -44,6 +44,17 @@ impl<'buf> Parser<'buf> {
     const fn undo(&mut self) {
         self.cursor -= 1;
     }
+
+    fn advance_checked(&mut self, n: usize) -> Result<(), MessageParseError> {
+        if self.cursor + n <= self.buf.len() {
+            self.cursor += n;
+            Ok(())
+        } else {
+            let remaining = self.buf.len().saturating_sub(self.cursor);
+            let missing = n.saturating_sub(remaining);
+            Err(MessageParseError::UnexpectedEOF(missing_nonzero(missing)))
+        }
+    }
 }
 
 impl Iterator for Parser<'_> {
@@ -54,6 +65,10 @@ impl Iterator for Parser<'_> {
         self.cursor += 1;
         Some(b)
     }
+}
+
+fn missing_nonzero(missing: usize) -> NonZeroUsize {
+    NonZeroUsize::new(missing.max(1)).unwrap_or(NonZeroUsize::MIN)
 }
 
 pub const END_OF_BODY: &[u8] = b"\r\n.\r\n";
@@ -112,7 +127,9 @@ impl<'a> Body<'a> {
 
         loop {
             if matches!(parser.peek_n::<END_OF_BODY_LENGTH>(), Some(END_OF_BODY)) {
-                let _ = parser.advance_by(END_OF_BODY_LENGTH);
+                parser
+                    .advance_checked(END_OF_BODY_LENGTH)
+                    .map_err(|_| MessageParseError::UnexpectedEOF(missing_nonzero(1)))?;
                 return Ok((
                     Body::Basic(std::borrow::Cow::Borrowed(
                         parser.slice(0, parser.checkpoint()),
@@ -147,7 +164,7 @@ impl Debug for Header<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Header")
             .field("name", &self.name)
-            .field("value", &self.value.as_ascii())
+            .field("value", &self.value)
             .finish()
     }
 }
@@ -184,9 +201,7 @@ impl<'a> Headers<'a> {
 
         while parser.peek().is_some() {
             if parser.peek_n::<END_OF_HEADER_LENGTH>() == Some(END_OF_HEADER) {
-                parser
-                    .advance_by(END_OF_HEADER_LENGTH)
-                    .map_err(MessageParseError::UnexpectedEOF)?;
+                parser.advance_checked(END_OF_HEADER_LENGTH)?;
                 break;
             }
 
@@ -211,9 +226,7 @@ impl<'a> Headers<'a> {
             headers.push(Header { name, value });
             if parser.peek_n::<END_OF_HEADER_LENGTH>() == Some(END_OF_HEADER) {
                 // SAFETY: peek_n() guarantees sufficient elements exist
-                parser
-                    .advance_by(END_OF_HEADER_LENGTH)
-                    .map_err(MessageParseError::UnexpectedEOF)?;
+                parser.advance_checked(END_OF_HEADER_LENGTH)?;
             }
         }
 

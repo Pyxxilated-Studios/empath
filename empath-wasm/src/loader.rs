@@ -50,22 +50,32 @@ static EPOCH_TASK_STARTED: AtomicBool = AtomicBool::new(false);
 /// This typically only occurs if the system is fundamentally misconfigured or lacks
 /// required resources.
 fn get_or_init_engine() -> Result<Arc<Engine>> {
-    SHARED_ENGINE
-        .get_or_try_init(|| {
-            internal!(
-                level = TRACE,
-                "Creating shared Wasmtime engine with epoch interruption"
-            );
+    if let Some(engine) = SHARED_ENGINE.get() {
+        return Ok(Arc::clone(engine));
+    }
 
-            let mut config = Config::new();
-            config.wasm_component_model(true);
-            config.epoch_interruption(true); // Enable timeout enforcement
+    internal!(
+        level = TRACE,
+        "Creating shared Wasmtime engine with epoch interruption"
+    );
 
-            Engine::new(&config)
-                .map(Arc::new)
-                .map_err(|e| WasmError::EngineCreation(e.to_string()))
-        })
-        .map(Arc::clone)
+    let mut config = Config::new();
+    config.wasm_component_model(true);
+    config.epoch_interruption(true); // Enable timeout enforcement
+
+    let engine = Engine::new(&config)
+        .map(Arc::new)
+        .map_err(|e| WasmError::EngineCreation(e.to_string()))?;
+
+    // Set may fail if another thread initialized concurrently; fall back to the stored value.
+    if SHARED_ENGINE.set(Arc::clone(&engine)).is_ok() {
+        Ok(engine)
+    } else {
+        SHARED_ENGINE
+            .get()
+            .map(Arc::clone)
+            .ok_or_else(|| WasmError::EngineCreation("Failed to initialize Wasmtime engine".into()))
+    }
 }
 
 /// Start the epoch manager task if not already running

@@ -210,13 +210,15 @@ impl Context {
     /// Returns the sender of this [`Context`].
     #[inline]
     pub fn sender(&self) -> String {
-        self.envelope.sender().map_or_default(ToString::to_string)
+        self.envelope
+            .sender()
+            .map_or_else(String::new, ToString::to_string)
     }
 
     /// Returns the recipients of this [`Context`].
     pub fn recipients(&self) -> Vec<String> {
-        self.envelope
-            .recipients()
-            .map_or_default(|addrs| addrs.iter().map(|addr| format!("RCPT TO:{addr}")).collect())
+        self.envelope.recipients().map_or_else(Vec::new, |addrs| {
+            addrs.iter().map(|addr| format!("RCPT TO:{addr}")).collect()
+        })
     }
 }

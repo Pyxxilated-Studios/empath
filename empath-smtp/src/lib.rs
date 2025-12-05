@@ -1,4 +1,4 @@
-#![feature(bstr, result_option_map_or_default)]
+#![feature(bstr)]
 
 pub mod client;
 pub mod command;
