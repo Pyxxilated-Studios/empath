@@ -704,4 +704,20 @@ mod tests {
         // let module = WasmModule::load("test.wasm").unwrap().with_timeout(timeout);
         // assert_eq!(module.timeout(), timeout);
     }
+
+    #[test]
+    fn validation_result_to_code_accept_is_zero() {
+        let result = wit::ValidationResult::Accept;
+        assert_eq!(validation_result_to_code("accept", result), 0);
+    }
+
+    #[test]
+    fn validation_result_to_code_clamps_invalid_codes() {
+        let rejection = wit::Rejection {
+            code: 999,
+            message: "bad code".to_string(),
+        };
+        let result = wit::ValidationResult::Reject(rejection);
+        assert_eq!(validation_result_to_code("invalid", result), 550);
+    }
 }
