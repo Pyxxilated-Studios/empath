@@ -1218,8 +1218,8 @@ on-delivery-attempt: func(ctx: delivery-context);
 **Priority**: Low (Observability)
 **Effort**: 1 hour
 **Dependencies**: NEW-WASM-01 (completed)
-**Owner**: Unassigned
-**Status**: Ready to start
+**Owner**: pyxxil
+**Status**: Completed (metrics + tests)
 **Tags**: wasm, observability, metrics
 **Added**: 2025-11-26 (Architecture Review)
 
@@ -1251,10 +1251,10 @@ Err(e) => {
 ```
 
 **Metrics to Add**:
-- `module_errors_total{module_type, module_path}` - Total errors
-- `module_execution_duration_seconds{module_type, callback}` - Latency
-- `module_memory_bytes{module_path}` - Memory usage
-- `module_timeout_total{module_path}` - Timeout count
+- `module_errors_total{module_type, module_path}` - Total errors ✅
+- `module_execution_duration_seconds{module_type, callback}` - Latency ✅
+- `module_memory_bytes{module_path}` - Memory usage ✅
+- `module_timeout_total{module_path}` - Timeout count ✅
 
 **Success Criteria**:
 - [ ] Error counter incremented on module failures

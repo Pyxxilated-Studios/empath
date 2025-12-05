@@ -6,7 +6,7 @@
 
 use std::{sync::Arc, time::SystemTime};
 
-use empath_metrics::{DeliveryMetrics, DnsMetrics, SmtpMetrics};
+use empath_metrics::{DeliveryMetrics, DnsMetrics, ModuleMetrics, SmtpMetrics};
 
 #[test]
 fn test_smtp_connection_counter_accuracy() {
@@ -189,6 +189,22 @@ fn test_dns_lookup_duration() {
     metrics.record_error("error.test");
 
     // Durations are recorded in histograms internally
+}
+
+#[test]
+fn test_module_metrics_memory_and_helpers() {
+    let metrics = ModuleMetrics::new().expect("Failed to create module metrics");
+
+    metrics.record_error("wasm", "/tmp/module.wasm");
+    metrics.record_execution("wasm", "validate_mail_from", 0.123);
+    metrics.record_timeout("/tmp/module.wasm");
+
+    metrics.update_memory("/tmp/module.wasm", 42);
+    metrics.update_memory("/tmp/other.wasm", 1024);
+
+    assert_eq!(metrics.get_memory("/tmp/module.wasm"), 42);
+    assert_eq!(metrics.get_memory("/tmp/other.wasm"), 1024);
+    assert_eq!(metrics.get_memory("/tmp/missing.wasm"), 0);
 }
 
 #[test]
