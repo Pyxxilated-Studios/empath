@@ -730,4 +730,13 @@ mod tests {
         let result = wit::ValidationResult::Reject(rejection);
         assert_eq!(validation_result_to_code("invalid", result), 550);
     }
+
+    #[test]
+    fn timeout_error_detection_matches_epoch_message() {
+        let timeout_err = wasmtime::Error::msg("epoch deadline exceeded");
+        assert!(is_timeout_error(&timeout_err));
+
+        let other_err = wasmtime::Error::msg("component instantiation failed");
+        assert!(!is_timeout_error(&other_err));
+    }
 }
