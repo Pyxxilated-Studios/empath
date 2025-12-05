@@ -2,7 +2,11 @@
 //!
 //! This module provides integration between WASM modules and the Empath module system.
 
-use std::{path::PathBuf, sync::OnceLock, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 
 use empath_common::{context::Context, internal};
 use empath_wasm::WasmModule;
@@ -133,10 +137,41 @@ impl Wasm {
             Event::Event(super::Ev::DnsLookup) => "on_dns_lookup",
         };
 
+        let module_path = self.path.to_string_lossy();
+
+        // Measure execution duration
+        let start = Instant::now();
+
         // Execute the callback
-        match module.execute_callback(callback_name, context) {
+        let result = module.execute_callback(callback_name, context);
+
+        // Record execution duration and memory limit
+        let duration = start.elapsed();
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            metrics
+                .modules
+                .record_execution("wasm", callback_name, duration.as_secs_f64());
+
+            // Update memory limit tracking (configured max memory for this module)
+            #[allow(clippy::cast_possible_truncation)]
+            metrics
+                .modules
+                .update_memory(&module_path, module.max_memory_bytes() as u64);
+        }
+
+        match result {
             Ok(return_code) => return_code,
             Err(e) => {
+                // Record error metrics
+                if let Some(metrics) = empath_metrics::try_metrics() {
+                    metrics.modules.record_error("wasm", &module_path);
+
+                    // Check if this was a timeout error
+                    if e.to_string().contains("timeout") || e.to_string().contains("epoch") {
+                        metrics.modules.record_timeout(&module_path);
+                    }
+                }
+
                 internal!(
                     level = ERROR,
                     "WASM module {} error in {callback_name}: {e}",
