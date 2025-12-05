@@ -1,4 +1,4 @@
-#![feature(bstr, slice_pattern)]
+#![feature(slice_pattern)]
 
 use core::slice::SlicePattern;
 use std::{borrow::Cow, ffi::CStr, sync::Arc};

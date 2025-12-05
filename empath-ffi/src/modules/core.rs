@@ -1,4 +1,4 @@
-use std::{borrow::Cow, bstr};
+use std::borrow::Cow;
 
 use empath_common::{context::Context, status::Status};
 use empath_tracing::traced;
@@ -42,7 +42,7 @@ fn validate_ehlo(validation_context: &mut Context) -> i32 {
         Cow::Owned(format!(
             "{} says hello to {}",
             validation_context.banner,
-            bstr::ByteStr::new(&validation_context.id())
+            validation_context.id()
         )),
     ));
 

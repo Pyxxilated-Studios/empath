@@ -1,5 +1,3 @@
-use core::bstr;
-
 use empath_common::{context, status::Status, tracing};
 use empath_tracing::traced;
 
@@ -58,7 +56,7 @@ impl Session {
                     "{} {} says hello to {}",
                     Status::Ok,
                     self.banner,
-                    bstr::ByteStr::new(&self.context.message)
+                    String::from_utf8_lossy(&self.context.message)
                 )]),
                 Event::ConnectionKeepAlive,
             ),
