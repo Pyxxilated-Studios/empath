@@ -167,7 +167,9 @@ fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult)
 
 /// Check if a Wasmtime error is caused by an epoch timeout
 fn is_timeout_error(err: &wasmtime::Error) -> bool {
-    err.to_string().contains("epoch")
+    let combined = format!("{err:?} {err}");
+    let lower = combined.to_ascii_lowercase();
+    lower.contains("epoch") || lower.contains("interrupt")
 }
 
 /// Call a validation callback and return the result code

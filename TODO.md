@@ -7,7 +7,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 ## P1 — Focus Now
 - [ ] NEW-WASM-02: `empath-wasm-guest` helper crate (proc macro + host bindings). Effort ~3d. Success: ergonomic Context API, reject/accept mapping, example module rewritten, docs/migration.
 - [ ] NEW-WASM-03: Multi-language WASM examples (Go/TinyGo, C/Emscripten, AssemblyScript). Effort ~4d. Success: each builds <100KB, README with toolchain steps, tests/CI hook.
-- [wip] NEW-WASM-13: WASM coverage parity. Remaining: timeout enforcement test, memory-limit enforcement at runtime (integration), event error-path tests, context mutation edge cases. Recently added: poisoned mutex regression, invalid SMTP code clamping, memory growth limit unit test.
+- [wip] NEW-WASM-13: WASM coverage parity. Remaining: memory-limit enforcement at runtime (integration), event error-path tests, context mutation edge cases. Recently added: timeout enforcement test, poisoned mutex regression, invalid SMTP code clamping, memory growth limit unit test.
 - [ ] NEW-18: Load & stress testing. Use k6/Locust; measure throughput (1k/10k/100k msg/day), CPU/mem/disk. Add docs + (optional) CI smoke.
 - [ ] 2.2 Connection pooling for SMTP client. Pool per-domain with idle cleanup, health check, metrics (hits/misses/size).
 - [ ] 0.12 Control socket commands. Remaining: config reload, log level adjust, connection stats, rate-limit adjust.
@@ -37,7 +37,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] IDEA-OBS-01: Add log/metric for WASM module validation timeout vs other errors (attribute in module error metrics).
 
 ## New Ideas / Quick Wins
-- [ ] IDEA-WASM-01: Deterministic timeout test harness using a tiny Wasm module that sleeps via busy loop; drive epoch counter to assert host returns timeout code (unblocks NEW-WASM-13 timeout test).
+- [x] IDEA-WASM-01: Deterministic timeout test harness using a tiny Wasm module that sleeps via busy loop; drive epoch counter to assert host returns timeout code (unblocks NEW-WASM-13 timeout test).
 
 ## Notes
 - Prefer `just test-nextest` locally; `just ci` before PRs.

@@ -101,6 +101,19 @@ impl ValidationGuest for Validator {
 
     /// Validate DATA command (message content)
     fn validate_data(ctx: Context) -> ValidationResult {
+        // Trigger a deterministic busy loop when the message begins with "timeout"
+        if let Some(data) = &ctx.data {
+            if data.starts_with(b"timeout") {
+                let mut spins: u64 = 0;
+                loop {
+                    spins = spins.wrapping_add(1);
+                    if spins % 1_000_000 == 0 {
+                        core::hint::spin_loop();
+                    }
+                }
+            }
+        }
+
         // Check if we have message data
         let data_size = ctx.data.as_ref().map_or(0, |d| d.len());
 

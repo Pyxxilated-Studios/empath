@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, OnceLock},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use ahash::AHashMap;
@@ -22,7 +22,7 @@ use empath_common::{
     context::Context,
     envelope::Envelope,
 };
-use empath_wasm::WasmModule;
+use empath_wasm::{WasmError, WasmModule};
 use tokio::runtime::Runtime;
 
 #[allow(clippy::panic, reason = "Test helpers should fail loudly")]
@@ -156,6 +156,15 @@ fn runtime() -> &'static Runtime {
 
 fn init_test_module() -> WasmModule {
     let module = load_test_module();
+    unwrap_result(
+        module.initialize(),
+        "Failed to initialize module during test setup",
+    );
+    module
+}
+
+fn init_test_module_with_timeout(timeout: Duration) -> WasmModule {
+    let module = load_test_module().with_timeout(timeout);
     unwrap_result(
         module.initialize(),
         "Failed to initialize module during test setup",
@@ -426,6 +435,23 @@ fn test_validate_data_reject_spam_content() {
         ctx.transaction.get(&Cow::Borrowed("spam_keyword")),
         Some(&"viagra".to_string())
     );
+}
+
+#[allow(clippy::expect_used, clippy::panic)]
+#[test]
+fn test_validate_data_timeout() {
+    let module = init_test_module_with_timeout(Duration::from_millis(10));
+
+    let mut ctx = create_test_context();
+    ctx.data = Some(Arc::from(b"timeout-trigger".to_vec()));
+
+    let result = module.execute_callback("validate_data", &mut ctx);
+
+    let err = result.expect_err("Expected validate_data to time out");
+    match err {
+        WasmError::Timeout(callback, _) => assert_eq!(callback, "validate_data"),
+        other => panic!("Expected timeout error, got {other:?}"),
+    }
 }
 
 #[test]
