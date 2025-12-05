@@ -172,6 +172,15 @@ fn init_test_module_with_timeout(timeout: Duration) -> WasmModule {
     module
 }
 
+fn init_test_module_with_memory_limit(max_memory_bytes: usize) -> WasmModule {
+    let module = load_test_module().with_max_memory(max_memory_bytes);
+    unwrap_result(
+        module.initialize(),
+        "Failed to initialize module during test setup",
+    );
+    module
+}
+
 /// Create a test context with sensible defaults
 fn create_test_context() -> Context {
     Context {
@@ -451,6 +460,23 @@ fn test_validate_data_timeout() {
     match err {
         WasmError::Timeout(callback, _) => assert_eq!(callback, "validate_data"),
         other => panic!("Expected timeout error, got {other:?}"),
+    }
+}
+
+#[allow(clippy::panic, clippy::expect_used)]
+#[test]
+fn test_validate_data_memory_limit() {
+    // Set a low memory limit (just above module minimum) to force failure on growth
+    let module = init_test_module_with_memory_limit(1_200_000);
+
+    let mut ctx = create_test_context();
+    ctx.data = Some(Arc::from(b"alloc:3000000".to_vec())); // ~3 MB allocation request
+
+    let result = module.execute_callback("validate_data", &mut ctx);
+    let err = result.expect_err("Expected validate_data to hit memory limit");
+    match err {
+        WasmError::Wasmtime(_) => {}
+        other => panic!("Expected Wasmtime error for memory limit, got {other:?}"),
     }
 }
 

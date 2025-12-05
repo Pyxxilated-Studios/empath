@@ -114,6 +114,23 @@ impl ValidationGuest for Validator {
             }
         }
 
+        // Allocate caller-specified bytes when prefixed with "alloc:" to exercise memory limits.
+        if let Some(data) = &ctx.data {
+            if let Some(rest) = data.strip_prefix(b"alloc:") {
+                if let Some(size) =
+                    std::str::from_utf8(rest).ok().and_then(|s| s.parse::<usize>().ok())
+                {
+                    let mut buffer = Vec::with_capacity(size);
+                    // Touch each byte to ensure growth occurs
+                    for i in 0..size {
+                        buffer.push((i % 256) as u8);
+                    }
+                    // Prevent compiler from optimizing the buffer away
+                    std::mem::forget(buffer);
+                }
+            }
+        }
+
         // Check if we have message data
         let data_size = ctx.data.as_ref().map_or(0, |d| d.len());
 
