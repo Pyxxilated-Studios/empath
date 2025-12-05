@@ -239,3 +239,53 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
             .is_some_and(|ctx| ctx.transaction.contains_key(key.as_str()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+
+    use wasmtime_wasi::WasiCtxBuilder;
+
+    use super::*;
+    use crate::bindings::empath::validator::host::Host;
+
+    fn poison_context(context: &Arc<Mutex<Context>>) {
+        let ctx_clone = Arc::clone(context);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = ctx_clone.lock().unwrap();
+            panic!("intentionally poison mutex");
+        }));
+    }
+
+    fn make_store(context: Arc<Mutex<Context>>) -> WasmStore {
+        let wasi_ctx = WasiCtxBuilder::new().build();
+        WasmStore::new(context, 1024, Duration::from_secs(1), wasi_ctx)
+            .expect("store creation should succeed")
+    }
+
+    #[test]
+    fn poisoned_mutex_returns_safe_defaults() {
+        let context = Arc::new(Mutex::new(Context::default()));
+        let mut store = make_store(Arc::clone(&context));
+
+        poison_context(&context);
+
+        // Poisoned mutex should surface as an error but not panic
+        assert!(store.try_lock_context().is_err());
+
+        store.session_set("session_key".into(), "value".into());
+        assert!(!store.session_exists("session_key".into()));
+        assert_eq!(store.session_get("session_key".into()), None);
+
+        store.transaction_set("txn_key".into(), "value".into());
+        assert!(!store.transaction_exists("txn_key".into()));
+        assert_eq!(store.transaction_get("txn_key".into()), None);
+
+        let guard = context
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(guard.session.is_empty());
+        assert!(guard.transaction.is_empty());
+        drop(guard);
+    }
+}

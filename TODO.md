@@ -1028,8 +1028,8 @@ fn test_poisoned_mutex_recovery() { /* NEW */ }
 **Priority**: Medium (Reliability)
 **Effort**: 0.5 days
 **Dependencies**: NEW-WASM-01 (completed)
-**Owner**: Unassigned
-**Status**: Ready to start
+**Owner**: pyxxil
+**Status**: Completed (tests added)
 **Tags**: wasm, safety, concurrency
 **Added**: 2025-11-26 (Rust Expert Review)
 
@@ -1073,10 +1073,10 @@ impl Host for WasmStore {
 ```
 
 **Success Criteria**:
-- [ ] All host functions handle poisoned mutexes gracefully
-- [ ] No panics in host function error paths
-- [ ] Tests: Poisoned mutex doesn't crash execution
-- [ ] Errors logged but execution continues
+- [x] All host functions handle poisoned mutexes gracefully
+- [x] No panics in host function error paths
+- [x] Tests: Poisoned mutex doesn't crash execution
+- [x] Errors logged but execution continues
 
 **Files to Modify**:
 - `empath-wasm/src/host.rs` - Replace all `.expect()` with match/`ok()?`
