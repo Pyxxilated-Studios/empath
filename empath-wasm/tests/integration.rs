@@ -728,6 +728,57 @@ fn test_session_context_persistence() {
     );
 }
 
+#[test]
+fn test_transaction_context_isolation_between_sessions() {
+    let module = init_test_module();
+
+    // First context writes transaction data
+    let mut ctx1 = create_test_context();
+    unwrap_result(
+        module.execute_callback("validate_mail_from", &mut ctx1),
+        "validate_mail_from failed",
+    );
+    assert!(
+        ctx1.transaction
+            .contains_key(&Cow::Borrowed("validated_sender")),
+        "Expected validated_sender in first transaction context"
+    );
+
+    // Second context should not see prior transaction data
+    let mut ctx2 = create_test_context();
+    unwrap_result(
+        module.execute_callback("validate_data", &mut ctx2),
+        "validate_data failed",
+    );
+    assert!(
+        !ctx2
+            .transaction
+            .contains_key(&Cow::Borrowed("validated_sender")),
+        "Transaction data leaked between contexts"
+    );
+}
+
+#[test]
+fn test_transaction_overwrite() {
+    let module = init_test_module();
+
+    let mut ctx = create_test_context();
+    ctx.transaction
+        .insert(Cow::Borrowed("rejection_reason"), "old".to_string());
+    ctx.data = Some(Arc::from(vec![0_u8; 1_000_001]));
+
+    unwrap_result(
+        module.execute_callback("validate_data", &mut ctx),
+        "validate_data failed",
+    );
+
+    assert_eq!(
+        ctx.transaction.get(&Cow::Borrowed("rejection_reason")),
+        Some(&"message_too_large".to_string()),
+        "Rejection reason not updated by callback"
+    );
+}
+
 // --- Error Handling Tests ---
 
 #[test]
