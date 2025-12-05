@@ -167,9 +167,16 @@ fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult)
 
 /// Check if a Wasmtime error is caused by an epoch timeout
 fn is_timeout_error(err: &wasmtime::Error) -> bool {
-    let combined = format!("{err:?} {err}");
-    let lower = combined.to_ascii_lowercase();
-    lower.contains("epoch") || lower.contains("interrupt")
+    // Prefer structured information when available.
+    if let Some(trap) = err.downcast_ref::<wasmtime::Trap>()
+        && trap.to_string().to_ascii_lowercase().contains("interrupt")
+    {
+        return true;
+    }
+
+    // Fallback to string search for host-propagated errors.
+    let combined = format!("{err:?} {err}").to_ascii_lowercase();
+    combined.contains("epoch deadline exceeded") || combined.contains("interrupt")
 }
 
 /// Call a validation callback and return the result code
@@ -738,7 +745,11 @@ mod tests {
         let timeout_err = wasmtime::Error::msg("epoch deadline exceeded");
         assert!(is_timeout_error(&timeout_err));
 
+        // Use an error that is not an interrupt
         let other_err = wasmtime::Error::msg("component instantiation failed");
-        assert!(!is_timeout_error(&other_err));
+        assert!(
+            !is_timeout_error(&other_err),
+            "non-interrupt traps should not be treated as timeout"
+        );
     }
 }
