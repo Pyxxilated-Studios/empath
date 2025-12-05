@@ -32,7 +32,7 @@ Goal: converge to stable Rust before 1.0. Track nightly-only features in use, wh
 6. **Timeline**: complete swaps before 1.0 code freeze; remove nightly toolchain pin once stable builds pass; keep edition 2024 features behind `cfg` if needed or backport to 2021 if blockers remain.
 
 ## Action Items
-- [ ] Add `stable-check` CI job (allowed to fail initially).
+- [x] Add `stable-check` CI job (allowed to fail initially).
 - [ ] Replace low-friction nightly features (step 2).
 - [ ] Refactor medium/high effort items (steps 3-4).
 - [ ] Remove nightly toolchain requirement and update `rust-toolchain.toml`.
