@@ -965,7 +965,8 @@ fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult)
   - Config knobs (timeout/max_memory) and path resolution via `xtask build-wasm`
 - ✅ Poisoned mutex recovery test added (`empath-wasm/src/host.rs::tests`)
 - ✅ Invalid SMTP code test added (`empath-wasm/src/loader.rs::tests`)
-- ❌ Resource limit tests (memory/timeout) still needed
+- ✅ Memory growth limit test added (`empath-wasm/src/host.rs::tests`)
+- ❌ Timeout enforcement test still needed
 
 **Python Coverage** (reference):
 - ✅ Positive and negative tests

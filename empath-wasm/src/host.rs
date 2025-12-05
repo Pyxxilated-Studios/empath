@@ -288,4 +288,15 @@ mod tests {
         assert!(guard.transaction.is_empty());
         drop(guard);
     }
+
+    #[test]
+    fn memory_growth_respects_limit() {
+        let context = Arc::new(Mutex::new(Context::default()));
+        let mut store = make_store(context);
+
+        // Allow growth within limit
+        assert!(store.memory_growing(0, 512, None).unwrap());
+        // Reject growth above limit
+        assert!(!store.memory_growing(0, 2048, None).unwrap());
+    }
 }
