@@ -83,6 +83,10 @@ empathctl queue retry <message-id>
 empathctl queue delete <message-id> --yes
 ```
 
+## Operations Runbook
+
+- Day-to-day operations guide: `docs/OPERATOR_RUNBOOK.md`
+
 ## Development
 
 ### Common Commands
