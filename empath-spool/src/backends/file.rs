@@ -263,13 +263,12 @@ impl BackingStore for FileBackingStore {
     async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId> {
         // Generate unique tracking ID
         let tracking_id = SpooledMessageId::generate();
-        let tracking_str = tracking_id.to_string();
 
         // Set the tracking ID in the context
-        context.tracking_id = Some(tracking_str.clone());
+        context.tracking_id = Some(tracking_id.clone());
 
-        let data_filename = format!("{tracking_str}.eml");
-        let meta_filename = format!("{tracking_str}.bin");
+        let data_filename = format!("{tracking_id}.eml");
+        let meta_filename = format!("{tracking_id}.bin");
 
         let data_path = self.path.join(&data_filename);
         let meta_path = self.path.join(&meta_filename);

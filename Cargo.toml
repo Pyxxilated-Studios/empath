@@ -153,7 +153,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
     "json",
 ] }
-ulid = "1"
+ulid = { version = "1", features = ["serde"] }
 wasmtime = { version = "39.0", features = ["component-model"] }
 wasmtime-wasi = { version = "39.0", default-features = false, features = [
     "p2",

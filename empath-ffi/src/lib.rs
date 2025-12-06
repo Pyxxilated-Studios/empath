@@ -395,7 +395,7 @@ pub extern "C" fn em_delivery_get_message_id(validate_context: &Context) -> crat
         .delivery
         .as_ref()
         .map_or_else(crate::string::String::default, |d| {
-            d.message_id.as_str().into()
+            d.message_id.to_string().into()
         })
 }
 

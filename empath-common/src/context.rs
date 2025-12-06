@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     email::{EmailAddress, ServerId},
     envelope::Envelope,
+    message_id::SpooledMessageId,
     status::Status,
 };
 
@@ -91,7 +92,7 @@ pub struct DeliveryAttempt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryContext {
     /// The message ID being delivered
-    pub message_id: String,
+    pub message_id: SpooledMessageId,
     /// The recipient domain being delivered to
     pub domain: crate::domain::Domain,
     /// The mail server (MX host:port) being used for delivery
@@ -126,7 +127,7 @@ const fn default_system_time() -> SystemTime {
 impl Default for DeliveryContext {
     fn default() -> Self {
         Self {
-            message_id: String::new(),
+            message_id: SpooledMessageId::generate(),
             domain: crate::domain::Domain::new(""),
             server: None,
             error: None,
@@ -172,7 +173,7 @@ pub struct Context {
     /// Delivery-specific context (populated during outbound delivery)
     pub delivery: Option<DeliveryContext>,
     /// Spool tracking ID (assigned when message is spooled)
-    pub tracking_id: Option<String>,
+    pub tracking_id: Option<SpooledMessageId>,
 }
 
 impl Default for Context {

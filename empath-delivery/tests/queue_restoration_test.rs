@@ -12,7 +12,7 @@ use std::{
 };
 
 use empath_common::{
-    DeliveryAttempt, DeliveryStatus,
+    DeliveryAttempt, DeliveryStatus, SpooledMessageId,
     address::{Address, AddressList},
     context::{Context, DeliveryContext},
     email::ServerId,
@@ -65,7 +65,7 @@ fn create_test_context_with_delivery_state(
         .collect();
 
     let delivery = DeliveryContext {
-        message_id: "test-msg-id".to_string(),
+        message_id: SpooledMessageId::generate(),
         domain: empath_common::Domain::new(domain),
         server: Some(ServerId::new("mx.example.com:25").unwrap()),
         error: Some("Connection refused".to_string()),

@@ -116,7 +116,7 @@ fn context_to_wit(ctx: &Context) -> wit::Context {
             .iter()
             .map(|(k, v)| (k.to_string(), v.clone()))
             .collect(),
-        tracking_id: ctx.tracking_id.clone(),
+        tracking_id: ctx.tracking_id.as_ref().map(ToString::to_string),
     }
 }
 

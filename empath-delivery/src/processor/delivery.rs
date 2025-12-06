@@ -70,7 +70,7 @@ pub async fn prepare_message(
     // Dispatch DeliveryAttempt event to modules
     {
         context.delivery = Some(DeliveryContext {
-            message_id: message_id.to_string(),
+            message_id: message_id.clone(),
             domain: info.recipient_domain.clone(),
             server: None, // Server not yet determined at this point
             error: None,
@@ -125,7 +125,7 @@ pub async fn prepare_message(
 
     // Dispatch DeliveryAttempt event before attempting delivery
     context.delivery = Some(DeliveryContext {
-        message_id: message_id.to_string(),
+        message_id: message_id.clone(),
         domain: info.recipient_domain.clone(),
         server: Some(mx_server_id.clone()),
         error: None,
@@ -215,7 +215,7 @@ pub async fn prepare_message(
 
             // Dispatch DeliverySuccess event to modules
             context.delivery = Some(DeliveryContext {
-                message_id: message_id.to_string(),
+                message_id: message_id.clone(),
                 domain: info.recipient_domain.clone(),
                 server: Some(mx_server_id.clone()),
                 error: None,
@@ -377,7 +377,7 @@ pub async fn handle_delivery_error(
     }
 
     context.delivery = Some(DeliveryContext {
-        message_id: message_id.to_string(),
+        message_id: message_id.clone(),
         domain: updated_info.recipient_domain.clone(),
         server: Some(server),
         error: Some(error.to_string()),
@@ -490,7 +490,7 @@ pub async fn persist_delivery_state(
 
     // Update the delivery field with current queue state
     context.delivery = Some(DeliveryContext {
-        message_id: message_id.to_string(),
+        message_id: message_id.clone(),
         domain: info.recipient_domain.clone(),
         server: current_server,
         error: match &info.status {

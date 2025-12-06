@@ -93,7 +93,7 @@ impl BackingStore for MemoryBackingStore {
         let id = SpooledMessageId::generate();
 
         // Set the tracking ID in the context
-        context.tracking_id = Some(id.to_string());
+        context.tracking_id = Some(id.clone());
 
         // Check capacity before inserting (don't count if overwriting existing)
         if let Some(cap) = self.capacity
@@ -195,7 +195,7 @@ mod tests {
         // Read context
         let read_ctx = store.read(&id).await.expect("Failed to read");
         assert_eq!(read_ctx.data.as_deref(), expected_data.as_deref());
-        assert_eq!(read_ctx.tracking_id, Some(id.to_string()));
+        assert_eq!(read_ctx.tracking_id, Some(id.clone()));
 
         // Delete message
         store.delete(&id).await.expect("Failed to delete");
