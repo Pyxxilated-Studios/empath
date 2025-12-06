@@ -7,6 +7,7 @@ use std::{
 
 use ahash::AHashMap;
 use serde::{Deserialize, Serialize};
+use ulid::Ulid;
 
 use crate::{
     email::{EmailAddress, ServerId},
@@ -127,7 +128,8 @@ const fn default_system_time() -> SystemTime {
 impl Default for DeliveryContext {
     fn default() -> Self {
         Self {
-            message_id: SpooledMessageId::generate(),
+            // Defaults should be deterministic; use nil ULID as a neutral placeholder.
+            message_id: SpooledMessageId::new(Ulid::nil()),
             domain: crate::domain::Domain::new(""),
             server: None,
             error: None,
@@ -227,10 +229,9 @@ impl Context {
 
     /// Returns the recipients of this [`Context`] as protocol-formatted strings.
     pub fn recipients(&self) -> Vec<String> {
-        self.recipient_emails()
-            .into_iter()
-            .map(|email| format!("RCPT TO:{email}"))
-            .collect()
+        self.envelope.recipients().map_or_else(Vec::new, |addrs| {
+            addrs.iter().map(|addr| format!("RCPT TO:{addr}")).collect()
+        })
     }
 
     /// Returns the recipients as validated [`EmailAddress`] values.

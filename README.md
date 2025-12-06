@@ -186,7 +186,7 @@ Empath has comprehensive test coverage:
 
 ```bash
 # Fast path
-just test-nextest          # nextest runner if installed
+just test-nextest          # if `cargo nextest` is installed
 just test                  # or `cargo test`
 
 # Lint/format

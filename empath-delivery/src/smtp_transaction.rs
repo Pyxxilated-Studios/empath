@@ -320,8 +320,8 @@ impl<'a> SmtpTransaction<'a> {
             .context
             .envelope
             .sender()
-            .map(extract_email_address)
-            .unwrap_or_default();
+            // RFC-compliant null reverse-path when absent
+            .map_or_else(|| "<>".to_string(), extract_email_address);
 
         let mail_from_timeout = Duration::from_secs(self.smtp_timeouts.mail_from_secs);
         let mail_response =
