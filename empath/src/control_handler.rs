@@ -898,8 +898,8 @@ impl EmpathControlHandler {
         for msg_id in &message_ids {
             total += 1;
 
-            // Read message to get status and size
-            let context = match spool.read_metadata(msg_id).await {
+            // Read message metadata and size in one pass
+            let (context, size) = match spool.read_metadata_with_size(msg_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::event!(
@@ -920,19 +920,7 @@ impl EmpathControlHandler {
             *by_status.entry(status).or_insert(0) += 1;
 
             // Add to total size
-            let size = match spool.message_size(msg_id).await {
-                Ok(Some(len)) => len,
-                Ok(None) => 0,
-                Err(e) => {
-                    tracing::event!(
-                        tracing::Level::WARN,
-                        message_id = %msg_id,
-                        error = %e,
-                        "Failed to read message size from spool during stats"
-                    );
-                    0
-                }
-            };
+            let size = size.unwrap_or(0);
             total_size = total_size.saturating_add(u64::try_from(size).unwrap_or(u64::MAX));
 
             // Track oldest message
