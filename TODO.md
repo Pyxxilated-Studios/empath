@@ -35,8 +35,8 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P2 — Next Up / Blocked
 - [x] DX-CTL-AUDIT: Factor control handler audit user/uid lookup into a helper to remove repeated unsafe blocks and keep audit metadata consistent. Added `audit!` macro in control handler that captures user/uid once and injects into tracing events.
-- [ ] DX-CTL-API: Make control handler commands accept `&str` where possible (e.g., retry/delete) to reduce unnecessary `String` allocations.
-- [ ] DX-CTL-SELECT: Deduplicate the `tokio::select!` branches in `Empath::run` so health-enabled and disabled flows share the same branch list.
+ - [x] DX-CTL-API: Make control handler commands accept `&str` where possible (e.g., retry/delete) to reduce unnecessary `String` allocations.
+ - [x] DX-CTL-SELECT: Deduplicate the `tokio::select!` branches in `Empath::run` so health-enabled and disabled flows share the same branch list.
 - [ ] NEW-WASM-15: Event registration macro to centralize event definitions and mappings (Ev enum, WIT names, handlers).
 - [ ] NEW-WASM-16: Split WIT context (read-only vs mutable or event-specific views) with compatibility plan.
 - [ ] NEW-WASM-04: Component Model with WIT interfaces. Optional but aligns with NEW-WASM-16.

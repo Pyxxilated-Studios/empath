@@ -69,6 +69,14 @@ impl AuditIdentity {
     }
 }
 
+fn parse_message_id(message_id: &str) -> empath_control::Result<empath_spool::SpooledMessageId> {
+    let mut filename = String::with_capacity(message_id.len() + 4);
+    filename.push_str(message_id);
+    filename.push_str(".bin");
+    empath_spool::SpooledMessageId::from_filename(&filename)
+        .ok_or_else(|| ControlError::ServerError(format!("Invalid message ID: {message_id}")))
+}
+
 fn reload_config_from_disk(delivery: &Arc<dyn DeliveryQueryService>) -> Result<String, String> {
     let config_path = find_config_file().map_err(|e| e.to_string())?;
     let config_content = std::fs::read_to_string(&config_path)
@@ -358,7 +366,7 @@ impl EmpathControlHandler {
                 page,
                 page_size,
             } => {
-                self.handle_list_command(spool, status_filter, page, page_size)
+                self.handle_list_command(spool, status_filter.as_deref(), page, page_size)
                     .await
             }
             QueueCommand::View {
@@ -366,14 +374,14 @@ impl EmpathControlHandler {
                 include_headers,
                 include_body_preview,
             } => {
-                self.handle_view_command(spool, message_id, include_headers, include_body_preview)
+                self.handle_view_command(spool, &message_id, include_headers, include_body_preview)
                     .await
             }
             QueueCommand::Retry { message_id, force } => {
                 self.handle_retry_command(&message_id, force)
             }
             QueueCommand::Delete { message_id } => {
-                self.handle_delete_command(spool, message_id).await
+                self.handle_delete_command(spool, &message_id).await
             }
             QueueCommand::Stats => Ok(self.handle_stats_command()),
             QueueCommand::ProcessNow => {
@@ -402,7 +410,7 @@ impl EmpathControlHandler {
     async fn handle_list_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-        status_filter: Option<String>,
+        status_filter: Option<&str>,
         page: Option<usize>,
         page_size: Option<usize>,
     ) -> empath_control::Result<Response> {
@@ -414,7 +422,7 @@ impl EmpathControlHandler {
         let mut filtered_info: Vec<_> = if let Some(status) = status_filter {
             all_info
                 .into_iter()
-                .filter(|info| info.status.matches_filter(&status))
+                .filter(|info| info.status.matches_filter(status))
                 .collect()
         } else {
             all_info
@@ -501,15 +509,12 @@ impl EmpathControlHandler {
     async fn handle_view_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-        message_id: String,
+        message_id: &str,
         include_headers: bool,
         include_body_preview: bool,
     ) -> empath_control::Result<Response> {
         // Parse message ID
-        let msg_id = empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-            .ok_or_else(|| {
-                ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-            })?;
+        let msg_id = parse_message_id(message_id)?;
 
         // Read message from spool first (this is the source of truth)
         let needs_body = include_headers || include_body_preview;
@@ -556,7 +561,7 @@ impl EmpathControlHandler {
 
         // Build details from either queue info or persisted delivery context
         let details = Self::build_message_details(
-            message_id,
+            message_id.to_string(),
             &msg_id,
             &context,
             size,
@@ -571,14 +576,11 @@ impl EmpathControlHandler {
     /// Handle queue retry command
     fn handle_retry_command(
         &self,
-        message_id: &String,
+        message_id: &str,
         force: bool,
     ) -> empath_control::Result<Response> {
         // Parse message ID
-        let msg_id = empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-            .ok_or_else(|| {
-                ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-            })?;
+        let msg_id = parse_message_id(message_id)?;
 
         // Get delivery info from queue
         let info = self.delivery.get_message(&msg_id).ok_or_else(|| {
@@ -610,13 +612,10 @@ impl EmpathControlHandler {
     async fn handle_delete_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-        message_id: String,
+        message_id: &str,
     ) -> empath_control::Result<Response> {
         // Parse message ID
-        let msg_id = empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
-            .ok_or_else(|| {
-                ControlError::ServerError(format!("Invalid message ID: {message_id}"))
-            })?;
+        let msg_id = parse_message_id(message_id)?;
 
         // Remove from queue
         self.delivery.remove(&msg_id).ok_or_else(|| {
@@ -801,7 +800,7 @@ impl EmpathControlHandler {
                 include_body_preview,
             } => {
                 // Reuse queue view logic but directly from spool
-                self.handle_view_command(spool, message_id, include_headers, include_body_preview)
+                self.handle_view_command(spool, &message_id, include_headers, include_body_preview)
                     .await
             }
             empath_control::SpoolCommand::CleanupCompleted => {

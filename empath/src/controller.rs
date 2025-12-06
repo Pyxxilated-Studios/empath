@@ -1,4 +1,8 @@
-use std::sync::{Arc, LazyLock};
+use std::{
+    future::{self, Future},
+    pin::Pin,
+    sync::{Arc, LazyLock},
+};
 
 use empath_common::{Signal, controller::Controller, internal, logging, tracing};
 use empath_control::{ControlAuthConfig, ControlServer, DEFAULT_CONTROL_SOCKET};
@@ -107,6 +111,7 @@ impl Empath {
     ///
     /// This function will return an error if any of the configured modules fail
     /// to initialise.
+    #[allow(clippy::too_many_lines)]
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, err), timing(precision = "s"))]
     pub async fn run(mut self) -> anyhow::Result<()> {
         // Initialize logging with configured OTLP endpoint for traces
@@ -196,44 +201,50 @@ impl Empath {
             None
         };
 
-        let ret = if let Some(health_server) = health_server {
-            tokio::select! {
-                r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
-                    r.map_err(|e| anyhow::anyhow!(e))
-                }
-                r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                    r.map_err(|e| anyhow::anyhow!(e))
-                }
-                r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                    r.map_err(|e| anyhow::anyhow!(e))
-                }
-                r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                    r.map_err(|e| anyhow::anyhow!("Control server error: {e}"))
-                }
-                r = health_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                    r.map_err(|e| anyhow::anyhow!("Health server error: {e}"))
-                }
-                r = shutdown() => {
-                    r
+        let mut health_future = health_server.map(|server| {
+            Box::pin(server.serve(SHUTDOWN_BROADCAST.subscribe()))
+                as Pin<Box<dyn Future<Output = Result<(), empath_health::HealthError>> + Send>>
+        });
+
+        let ret = tokio::select! {
+            r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
+                match r {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(anyhow::anyhow!(e)),
                 }
             }
-        } else {
-            tokio::select! {
-                r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
-                    r.map_err(|e| anyhow::anyhow!(e))
+            r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                match r {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(anyhow::anyhow!(e)),
                 }
-                r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                    r.map_err(|e| anyhow::anyhow!(e))
+            }
+            r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                match r {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(anyhow::anyhow!(e)),
                 }
-                r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                    r.map_err(|e| anyhow::anyhow!(e))
+            }
+            r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
+                match r {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(anyhow::anyhow!("Control server error: {e}")),
                 }
-                r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                    r.map_err(|e| anyhow::anyhow!("Control server error: {e}"))
+            }
+            r = async {
+                match &mut health_future {
+                    Some(fut) => {
+                        fut.as_mut()
+                            .await
+                            .map_err(|e| anyhow::anyhow!("Health server error: {e}"))
+                    }
+                    None => future::pending::<anyhow::Result<()>>().await,
                 }
-                r = shutdown() => {
-                    r
-                }
+            } => {
+                r
+            }
+            r = shutdown() => {
+                r
             }
         };
 
