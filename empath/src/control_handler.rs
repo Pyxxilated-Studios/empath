@@ -899,7 +899,7 @@ impl EmpathControlHandler {
             total += 1;
 
             // Read message metadata and size in one pass
-            let (context, size) = match spool.read_metadata_with_size(msg_id).await {
+            let (meta, size) = match spool.read_metadata_summary(msg_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::event!(
@@ -913,10 +913,9 @@ impl EmpathControlHandler {
             };
 
             // Count by status
-            let status = context.delivery.as_ref().map_or_else(
-                || "NoDeliveryContext".to_string(),
-                |delivery| format!("{:?}", delivery.status),
-            );
+            let status = meta
+                .status
+                .unwrap_or_else(|| "NoDeliveryContext".to_string());
             *by_status.entry(status).or_insert(0) += 1;
 
             // Add to total size

@@ -3,6 +3,14 @@ use empath_common::context::Context;
 
 use crate::types::SpooledMessageId;
 
+/// Minimal metadata view for control/spool listings.
+#[derive(Debug, Clone)]
+pub struct MessageMetadata {
+    pub status: Option<String>,
+    pub domain: Option<String>,
+    pub attempts: Option<u32>,
+}
+
 /// Trait for the underlying storage mechanism
 ///
 /// This trait defines the core operations for message storage backends.
@@ -70,6 +78,26 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
             self.message_size(id).await?
         };
         Ok((ctx, size))
+    }
+
+    /// Read only metadata and size without loading the full body.
+    ///
+    /// Default implementation calls [`read_metadata_with_size`] and extracts
+    /// fields; backends can override to avoid deserializing unused fields.
+    async fn read_metadata_summary(
+        &self,
+        id: &SpooledMessageId,
+    ) -> crate::Result<(MessageMetadata, Option<usize>)> {
+        let (ctx, size) = self.read_metadata_with_size(id).await?;
+        let meta = MessageMetadata {
+            status: ctx.delivery.as_ref().map(|d| format!("{:?}", d.status)),
+            domain: ctx.delivery.as_ref().map(|d| d.domain.to_string()),
+            attempts: ctx
+                .delivery
+                .as_ref()
+                .map(|d| u32::try_from(d.attempt_history.len()).unwrap_or_default()),
+        };
+        Ok((meta, size))
     }
 
     /// Get the size of the message body in bytes without reading the full data
