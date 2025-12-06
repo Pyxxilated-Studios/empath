@@ -806,7 +806,7 @@ impl EmpathControlHandler {
         let mut matched = 0usize;
         let mut messages = Vec::new();
         for msg_id in message_ids {
-            // Read each message
+            // Read each message metadata + size (no body)
             let (context, size) = match spool.read_metadata_with_size(&msg_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
@@ -847,7 +847,7 @@ impl EmpathControlHandler {
             }
 
             if matched >= offset && messages.len() < page_size {
-                let message = empath_control::protocol::SpoolMessage {
+                messages.push(empath_control::protocol::SpoolMessage {
                     id: msg_id.to_string(),
                     from: context
                         .envelope
@@ -861,8 +861,7 @@ impl EmpathControlHandler {
                     attempts,
                     size,
                     spooled_at: msg_id.timestamp_ms() / 1000,
-                };
-                messages.push(message);
+                });
             }
             matched += 1;
         }
