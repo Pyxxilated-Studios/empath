@@ -11,7 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use empath_common::{context::Context, internal};
+use empath_common::{Signal, context::Context, internal};
 use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SystemCommand,
     protocol::ResponseData, server::CommandHandler,
@@ -19,6 +19,8 @@ use empath_control::{
 use empath_delivery::DeliveryQueryService;
 use empath_spool::BackingStore;
 use tracing_subscriber::filter::LevelFilter;
+
+use crate::controller::SHUTDOWN_BROADCAST;
 
 /// Handler for control commands
 pub struct EmpathControlHandler {
@@ -229,6 +231,38 @@ impl EmpathControlHandler {
                 })?;
                 Ok(Response::data(ResponseData::Message(format!(
                     "Log level set to {parsed}"
+                ))))
+            }
+
+            SystemCommand::ReloadConfig => {
+                SHUTDOWN_BROADCAST
+                    .send(Signal::Shutdown)
+                    .map_err(|e| ControlError::ServerError(format!("Failed to reload: {e}")))?;
+                Ok(Response::data(ResponseData::Message(
+                    "Configuration reload requested; shutting down".to_string(),
+                )))
+            }
+
+            SystemCommand::ConnectionStats => {
+                let stats = self.delivery.connection_stats();
+                Ok(Response::data(ResponseData::ConnectionStats(
+                    empath_control::protocol::ConnectionStats {
+                        queue_size: stats.queue_size,
+                        rate_limit_domains: stats.rate_limit_domains,
+                    },
+                )))
+            }
+
+            SystemCommand::SetRateLimit {
+                domain,
+                messages_per_second,
+                burst,
+            } => {
+                self.delivery
+                    .update_rate_limit(domain.clone(), *messages_per_second, *burst)
+                    .map_err(ControlError::ServerError)?;
+                Ok(Response::data(ResponseData::Message(format!(
+                    "Rate limit updated (domain={domain:?}, mps={messages_per_second}, burst={burst})"
                 ))))
             }
         };

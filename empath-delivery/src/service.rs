@@ -118,4 +118,19 @@ pub trait DeliveryQueryService: Send + Sync {
 
     /// Request an immediate scan/process cycle (used by control interface)
     fn request_process_now(&self);
+
+    /// Get connection/rate-limit statistics
+    fn connection_stats(&self) -> crate::types::ConnectionStats;
+
+    /// Update rate limits (global or per-domain)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the rate limiter is not initialized or provided values are invalid.
+    fn update_rate_limit(
+        &self,
+        domain: Option<String>,
+        messages_per_second: f64,
+        burst: u32,
+    ) -> Result<(), String>;
 }

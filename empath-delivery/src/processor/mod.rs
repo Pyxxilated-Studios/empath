@@ -573,4 +573,27 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
     fn request_process_now(&self) {
         Self::request_process_now(self);
     }
+
+    fn connection_stats(&self) -> crate::types::ConnectionStats {
+        crate::types::ConnectionStats {
+            queue_size: self.queue.len(),
+            rate_limit_domains: self
+                .rate_limiter
+                .as_ref()
+                .map_or(0, crate::rate_limiter::RateLimiter::bucket_count),
+        }
+    }
+
+    fn update_rate_limit(
+        &self,
+        domain: Option<String>,
+        messages_per_second: f64,
+        burst: u32,
+    ) -> Result<(), String> {
+        let limiter = self
+            .rate_limiter
+            .as_ref()
+            .ok_or_else(|| "Rate limiter not initialized".to_string())?;
+        limiter.update_limits(domain.as_deref(), messages_per_second, burst)
+    }
 }

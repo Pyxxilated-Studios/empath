@@ -100,6 +100,15 @@ const fn default_quit_timeout() -> u64 {
     10
 }
 
+/// Snapshot of connection/rate-limit stats for control endpoints
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ConnectionStats {
+    /// Messages currently in the delivery queue
+    pub queue_size: usize,
+    /// Number of active rate limiter buckets
+    pub rate_limit_domains: usize,
+}
+
 /// Information about a message in the delivery queue
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryInfo {

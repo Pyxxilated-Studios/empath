@@ -15,8 +15,8 @@ use async_trait::async_trait;
 use empath_control::{
     ControlClient, ControlError, ControlServer, Result,
     protocol::{
-        CachedMailServer, DnsCommand, QueueCommand, Request, RequestCommand, Response,
-        ResponseData, ResponsePayload, SystemCommand, SystemStatus,
+        CachedMailServer, ConnectionStats, DnsCommand, QueueCommand, Request, RequestCommand,
+        Response, ResponseData, ResponsePayload, SystemCommand, SystemStatus,
     },
     server::CommandHandler,
 };
@@ -99,6 +99,22 @@ impl CommandHandler for MockHandler {
                 SystemCommand::SetLogLevel { level } => Ok(Response::data(ResponseData::Message(
                     format!("Log level set to {level}"),
                 ))),
+                SystemCommand::ReloadConfig => Ok(Response::data(ResponseData::Message(
+                    "Reloading config".to_string(),
+                ))),
+                SystemCommand::ConnectionStats => Ok(Response::data(
+                    ResponseData::ConnectionStats(ConnectionStats {
+                        queue_size: 42,
+                        rate_limit_domains: 3,
+                    }),
+                )),
+                SystemCommand::SetRateLimit {
+                    domain,
+                    messages_per_second,
+                    burst,
+                } => Ok(Response::data(ResponseData::Message(format!(
+                    "Rate limit set: domain={domain:?}, mps={messages_per_second}, burst={burst}"
+                )))),
             },
             RequestCommand::Queue(cmd) => match cmd {
                 QueueCommand::Stats => Ok(Response::data(ResponseData::Message(

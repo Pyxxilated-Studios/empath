@@ -82,10 +82,24 @@ pub enum SystemCommand {
     Ping,
     /// Get system status and statistics
     Status,
+    /// Reload configuration (graceful shutdown/reload)
+    ReloadConfig,
+    /// Runtime connection/rate-limit stats
+    ConnectionStats,
     /// Adjust runtime log level (e.g., "info", "debug", "trace")
     SetLogLevel {
         /// New log level
         level: String,
+    },
+    /// Adjust rate limits (global or per-domain)
+    SetRateLimit {
+        /// Target domain (None = global default)
+        #[serde(default)]
+        domain: Option<String>,
+        /// Messages per second
+        messages_per_second: f64,
+        /// Burst size
+        burst: u32,
     },
 }
 
@@ -192,6 +206,8 @@ pub enum ResponseData {
     MxOverrides(HashMap<String, String>),
     /// System status information
     SystemStatus(SystemStatus),
+    /// Connection/rate-limit statistics
+    ConnectionStats(ConnectionStats),
     /// Queue message list
     QueueList(QueueListPage),
     /// Queue message details
@@ -230,6 +246,15 @@ pub struct SystemStatus {
     pub queue_size: usize,
     /// DNS cache statistics
     pub dns_cache_entries: usize,
+}
+
+/// Connection and rate-limit statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionStats {
+    /// Messages currently in the queue
+    pub queue_size: usize,
+    /// Number of active rate-limiter buckets
+    pub rate_limit_domains: usize,
 }
 
 /// Paginated queue list

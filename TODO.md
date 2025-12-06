@@ -13,7 +13,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-WASM-13: WASM coverage parity. Recently added: timeout enforcement test, memory-limit enforcement (integration), event error-path tests, context mutation edge cases, poisoned mutex regression, invalid SMTP code clamping, memory growth limit unit test.
 - [ ] NEW-18: Load & stress testing. Use k6/Locust; measure throughput (1k/10k/100k msg/day), CPU/mem/disk. Add docs + (optional) CI smoke.
 - [ ] 2.2 Connection pooling for SMTP client. Pool per-domain with idle cleanup, health check, metrics (hits/misses/size).
-- [wip] 0.12 Control socket commands. Added log level adjust; remaining: config reload, connection stats, rate-limit adjust.
+- [x] 0.12 Control socket commands. Added config reload trigger (graceful shutdown), log level adjust, connection stats, and rate-limit adjust.
 - [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 - [ ] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard.
 - [ ] NEW-23: Outbound bindings. Configurable binding definitions (source IP/interface + TLS/helo), mapping rules (static/domain/module override), stored per message for retries/DSN, SMTP client bind support, metrics/control listing, docs + tests.

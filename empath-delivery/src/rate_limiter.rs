@@ -139,7 +139,7 @@ impl TokenBucket {
 #[derive(Debug)]
 pub struct RateLimiter {
     /// Configuration
-    config: RateLimitConfig,
+    config: parking_lot::RwLock<RateLimitConfig>,
     /// Per-domain token buckets
     buckets: DashMap<Domain, Arc<parking_lot::Mutex<TokenBucket>>>,
 }
@@ -149,7 +149,7 @@ impl RateLimiter {
     #[must_use]
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
-            config,
+            config: parking_lot::RwLock::new(config),
             buckets: DashMap::new(),
         }
     }
@@ -159,11 +159,13 @@ impl RateLimiter {
         self.buckets
             .entry(domain.clone())
             .or_insert_with(|| {
-                let (messages_per_second, burst_size) =
-                    self.config.domain_limits.get(domain.as_str()).map_or_else(
-                        || (self.config.messages_per_second, self.config.burst_size),
+                let (messages_per_second, burst_size) = {
+                    let cfg = self.config.read();
+                    cfg.domain_limits.get(domain.as_str()).map_or_else(
+                        || (cfg.messages_per_second, cfg.burst_size),
                         |limit| (limit.messages_per_second, limit.burst_size),
-                    );
+                    )
+                };
 
                 Arc::new(parking_lot::Mutex::new(TokenBucket::new(
                     messages_per_second,
@@ -207,6 +209,62 @@ impl RateLimiter {
                 refill_rate: bucket.refill_rate,
             }
         })
+    }
+
+    /// Update rate limits globally or for a specific domain
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if provided values are invalid (zero/negative).
+    pub fn update_limits(
+        &self,
+        domain: Option<&str>,
+        messages_per_second: f64,
+        burst_size: u32,
+    ) -> Result<(), String> {
+        if messages_per_second <= 0.0 {
+            return Err("messages_per_second must be greater than zero".to_string());
+        }
+        if burst_size == 0 {
+            return Err("burst must be greater than zero".to_string());
+        }
+
+        if let Some(dom) = domain {
+            {
+                let mut cfg = self.config.write();
+                cfg.domain_limits.insert(
+                    dom.to_string(),
+                    DomainRateLimit {
+                        messages_per_second,
+                        burst_size,
+                    },
+                );
+            }
+            let domain_key = Domain::from(dom.to_string());
+            self.buckets.insert(
+                domain_key,
+                Arc::new(parking_lot::Mutex::new(TokenBucket::new(
+                    messages_per_second,
+                    burst_size,
+                ))),
+            );
+        } else {
+            {
+                let mut cfg = self.config.write();
+                cfg.messages_per_second = messages_per_second;
+                cfg.burst_size = burst_size;
+            }
+            // Clear buckets so they rebuild with new defaults
+            self.buckets.clear();
+        }
+
+        Ok(())
+    }
+
+    /// Number of active rate-limit buckets
+    #[must_use]
+    pub fn bucket_count(&self) -> usize {
+        self.buckets.len()
     }
 }
 
