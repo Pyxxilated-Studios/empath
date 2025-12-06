@@ -548,6 +548,7 @@ async fn deliver_message(
     let transaction = crate::smtp_transaction::SmtpTransaction::new(
         context,
         server_address.to_string(),
+        true,
         require_tls,
         accept_invalid_certs,
         &processor.smtp_timeouts,

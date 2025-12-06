@@ -24,7 +24,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-23e: Module binding ergonomics. Typed binding-name enum in FFI/WASM so modules can list/choose configured bindings; validate names with tests.
 - [ ] NEW-23f: Binding config linting. Detect unmapped/unknown binding names and missing interfaces at startup; emit warnings/errors early.
 - [ ] NEW-24: Per-domain bounce classification. Track temp vs perm failures by domain, expose metrics, and feed retry policy tuning.
-- [ ] NEW-25: SMTP STARTTLS policy tests. Added RON serde coverage for TLS policy config; remaining: runtime coverage for require/allow/disable and banner hostname validation via `BannerHostname`.
+- [x] NEW-25: SMTP STARTTLS policy tests. Added runtime coverage for require/allow/disable STARTTLS negotiation paths (including disabled policy skip) and RON serde coverage for TLS policy config; banner hostname validated via `BannerHostname` newtype.
 - [ ] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
 - [ ] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
 - [ ] DX-02: Fast inner-loop helpers. `just lint-quick`/`just check-changed` to run fmt/clippy/tests on changed crates only.

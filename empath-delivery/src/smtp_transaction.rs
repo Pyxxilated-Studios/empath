@@ -10,8 +10,9 @@
 
 use std::time::Duration;
 
+use async_trait::async_trait;
 use empath_common::{context::Context, tracing};
-use empath_smtp::client::SmtpClient;
+use empath_smtp::client::{ClientError, Response as ClientResponse, SmtpClient};
 use empath_tracing::traced;
 
 use crate::{
@@ -49,6 +50,8 @@ pub struct SmtpTransaction<'a> {
     context: &'a Context,
     /// The SMTP server address (host:port)
     server_address: String,
+    /// Whether TLS should be attempted at all (disabled policy skips STARTTLS)
+    attempt_tls: bool,
     /// Whether TLS is required for this delivery
     require_tls: bool,
     /// Whether to accept invalid TLS certificates
@@ -57,12 +60,30 @@ pub struct SmtpTransaction<'a> {
     smtp_timeouts: &'a SmtpTimeouts,
 }
 
+#[async_trait]
+trait StarttlsClient {
+    async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError>;
+    async fn starttls(&mut self) -> Result<ClientResponse, ClientError>;
+}
+
+#[async_trait]
+impl StarttlsClient for SmtpClient {
+    async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError> {
+        self.ehlo(domain).await
+    }
+
+    async fn starttls(&mut self) -> Result<ClientResponse, ClientError> {
+        self.starttls().await
+    }
+}
+
 impl<'a> SmtpTransaction<'a> {
     /// Create a new SMTP transaction
     ///
     /// # Arguments
     /// * `context` - The message context containing envelope and data
     /// * `server_address` - The SMTP server address (host:port)
+    /// * `attempt_tls` - Whether to attempt STARTTLS negotiation when advertised
     /// * `require_tls` - Whether TLS is required for this delivery
     /// * `accept_invalid_certs` - Whether to accept invalid TLS certificates
     /// * `smtp_timeouts` - Timeout configuration for SMTP operations
@@ -70,6 +91,7 @@ impl<'a> SmtpTransaction<'a> {
     pub const fn new(
         context: &'a Context,
         server_address: String,
+        attempt_tls: bool,
         require_tls: bool,
         accept_invalid_certs: bool,
         smtp_timeouts: &'a SmtpTimeouts,
@@ -77,6 +99,7 @@ impl<'a> SmtpTransaction<'a> {
         Self {
             context,
             server_address,
+            attempt_tls,
             require_tls,
             accept_invalid_certs,
             smtp_timeouts,
@@ -211,17 +234,26 @@ impl<'a> SmtpTransaction<'a> {
     /// Returns an error if TLS is required but fails
     async fn negotiate_tls(
         &self,
-        client: &mut SmtpClient,
+        client: &mut (impl StarttlsClient + Send),
     ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        if !self.attempt_tls {
+            tracing::debug!(
+                domain = %self.context.id,
+                "TLS negotiation skipped due to disabled policy"
+            );
+            return Ok(TlsNegotiationOutcome::Skipped);
+        }
+
         let helo_domain = &self.context.id;
 
         // Send initial EHLO
         let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
-        let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-            .await
-            .map_err(|_| {
-                TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
-            })??;
+        let ehlo_response: ClientResponse =
+            tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
+                })??;
 
         if !ehlo_response.is_success() {
             return Err(TemporaryError::SmtpTemporary(format!(
@@ -235,7 +267,7 @@ impl<'a> SmtpTransaction<'a> {
         let supports_starttls = ehlo_response
             .message()
             .lines()
-            .any(|line| line.to_uppercase().contains("STARTTLS"));
+            .any(|line: &str| line.to_uppercase().contains("STARTTLS"));
 
         // If server doesn't support STARTTLS and it's not required, skip TLS
         if !supports_starttls && !self.require_tls {
@@ -246,12 +278,13 @@ impl<'a> SmtpTransaction<'a> {
             let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
 
             // Attempt STARTTLS command
-            let starttls_result = tokio::time::timeout(starttls_timeout, client.starttls())
-                .await
-                .map_err(|_| format!("STARTTLS timed out after {starttls_timeout:?}"))
-                .and_then(|r| r.map_err(|e| format!("STARTTLS failed: {e}")));
+            let starttls_result: Result<ClientResponse, String> =
+                tokio::time::timeout(starttls_timeout, client.starttls())
+                    .await
+                    .map_err(|_| format!("STARTTLS timed out after {starttls_timeout:?}"))
+                    .and_then(|r| r.map_err(|e| format!("STARTTLS failed: {e}")));
 
-            let starttls_response = match starttls_result {
+            let starttls_response: ClientResponse = match starttls_result {
                 Ok(response) => response,
                 Err(error_msg) => {
                     if self.require_tls {
@@ -284,13 +317,14 @@ impl<'a> SmtpTransaction<'a> {
             }
 
             // Re-send EHLO after STARTTLS (RFC 3207)
-            let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-                .await
-                .map_err(|_| {
-                    TemporaryError::Timeout(format!(
-                        "EHLO after STARTTLS timed out after {ehlo_timeout:?}"
-                    ))
-                })??;
+            let ehlo_response: ClientResponse =
+                tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                    .await
+                    .map_err(|_| {
+                        TemporaryError::Timeout(format!(
+                            "EHLO after STARTTLS timed out after {ehlo_timeout:?}"
+                        ))
+                    })??;
 
             if !ehlo_response.is_success() {
                 return Err(TemporaryError::SmtpTemporary(format!(
@@ -437,6 +471,232 @@ impl<'a> SmtpTransaction<'a> {
             };
         }
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use empath_common::context::Context;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct MockStarttlsClient {
+        ehlo_responses: Vec<ClientResponse>,
+        starttls_result: Option<Result<ClientResponse, ClientError>>,
+        ehlo_calls: usize,
+        starttls_calls: usize,
+    }
+
+    #[async_trait]
+    impl StarttlsClient for MockStarttlsClient {
+        async fn ehlo(&mut self, _domain: &str) -> Result<ClientResponse, ClientError> {
+            let response = self
+                .ehlo_responses
+                .get(self.ehlo_calls)
+                .cloned()
+                .unwrap_or_else(|| ClientResponse::new(500, vec!["EHLO failure".to_string()]));
+            self.ehlo_calls += 1;
+            Ok(response)
+        }
+
+        async fn starttls(&mut self) -> Result<ClientResponse, ClientError> {
+            self.starttls_calls += 1;
+            self.starttls_result
+                .take()
+                .unwrap_or_else(|| Ok(ClientResponse::new(220, vec!["Ready for TLS".to_string()])))
+        }
+    }
+
+    fn make_context() -> Context {
+        Context {
+            id: "example.com".to_string(),
+            ..Context::default()
+        }
+    }
+
+    fn default_timeouts() -> SmtpTimeouts {
+        SmtpTimeouts {
+            ehlo_secs: 1,
+            starttls_secs: 1,
+            ..SmtpTimeouts::default()
+        }
+    }
+
+    fn starttls_advertised_response() -> ClientResponse {
+        ClientResponse::new(
+            250,
+            vec!["example.com", "STARTTLS"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
+    }
+
+    fn starttls_not_supported_response() -> ClientResponse {
+        ClientResponse::new(
+            250,
+            vec!["example.com"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
+    }
+
+    #[tokio::test]
+    async fn disabled_policy_skips_even_when_advertised() -> Result<(), DeliveryError> {
+        let context = make_context();
+        let timeouts = default_timeouts();
+        let transaction = SmtpTransaction::new(
+            &context,
+            "server:25".to_string(),
+            false,
+            false,
+            false,
+            &timeouts,
+        );
+
+        let mut client = MockStarttlsClient {
+            ehlo_responses: vec![starttls_advertised_response()],
+            starttls_result: None,
+            ..Default::default()
+        };
+
+        let outcome = transaction.negotiate_tls(&mut client).await?;
+
+        assert_eq!(outcome, TlsNegotiationOutcome::Skipped);
+        assert_eq!(client.starttls_calls, 0, "STARTTLS should not be attempted");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn opportunistic_skips_when_server_lacks_starttls() -> Result<(), DeliveryError> {
+        let context = make_context();
+        let timeouts = default_timeouts();
+        let transaction = SmtpTransaction::new(
+            &context,
+            "server:25".to_string(),
+            true,
+            false,
+            false,
+            &timeouts,
+        );
+
+        let mut client = MockStarttlsClient {
+            ehlo_responses: vec![starttls_not_supported_response()],
+            starttls_result: None,
+            ..Default::default()
+        };
+
+        let outcome = transaction.negotiate_tls(&mut client).await?;
+
+        assert_eq!(outcome, TlsNegotiationOutcome::Skipped);
+        assert_eq!(client.starttls_calls, 0, "STARTTLS should not be attempted");
+        assert_eq!(client.ehlo_calls, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn opportunistic_retries_without_tls_on_failure() -> Result<(), DeliveryError> {
+        let context = make_context();
+        let timeouts = default_timeouts();
+        let transaction = SmtpTransaction::new(
+            &context,
+            "server:25".to_string(),
+            true,
+            false,
+            false,
+            &timeouts,
+        );
+
+        let mut client = MockStarttlsClient {
+            ehlo_responses: vec![starttls_advertised_response()],
+            starttls_result: Some(Err(ClientError::TlsError("handshake failed".to_string()))),
+            ..Default::default()
+        };
+
+        let outcome = transaction.negotiate_tls(&mut client).await?;
+
+        assert_eq!(outcome, TlsNegotiationOutcome::RetryWithoutTls);
+        assert_eq!(client.starttls_calls, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn require_tls_propagates_failure_as_permanent() -> Result<(), DeliveryError> {
+        let context = make_context();
+        let timeouts = default_timeouts();
+        let transaction = SmtpTransaction::new(
+            &context,
+            "secure:25".to_string(),
+            true,
+            true,
+            false,
+            &timeouts,
+        );
+
+        let mut client = MockStarttlsClient {
+            ehlo_responses: vec![starttls_advertised_response()],
+            starttls_result: Some(Err(ClientError::TlsError("cert mismatch".to_string()))),
+            ..Default::default()
+        };
+
+        let err: DeliveryError = match transaction.negotiate_tls(&mut client).await {
+            Ok(outcome) => {
+                return Err(DeliveryError::System(SystemError::Internal(format!(
+                    "expected TLS failure, got {outcome:?}"
+                ))));
+            }
+            Err(e) => e,
+        };
+
+        match err {
+            DeliveryError::Permanent(PermanentError::TlsRequired(msg)) => {
+                assert!(
+                    msg.contains("cert mismatch"),
+                    "expected TLS error message to bubble up"
+                );
+            }
+            other => {
+                return Err(DeliveryError::System(SystemError::Internal(format!(
+                    "expected permanent TLS-required error, got {other:?}"
+                ))));
+            }
+        }
+        assert_eq!(client.starttls_calls, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn require_tls_succeeds_when_starttls_succeeds() -> Result<(), DeliveryError> {
+        let context = make_context();
+        let timeouts = default_timeouts();
+        let transaction = SmtpTransaction::new(
+            &context,
+            "secure:25".to_string(),
+            true,
+            true,
+            false,
+            &timeouts,
+        );
+
+        let mut client = MockStarttlsClient {
+            ehlo_responses: vec![
+                starttls_advertised_response(),
+                starttls_not_supported_response(),
+            ],
+            starttls_result: Some(Ok(ClientResponse::new(
+                220,
+                vec!["Ready to start TLS".to_string()],
+            ))),
+            ..Default::default()
+        };
+
+        let outcome = transaction.negotiate_tls(&mut client).await?;
+
+        assert_eq!(outcome, TlsNegotiationOutcome::Success);
+        assert_eq!(client.starttls_calls, 1);
         Ok(())
     }
 }
