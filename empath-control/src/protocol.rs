@@ -82,6 +82,11 @@ pub enum SystemCommand {
     Ping,
     /// Get system status and statistics
     Status,
+    /// Adjust runtime log level (e.g., "info", "debug", "trace")
+    SetLogLevel {
+        /// New log level
+        level: String,
+    },
 }
 
 /// Queue management commands

@@ -96,6 +96,9 @@ impl CommandHandler for MockHandler {
                         dns_cache_entries: 10,
                     })))
                 }
+                SystemCommand::SetLogLevel { level } => Ok(Response::data(ResponseData::Message(
+                    format!("Log level set to {level}"),
+                ))),
             },
             RequestCommand::Queue(cmd) => match cmd {
                 QueueCommand::Stats => Ok(Response::data(ResponseData::Message(

@@ -5,6 +5,7 @@
 
 use std::{
     collections::HashMap,
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
@@ -17,6 +18,7 @@ use empath_control::{
 };
 use empath_delivery::DeliveryQueryService;
 use empath_spool::BackingStore;
+use tracing_subscriber::filter::LevelFilter;
 
 /// Handler for control commands
 pub struct EmpathControlHandler {
@@ -216,6 +218,18 @@ impl EmpathControlHandler {
                 };
 
                 Ok(Response::data(ResponseData::SystemStatus(status)))
+            }
+
+            SystemCommand::SetLogLevel { level } => {
+                let parsed = LevelFilter::from_str(level.as_str()).map_err(|e| {
+                    ControlError::ServerError(format!("Invalid log level '{level}': {e}"))
+                })?;
+                empath_common::logging::set_log_level(parsed).map_err(|e| {
+                    ControlError::ServerError(format!("Failed to set log level: {e}"))
+                })?;
+                Ok(Response::data(ResponseData::Message(format!(
+                    "Log level set to {parsed}"
+                ))))
             }
         };
 

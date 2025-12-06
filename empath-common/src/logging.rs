@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::OnceLock};
 
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
@@ -8,8 +8,14 @@ use opentelemetry_sdk::{
 };
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{
-    Layer, filter::FilterFn, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
+    filter::{EnvFilter, LevelFilter as SubscriberLevelFilter},
+    prelude::__tracing_subscriber_SubscriberExt,
+    reload,
+    util::SubscriberInitExt,
 };
+
+static LOG_FILTER_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
+    OnceLock::new();
 
 #[macro_export]
 macro_rules! log {
@@ -180,25 +186,56 @@ pub fn init(otlp_endpoint: Option<&str>) -> anyhow::Result<()> {
     opentelemetry::global::set_tracer_provider(tracer_provider.clone());
     let tracer = tracer_provider.tracer("empath");
 
+    let subscriber_level = level.into_level().unwrap_or(tracing::Level::TRACE);
+
+    let filter = EnvFilter::builder()
+        .with_default_directive(SubscriberLevelFilter::from_level(subscriber_level).into())
+        .parse_lossy(format!(
+            "empath={level},empath_common={level},empath_delivery={level},empath_smtp={level}"
+        ));
+
+    let (filter_layer, handle) = reload::Layer::new(filter);
+    let _ = LOG_FILTER_HANDLE.set(handle);
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_file(true) // Include file for debugging
+        .with_line_number(true) // Include line number for debugging
+        .json() // JSON format for structured logging and LogQL queries
+        .with_current_span(true) // Include current span fields
+        .with_span_list(true) // Include span list for context
+        .with_timer(tracing_subscriber::fmt::time::ChronoUtc::rfc_3339());
+
     tracing_subscriber::Registry::default()
-        .with(
-            // OpenTelemetry layer for trace context (trace_id, span_id)
-            tracing_opentelemetry::layer().with_tracer(tracer),
-        )
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_file(true) // Include file for debugging
-                .with_line_number(true) // Include line number for debugging
-                .json() // JSON format for structured logging and LogQL queries
-                .with_current_span(true) // Include current span fields
-                .with_span_list(true) // Include span list for context
-                .with_timer(tracing_subscriber::fmt::time::ChronoUtc::rfc_3339())
-                .with_filter(level)
-                .with_filter(FilterFn::new(|metadata| {
-                    metadata.target().starts_with("empath")
-                })),
-        )
+        .with(filter_layer)
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .with(fmt_layer)
         .init();
 
     Ok(())
+}
+
+/// Update the runtime log level for all Empath targets.
+///
+/// Returns an error if the logging subscriber has not been initialised.
+///
+/// # Errors
+///
+/// Returns an error if the global logger has not been initialised or if the
+/// reload handle cannot be updated.
+pub fn set_log_level(level: LevelFilter) -> Result<(), String> {
+    let handle = LOG_FILTER_HANDLE
+        .get()
+        .ok_or_else(|| "logging not initialised".to_string())?;
+
+    let subscriber_level = level.into_level().unwrap_or(tracing::Level::TRACE);
+
+    handle
+        .modify(|filter| {
+            *filter = EnvFilter::builder()
+                .with_default_directive(SubscriberLevelFilter::from_level(subscriber_level).into())
+                .parse_lossy(format!(
+                    "empath={level},empath_common={level},empath_delivery={level},empath_smtp={level}"
+                ));
+        })
+        .map_err(|e| format!("failed to update log level: {e}"))
 }
