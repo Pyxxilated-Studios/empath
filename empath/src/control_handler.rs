@@ -29,6 +29,40 @@ pub struct EmpathControlHandler {
 const DEFAULT_PAGE_SIZE: usize = 100;
 const MAX_PAGE_SIZE: usize = 500;
 
+// Emit an audit event with user/uid fields added automatically.
+macro_rules! audit {
+    ($level:ident, $msg:literal $(, $($field:tt)+ )? $(,)?) => {{
+        let identity = crate::control_handler::AuditIdentity::capture();
+        tracing::event!(
+            tracing::Level::$level,
+            user = %identity.user,
+            uid = %identity.uid,
+            $( $($field)+ ,)?
+            $msg
+        );
+    }};
+}
+
+#[derive(Debug)]
+struct AuditIdentity {
+    user: String,
+    uid: String,
+}
+
+impl AuditIdentity {
+    /// Capture the current user and uid for audit logging.
+    fn capture() -> Self {
+        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+
+        #[cfg(unix)]
+        let uid = unsafe { libc::getuid() }.to_string();
+        #[cfg(not(unix))]
+        let uid = "N/A".to_string();
+
+        Self { user, uid }
+    }
+}
+
 impl EmpathControlHandler {
     /// Create a new control handler
     #[must_use]
@@ -65,27 +99,13 @@ impl EmpathControlHandler {
     /// Handle DNS cache management commands
     async fn handle_dns_command(&self, command: DnsCommand) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
-        #[cfg(unix)]
-        let uid = unsafe { libc::getuid() };
-        #[cfg(not(unix))]
-        let uid = "N/A";
-
-        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-
-        tracing::event!(
-            tracing::Level::INFO,
-            user = %user,
-            uid = %uid,
-            command = ?command,
-            "Control command: DNS"
-        );
+        audit!(INFO, "Control command: DNS", command = ?command);
 
         let Some(resolver) = self.delivery.dns_resolver() else {
-            tracing::event!(tracing::Level::WARN,
-                user = %user,
-                uid = %uid,
-                command = ?command,
-                "DNS command failed: resolver not initialized"
+            audit!(
+                WARN,
+                "DNS command failed: resolver not initialized",
+                command = ?command
             );
             return Err(ControlError::ServerError(
                 "DNS resolver not initialized".to_string(),
@@ -159,19 +179,10 @@ impl EmpathControlHandler {
         // Audit log: Record command result
         match &result {
             Ok(_) => {
-                tracing::event!(tracing::Level::INFO,
-                    user = %user,
-                    uid = %uid,
-                    "DNS command completed successfully"
-                );
+                audit!(INFO, "DNS command completed successfully");
             }
             Err(e) => {
-                tracing::event!(tracing::Level::WARN,
-                    user = %user,
-                    uid = %uid,
-                    error = %e,
-                    "DNS command failed"
-                );
+                audit!(WARN, "DNS command failed", error = %e);
             }
         }
 
@@ -181,19 +192,7 @@ impl EmpathControlHandler {
     /// Handle system management commands
     fn handle_system_command(&self, command: &SystemCommand) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
-        #[cfg(unix)]
-        let uid = unsafe { libc::getuid() };
-        #[cfg(not(unix))]
-        let uid = "N/A";
-
-        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-
-        tracing::event!(tracing::Level::INFO,
-            user = %user,
-            uid = %uid,
-            command = ?command,
-            "Control command: System"
-        );
+        audit!(INFO, "Control command: System", command = ?command);
 
         let result = match command {
             SystemCommand::Ping => Ok(Response::ok()),
@@ -223,19 +222,10 @@ impl EmpathControlHandler {
         // Audit log: Record command result
         match &result {
             Ok(_) => {
-                tracing::event!(tracing::Level::INFO,
-                    user = %user,
-                    uid = %uid,
-                    "System command completed successfully"
-                );
+                audit!(INFO, "System command completed successfully");
             }
             Err(e) => {
-                tracing::event!(tracing::Level::WARN,
-                    user = %user,
-                    uid = %uid,
-                    error = %e,
-                    "System command failed"
-                );
+                audit!(WARN, "System command failed", error = %e);
             }
         }
 
@@ -248,26 +238,13 @@ impl EmpathControlHandler {
         command: QueueCommand,
     ) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
-        #[cfg(unix)]
-        let uid = unsafe { libc::getuid() };
-        #[cfg(not(unix))]
-        let uid = "N/A";
-
-        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-
-        tracing::event!(tracing::Level::INFO,
-            user = %user,
-            uid = %uid,
-            command = ?command,
-            "Control command: Queue"
-        );
+        audit!(INFO, "Control command: Queue", command = ?command);
 
         let Some(spool) = self.delivery.spool() else {
-            tracing::event!(tracing::Level::WARN,
-                user = %user,
-                uid = %uid,
-                command = ?command,
-                "Queue command failed: spool not initialized"
+            audit!(
+                WARN,
+                "Queue command failed: spool not initialized",
+                command = ?command
             );
             return Err(ControlError::ServerError(
                 "Spool not initialized".to_string(),
@@ -300,12 +277,7 @@ impl EmpathControlHandler {
             QueueCommand::Stats => Ok(self.handle_stats_command()),
             QueueCommand::ProcessNow => {
                 self.delivery.request_process_now();
-                tracing::event!(
-                    tracing::Level::INFO,
-                    user = %user,
-                    uid = %uid,
-                    "Manual queue process trigger received"
-                );
+                audit!(INFO, "Manual queue process trigger received");
                 Ok(Response::data(ResponseData::Message(
                     "Triggered immediate queue scan and process".to_string(),
                 )))
@@ -315,19 +287,10 @@ impl EmpathControlHandler {
         // Audit log: Record command result
         match &result {
             Ok(_) => {
-                tracing::event!(tracing::Level::INFO,
-                    user = %user,
-                    uid = %uid,
-                    "Queue command completed successfully"
-                );
+                audit!(INFO, "Queue command completed successfully");
             }
             Err(e) => {
-                tracing::event!(tracing::Level::WARN,
-                    user = %user,
-                    uid = %uid,
-                    error = %e,
-                    "Queue command failed"
-                );
+                audit!(WARN, "Queue command failed", error = %e);
             }
         }
 
@@ -709,27 +672,13 @@ impl EmpathControlHandler {
         command: empath_control::SpoolCommand,
     ) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
-        #[cfg(unix)]
-        let uid = unsafe { libc::getuid() };
-        #[cfg(not(unix))]
-        let uid = "N/A";
-
-        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-
-        tracing::event!(
-            tracing::Level::INFO,
-            user = %user,
-            uid = %uid,
-            command = ?command,
-            "Control command: Spool"
-        );
+        audit!(INFO, "Control command: Spool", command = ?command);
 
         let Some(spool) = self.delivery.spool() else {
-            tracing::event!(tracing::Level::WARN,
-                user = %user,
-                uid = %uid,
-                command = ?command,
-                "Spool command failed: spool not initialized"
+            audit!(
+                WARN,
+                "Spool command failed: spool not initialized",
+                command = ?command
             );
             return Err(ControlError::ServerError(
                 "Spool not initialized".to_string(),
@@ -763,19 +712,10 @@ impl EmpathControlHandler {
         // Audit log: Record command result
         match &result {
             Ok(_) => {
-                tracing::event!(tracing::Level::INFO,
-                    user = %user,
-                    uid = %uid,
-                    "Spool command completed successfully"
-                );
+                audit!(INFO, "Spool command completed successfully");
             }
             Err(e) => {
-                tracing::event!(tracing::Level::WARN,
-                    user = %user,
-                    uid = %uid,
-                    error = %e,
-                    "Spool command failed"
-                );
+                audit!(WARN, "Spool command failed", error = %e);
             }
         }
 

@@ -1,6 +1,6 @@
 # Empath TODO (Concise)
 
-Last updated: 2025-12-04 (rewritten for an actionable view). See `docs/COMPLETED.md` for history.
+Last updated: 2025-12-06 (rewritten for an actionable view). See `docs/COMPLETED.md` for history.
 
 Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] done.
 
@@ -24,16 +24,16 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-23e: Module binding ergonomics. Typed binding-name enum in FFI/WASM so modules can list/choose configured bindings; validate names with tests.
 - [ ] NEW-23f: Binding config linting. Detect unmapped/unknown binding names and missing interfaces at startup; emit warnings/errors early.
 - [ ] NEW-24: Per-domain bounce classification. Track temp vs perm failures by domain, expose metrics, and feed retry policy tuning.
-- [ ] NEW-25: SMTP STARTTLS policy tests. Coverage for require/allow/disable and banner hostname validation via `BannerHostname`.
+- [ ] NEW-25: SMTP STARTTLS policy tests. Added RON serde coverage for TLS policy config; remaining: runtime coverage for require/allow/disable and banner hostname validation via `BannerHostname`.
 - [ ] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
 - [ ] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
 - [ ] DX-02: Fast inner-loop helpers. `just lint-quick`/`just check-changed` to run fmt/clippy/tests on changed crates only.
-- [ ] DOC-05: Operator runbook. Minimal ops guide (restart steps, common errors, control commands, log filters) linked from README.
+- [x] DOC-05: Operator runbook. Added `docs/OPERATOR_RUNBOOK.md` with restart/health steps, common errors, control commands, and log filters; linked from README.
 - [wip] NEW-09: Newtype safety. Added validated newtypes (`EmailAddress`, `ServerId`, `BannerHostname`) in `empath-common`; SMTP session now uses `BannerHostname` for config/tests; SPF evaluator now accepts `EmailAddress`. Remaining: propagate to envelope sender/recipients and delivery identifiers.
 - [wip] NEW-10: Nightly feature stability plan. Added `docs/NIGHTLY_FEATURES.md`; stable CI lane (`stable-check`) added; low-friction gates removed (`result_option_map_or_default`, `iter_advance_by`, `ascii_char`, `once_cell_try`, `bstr`); remaining: associated_type_defaults, slice_pattern, fn_traits, unboxed_closures.
 
 ## P2 — Next Up / Blocked
-- [ ] DX-CTL-AUDIT: Factor control handler audit user/uid lookup into a helper to remove repeated unsafe blocks and keep audit metadata consistent.
+- [x] DX-CTL-AUDIT: Factor control handler audit user/uid lookup into a helper to remove repeated unsafe blocks and keep audit metadata consistent. Added `audit!` macro in control handler that captures user/uid once and injects into tracing events.
 - [ ] DX-CTL-API: Make control handler commands accept `&str` where possible (e.g., retry/delete) to reduce unnecessary `String` allocations.
 - [ ] DX-CTL-SELECT: Deduplicate the `tokio::select!` branches in `Empath::run` so health-enabled and disabled flows share the same branch list.
 - [ ] NEW-WASM-15: Event registration macro to centralize event definitions and mappings (Ev enum, WIT names, handlers).
