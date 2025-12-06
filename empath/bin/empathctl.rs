@@ -104,6 +104,27 @@ enum SystemAction {
     Ping,
     /// Get system status and statistics
     Status,
+    /// Reload configuration (triggers graceful shutdown/reload)
+    ReloadConfig,
+    /// Set runtime log level (e.g., info, debug, trace)
+    SetLogLevel {
+        /// New log level
+        level: String,
+    },
+    /// Show connection and rate-limit statistics
+    ConnectionStats,
+    /// Update rate limits (global or per-domain)
+    SetRateLimit {
+        /// Target domain (omit for global defaults)
+        #[arg(long)]
+        domain: Option<String>,
+        /// Messages per second
+        #[arg(long)]
+        mps: f64,
+        /// Burst size (tokens)
+        #[arg(long, default_value = "20")]
+        burst: u32,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -388,6 +409,22 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
     let request = match action {
         SystemAction::Ping => Request::new(RequestCommand::System(SystemCommand::Ping)),
         SystemAction::Status => Request::new(RequestCommand::System(SystemCommand::Status)),
+        SystemAction::ReloadConfig => {
+            Request::new(RequestCommand::System(SystemCommand::ReloadConfig))
+        }
+        SystemAction::SetLogLevel { level } => {
+            Request::new(RequestCommand::System(SystemCommand::SetLogLevel { level }))
+        }
+        SystemAction::ConnectionStats => {
+            Request::new(RequestCommand::System(SystemCommand::ConnectionStats))
+        }
+        SystemAction::SetRateLimit { domain, mps, burst } => {
+            Request::new(RequestCommand::System(SystemCommand::SetRateLimit {
+                domain,
+                messages_per_second: mps,
+                burst,
+            }))
+        }
     };
 
     let response = client.send_request(request).await?;
@@ -407,13 +444,19 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                 println!("Queue size:         {} message(s)", status.queue_size);
                 println!("DNS cache entries:  {}", status.dns_cache_entries);
             }
+            ResponseData::ConnectionStats(stats) => {
+                println!("=== Connection Stats ===\n");
+                println!("Queue size:             {}", stats.queue_size);
+                println!("Rate limit buckets:     {}", stats.rate_limit_domains);
+            }
+            ResponseData::Message(msg) => {
+                println!("✓ {msg}");
+            }
             ResponseData::DnsCache(_)
             | ResponseData::MxOverrides(_)
-            | ResponseData::Message(_)
             | ResponseData::QueueList(_)
             | ResponseData::QueueMessageDetails(_)
             | ResponseData::QueueStats(_)
-            | ResponseData::ConnectionStats(_)
             | ResponseData::SpoolList(_)
             | ResponseData::SpoolStats(_) => {
                 println!("Unexpected response for system command: {data:?}");
