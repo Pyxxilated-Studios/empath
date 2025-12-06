@@ -10,6 +10,7 @@ use std::{sync::Arc, time::Duration};
 use empath_common::{Signal, internal};
 use empath_tracing::traced;
 use serde::Deserialize;
+use tokio::{pin, sync::Notify};
 
 use crate::{
     circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
@@ -190,6 +191,10 @@ pub struct DeliveryProcessor {
     /// Domain policy resolver for configuration lookups (initialized in `init()`)
     #[serde(skip)]
     pub(crate) domain_resolver: Option<crate::policy::DomainPolicyResolver>,
+
+    /// Notifier to trigger immediate scan/process from control commands
+    #[serde(skip)]
+    process_now_notifier: Notify,
 }
 
 impl Default for DeliveryProcessor {
@@ -217,6 +222,7 @@ impl Default for DeliveryProcessor {
             rate_limiter: None,
             circuit_breaker_instance: None,
             domain_resolver: None,
+            process_now_notifier: Notify::new(),
         }
     }
 }
@@ -315,6 +321,11 @@ impl DeliveryProcessor {
         &self.spool
     }
 
+    /// Request an immediate scan/process cycle (non-blocking)
+    pub fn request_process_now(&self) {
+        self.process_now_notifier.notify_one();
+    }
+
     /// Run the delivery processor
     ///
     /// This method runs continuously until a shutdown signal is received.
@@ -370,6 +381,8 @@ impl DeliveryProcessor {
         let mut scan_timer = tokio::time::interval(scan_interval);
         let mut process_timer = tokio::time::interval(process_interval);
         let mut cleanup_timer = tokio::time::interval(cleanup_interval);
+        let process_now = self.process_now_notifier.notified();
+        pin!(process_now);
 
         // Skip the first tick to avoid immediate execution (after initial scan)
         scan_timer.tick().await;
@@ -382,6 +395,25 @@ impl DeliveryProcessor {
 
         loop {
             tokio::select! {
+                () = &mut process_now => {
+                    processing.store(true, std::sync::atomic::Ordering::SeqCst);
+
+                    if let Err(e) = scan::scan_spool_internal(&self, spool).await {
+                        empath_common::tracing::error!("Error scanning spool: {e}");
+                    }
+
+                    match process::process_queue_internal(Arc::clone(&self), Arc::clone(spool)).await {
+                        Ok(()) => {
+                            empath_common::tracing::info!("Processed delivery queue on manual trigger");
+                        }
+                        Err(e) => {
+                            empath_common::tracing::error!("Error processing delivery queue on manual trigger: {e}");
+                        }
+                    }
+
+                    processing.store(false, std::sync::atomic::Ordering::SeqCst);
+                    process_now.set(self.process_now_notifier.notified());
+                }
                 _ = scan_timer.tick() => {
                     match scan::scan_spool_internal(&self, spool).await {
                         Ok(count) if count > 0 => {
@@ -490,16 +522,16 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         &self,
         status: Option<empath_common::DeliveryStatus>,
     ) -> Vec<crate::DeliveryInfo> {
-        let all_messages = self.queue.all_messages();
-
-        if let Some(filter_status) = status {
-            all_messages
-                .into_iter()
-                .filter(|info| info.status == filter_status)
-                .collect()
-        } else {
-            all_messages
-        }
+        self.queue
+            .queue
+            .iter()
+            .filter(|entry| {
+                status
+                    .as_ref()
+                    .is_none_or(|filter| entry.value().status == *filter)
+            })
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 
     fn update_status(
@@ -536,5 +568,9 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
 
     fn domains(&self) -> &DomainConfigRegistry {
         &self.domains
+    }
+
+    fn request_process_now(&self) {
+        Self::request_process_now(self);
     }
 }

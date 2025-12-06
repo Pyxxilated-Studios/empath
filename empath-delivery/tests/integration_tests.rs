@@ -122,7 +122,7 @@ async fn test_delivery_with_mock_dns_resolver_integration() {
 
     // Verify the processor was initialized correctly
     // The queue starts empty
-    assert!(processor.queue().all_messages().is_empty());
+    assert!(processor.queue().is_empty());
 }
 
 #[test]

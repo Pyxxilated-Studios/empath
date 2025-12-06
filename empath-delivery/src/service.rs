@@ -115,4 +115,7 @@ pub trait DeliveryQueryService: Send + Sync {
     ///
     /// Used by domain management commands.
     fn domains(&self) -> &DomainConfigRegistry;
+
+    /// Request an immediate scan/process cycle (used by control interface)
+    fn request_process_now(&self);
 }

@@ -5,12 +5,15 @@ Last updated: 2025-12-04 (rewritten for an actionable view). See `docs/COMPLETED
 Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] done.
 
 ## P1 — Focus Now
+- [x] BUG-CTL-AGE: Fix queue/spool age calculations to avoid `u64` underflow when clocks skew or spool timestamps are in the future. Status: control stats now use `SystemTime` with saturation; add regression coverage.
+- [x] PERF-QUEUE-CLONE: Stop cloning the entire delivery queue on every scan. Status: processor iterates DashMap in place, pending items cloned only; removed `all_messages()` helper.
+- [ ] PERF-CTL-STATS: Stream/page control queue/spool listings and avoid reading full messages when not needed. Success: list/stats stay responsive on large queues; body/header reads are optional.
 - [ ] NEW-WASM-02: `empath-wasm-guest` helper crate (proc macro + host bindings). Effort ~3d. Success: ergonomic Context API, reject/accept mapping, example module rewritten, docs/migration.
 - [ ] NEW-WASM-03: Multi-language WASM examples (Go/TinyGo, C/Emscripten, AssemblyScript). Effort ~4d. Success: each builds <100KB, README with toolchain steps, tests/CI hook.
 - [x] NEW-WASM-13: WASM coverage parity. Recently added: timeout enforcement test, memory-limit enforcement (integration), event error-path tests, context mutation edge cases, poisoned mutex regression, invalid SMTP code clamping, memory growth limit unit test.
 - [ ] NEW-18: Load & stress testing. Use k6/Locust; measure throughput (1k/10k/100k msg/day), CPU/mem/disk. Add docs + (optional) CI smoke.
 - [ ] 2.2 Connection pooling for SMTP client. Pool per-domain with idle cleanup, health check, metrics (hits/misses/size).
-- [ ] 0.12 Control socket commands. Remaining: config reload, log level adjust, connection stats, rate-limit adjust.
+- [ ] 0.12 Control socket commands. ProcessNow now triggers immediate scan/process; remaining: config reload, log level adjust, connection stats, rate-limit adjust.
 - [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 - [ ] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard.
 - [ ] NEW-23: Outbound bindings. Configurable binding definitions (source IP/interface + TLS/helo), mapping rules (static/domain/module override), stored per message for retries/DSN, SMTP client bind support, metrics/control listing, docs + tests.
@@ -30,6 +33,9 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [wip] NEW-10: Nightly feature stability plan. Added `docs/NIGHTLY_FEATURES.md`; stable CI lane (`stable-check`) added; low-friction gates removed (`result_option_map_or_default`, `iter_advance_by`, `ascii_char`, `once_cell_try`, `bstr`); remaining: associated_type_defaults, slice_pattern, fn_traits, unboxed_closures.
 
 ## P2 — Next Up / Blocked
+- [ ] DX-CTL-AUDIT: Factor control handler audit user/uid lookup into a helper to remove repeated unsafe blocks and keep audit metadata consistent.
+- [ ] DX-CTL-API: Make control handler commands accept `&str` where possible (e.g., retry/delete) to reduce unnecessary `String` allocations.
+- [ ] DX-CTL-SELECT: Deduplicate the `tokio::select!` branches in `Empath::run` so health-enabled and disabled flows share the same branch list.
 - [ ] NEW-WASM-15: Event registration macro to centralize event definitions and mappings (Ev enum, WIT names, handlers).
 - [ ] NEW-WASM-16: Split WIT context (read-only vs mutable or event-specific views) with compatibility plan.
 - [ ] NEW-WASM-04: Component Model with WIT interfaces. Optional but aligns with NEW-WASM-16.

@@ -110,29 +110,11 @@ pub async fn process_queue_internal(
 
     // Vector to collect messages ready for parallel delivery
     let mut pending_messages = Vec::new();
+    let mut to_persist = Vec::new();
+    let mut oldest_pending_age_secs = 0u64;
 
-    // Get all messages to check for expiration and retry timing
-    let all_messages = processor.queue.all_messages();
-
-    // Calculate and update the oldest pending message age
-    if let Some(metrics) = &processor.metrics {
-        let oldest_age_secs = all_messages
-            .iter()
-            .filter(|msg| {
-                matches!(
-                    msg.status,
-                    DeliveryStatus::Pending | DeliveryStatus::Retry { .. }
-                )
-            })
-            .filter_map(|msg| now.duration_since(msg.queued_at).ok())
-            .map(|duration| duration.as_secs())
-            .max()
-            .unwrap_or(0);
-
-        metrics.update_oldest_message_age(oldest_age_secs);
-    }
-
-    for info in all_messages {
+    for mut entry in processor.queue.queue.iter_mut() {
+        let info = entry.value_mut();
         // Skip messages that are already completed, failed, expired, or in progress
         if matches!(
             info.status,
@@ -142,6 +124,15 @@ pub async fn process_queue_internal(
                 | DeliveryStatus::InProgress
         ) {
             continue;
+        }
+
+        // Track oldest age for pending/retry for metrics
+        if matches!(
+            info.status,
+            DeliveryStatus::Pending | DeliveryStatus::Retry { .. }
+        ) && let Ok(age) = now.duration_since(info.queued_at)
+        {
+            oldest_pending_age_secs = oldest_pending_age_secs.max(age.as_secs());
         }
 
         // Check if message has expired
@@ -157,21 +148,8 @@ pub async fn process_queue_internal(
                     expiration_secs = expiration_secs,
                     "Message expired, marking as Expired"
                 );
-                processor
-                    .queue
-                    .update_status(&info.message_id, DeliveryStatus::Expired);
-
-                // Persist the Expired status to spool
-                if let Err(e) =
-                    super::delivery::persist_delivery_state(&processor, &info.message_id, &spool)
-                        .await
-                {
-                    warn!(
-                        message_id = ?info.message_id,
-                        error = %e,
-                        "Failed to persist delivery state after marking message as Expired"
-                    );
-                }
+                info.status = DeliveryStatus::Expired;
+                to_persist.push(info.message_id.clone());
 
                 continue;
             }
@@ -201,28 +179,32 @@ pub async fn process_queue_internal(
                 attempt = info.attempt_count(),
                 "Time to retry delivery"
             );
-            processor
-                .queue
-                .update_status(&info.message_id, DeliveryStatus::Pending);
-
-            // Reset to first MX server for new retry cycle
-            processor.queue.reset_server_index(&info.message_id);
-
-            // Persist the Pending status for retry
-            if let Err(e) =
-                super::delivery::persist_delivery_state(&processor, &info.message_id, &spool).await
-            {
-                warn!(
-                    message_id = ?info.message_id,
-                    error = %e,
-                    "Failed to persist delivery state after marking message for retry"
-                );
-            }
+            info.status = DeliveryStatus::Pending;
+            info.reset_server_index();
+            to_persist.push(info.message_id.clone());
         }
 
         // Collect Pending messages for parallel processing
         if matches!(info.status, DeliveryStatus::Pending) {
-            pending_messages.push(info);
+            pending_messages.push(info.clone());
+        }
+    }
+
+    // Update the oldest pending age metric
+    if let Some(metrics) = &processor.metrics {
+        metrics.update_oldest_message_age(oldest_pending_age_secs);
+    }
+
+    // Persist any status changes that were made without holding DashMap locks across awaits
+    for message_id in to_persist {
+        if let Err(e) =
+            super::delivery::persist_delivery_state(&processor, &message_id, &spool).await
+        {
+            warn!(
+                message_id = ?message_id,
+                error = %e,
+                "Failed to persist delivery state after status change"
+            );
         }
     }
 

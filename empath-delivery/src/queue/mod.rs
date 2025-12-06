@@ -8,7 +8,6 @@ use std::{sync::Arc, time::SystemTime};
 use dashmap::DashMap;
 use empath_common::DeliveryStatus;
 use empath_spool::SpooledMessageId;
-use empath_tracing::traced;
 
 use crate::{dns::MailServer, types::DeliveryInfo};
 
@@ -124,15 +123,6 @@ impl DeliveryQueue {
         self.queue
             .iter()
             .filter(|entry| entry.value().status == DeliveryStatus::Pending)
-            .map(|entry| entry.value().clone())
-            .collect()
-    }
-
-    /// Get all messages with their current status
-    #[traced(instrument(ret, level = tracing::Level::TRACE))]
-    pub fn all_messages(&self) -> Vec<DeliveryInfo> {
-        self.queue
-            .iter()
             .map(|entry| entry.value().clone())
             .collect()
     }

@@ -3,7 +3,11 @@
 //! This module implements the `CommandHandler` trait to process control requests
 //! for managing the running MTA instance.
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime},
+};
 
 use async_trait::async_trait;
 use empath_common::{context::Context, internal};
@@ -280,12 +284,15 @@ impl EmpathControlHandler {
             }
             QueueCommand::Stats => Ok(self.handle_stats_command()),
             QueueCommand::ProcessNow => {
-                // Note: Manual queue triggering not yet implemented
-                // Queue processing happens automatically based on scan_interval and process_interval
+                self.delivery.request_process_now();
+                tracing::event!(
+                    tracing::Level::INFO,
+                    user = %user,
+                    uid = %uid,
+                    "Manual queue process trigger received"
+                );
                 Ok(Response::data(ResponseData::Message(
-                    "Queue processing is automatic. Use 'queue stats' to view processing status. \
-                    Manual triggering will be available in a future release."
-                        .to_string(),
+                    "Triggered immediate queue scan and process".to_string(),
                 )))
             }
         };
@@ -575,17 +582,7 @@ impl EmpathControlHandler {
         // Find oldest message
         let oldest_age = all_info
             .iter()
-            .map(|info| {
-                let now_ms = u64::try_from(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis(),
-                )
-                .unwrap_or_default();
-                let spooled_ms = info.message_id.timestamp_ms();
-                (now_ms - spooled_ms) / 1000
-            })
+            .map(|info| Self::age_secs_from_timestamp(info.message_id.timestamp_ms()))
             .max();
 
         let stats = empath_control::protocol::QueueStats {
@@ -878,17 +875,7 @@ impl EmpathControlHandler {
             }
 
             // Track oldest message
-            let age_secs = {
-                let now_ms = u64::try_from(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis(),
-                )
-                .unwrap_or_default();
-                let spooled_ms = msg_id.timestamp_ms();
-                (now_ms - spooled_ms) / 1000
-            };
+            let age_secs = Self::age_secs_from_timestamp(msg_id.timestamp_ms());
             oldest_age = Some(oldest_age.map_or(age_secs, |current| current.max(age_secs)));
         }
 
@@ -969,5 +956,14 @@ impl EmpathControlHandler {
         };
 
         Ok(Response::data(ResponseData::Message(message)))
+    }
+
+    /// Calculate age in seconds from a ULID timestamp, saturating at zero on clock skew
+    fn age_secs_from_timestamp(timestamp_ms: u64) -> u64 {
+        let spooled_at = SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp_ms);
+        SystemTime::now()
+            .duration_since(spooled_at)
+            .unwrap_or(Duration::ZERO)
+            .as_secs()
     }
 }
