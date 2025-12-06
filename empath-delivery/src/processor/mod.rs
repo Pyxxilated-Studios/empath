@@ -534,6 +534,18 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
             .collect()
     }
 
+    fn list_messages_iter(
+        &self,
+        status: Option<empath_common::DeliveryStatus>,
+    ) -> Box<dyn Iterator<Item = crate::DeliveryInfo> + '_> {
+        let iter = self.queue.queue.iter().filter(move |entry| {
+            status
+                .as_ref()
+                .is_none_or(|filter| entry.value().status == *filter)
+        });
+        Box::new(iter.map(|entry| entry.value().clone()))
+    }
+
     fn update_status(
         &self,
         message_id: &empath_spool::SpooledMessageId,

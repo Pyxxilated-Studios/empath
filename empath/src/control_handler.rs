@@ -14,8 +14,8 @@ use std::{
 use async_trait::async_trait;
 use empath_common::{context::Context, internal};
 use empath_control::{
-    ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SystemCommand,
-    protocol::ResponseData, server::CommandHandler,
+    ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SpoolCommand,
+    SystemCommand, protocol::ResponseData, server::CommandHandler,
 };
 use empath_delivery::DeliveryQueryService;
 use empath_spool::BackingStore;
@@ -374,14 +374,19 @@ impl EmpathControlHandler {
                 include_headers,
                 include_body_preview,
             } => {
-                self.handle_view_command(spool, &message_id, include_headers, include_body_preview)
-                    .await
+                self.handle_view_command(
+                    spool,
+                    message_id.as_ref(),
+                    include_headers,
+                    include_body_preview,
+                )
+                .await
             }
             QueueCommand::Retry { message_id, force } => {
-                self.handle_retry_command(&message_id, force)
+                self.handle_retry_command(message_id.as_ref(), force)
             }
             QueueCommand::Delete { message_id } => {
-                self.handle_delete_command(spool, &message_id).await
+                self.handle_delete_command(spool, message_id.as_ref()).await
             }
             QueueCommand::Stats => Ok(self.handle_stats_command()),
             QueueCommand::ProcessNow => {
@@ -415,18 +420,12 @@ impl EmpathControlHandler {
         page_size: Option<usize>,
     ) -> empath_control::Result<Response> {
         // Get all messages from queue
-        let all_info = self.delivery.list_messages(None);
-        internal!(level = TRACE, "{all_info:?}");
+        let all_info = self.delivery.list_messages_iter(None);
 
         // Filter by status if requested
-        let mut filtered_info: Vec<_> = if let Some(status) = status_filter {
-            all_info
-                .into_iter()
-                .filter(|info| info.status.matches_filter(status))
-                .collect()
-        } else {
-            all_info
-        };
+        let mut filtered_info: Vec<_> = all_info
+            .filter(|info| status_filter.is_none_or(|status| info.status.matches_filter(status)))
+            .collect();
         internal!(level = TRACE, "{filtered_info:?}");
         filtered_info.sort_by(|a, b| a.message_id.cmp(&b.message_id));
 
@@ -769,7 +768,7 @@ impl EmpathControlHandler {
     /// Handle spool management commands
     async fn handle_spool_command(
         &self,
-        command: empath_control::SpoolCommand,
+        command: SpoolCommand,
     ) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
         audit!(INFO, "Control command: Spool", command = ?command);
@@ -786,27 +785,30 @@ impl EmpathControlHandler {
         };
 
         let result = match command {
-            empath_control::SpoolCommand::List {
+            SpoolCommand::List {
                 status_filter,
                 page,
                 page_size,
             } => {
-                self.handle_spool_list_command(spool, status_filter, page, page_size)
+                self.handle_spool_list_command(spool, status_filter.as_deref(), page, page_size)
                     .await
             }
-            empath_control::SpoolCommand::View {
+            SpoolCommand::View {
                 message_id,
                 include_headers,
                 include_body_preview,
             } => {
                 // Reuse queue view logic but directly from spool
-                self.handle_view_command(spool, &message_id, include_headers, include_body_preview)
-                    .await
+                self.handle_view_command(
+                    spool,
+                    message_id.as_ref(),
+                    include_headers,
+                    include_body_preview,
+                )
+                .await
             }
-            empath_control::SpoolCommand::CleanupCompleted => {
-                self.handle_spool_cleanup_command(spool).await
-            }
-            empath_control::SpoolCommand::Stats => self.handle_spool_stats_command(spool).await,
+            SpoolCommand::CleanupCompleted => self.handle_spool_cleanup_command(spool).await,
+            SpoolCommand::Stats => self.handle_spool_stats_command(spool).await,
         };
 
         // Audit log: Record command result
@@ -826,7 +828,7 @@ impl EmpathControlHandler {
     async fn handle_spool_list_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-        status_filter: Option<String>,
+        status_filter: Option<&str>,
         page: Option<usize>,
         page_size: Option<usize>,
     ) -> empath_control::Result<Response> {
@@ -883,7 +885,7 @@ impl EmpathControlHandler {
                     });
 
             // Apply status filter if specified
-            if let Some(ref filter) = status_filter {
+            if let Some(filter) = status_filter {
                 if let Some(ref msg_status) = status {
                     if !msg_status.contains(filter) {
                         continue;

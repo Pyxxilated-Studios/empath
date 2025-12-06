@@ -118,12 +118,11 @@ impl DeliveryQueue {
         }
     }
 
-    /// Get all pending messages
-    pub fn pending_messages(&self) -> Vec<DeliveryInfo> {
+    /// Get an iterator over pending messages without cloning the map
+    pub fn pending_messages_iter(&self) -> impl Iterator<Item = DeliveryInfo> + '_ {
         self.queue
             .iter()
             .filter(|entry| entry.value().status == DeliveryStatus::Pending)
             .map(|entry| entry.value().clone())
-            .collect()
     }
 }

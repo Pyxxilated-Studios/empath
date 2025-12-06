@@ -16,8 +16,8 @@ use empath_common::context::{
     COMPLETED_STR, EXPIRED_STR, FAILED_STR, IN_PROGRESS_STR, PENDING_STR, RETRY_STR,
 };
 use empath_control::{
-    ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, Request, RequestCommand, ResponsePayload,
-    SystemCommand, protocol::ResponseData,
+    ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, QueueCommand, Request, RequestCommand,
+    ResponsePayload, SpoolCommand, SystemCommand, protocol::ResponseData,
 };
 
 /// Command-line utility for managing the Empath MTA
@@ -472,7 +472,7 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
 
 /// Handle queue stats watch mode
 async fn handle_queue_stats_watch(client: &ControlClient, interval: u64) -> anyhow::Result<()> {
-    use empath_control::{QueueCommand, protocol::ResponseData};
+    use empath_control::protocol::ResponseData;
 
     loop {
         // Clear screen
@@ -505,8 +505,6 @@ async fn handle_queue_stats_watch(client: &ControlClient, interval: u64) -> anyh
 
 /// Build queue command request from action
 fn build_queue_request(action: &QueueAction) -> anyhow::Result<Request> {
-    use empath_control::QueueCommand;
-
     let command = match action {
         QueueAction::List {
             status,
@@ -657,8 +655,6 @@ async fn handle_spool_command_direct(socket_path: &str, action: SpoolAction) -> 
 
 /// Build spool command request from action
 fn build_spool_request(action: &SpoolAction) -> Request {
-    use empath_control::SpoolCommand;
-
     let command = match action {
         SpoolAction::List {
             status,

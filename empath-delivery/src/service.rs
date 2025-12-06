@@ -49,6 +49,13 @@ pub trait DeliveryQueryService: Send + Sync {
     /// A vector of delivery information for all matching messages.
     fn list_messages(&self, status: Option<DeliveryStatus>) -> Vec<DeliveryInfo>;
 
+    /// Borrowing iterator over queue entries to avoid cloning when only
+    /// read-only access is needed (e.g., listing).
+    fn list_messages_iter(
+        &self,
+        status: Option<DeliveryStatus>,
+    ) -> Box<dyn Iterator<Item = DeliveryInfo> + '_>;
+
     /// Update the delivery status of a message
     ///
     /// This is used by control commands like `retry` to reset failed

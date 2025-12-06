@@ -67,11 +67,7 @@ async fn test_queue_list_with_status_filter() {
             page,
             page_size,
         }) => {
-            assert_eq!(
-                status_filter,
-                Some("failed".to_string()),
-                "Expected 'failed' status filter"
-            );
+            assert_eq!(status_filter.as_deref(), Some("failed"));
             assert_eq!(page, Some(2));
             assert_eq!(page_size, Some(25));
         }
