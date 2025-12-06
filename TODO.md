@@ -13,7 +13,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-WASM-13: WASM coverage parity. Recently added: timeout enforcement test, memory-limit enforcement (integration), event error-path tests, context mutation edge cases, poisoned mutex regression, invalid SMTP code clamping, memory growth limit unit test.
 - [ ] NEW-18: Load & stress testing. Use k6/Locust; measure throughput (1k/10k/100k msg/day), CPU/mem/disk. Add docs + (optional) CI smoke.
 - [ ] 2.2 Connection pooling for SMTP client. Pool per-domain with idle cleanup, health check, metrics (hits/misses/size).
-- [x] 0.12 Control socket commands. Added config reload trigger (graceful shutdown), log level adjust, connection stats, and rate-limit adjust.
+- [x] 0.12 Control socket commands. Added config reload (domains/rate limits), log level adjust, connection stats, and rate-limit adjust. Full multi-component reload follow-up noted.
 - [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 - [ ] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard.
 - [ ] NEW-23: Outbound bindings. Configurable binding definitions (source IP/interface + TLS/helo), mapping rules (static/domain/module override), stored per message for retries/DSN, SMTP client bind support, metrics/control listing, docs + tests.
@@ -27,6 +27,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-25: SMTP STARTTLS policy tests. Added runtime coverage for require/allow/disable STARTTLS negotiation paths (including disabled policy skip) and RON serde coverage for TLS policy config; banner hostname validated via `BannerHostname` newtype.
 - [ ] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
 - [ ] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
+- [ ] 0.12a Full config reload. Extend control reload to reapply all config facets in-process (SMTP/controller timeouts, DNS, delivery retry/circuit breaker, metrics/health/audit) or clearly mark restart-required fields; add tests and docs.
 - [x] DX-02: Fast inner-loop helpers. Added `scripts/check-changed.sh` and `just lint-quick`/`just check-changed` to run fmt/clippy/tests on changed crates (workspace fallback).
 - [x] DOC-05: Operator runbook. Added `docs/OPERATOR_RUNBOOK.md` with restart/health steps, common errors, control commands, and log filters; linked from README.
 - [wip] NEW-09: Newtype safety. Added validated newtypes (`EmailAddress`, `ServerId`, `BannerHostname`) in `empath-common`; SMTP session now uses `BannerHostname` for config/tests; SPF evaluator now accepts `EmailAddress`. Remaining: propagate to envelope sender/recipients and delivery identifiers.
