@@ -10,7 +10,11 @@ use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::fs;
 
-use crate::{SpoolError, ValidationError, r#trait::BackingStore, types::SpooledMessageId};
+use crate::{
+    SpoolError, ValidationError,
+    r#trait::{BackingStore, MessageMetadata},
+    types::SpooledMessageId,
+};
 
 /// File-based backing store implementation
 ///
@@ -416,6 +420,41 @@ impl BackingStore for FileBackingStore {
 
         let metadata = fs::metadata(&data_path).await?;
         Ok(usize::try_from(metadata.len()).ok())
+    }
+
+    async fn read_metadata_summary(
+        &self,
+        msg_id: &SpooledMessageId,
+    ) -> crate::Result<(MessageMetadata, Option<usize>)> {
+        let tracking_str = msg_id.to_string();
+        let meta_filename = format!("{tracking_str}.bin");
+        let meta_path = self.path.join(&meta_filename);
+
+        let meta_content = fs::read(&meta_path).await?;
+        let (mut context, _): (Context, _) =
+            bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
+                .map_err(crate::error::SerializationError::from)?;
+        context.data = None;
+
+        let meta = MessageMetadata {
+            status: context.delivery.as_ref().map(|d| format!("{:?}", d.status)),
+            domain: context.delivery.as_ref().map(|d| d.domain.to_string()),
+            attempts: context
+                .delivery
+                .as_ref()
+                .map(|d| u32::try_from(d.attempt_history.len()).unwrap_or_default()),
+        };
+
+        let size = {
+            let data_filename = format!("{tracking_str}.eml");
+            let data_path = self.path.join(&data_filename);
+            fs::metadata(&data_path)
+                .await
+                .ok()
+                .and_then(|m| usize::try_from(m.len()).ok())
+        };
+
+        Ok((meta, size))
     }
 
     /// Update an existing message's metadata in the spool
