@@ -27,7 +27,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-25: SMTP STARTTLS policy tests. Added runtime coverage for require/allow/disable STARTTLS negotiation paths (including disabled policy skip) and RON serde coverage for TLS policy config; banner hostname validated via `BannerHostname` newtype.
 - [ ] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
 - [ ] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
-- [ ] DX-02: Fast inner-loop helpers. `just lint-quick`/`just check-changed` to run fmt/clippy/tests on changed crates only.
+- [x] DX-02: Fast inner-loop helpers. Added `scripts/check-changed.sh` and `just lint-quick`/`just check-changed` to run fmt/clippy/tests on changed crates (workspace fallback).
 - [x] DOC-05: Operator runbook. Added `docs/OPERATOR_RUNBOOK.md` with restart/health steps, common errors, control commands, and log filters; linked from README.
 - [wip] NEW-09: Newtype safety. Added validated newtypes (`EmailAddress`, `ServerId`, `BannerHostname`) in `empath-common`; SMTP session now uses `BannerHostname` for config/tests; SPF evaluator now accepts `EmailAddress`. Remaining: propagate to envelope sender/recipients and delivery identifiers.
 - [wip] NEW-10: Nightly feature stability plan. Added `docs/NIGHTLY_FEATURES.md`; stable CI lane (`stable-check`) added; low-friction gates removed (`result_option_map_or_default`, `iter_advance_by`, `ascii_char`, `once_cell_try`, `bstr`); remaining: associated_type_defaults, slice_pattern, fn_traits, unboxed_closures.

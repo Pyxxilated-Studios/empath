@@ -201,6 +201,10 @@ lint:
 lint-fix:
     cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged
 
+# Fast clippy/fmt on changed crates (workspace fallback)
+lint-quick:
+    @./scripts/check-changed.sh lint
+
 # Run clippy on single crate
 lint-crate CRATE:
     cargo clippy -p {{CRATE}} --all-targets
@@ -248,6 +252,10 @@ test-e2e:
 # Run fast tests only (unit/integration, skip slow tests)
 test-fast:
     cargo test --lib --bins
+
+# Format + clippy + tests on changed crates (workspace fallback)
+check-changed:
+    @./scripts/check-changed.sh test
 
 # Run minimal smoke tests (quick validation)
 test-smoke:
