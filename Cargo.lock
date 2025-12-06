@@ -941,6 +941,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "pretty_assertions",
+ "ron",
  "serde",
  "thiserror 2.0.17",
  "tokio",

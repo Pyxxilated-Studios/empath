@@ -113,6 +113,7 @@ opentelemetry_sdk = { version = "0.31", default-features = false, features = [
 opentelemetry-otlp = "0.31"
 parking_lot = "0.12"
 phf = { version = "0.13", default-features = false, features = ["macros"] }
+pretty_assertions = "1"
 proptest = "1.9"
 pyo3 = { version = "0.27", default-features = false, features = [
     "auto-initialize",

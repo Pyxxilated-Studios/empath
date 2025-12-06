@@ -212,4 +212,41 @@ mod tests {
             cloned.certificate.accept_invalid_certs
         );
     }
+
+    #[test]
+    #[allow(clippy::panic)]
+    fn test_tls_policy_serde_variants() {
+        let cases = [
+            ("opportunistic", TlsPolicy::Opportunistic),
+            ("required", TlsPolicy::Required),
+            ("disabled", TlsPolicy::Disabled),
+        ];
+
+        for (json, expected) in cases {
+            let parsed: TlsPolicy = match ron::from_str(json) {
+                Ok(value) => value,
+                Err(e) => panic!("should deserialize: {e}"),
+            };
+            assert_eq!(parsed, expected, "ron: {json}");
+
+            let serialized = match ron::to_string(&parsed) {
+                Ok(value) => value,
+                Err(e) => panic!("should serialize: {e}"),
+            };
+            assert_eq!(serialized, json);
+        }
+    }
+
+    #[test]
+    #[allow(clippy::panic)]
+    fn test_tls_policy_rejects_unknown_variant() {
+        let err = match ron::from_str::<TlsPolicy>("strict") {
+            Ok(value) => panic!("expected error, got {value:?}"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("unknown variant"),
+            "unexpected error: {err}"
+        );
+    }
 }

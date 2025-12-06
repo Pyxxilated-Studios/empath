@@ -318,4 +318,13 @@ mod tests {
             EmailValidationError::InvalidFormat("banner hostname cannot contain whitespace")
         );
     }
+
+    #[test]
+    fn banner_hostname_rejects_empty() {
+        let err = BannerHostname::new("").unwrap_err();
+        assert_eq!(
+            err,
+            EmailValidationError::InvalidFormat("banner hostname cannot be empty")
+        );
+    }
 }
