@@ -170,7 +170,7 @@ pub async fn prepare_message(
     empath_common::audit::log_delivery_attempt(
         &message_id.to_string(),
         &info.recipient_domain,
-        &mx_address,
+        &mx_server_id,
         usize::try_from(info.attempt_count()).unwrap_or(0) + 1, // Next attempt number (1-based)
     );
 
@@ -233,7 +233,7 @@ pub async fn prepare_message(
             empath_common::audit::log_delivery_success(
                 &message_id.to_string(),
                 &info.recipient_domain,
-                &mx_address,
+                &mx_server_id,
                 usize::try_from(info.attempt_count()).unwrap_or(0) + 1,
                 duration_ms,
             );

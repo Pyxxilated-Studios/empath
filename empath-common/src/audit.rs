@@ -19,6 +19,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::{
+    Domain,
+    email::{EmailAddress, ServerId},
+};
+
 /// Audit logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(
@@ -77,7 +82,7 @@ pub fn config() -> Arc<AuditConfig> {
 
 /// Redact email address if redaction is enabled
 #[must_use]
-pub fn redact_email(email: &str, redact: bool) -> String {
+pub fn redact_email(email: &EmailAddress, redact: bool) -> String {
     if redact {
         // Keep domain but redact local part
         if let Some((_, domain)) = email.split_once('@') {
@@ -92,7 +97,7 @@ pub fn redact_email(email: &str, redact: bool) -> String {
 
 /// Redact multiple email addresses
 #[must_use]
-pub fn redact_emails(emails: &[String], redact: bool) -> Vec<String> {
+pub fn redact_emails(emails: &[EmailAddress], redact: bool) -> Vec<String> {
     emails.iter().map(|e| redact_email(e, redact)).collect()
 }
 
@@ -109,8 +114,8 @@ pub fn redact_emails(emails: &[String], redact: bool) -> Vec<String> {
 /// - `from_ip`: Client IP address
 pub fn log_message_received(
     message_id: &str,
-    sender: &str,
-    recipients: &[String],
+    sender: Option<&EmailAddress>,
+    recipients: &[EmailAddress],
     size: usize,
     from_ip: &str,
 ) {
@@ -119,7 +124,8 @@ pub fn log_message_received(
         return;
     }
 
-    let redacted_sender = redact_email(sender, config.redact_sender);
+    let redacted_sender =
+        sender.map_or_else(String::new, |s| redact_email(s, config.redact_sender));
     let redacted_recipients = redact_emails(recipients, config.redact_recipients);
 
     tracing::event!(
@@ -144,7 +150,7 @@ pub fn log_message_received(
 /// - `domain`: Recipient domain
 /// - `server`: MX server address (host:port)
 /// - `delivery_attempt`: Attempt number (1-based)
-pub fn log_delivery_attempt(message_id: &str, domain: &str, server: &str, attempt: usize) {
+pub fn log_delivery_attempt(message_id: &str, domain: &Domain, server: &ServerId, attempt: usize) {
     let config = config();
     if !config.enabled {
         return;
@@ -173,8 +179,8 @@ pub fn log_delivery_attempt(message_id: &str, domain: &str, server: &str, attemp
 /// - `duration_ms`: Total delivery duration in milliseconds
 pub fn log_delivery_success(
     message_id: &str,
-    domain: &str,
-    server: &str,
+    domain: &Domain,
+    server: &ServerId,
     attempt: usize,
     duration_ms: u128,
 ) {
@@ -207,7 +213,7 @@ pub fn log_delivery_success(
 /// - `status`: Final delivery status (Failed/Retry)
 pub fn log_delivery_failure(
     message_id: &str,
-    domain: &str,
+    domain: &Domain,
     error: &str,
     attempt: usize,
     status: &str,
@@ -230,25 +236,25 @@ pub fn log_delivery_failure(
 }
 
 #[cfg(test)]
+#[allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_redact_email() {
-        assert_eq!(
-            redact_email("user@example.com", true),
-            "[REDACTED]@example.com"
-        );
-        assert_eq!(redact_email("user@example.com", false), "user@example.com");
-        assert_eq!(redact_email("invalid", true), "[REDACTED]");
-        assert_eq!(redact_email("invalid", false), "invalid");
+        let email = EmailAddress::new("user@example.com")
+            .unwrap_or_else(|e| panic!("expected valid email: {e}"));
+        assert_eq!(redact_email(&email, true), "[REDACTED]@example.com");
+        assert_eq!(redact_email(&email, false), "user@example.com");
     }
 
     #[test]
     fn test_redact_emails() {
         let emails = vec![
-            "user1@example.com".to_string(),
-            "user2@example.org".to_string(),
+            EmailAddress::new("user1@example.com")
+                .unwrap_or_else(|e| panic!("expected valid email: {e}")),
+            EmailAddress::new("user2@example.org")
+                .unwrap_or_else(|e| panic!("expected valid email: {e}")),
         ];
 
         let redacted = redact_emails(&emails, true);
@@ -279,16 +285,20 @@ mod tests {
             redact_message_content: false,
         });
 
+        let sender = EmailAddress::new("sender@example.com")
+            .unwrap_or_else(|e| panic!("expected valid email: {e}"));
+        let recipients = vec![
+            EmailAddress::new("rcpt@example.com")
+                .unwrap_or_else(|e| panic!("expected valid email: {e}")),
+        ];
+        let domain = Domain::new("example.com");
+        let server = ServerId::new("mx1.example.com:25")
+            .unwrap_or_else(|e| panic!("expected valid server id: {e}"));
+
         // These should not panic even when disabled
-        log_message_received(
-            "test-id",
-            "sender@example.com",
-            &["rcpt@example.com".to_string()],
-            1024,
-            "192.168.1.1",
-        );
-        log_delivery_attempt("test-id", "example.com", "mx1.example.com:25", 1);
-        log_delivery_success("test-id", "example.com", "mx1.example.com:25", 1, 1000);
-        log_delivery_failure("test-id", "example.com", "connection refused", 1, "Failed");
+        log_message_received("test-id", Some(&sender), &recipients, 1024, "192.168.1.1");
+        log_delivery_attempt("test-id", &domain, &server, 1);
+        log_delivery_success("test-id", &domain, &server, 1, 1000);
+        log_delivery_failure("test-id", &domain, "connection refused", 1, "Failed");
     }
 }

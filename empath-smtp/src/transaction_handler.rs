@@ -210,14 +210,14 @@ impl DefaultSmtpTransactionHandler {
 
         // Audit log: Message received and spooled
         if let Some(id) = &tracking_id {
-            let sender = ctx.sender();
-            let recipients = ctx.recipients();
+            let sender = ctx.sender_email();
+            let recipients = ctx.recipient_emails();
             let size = ctx.data.as_ref().map_or(0, |d| d.len());
             let from_ip = self.peer.to_string();
 
             empath_common::audit::log_message_received(
                 &id.to_string(),
-                &sender,
+                sender,
                 &recipients,
                 size,
                 &from_ip,
