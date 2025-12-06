@@ -75,7 +75,7 @@ cap-std = "3.4"
 cbindgen = { version = "0.29", default-features = false }
 charset = "0.1.5"
 chrono = "0.4"
-clap = { version = "4", default-features = false, features = ["derive", "std"] }
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 dashmap = "6"
 empath = { path = "empath", version = "0" }

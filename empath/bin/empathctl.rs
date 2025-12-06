@@ -22,9 +22,14 @@ use empath_control::{
 
 /// Command-line utility for managing the Empath MTA
 #[derive(Parser, Debug)]
-#[command(name = "empathctl")]
-#[command(about = "Manage the Empath MTA", long_about = None)]
-#[command(version)]
+#[command(
+    name = "empathctl",
+    about = "Manage the Empath MTA",
+    long_about = None,
+    version,
+    arg_required_else_help = true,
+    subcommand_required = true
+)]
 struct Cli {
     /// Path to the spool directory (for queue commands)
     #[arg(short, long, default_value = "/tmp/spool/empath")]
