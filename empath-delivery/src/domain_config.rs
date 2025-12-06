@@ -154,6 +154,11 @@ impl DomainConfigRegistry {
             .into_iter()
     }
 
+    /// Clear all domain configurations
+    pub fn clear(&self) {
+        self.domains.clear();
+    }
+
     /// Convert to `HashMap` (used during serialization)
     #[must_use]
     pub fn to_map(&self) -> HashMap<String, DomainConfig> {

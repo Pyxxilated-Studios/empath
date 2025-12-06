@@ -133,4 +133,10 @@ pub trait DeliveryQueryService: Send + Sync {
         messages_per_second: f64,
         burst: u32,
     ) -> Result<(), String>;
+
+    /// Replace the full rate limit configuration (global + per-domain).
+    fn replace_rate_limit_config(&self, config: crate::rate_limiter::RateLimitConfig);
+
+    /// Replace domain configuration registry contents.
+    fn replace_domains(&self, registry: crate::DomainConfigRegistry);
 }

@@ -5,22 +5,24 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 
 use async_trait::async_trait;
-use empath_common::{Signal, context::Context, internal};
+use empath_common::{context::Context, internal};
 use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SystemCommand,
     protocol::ResponseData, server::CommandHandler,
 };
 use empath_delivery::DeliveryQueryService;
 use empath_spool::BackingStore;
+use ron::Options;
 use tracing_subscriber::filter::LevelFilter;
 
-use crate::controller::SHUTDOWN_BROADCAST;
+use crate::controller::Empath;
 
 /// Handler for control commands
 pub struct EmpathControlHandler {
@@ -65,6 +67,61 @@ impl AuditIdentity {
 
         Self { user, uid }
     }
+}
+
+fn reload_config_from_disk(delivery: &Arc<dyn DeliveryQueryService>) -> Result<String, String> {
+    let config_path = find_config_file().map_err(|e| e.to_string())?;
+    let config_content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config from {}: {e}", config_path.display()))?;
+
+    let empath: Empath = Options::default()
+        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+        .from_str(&config_content)
+        .map_err(|e| format!("Failed to parse config: {e}"))?;
+
+    let (domains, rate_limit) = empath.delivery_reload_settings();
+
+    delivery.replace_domains(domains);
+    delivery.replace_rate_limit_config(rate_limit);
+
+    Ok(format!(
+        "Configuration reloaded from {}",
+        config_path.display()
+    ))
+}
+
+fn find_config_file() -> anyhow::Result<PathBuf> {
+    if let Ok(env_path) = std::env::var("EMPATH_CONFIG") {
+        let path = PathBuf::from(env_path);
+        if path.exists() {
+            return Ok(path);
+        }
+        anyhow::bail!(
+            "EMPATH_CONFIG points to non-existent file: {}",
+            path.display()
+        );
+    }
+
+    let default_paths = vec![
+        PathBuf::from("./empath.config.ron"),
+        PathBuf::from("/etc/empath/empath.config.ron"),
+    ];
+
+    for path in &default_paths {
+        if path.exists() {
+            return Ok(path.clone());
+        }
+    }
+
+    let paths_tried = default_paths
+        .iter()
+        .map(|p| format!("  - {}", p.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    anyhow::bail!(
+        "No configuration file found. Tried:\n  - EMPATH_CONFIG environment variable\n{paths_tried}"
+    )
 }
 
 impl EmpathControlHandler {
@@ -234,14 +291,10 @@ impl EmpathControlHandler {
                 ))))
             }
 
-            SystemCommand::ReloadConfig => {
-                SHUTDOWN_BROADCAST
-                    .send(Signal::Shutdown)
-                    .map_err(|e| ControlError::ServerError(format!("Failed to reload: {e}")))?;
-                Ok(Response::data(ResponseData::Message(
-                    "Configuration reload requested; shutting down".to_string(),
-                )))
-            }
+            SystemCommand::ReloadConfig => match reload_config_from_disk(&self.delivery) {
+                Ok(message) => Ok(Response::data(ResponseData::Message(message))),
+                Err(e) => Err(ControlError::ServerError(e)),
+            },
 
             SystemCommand::ConnectionStats => {
                 let stats = self.delivery.connection_stats();

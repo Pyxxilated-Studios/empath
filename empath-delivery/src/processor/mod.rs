@@ -596,4 +596,18 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
             .ok_or_else(|| "Rate limiter not initialized".to_string())?;
         limiter.update_limits(domain.as_deref(), messages_per_second, burst)
     }
+
+    fn replace_rate_limit_config(&self, config: crate::rate_limiter::RateLimitConfig) {
+        if let Some(limiter) = &self.rate_limiter {
+            limiter.replace_config(config);
+        }
+    }
+
+    fn replace_domains(&self, registry: crate::DomainConfigRegistry) {
+        // Clear current domains and replace with new registry contents
+        self.domains.clear();
+        for (domain, config) in registry.iter() {
+            self.domains.insert(domain, config);
+        }
+    }
 }

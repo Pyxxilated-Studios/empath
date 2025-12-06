@@ -261,6 +261,15 @@ impl RateLimiter {
         Ok(())
     }
 
+    /// Replace the full rate limit configuration (global + per-domain) and reset buckets.
+    pub fn replace_config(&self, config: RateLimitConfig) {
+        {
+            let mut cfg = self.config.write();
+            *cfg = config;
+        }
+        self.buckets.clear();
+    }
+
     /// Number of active rate-limit buckets
     #[must_use]
     pub fn bucket_count(&self) -> usize {

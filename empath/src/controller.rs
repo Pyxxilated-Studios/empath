@@ -241,4 +241,18 @@ impl Empath {
 
         ret
     }
+
+    /// Snapshot delivery-related config needed for in-process reloads.
+    #[must_use]
+    pub fn delivery_reload_settings(
+        &self,
+    ) -> (
+        empath_delivery::DomainConfigRegistry,
+        empath_delivery::RateLimitConfig,
+    ) {
+        (
+            self.delivery.domains.clone(),
+            self.delivery.rate_limit.clone(),
+        )
+    }
 }
