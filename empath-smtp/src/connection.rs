@@ -1,4 +1,7 @@
-use std::{fmt::Write, fs::File, io::BufReader, sync::Arc};
+use std::{
+    fmt::{Debug, Write},
+    sync::Arc,
+};
 
 use empath_common::tracing;
 use empath_tracing::traced;
@@ -7,7 +10,7 @@ use tokio_rustls::{
     TlsAcceptor,
     rustls::{
         ProtocolVersion, ServerConfig, ServerConnection, SupportedCipherSuite,
-        pki_types::{CertificateDer, PrivateKeyDer},
+        pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     },
     server::TlsStream,
 };
@@ -92,49 +95,33 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    fn load_certs<P: AsRef<std::path::Path>>(
+    fn load_certs<P: AsRef<std::path::Path> + Debug>(
         path: &P,
-    ) -> std::io::Result<Vec<CertificateDer<'static>>> {
-        rustls_pemfile::certs(&mut BufReader::new(File::open(path)?)).collect()
+    ) -> TlsResult<CertificateDer<'static>> {
+        CertificateDer::from_pem_file(path).map_err(|e| TlsError::KeyLoad {
+            path: format!("{path:?}"),
+            reason: e.to_string(),
+        })
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    fn load_keys<P: AsRef<std::path::Path>>(path: &P) -> TlsResult<PrivateKeyDer<'static>> {
-        let path_str = path.as_ref().display().to_string();
-        let mut reader = BufReader::new(File::open(path).map_err(|e| TlsError::KeyLoad {
-            path: path_str.clone(),
+    fn load_keys<P: AsRef<std::path::Path> + Debug>(path: &P) -> TlsResult<PrivateKeyDer<'static>> {
+        PrivateKeyDer::from_pem_file(path).map_err(|e| TlsError::KeyLoad {
+            path: format!("{path:?}"),
             reason: e.to_string(),
-        })?);
-
-        match rustls_pemfile::read_one(&mut reader).map_err(|e| TlsError::KeyLoad {
-            path: path_str.clone(),
-            reason: e.to_string(),
-        })? {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => Ok(PrivateKeyDer::Pkcs1(key)),
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => Ok(PrivateKeyDer::Pkcs8(key)),
-            Some(rustls_pemfile::Item::Sec1Key(key)) => Ok(PrivateKeyDer::Sec1(key)),
-            _ => Err(TlsError::KeyLoad {
-                path: path_str,
-                reason: "Unable to determine key file format (expected PKCS1, PKCS8, or SEC1)"
-                    .to_string(),
-            }),
-        }
+        })
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> TlsResult<(Self, TlsInfo)> {
         tracing::debug!("Upgrading connection ...");
 
-        let certs =
-            Self::load_certs(&tls_context.certificate).map_err(|e| TlsError::CertificateLoad {
-                path: tls_context.certificate.display().to_string(),
-                source: e,
-            })?;
+        let certs = Self::load_certs(&tls_context.certificate)?;
         let keys = Self::load_keys(&tls_context.key)?;
 
         let config = ServerConfig::builder()
             .with_no_client_auth()
-            .with_single_cert(certs, keys)?;
+            .with_single_cert(vec![certs], keys)?;
 
         let acceptor = TlsAcceptor::from(Arc::new(config));
 

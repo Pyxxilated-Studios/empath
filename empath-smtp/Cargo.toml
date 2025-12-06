@@ -27,7 +27,6 @@ empath-tracing.workspace = true
 ipnetwork.workspace = true
 phf.workspace = true
 rustls-native-certs.workspace = true
-rustls-pemfile.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

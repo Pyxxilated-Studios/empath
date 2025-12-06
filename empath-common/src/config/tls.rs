@@ -245,7 +245,9 @@ mod tests {
             Err(e) => e,
         };
         assert!(
-            err.to_string().contains("unknown variant"),
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("unknown variant"),
             "unexpected error: {err}"
         );
     }
