@@ -55,6 +55,23 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
         self.read(id).await
     }
 
+    /// Read metadata together with a size hint in a single call when supported.
+    ///
+    /// Default implementation calls [`read_metadata`] and falls back to
+    /// [`message_size`] when the returned context has no body loaded.
+    async fn read_metadata_with_size(
+        &self,
+        id: &SpooledMessageId,
+    ) -> crate::Result<(Context, Option<usize>)> {
+        let ctx = self.read_metadata(id).await?;
+        let size = if let Some(data) = ctx.data.as_ref() {
+            Some(data.len())
+        } else {
+            self.message_size(id).await?
+        };
+        Ok((ctx, size))
+    }
+
     /// Get the size of the message body in bytes without reading the full data
     ///
     /// Default implementation loads the full message and reports the size of

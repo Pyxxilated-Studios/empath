@@ -23,8 +23,8 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-23d: Control inspection for bindings. Control command to show binding selection for a queued message and toggle/disable a binding at runtime.
 - [ ] NEW-23e: Module binding ergonomics. Typed binding-name enum in FFI/WASM so modules can list/choose configured bindings; validate names with tests.
 - [ ] NEW-23f: Binding config linting. Detect unmapped/unknown binding names and missing interfaces at startup; emit warnings/errors early.
-- [ ] DX-CTL-ZERO-CLONE: Introduce borrowed queue/spool views (DashMap guards or streaming page iterators) so control list/view paths avoid cloning `DeliveryInfo`/contexts and extra `Vec` allocations.
-- [ ] DX-SPOOL-METADATA: Add a single metadata read path (size/status) to avoid per-message double I/O in spool listings and make filters operate on metadata without fetching bodies.
+- [x] DX-CTL-ZERO-CLONE: Introduce borrowed queue/spool views (DashMap guards or streaming page iterators) so control list/view paths avoid cloning `DeliveryInfo`/contexts and extra `Vec` allocations.
+- [x] DX-SPOOL-METADATA: Add a single metadata read path (size/status) to avoid per-message double I/O in spool listings and make filters operate on metadata without fetching bodies.
 - [x] DX-CTL-BORROW: Make control protocol filters/IDs borrow where possible (`QueueCommand`/`SpoolCommand` fields via serde borrowing) to avoid String allocations on hot paths.
 - [x] DX-CTL-ITER: Add borrowed iterators for delivery queue listings (`list_messages`/`pending_messages`) and update control handlers to avoid cloning `DeliveryInfo` for pagination.
 - [ ] NEW-24: Per-domain bounce classification. Track temp vs perm failures by domain, expose metrics, and feed retry policy tuning.

@@ -12,7 +12,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use empath_common::{context::Context, internal};
+use empath_common::context::Context;
 use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SpoolCommand,
     SystemCommand, protocol::ResponseData, server::CommandHandler,
@@ -419,25 +419,21 @@ impl EmpathControlHandler {
         page: Option<usize>,
         page_size: Option<usize>,
     ) -> empath_control::Result<Response> {
-        // Get all messages from queue
-        let all_info = self.delivery.list_messages_iter(None);
-
-        // Filter by status if requested
-        let mut filtered_info: Vec<_> = all_info
-            .filter(|info| status_filter.is_none_or(|status| info.status.matches_filter(status)))
-            .collect();
-        internal!(level = TRACE, "{filtered_info:?}");
-        filtered_info.sort_by(|a, b| a.message_id.cmp(&b.message_id));
+        // Fetch sorted identifiers filtered by status without cloning the full entries
+        let ids = self.delivery.list_message_ids(status_filter);
+        let total = ids.len();
 
         let (page, page_size) = Self::resolve_paging(page, page_size);
         let offset = page.saturating_sub(1).saturating_mul(page_size);
-        let total = filtered_info.len();
 
         // Convert to protocol types
         let mut messages = Vec::new();
-        for info in filtered_info.into_iter().skip(offset).take(page_size) {
+        for message_id in ids.into_iter().skip(offset).take(page_size) {
+            let Some(info) = self.delivery.get_message(&message_id) else {
+                continue;
+            };
             // Read message from spool to get details
-            let context = match spool.read_metadata(&info.message_id).await {
+            let (context, size) = match spool.read_metadata_with_size(&info.message_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     // Log warning but continue - message may have been deleted after queue read
@@ -451,19 +447,7 @@ impl EmpathControlHandler {
                 }
             };
 
-            let size = match spool.message_size(&info.message_id).await {
-                Ok(Some(size)) => size,
-                Ok(None) => 0,
-                Err(e) => {
-                    tracing::event!(
-                        tracing::Level::WARN,
-                        message_id = %info.message_id,
-                        error = %e,
-                        "Failed to read message size from spool during queue list"
-                    );
-                    0
-                }
-            };
+            let size = size.unwrap_or(0);
 
             let message = empath_control::protocol::QueueMessage {
                 id: info.message_id.to_string(),
@@ -844,7 +828,7 @@ impl EmpathControlHandler {
         let mut messages = Vec::new();
         for msg_id in message_ids {
             // Read each message
-            let context = match spool.read_metadata(&msg_id).await {
+            let (context, size) = match spool.read_metadata_with_size(&msg_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::event!(
@@ -856,20 +840,7 @@ impl EmpathControlHandler {
                     continue;
                 }
             };
-
-            let size = match spool.message_size(&msg_id).await {
-                Ok(Some(size)) => size,
-                Ok(None) => 0,
-                Err(e) => {
-                    tracing::event!(
-                        tracing::Level::WARN,
-                        message_id = %msg_id,
-                        error = %e,
-                        "Failed to read message size from spool during spool list"
-                    );
-                    0
-                }
-            };
+            let size = size.unwrap_or(0);
 
             // Extract status from delivery context (if present)
             let (status, domain, attempts) =

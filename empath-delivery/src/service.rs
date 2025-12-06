@@ -56,6 +56,10 @@ pub trait DeliveryQueryService: Send + Sync {
         status: Option<DeliveryStatus>,
     ) -> Box<dyn Iterator<Item = DeliveryInfo> + '_>;
 
+    /// Return sorted message identifiers for control pagination without
+    /// cloning full delivery records.
+    fn list_message_ids(&self, status_filter: Option<&str>) -> Vec<SpooledMessageId>;
+
     /// Update the delivery status of a message
     ///
     /// This is used by control commands like `retry` to reset failed

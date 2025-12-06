@@ -546,6 +546,20 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         Box::new(iter.map(|entry| entry.value().clone()))
     }
 
+    fn list_message_ids(&self, status_filter: Option<&str>) -> Vec<empath_spool::SpooledMessageId> {
+        let mut ids: Vec<_> = self
+            .queue
+            .queue
+            .iter()
+            .filter(|entry| {
+                status_filter.is_none_or(|filter| entry.value().status.matches_filter(filter))
+            })
+            .map(|entry| entry.key().clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
     fn update_status(
         &self,
         message_id: &empath_spool::SpooledMessageId,
