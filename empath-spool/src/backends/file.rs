@@ -1,4 +1,5 @@
 use std::{
+    convert::TryFrom,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -291,8 +292,10 @@ impl BackingStore for FileBackingStore {
             fs::write(&temp_data_path, b"").await?;
         }
 
-        // Serialize metadata to bincode
-        let metadata = bincode::serde::encode_to_vec(&context, bincode::config::legacy())
+        // Serialize metadata to bincode (omit body to keep metadata lightweight)
+        let mut metadata_context = context.clone();
+        metadata_context.data = None;
+        let metadata = bincode::serde::encode_to_vec(&metadata_context, bincode::config::legacy())
             .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
@@ -350,6 +353,28 @@ impl BackingStore for FileBackingStore {
         Ok(message_ids)
     }
 
+    /// Read message metadata from the spool without loading the body
+    ///
+    /// Only reads the `.bin` metadata file and explicitly clears the data field
+    /// to avoid loading the message body when not needed.
+    #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
+    async fn read_metadata(&self, msg_id: &SpooledMessageId) -> crate::Result<Context> {
+        let tracking_str = msg_id.to_string();
+        let meta_filename = format!("{tracking_str}.bin");
+        let meta_path = self.path.join(&meta_filename);
+
+        // Read and deserialize metadata
+        let meta_content = fs::read(&meta_path).await?;
+        let (mut context, _): (Context, _) =
+            bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
+                .map_err(crate::error::SerializationError::from)?;
+
+        // Ensure body is not retained from metadata (older files may contain it)
+        context.data = None;
+
+        Ok(context)
+    }
+
     /// Read a specific message from the spool
     ///
     /// Reads both the metadata (.bin) and data (.eml) files for a message.
@@ -364,18 +389,11 @@ impl BackingStore for FileBackingStore {
     /// you actually need the full data or just the metadata.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn read(&self, msg_id: &SpooledMessageId) -> crate::Result<Context> {
+        let mut context = self.read_metadata(msg_id).await?;
+
         let tracking_str = msg_id.to_string();
-        let meta_filename = format!("{tracking_str}.bin");
         let data_filename = format!("{tracking_str}.eml");
-
-        let meta_path = self.path.join(&meta_filename);
         let data_path = self.path.join(&data_filename);
-
-        // Read and deserialize metadata
-        let meta_content = fs::read(&meta_path).await?;
-        let (mut context, _): (Context, _) =
-            bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
-                .map_err(crate::error::SerializationError::from)?;
 
         // Read message data
         let data_bytes = fs::read(&data_path).await?;
@@ -388,6 +406,16 @@ impl BackingStore for FileBackingStore {
         internal!(level = DEBUG, "Read message {msg_id} from spool");
 
         Ok(context)
+    }
+
+    /// Get message size without reading the body
+    async fn message_size(&self, msg_id: &SpooledMessageId) -> crate::Result<Option<usize>> {
+        let tracking_str = msg_id.to_string();
+        let data_filename = format!("{tracking_str}.eml");
+        let data_path = self.path.join(&data_filename);
+
+        let metadata = fs::metadata(&data_path).await?;
+        Ok(usize::try_from(metadata.len()).ok())
     }
 
     /// Update an existing message's metadata in the spool
@@ -418,8 +446,10 @@ impl BackingStore for FileBackingStore {
         // Write to temporary file first, then atomically rename
         let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
 
-        // Serialize metadata to bincode
-        let metadata = bincode::serde::encode_to_vec(context, bincode::config::legacy())
+        // Serialize metadata to bincode (omit body to keep metadata compact)
+        let mut metadata_context = context.clone();
+        metadata_context.data = None;
+        let metadata = bincode::serde::encode_to_vec(&metadata_context, bincode::config::legacy())
             .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 

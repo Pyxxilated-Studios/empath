@@ -44,6 +44,29 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     /// Returns an error if the message cannot be found or read
     async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context>;
 
+    /// Read only message metadata without loading the body
+    ///
+    /// Default implementation falls back to [`read`]. Backends should override
+    /// this to avoid loading the message body when only metadata is needed.
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be found or read
+    async fn read_metadata(&self, id: &SpooledMessageId) -> crate::Result<Context> {
+        self.read(id).await
+    }
+
+    /// Get the size of the message body in bytes without reading the full data
+    ///
+    /// Default implementation loads the full message and reports the size of
+    /// the in-memory body.
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be found or read
+    async fn message_size(&self, id: &SpooledMessageId) -> crate::Result<Option<usize>> {
+        let context = self.read(id).await?;
+        Ok(context.data.as_ref().map(|d| d.len()))
+    }
+
     /// Update an existing message in the backing store
     ///
     /// This allows updating the context (especially delivery metadata) without

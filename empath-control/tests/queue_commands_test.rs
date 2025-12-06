@@ -6,7 +6,7 @@
 )]
 
 use empath_control::protocol::{
-    QueueCommand, Request, RequestCommand, Response, ResponseData, ResponsePayload,
+    QueueCommand, QueueListPage, Request, RequestCommand, Response, ResponseData, ResponsePayload,
 };
 
 /// Integration test for queue list command via control socket
@@ -19,6 +19,8 @@ async fn test_queue_list_command() {
     // Test QueueCommand::List serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::List {
         status_filter: None,
+        page: None,
+        page_size: None,
     }));
 
     // Verify serialization/deserialization
@@ -29,8 +31,14 @@ async fn test_queue_list_command() {
             .expect("Failed to deserialize request");
 
     match deserialized.command {
-        RequestCommand::Queue(QueueCommand::List { status_filter }) => {
+        RequestCommand::Queue(QueueCommand::List {
+            status_filter,
+            page,
+            page_size,
+        }) => {
             assert!(status_filter.is_none(), "Expected no status filter");
+            assert!(page.is_none());
+            assert!(page_size.is_none());
         }
         _ => panic!("Expected QueueCommand::List"),
     }
@@ -42,6 +50,8 @@ async fn test_queue_list_with_status_filter() {
     // Test QueueCommand::List with status filter
     let request = Request::new(RequestCommand::Queue(QueueCommand::List {
         status_filter: Some("failed".to_string()),
+        page: Some(2),
+        page_size: Some(25),
     }));
 
     // Verify serialization/deserialization
@@ -52,12 +62,18 @@ async fn test_queue_list_with_status_filter() {
             .expect("Failed to deserialize request");
 
     match deserialized.command {
-        RequestCommand::Queue(QueueCommand::List { status_filter }) => {
+        RequestCommand::Queue(QueueCommand::List {
+            status_filter,
+            page,
+            page_size,
+        }) => {
             assert_eq!(
                 status_filter,
                 Some("failed".to_string()),
                 "Expected 'failed' status filter"
             );
+            assert_eq!(page, Some(2));
+            assert_eq!(page_size, Some(25));
         }
         _ => panic!("Expected QueueCommand::List"),
     }
@@ -94,7 +110,13 @@ async fn test_queue_message_response_serialization() {
         },
     ];
 
-    let response = Response::data(ResponseData::QueueList(messages));
+    let response = Response::data(ResponseData::QueueList(QueueListPage {
+        total: 2,
+        page: 1,
+        page_size: 50,
+        has_more: false,
+        messages,
+    }));
 
     // Verify serialization/deserialization
     let serialized = bincode::serde::encode_to_vec(response, bincode::config::standard())
@@ -105,27 +127,27 @@ async fn test_queue_message_response_serialization() {
 
     match deserialized.payload {
         ResponsePayload::Data(data) => match *data {
-            ResponseData::QueueList(deserialized_messages) => {
-                assert_eq!(
-                    deserialized_messages.len(),
-                    2,
-                    "Expected 2 messages in response"
-                );
+            ResponseData::QueueList(page) => {
+                assert_eq!(page.total, 2);
+                assert_eq!(page.page, 1);
+                assert_eq!(page.page_size, 50);
+                assert!(!page.has_more);
+                assert_eq!(page.messages.len(), 2, "Expected 2 messages in response");
 
                 // Verify first message
-                assert_eq!(deserialized_messages[0].id, "01JCXYZ123ABC");
-                assert_eq!(deserialized_messages[0].from, "sender@example.com");
-                assert_eq!(deserialized_messages[0].to.len(), 1);
-                assert_eq!(deserialized_messages[0].status, "pending");
-                assert_eq!(deserialized_messages[0].attempts, 0);
-                assert_eq!(deserialized_messages[0].next_retry, None);
+                assert_eq!(page.messages[0].id, "01JCXYZ123ABC");
+                assert_eq!(page.messages[0].from, "sender@example.com");
+                assert_eq!(page.messages[0].to.len(), 1);
+                assert_eq!(page.messages[0].status, "pending");
+                assert_eq!(page.messages[0].attempts, 0);
+                assert_eq!(page.messages[0].next_retry, None);
 
                 // Verify second message
-                assert_eq!(deserialized_messages[1].id, "01JCXYZ456DEF");
-                assert_eq!(deserialized_messages[1].status, "failed");
-                assert_eq!(deserialized_messages[1].attempts, 3);
-                assert_eq!(deserialized_messages[1].to.len(), 2);
-                assert_eq!(deserialized_messages[1].next_retry, Some(1_700_001_000));
+                assert_eq!(page.messages[1].id, "01JCXYZ456DEF");
+                assert_eq!(page.messages[1].status, "failed");
+                assert_eq!(page.messages[1].attempts, 3);
+                assert_eq!(page.messages[1].to.len(), 2);
+                assert_eq!(page.messages[1].next_retry, Some(1_700_001_000));
             }
             _ => panic!("Expected QueueList response"),
         },
@@ -160,6 +182,8 @@ async fn test_queue_view_command() {
     // Test QueueCommand::View serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::View {
         message_id: "01JCXYZ123ABC".to_string(),
+        include_headers: true,
+        include_body_preview: false,
     }));
 
     // Verify serialization/deserialization
@@ -170,8 +194,14 @@ async fn test_queue_view_command() {
             .expect("Failed to deserialize request");
 
     match deserialized.command {
-        RequestCommand::Queue(QueueCommand::View { message_id }) => {
+        RequestCommand::Queue(QueueCommand::View {
+            message_id,
+            include_headers,
+            include_body_preview,
+        }) => {
             assert_eq!(message_id, "01JCXYZ123ABC", "Expected correct message ID");
+            assert!(include_headers);
+            assert!(!include_body_preview);
         }
         _ => panic!("Expected QueueCommand::View"),
     }

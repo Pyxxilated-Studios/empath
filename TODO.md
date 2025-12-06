@@ -7,7 +7,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 ## P1 — Focus Now
 - [x] BUG-CTL-AGE: Fix queue/spool age calculations to avoid `u64` underflow when clocks skew or spool timestamps are in the future. Status: control stats now use `SystemTime` with saturation; add regression coverage.
 - [x] PERF-QUEUE-CLONE: Stop cloning the entire delivery queue on every scan. Status: processor iterates DashMap in place, pending items cloned only; removed `all_messages()` helper.
-- [ ] PERF-CTL-STATS: Stream/page control queue/spool listings and avoid reading full messages when not needed. Success: list/stats stay responsive on large queues; body/header reads are optional.
+- [x] PERF-CTL-STATS: Stream/page control queue/spool listings and avoid reading full messages when not needed. Success: list/stats stay responsive on large queues; body/header reads are optional.
 - [ ] NEW-WASM-02: `empath-wasm-guest` helper crate (proc macro + host bindings). Effort ~3d. Success: ergonomic Context API, reject/accept mapping, example module rewritten, docs/migration.
 - [ ] NEW-WASM-03: Multi-language WASM examples (Go/TinyGo, C/Emscripten, AssemblyScript). Effort ~4d. Success: each builds <100KB, README with toolchain steps, tests/CI hook.
 - [x] NEW-WASM-13: WASM coverage parity. Recently added: timeout enforcement test, memory-limit enforcement (integration), event error-path tests, context mutation edge cases, poisoned mutex regression, invalid SMTP code clamping, memory growth limit unit test.

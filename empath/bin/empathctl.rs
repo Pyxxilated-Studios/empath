@@ -109,6 +109,14 @@ enum QueueAction {
         #[arg(long, value_enum)]
         status: Option<StatusFilter>,
 
+        /// Page number (1-based)
+        #[arg(long, default_value = "1")]
+        page: usize,
+
+        /// Page size (max enforced by server)
+        #[arg(long, default_value = "100")]
+        page_size: usize,
+
         /// Output format (text, json)
         #[arg(long, default_value = "text")]
         format: String,
@@ -117,6 +125,14 @@ enum QueueAction {
     View {
         /// Message ID to view
         message_id: String,
+
+        /// Skip reading message headers (faster, less I/O)
+        #[arg(long)]
+        no_headers: bool,
+
+        /// Skip reading message body preview (faster, less I/O)
+        #[arg(long)]
+        no_body: bool,
     },
     /// Retry delivery of a message
     Retry {
@@ -158,6 +174,14 @@ enum SpoolAction {
         #[arg(long, value_enum)]
         status: Option<StatusFilter>,
 
+        /// Page number (1-based)
+        #[arg(long, default_value = "1")]
+        page: usize,
+
+        /// Page size (max enforced by server)
+        #[arg(long, default_value = "100")]
+        page_size: usize,
+
         /// Output format (text, json)
         #[arg(long, default_value = "text")]
         format: String,
@@ -166,6 +190,14 @@ enum SpoolAction {
     View {
         /// Message ID to view
         message_id: String,
+
+        /// Skip reading message headers (faster, less I/O)
+        #[arg(long)]
+        no_headers: bool,
+
+        /// Skip reading message body preview (faster, less I/O)
+        #[arg(long)]
+        no_body: bool,
     },
     /// Clean up completed/failed messages from spool
     CleanupCompleted,
@@ -426,7 +458,12 @@ fn build_queue_request(action: &QueueAction) -> anyhow::Result<Request> {
     use empath_control::QueueCommand;
 
     let command = match action {
-        QueueAction::List { status, format: _ } => {
+        QueueAction::List {
+            status,
+            page,
+            page_size,
+            format: _,
+        } => {
             let status_filter = status.as_ref().map(|s| {
                 match s {
                     StatusFilter::Pending => PENDING_STR,
@@ -438,10 +475,20 @@ fn build_queue_request(action: &QueueAction) -> anyhow::Result<Request> {
                 }
                 .to_string()
             });
-            QueueCommand::List { status_filter }
+            QueueCommand::List {
+                status_filter,
+                page: Some((*page).max(1)),
+                page_size: Some((*page_size).max(1)),
+            }
         }
-        QueueAction::View { message_id } => QueueCommand::View {
+        QueueAction::View {
+            message_id,
+            no_headers,
+            no_body,
+        } => QueueCommand::View {
             message_id: message_id.clone(),
+            include_headers: !no_headers,
+            include_body_preview: !no_body,
         },
         QueueAction::Retry { message_id, force } => QueueCommand::Retry {
             message_id: message_id.clone(),
@@ -481,13 +528,31 @@ fn handle_queue_response(payload: ResponsePayload) -> anyhow::Result<()> {
             println!("✓ Command completed successfully");
         }
         ResponsePayload::Data(data) => match *data {
-            ResponseData::QueueList(messages) => {
-                if messages.is_empty() {
-                    println!("No messages in queue");
+            ResponseData::QueueList(page) => {
+                if page.messages.is_empty() {
+                    if page.total == 0 {
+                        println!("No messages in queue");
+                    } else {
+                        let page_count = total_pages(page.total, page.page_size).max(1);
+                        println!(
+                            "No messages on this page (page {} of {}, {} total matching)",
+                            page.page, page_count, page.total
+                        );
+                    }
                 } else {
-                    println!("=== Queue Messages ({}) ===\n", messages.len());
-                    for msg in messages {
+                    let page_count = total_pages(page.total, page.page_size).max(1);
+                    println!(
+                        "=== Queue Messages (page {} of {}, showing {} of {} total) ===\n",
+                        page.page,
+                        page_count,
+                        page.messages.len(),
+                        page.total
+                    );
+                    for msg in page.messages {
                         println!("{msg}");
+                    }
+                    if page.has_more {
+                        println!("\n… more results available; try --page {}.", page.page + 1);
                     }
                 }
             }
@@ -544,7 +609,12 @@ fn build_spool_request(action: &SpoolAction) -> Request {
     use empath_control::SpoolCommand;
 
     let command = match action {
-        SpoolAction::List { status, format: _ } => {
+        SpoolAction::List {
+            status,
+            page,
+            page_size,
+            format: _,
+        } => {
             let status_filter = status.as_ref().map(|s| {
                 match s {
                     StatusFilter::Pending => PENDING_STR,
@@ -556,10 +626,20 @@ fn build_spool_request(action: &SpoolAction) -> Request {
                 }
                 .to_string()
             });
-            SpoolCommand::List { status_filter }
+            SpoolCommand::List {
+                status_filter,
+                page: Some((*page).max(1)),
+                page_size: Some((*page_size).max(1)),
+            }
         }
-        SpoolAction::View { message_id } => SpoolCommand::View {
+        SpoolAction::View {
+            message_id,
+            no_headers,
+            no_body,
+        } => SpoolCommand::View {
             message_id: message_id.clone(),
+            include_headers: !no_headers,
+            include_body_preview: !no_body,
         },
         SpoolAction::CleanupCompleted => SpoolCommand::CleanupCompleted,
         SpoolAction::Stats => SpoolCommand::Stats,
@@ -577,13 +657,31 @@ fn handle_spool_response(payload: ResponsePayload) -> anyhow::Result<()> {
             println!("✓ Command completed successfully");
         }
         ResponsePayload::Data(data) => match *data {
-            ResponseData::SpoolList(messages) => {
-                if messages.is_empty() {
-                    println!("No messages in spool");
+            ResponseData::SpoolList(page) => {
+                if page.messages.is_empty() {
+                    if page.total == 0 {
+                        println!("No messages in spool");
+                    } else {
+                        let page_count = total_pages(page.total, page.page_size).max(1);
+                        println!(
+                            "No messages on this page (page {} of {}, {} total matching)",
+                            page.page, page_count, page.total
+                        );
+                    }
                 } else {
-                    println!("=== Spool Messages ({}) ===\n", messages.len());
-                    for msg in messages {
+                    let page_count = total_pages(page.total, page.page_size).max(1);
+                    println!(
+                        "=== Spool Messages (page {} of {}, showing {} of {} total) ===\n",
+                        page.page,
+                        page_count,
+                        page.messages.len(),
+                        page.total
+                    );
+                    for msg in page.messages {
                         println!("{msg}");
+                    }
+                    if page.has_more {
+                        println!("\n… more results available; try --page {}.", page.page + 1);
                     }
                 }
             }
@@ -664,6 +762,14 @@ fn display_queue_stats(stats: &empath_control::protocol::QueueStats) {
 
     if let Some(age) = stats.oldest_message_age_secs {
         println!("\nOldest message age: {}", format_duration(age));
+    }
+}
+
+const fn total_pages(total: usize, page_size: usize) -> usize {
+    if total == 0 || page_size == 0 {
+        0
+    } else {
+        total.div_ceil(page_size)
     }
 }
 

@@ -9,7 +9,7 @@ use chrono::{TimeZone, Utc, offset::LocalResult};
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Format timestamp (milliseconds since epoch) as human-readable
 fn format_timestamp(timestamp_ms: u64) -> String {
@@ -19,6 +19,10 @@ fn format_timestamp(timestamp_ms: u64) -> String {
     } else {
         "unknown".to_string()
     }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 /// Request sent to the control server (versioned wrapper)
@@ -87,11 +91,23 @@ pub enum QueueCommand {
     List {
         /// Filter by status (optional)
         status_filter: Option<String>,
+        /// Page number (1-based). If omitted, defaults to 1.
+        #[serde(default)]
+        page: Option<usize>,
+        /// Page size (max enforced by server). If omitted, server default applies.
+        #[serde(default)]
+        page_size: Option<usize>,
     },
     /// View detailed information about a specific message
     View {
         /// Message ID to view
         message_id: String,
+        /// Include parsed headers (requires reading message data)
+        #[serde(default = "default_true")]
+        include_headers: bool,
+        /// Include a body preview (requires reading message data)
+        #[serde(default = "default_true")]
+        include_body_preview: bool,
     },
     /// Retry delivery of a message
     Retry {
@@ -118,11 +134,23 @@ pub enum SpoolCommand {
     List {
         /// Filter by status (optional)
         status_filter: Option<String>,
+        /// Page number (1-based). If omitted, defaults to 1.
+        #[serde(default)]
+        page: Option<usize>,
+        /// Page size (max enforced by server). If omitted, server default applies.
+        #[serde(default)]
+        page_size: Option<usize>,
     },
     /// View detailed information about a specific message in the spool
     View {
         /// Message ID to view
         message_id: String,
+        /// Include parsed headers (requires reading message data)
+        #[serde(default = "default_true")]
+        include_headers: bool,
+        /// Include a body preview (requires reading message data)
+        #[serde(default = "default_true")]
+        include_body_preview: bool,
     },
     /// Delete completed/failed messages from the spool
     CleanupCompleted,
@@ -160,13 +188,13 @@ pub enum ResponseData {
     /// System status information
     SystemStatus(SystemStatus),
     /// Queue message list
-    QueueList(Vec<QueueMessage>),
+    QueueList(QueueListPage),
     /// Queue message details
     QueueMessageDetails(QueueMessageDetails),
     /// Queue statistics
     QueueStats(QueueStats),
     /// Spool message list
-    SpoolList(Vec<SpoolMessage>),
+    SpoolList(SpoolListPage),
     /// Spool statistics
     SpoolStats(SpoolStats),
     /// Simple string message
@@ -197,6 +225,21 @@ pub struct SystemStatus {
     pub queue_size: usize,
     /// DNS cache statistics
     pub dns_cache_entries: usize,
+}
+
+/// Paginated queue list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueListPage {
+    /// Messages returned for this page
+    pub messages: Vec<QueueMessage>,
+    /// Total messages matching filter
+    pub total: usize,
+    /// Current page (1-based)
+    pub page: usize,
+    /// Page size applied by server
+    pub page_size: usize,
+    /// Whether additional pages exist
+    pub has_more: bool,
 }
 
 /// Queue message summary (for list command)
@@ -268,9 +311,11 @@ pub struct QueueMessageDetails {
     /// Time message was spooled (Unix timestamp in seconds)
     pub spooled_at: u64,
     /// Message headers
-    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
     /// Message body preview (first 1KB)
-    pub body_preview: String,
+    #[serde(default)]
+    pub body_preview: Option<String>,
 }
 
 impl Display for QueueMessageDetails {
@@ -296,15 +341,21 @@ impl Display for QueueMessageDetails {
             format_timestamp(self.spooled_at * 1000)
         ))?;
 
-        if !self.headers.is_empty() {
+        if let Some(headers) = &self.headers
+            && !headers.is_empty()
+        {
             f.write_str("\n--- Headers ---\n")?;
-            for (key, value) in &self.headers {
+            for (key, value) in headers {
                 f.write_fmt(format_args!("{key}: {value}\n"))?;
             }
         }
 
         f.write_str("\n--- Body Preview ---\n")?;
-        f.write_fmt(format_args!("{}\n", self.body_preview))
+        if let Some(body_preview) = &self.body_preview {
+            f.write_fmt(format_args!("{body_preview}\n"))
+        } else {
+            f.write_str("[Body not requested]\n")
+        }
     }
 }
 
@@ -319,6 +370,21 @@ pub struct QueueStats {
     pub by_domain: HashMap<String, usize>,
     /// Oldest message age in seconds
     pub oldest_message_age_secs: Option<u64>,
+}
+
+/// Paginated spool list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpoolListPage {
+    /// Messages returned for this page
+    pub messages: Vec<SpoolMessage>,
+    /// Total messages matching filter
+    pub total: usize,
+    /// Current page (1-based)
+    pub page: usize,
+    /// Page size applied by server
+    pub page_size: usize,
+    /// Whether additional pages exist
+    pub has_more: bool,
 }
 
 /// Spool message summary (for list command)

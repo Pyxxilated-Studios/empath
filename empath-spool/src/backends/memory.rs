@@ -138,6 +138,17 @@ impl BackingStore for MemoryBackingStore {
             .ok_or_else(|| SpoolError::NotFound(id.clone()))
     }
 
+    async fn read_metadata(&self, id: &SpooledMessageId) -> crate::Result<Context> {
+        let mut context = self.read(id).await?;
+        context.data = None;
+        Ok(context)
+    }
+
+    async fn message_size(&self, id: &SpooledMessageId) -> crate::Result<Option<usize>> {
+        let context = self.read(id).await?;
+        Ok(context.data.as_ref().map(|d| d.len()))
+    }
+
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
         if self.messages.contains_key(id) {
             self.messages.insert(id.clone(), context.clone());

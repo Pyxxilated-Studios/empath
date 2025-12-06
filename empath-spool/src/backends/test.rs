@@ -102,6 +102,14 @@ impl BackingStore for TestBackingStore {
         self.inner.read(id).await
     }
 
+    async fn read_metadata(&self, id: &SpooledMessageId) -> crate::Result<Context> {
+        self.inner.read_metadata(id).await
+    }
+
+    async fn message_size(&self, id: &SpooledMessageId) -> crate::Result<Option<usize>> {
+        self.inner.message_size(id).await
+    }
+
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
         self.inner.update(id, context).await
     }

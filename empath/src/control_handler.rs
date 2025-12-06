@@ -26,6 +26,9 @@ pub struct EmpathControlHandler {
     start_time: Instant,
 }
 
+const DEFAULT_PAGE_SIZE: usize = 100;
+const MAX_PAGE_SIZE: usize = 500;
+
 impl EmpathControlHandler {
     /// Create a new control handler
     #[must_use]
@@ -272,10 +275,22 @@ impl EmpathControlHandler {
         };
 
         let result = match command {
-            QueueCommand::List { status_filter } => {
-                self.handle_list_command(spool, status_filter).await
+            QueueCommand::List {
+                status_filter,
+                page,
+                page_size,
+            } => {
+                self.handle_list_command(spool, status_filter, page, page_size)
+                    .await
             }
-            QueueCommand::View { message_id } => self.handle_view_command(spool, message_id).await,
+            QueueCommand::View {
+                message_id,
+                include_headers,
+                include_body_preview,
+            } => {
+                self.handle_view_command(spool, message_id, include_headers, include_body_preview)
+                    .await
+            }
             QueueCommand::Retry { message_id, force } => {
                 self.handle_retry_command(&message_id, force)
             }
@@ -324,13 +339,15 @@ impl EmpathControlHandler {
         &self,
         spool: &Arc<dyn BackingStore>,
         status_filter: Option<String>,
+        page: Option<usize>,
+        page_size: Option<usize>,
     ) -> empath_control::Result<Response> {
         // Get all messages from queue
         let all_info = self.delivery.list_messages(None);
         internal!(level = TRACE, "{all_info:?}");
 
         // Filter by status if requested
-        let filtered_info: Vec<_> = if let Some(status) = status_filter {
+        let mut filtered_info: Vec<_> = if let Some(status) = status_filter {
             all_info
                 .into_iter()
                 .filter(|info| info.status.matches_filter(&status))
@@ -339,12 +356,17 @@ impl EmpathControlHandler {
             all_info
         };
         internal!(level = TRACE, "{filtered_info:?}");
+        filtered_info.sort_by(|a, b| a.message_id.cmp(&b.message_id));
+
+        let (page, page_size) = Self::resolve_paging(page, page_size);
+        let offset = page.saturating_sub(1).saturating_mul(page_size);
+        let total = filtered_info.len();
 
         // Convert to protocol types
         let mut messages = Vec::new();
-        for info in filtered_info {
+        for info in filtered_info.into_iter().skip(offset).take(page_size) {
             // Read message from spool to get details
-            let context = match spool.read(&info.message_id).await {
+            let context = match spool.read_metadata(&info.message_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     // Log warning but continue - message may have been deleted after queue read
@@ -355,6 +377,20 @@ impl EmpathControlHandler {
                         "Failed to read message from spool during queue list - message may have been deleted"
                     );
                     continue;
+                }
+            };
+
+            let size = match spool.message_size(&info.message_id).await {
+                Ok(Some(size)) => size,
+                Ok(None) => 0,
+                Err(e) => {
+                    tracing::event!(
+                        tracing::Level::WARN,
+                        message_id = %info.message_id,
+                        error = %e,
+                        "Failed to read message size from spool during queue list"
+                    );
+                    0
                 }
             };
 
@@ -375,13 +411,22 @@ impl EmpathControlHandler {
                         .ok()
                         .map(|d| d.as_secs())
                 }),
-                size: context.data.as_ref().map_or(0, |d| d.len()),
+                size,
                 spooled_at: info.message_id.timestamp_ms() / 1000,
             };
             messages.push(message);
         }
 
-        Ok(Response::data(ResponseData::QueueList(messages)))
+        let returned = messages.len();
+        let queue_page = empath_control::protocol::QueueListPage {
+            messages,
+            total,
+            page,
+            page_size,
+            has_more: offset + returned < total,
+        };
+
+        Ok(Response::data(ResponseData::QueueList(queue_page)))
     }
 
     /// Handle queue view command
@@ -393,6 +438,8 @@ impl EmpathControlHandler {
         &self,
         spool: &Arc<dyn BackingStore>,
         message_id: String,
+        include_headers: bool,
+        include_body_preview: bool,
     ) -> empath_control::Result<Response> {
         // Parse message ID
         let msg_id = empath_spool::SpooledMessageId::from_filename(&format!("{message_id}.bin"))
@@ -401,96 +448,58 @@ impl EmpathControlHandler {
             })?;
 
         // Read message from spool first (this is the source of truth)
-        let context = spool
-            .read(&msg_id)
-            .await
-            .map_err(|e| ControlError::ServerError(format!("Message not found in spool: {e}")))?;
+        let needs_body = include_headers || include_body_preview;
+        let context = if needs_body {
+            spool.read(&msg_id).await.map_err(|e| {
+                ControlError::ServerError(format!("Message not found in spool: {e}"))
+            })?
+        } else {
+            spool.read_metadata(&msg_id).await.map_err(|e| {
+                ControlError::ServerError(format!("Message not found in spool: {e}"))
+            })?
+        };
 
         // Try to get delivery info from queue (optional - message may have been delivered already)
         let info = self.delivery.get_message(&msg_id);
 
         // Extract headers
-        let headers = Self::extract_headers(&context);
+        let headers = if include_headers {
+            Some(Self::extract_headers(&context))
+        } else {
+            None
+        };
 
         // Extract body preview
-        let body_preview = Self::extract_body_preview(&context);
-
-        // Build details from either queue info or persisted delivery context
-        let details = if let Some(queue_info) = info {
-            // Message is in the active queue - use queue state
-            empath_control::protocol::QueueMessageDetails {
-                id: message_id,
-                from: context
-                    .envelope
-                    .sender()
-                    .map_or_else(|| "<>".to_string(), ToString::to_string),
-                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
-                    list.iter().map(std::string::ToString::to_string).collect()
-                }),
-                domain: queue_info.recipient_domain.to_string(),
-                status: format!("{:?}", queue_info.status),
-                attempts: u32::try_from(queue_info.attempts.len()).unwrap_or_default(),
-                next_retry: queue_info.next_retry_at.and_then(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH)
-                        .ok()
-                        .map(|d| d.as_secs())
-                }),
-                last_error: queue_info.attempts.last().and_then(|a| a.error.clone()),
-                size: context.data.as_ref().map_or(0, |d| d.len()),
-                spooled_at: msg_id.timestamp_ms() / 1000,
-                headers,
-                body_preview,
-            }
-        } else if let Some(ref delivery_ctx) = context.delivery {
-            // Message not in queue but has persisted delivery context (e.g., completed/failed)
-            empath_control::protocol::QueueMessageDetails {
-                id: message_id,
-                from: context
-                    .envelope
-                    .sender()
-                    .map_or_else(|| "<>".to_string(), ToString::to_string),
-                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
-                    list.iter().map(std::string::ToString::to_string).collect()
-                }),
-                domain: delivery_ctx.domain.to_string(),
-                status: format!("{:?}", delivery_ctx.status),
-                attempts: u32::try_from(delivery_ctx.attempt_history.len()).unwrap_or_default(),
-                next_retry: delivery_ctx.next_retry_at.and_then(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH)
-                        .ok()
-                        .map(|d| d.as_secs())
-                }),
-                last_error: delivery_ctx
-                    .attempt_history
-                    .last()
-                    .and_then(|a| a.error.clone()),
-                size: context.data.as_ref().map_or(0, |d| d.len()),
-                spooled_at: msg_id.timestamp_ms() / 1000,
-                headers,
-                body_preview,
-            }
+        let body_preview = if include_body_preview {
+            Some(Self::extract_body_preview(&context))
         } else {
-            // Message exists in spool but has no delivery context (shouldn't happen in normal operation)
-            empath_control::protocol::QueueMessageDetails {
-                id: message_id,
-                from: context
-                    .envelope
-                    .sender()
-                    .map_or_else(|| "<>".to_string(), ToString::to_string),
-                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
-                    list.iter().map(std::string::ToString::to_string).collect()
-                }),
-                domain: "unknown".to_string(),
-                status: "Unknown".to_string(),
-                attempts: 0,
-                next_retry: None,
-                last_error: None,
-                size: context.data.as_ref().map_or(0, |d| d.len()),
-                spooled_at: msg_id.timestamp_ms() / 1000,
-                headers,
-                body_preview,
+            None
+        };
+
+        let size = match spool.message_size(&msg_id).await {
+            Ok(Some(size)) => size,
+            Ok(None) => 0,
+            Err(e) => {
+                tracing::event!(
+                    tracing::Level::WARN,
+                    message_id = %msg_id,
+                    error = %e,
+                    "Failed to read message size from spool during view"
+                );
+                0
             }
         };
+
+        // Build details from either queue info or persisted delivery context
+        let details = Self::build_message_details(
+            message_id,
+            &msg_id,
+            &context,
+            size,
+            headers,
+            body_preview,
+            info,
+        );
 
         Ok(Response::data(ResponseData::QueueMessageDetails(details)))
     }
@@ -593,6 +602,14 @@ impl EmpathControlHandler {
         };
 
         Response::data(ResponseData::QueueStats(stats))
+    }
+
+    fn resolve_paging(page: Option<usize>, page_size: Option<usize>) -> (usize, usize) {
+        let page_size = page_size
+            .unwrap_or(DEFAULT_PAGE_SIZE)
+            .clamp(1, MAX_PAGE_SIZE);
+        let page = page.unwrap_or(1).max(1);
+        (page, page_size)
     }
 
     /// Extract email headers from message data
@@ -720,12 +737,22 @@ impl EmpathControlHandler {
         };
 
         let result = match command {
-            empath_control::SpoolCommand::List { status_filter } => {
-                self.handle_spool_list_command(spool, status_filter).await
+            empath_control::SpoolCommand::List {
+                status_filter,
+                page,
+                page_size,
+            } => {
+                self.handle_spool_list_command(spool, status_filter, page, page_size)
+                    .await
             }
-            empath_control::SpoolCommand::View { message_id } => {
+            empath_control::SpoolCommand::View {
+                message_id,
+                include_headers,
+                include_body_preview,
+            } => {
                 // Reuse queue view logic but directly from spool
-                self.handle_view_command(spool, message_id).await
+                self.handle_view_command(spool, message_id, include_headers, include_body_preview)
+                    .await
             }
             empath_control::SpoolCommand::CleanupCompleted => {
                 self.handle_spool_cleanup_command(spool).await
@@ -760,6 +787,8 @@ impl EmpathControlHandler {
         &self,
         spool: &Arc<dyn BackingStore>,
         status_filter: Option<String>,
+        page: Option<usize>,
+        page_size: Option<usize>,
     ) -> empath_control::Result<Response> {
         // List all messages in spool
         let message_ids = spool
@@ -767,10 +796,13 @@ impl EmpathControlHandler {
             .await
             .map_err(|e| ControlError::ServerError(format!("Failed to list spool: {e}")))?;
 
+        let (page, page_size) = Self::resolve_paging(page, page_size);
+        let offset = page.saturating_sub(1).saturating_mul(page_size);
+        let mut matched = 0usize;
         let mut messages = Vec::new();
         for msg_id in message_ids {
             // Read each message
-            let context = match spool.read(&msg_id).await {
+            let context = match spool.read_metadata(&msg_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::event!(
@@ -780,6 +812,20 @@ impl EmpathControlHandler {
                         "Failed to read message from spool during spool list"
                     );
                     continue;
+                }
+            };
+
+            let size = match spool.message_size(&msg_id).await {
+                Ok(Some(size)) => size,
+                Ok(None) => 0,
+                Err(e) => {
+                    tracing::event!(
+                        tracing::Level::WARN,
+                        message_id = %msg_id,
+                        error = %e,
+                        "Failed to read message size from spool during spool list"
+                    );
+                    0
                 }
             };
 
@@ -808,25 +854,37 @@ impl EmpathControlHandler {
                 }
             }
 
-            let message = empath_control::protocol::SpoolMessage {
-                id: msg_id.to_string(),
-                from: context
-                    .envelope
-                    .sender()
-                    .map_or_else(|| "<>".to_string(), ToString::to_string),
-                to: context.envelope.recipients().map_or_else(Vec::new, |list| {
-                    list.iter().map(std::string::ToString::to_string).collect()
-                }),
-                status,
-                domain,
-                attempts,
-                size: context.data.as_ref().map_or(0, |d| d.len()),
-                spooled_at: msg_id.timestamp_ms() / 1000,
-            };
-            messages.push(message);
+            if matched >= offset && messages.len() < page_size {
+                let message = empath_control::protocol::SpoolMessage {
+                    id: msg_id.to_string(),
+                    from: context
+                        .envelope
+                        .sender()
+                        .map_or_else(|| "<>".to_string(), ToString::to_string),
+                    to: context.envelope.recipients().map_or_else(Vec::new, |list| {
+                        list.iter().map(std::string::ToString::to_string).collect()
+                    }),
+                    status,
+                    domain,
+                    attempts,
+                    size,
+                    spooled_at: msg_id.timestamp_ms() / 1000,
+                };
+                messages.push(message);
+            }
+            matched += 1;
         }
 
-        Ok(Response::data(ResponseData::SpoolList(messages)))
+        let returned = messages.len();
+        let spool_page = empath_control::protocol::SpoolListPage {
+            messages,
+            total: matched,
+            page,
+            page_size,
+            has_more: offset + returned < matched,
+        };
+
+        Ok(Response::data(ResponseData::SpoolList(spool_page)))
     }
 
     /// Handle spool stats command
@@ -849,7 +907,7 @@ impl EmpathControlHandler {
             total += 1;
 
             // Read message to get status and size
-            let context = match spool.read(msg_id).await {
+            let context = match spool.read_metadata(msg_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::event!(
@@ -870,9 +928,20 @@ impl EmpathControlHandler {
             *by_status.entry(status).or_insert(0) += 1;
 
             // Add to total size
-            if let Some(ref data) = context.data {
-                total_size += u64::try_from(data.len()).unwrap_or(0);
-            }
+            let size = match spool.message_size(msg_id).await {
+                Ok(Some(len)) => len,
+                Ok(None) => 0,
+                Err(e) => {
+                    tracing::event!(
+                        tracing::Level::WARN,
+                        message_id = %msg_id,
+                        error = %e,
+                        "Failed to read message size from spool during stats"
+                    );
+                    0
+                }
+            };
+            total_size = total_size.saturating_add(u64::try_from(size).unwrap_or(u64::MAX));
 
             // Track oldest message
             let age_secs = Self::age_secs_from_timestamp(msg_id.timestamp_ms());
@@ -905,7 +974,7 @@ impl EmpathControlHandler {
 
         for msg_id in message_ids {
             // Read message to check status
-            let context = match spool.read(&msg_id).await {
+            let context = match spool.read_metadata(&msg_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::event!(
@@ -965,5 +1034,85 @@ impl EmpathControlHandler {
             .duration_since(spooled_at)
             .unwrap_or(Duration::ZERO)
             .as_secs()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_message_details(
+        message_id: String,
+        msg_id: &empath_spool::SpooledMessageId,
+        context: &Context,
+        size: usize,
+        headers: Option<HashMap<String, String>>,
+        body_preview: Option<String>,
+        queue_info: Option<empath_delivery::DeliveryInfo>,
+    ) -> empath_control::protocol::QueueMessageDetails {
+        let from = context
+            .envelope
+            .sender()
+            .map_or_else(|| "<>".to_string(), ToString::to_string);
+        let to = context.envelope.recipients().map_or_else(Vec::new, |list| {
+            list.iter().map(std::string::ToString::to_string).collect()
+        });
+        let spooled_at = msg_id.timestamp_ms() / 1000;
+
+        if let Some(queue_info) = queue_info {
+            return empath_control::protocol::QueueMessageDetails {
+                id: message_id,
+                from,
+                to,
+                domain: queue_info.recipient_domain.to_string(),
+                status: format!("{:?}", queue_info.status),
+                attempts: u32::try_from(queue_info.attempts.len()).unwrap_or_default(),
+                next_retry: queue_info.next_retry_at.and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
+                }),
+                last_error: queue_info.attempts.last().and_then(|a| a.error.clone()),
+                size,
+                spooled_at,
+                headers,
+                body_preview,
+            };
+        }
+
+        if let Some(ref delivery_ctx) = context.delivery {
+            return empath_control::protocol::QueueMessageDetails {
+                id: message_id,
+                from,
+                to,
+                domain: delivery_ctx.domain.to_string(),
+                status: format!("{:?}", delivery_ctx.status),
+                attempts: u32::try_from(delivery_ctx.attempt_history.len()).unwrap_or_default(),
+                next_retry: delivery_ctx.next_retry_at.and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
+                }),
+                last_error: delivery_ctx
+                    .attempt_history
+                    .last()
+                    .and_then(|a| a.error.clone()),
+                size,
+                spooled_at,
+                headers,
+                body_preview,
+            };
+        }
+
+        empath_control::protocol::QueueMessageDetails {
+            id: message_id,
+            from,
+            to,
+            domain: "unknown".to_string(),
+            status: "Unknown".to_string(),
+            attempts: 0,
+            next_retry: None,
+            last_error: None,
+            size,
+            spooled_at,
+            headers,
+            body_preview,
+        }
     }
 }
