@@ -13,6 +13,19 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] 0.12 Control socket commands. Remaining: config reload, log level adjust, connection stats, rate-limit adjust.
 - [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 - [ ] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard.
+- [ ] NEW-23: Outbound bindings. Configurable binding definitions (source IP/interface + TLS/helo), mapping rules (static/domain/module override), stored per message for retries/DSN, SMTP client bind support, metrics/control listing, docs + tests.
+- [ ] NEW-23a: Per-binding retry/backoff. Allow bindings to carry timeout/retry profiles; ensure retries stick to the chosen binding unless explicitly allowed to fail over.
+- [ ] NEW-23b: Binding health/circuit breaker. Track per-binding connect success/latency; temporarily disable unhealthy bindings and surface status via metrics/control.
+- [ ] NEW-23c: Outbound binding observability. Per-binding counters and latency histograms (connect/EHLO); add Grafana panels.
+- [ ] NEW-23d: Control inspection for bindings. Control command to show binding selection for a queued message and toggle/disable a binding at runtime.
+- [ ] NEW-23e: Module binding ergonomics. Typed binding-name enum in FFI/WASM so modules can list/choose configured bindings; validate names with tests.
+- [ ] NEW-23f: Binding config linting. Detect unmapped/unknown binding names and missing interfaces at startup; emit warnings/errors early.
+- [ ] NEW-24: Per-domain bounce classification. Track temp vs perm failures by domain, expose metrics, and feed retry policy tuning.
+- [ ] NEW-25: SMTP STARTTLS policy tests. Coverage for require/allow/disable and banner hostname validation via `BannerHostname`.
+- [ ] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
+- [ ] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
+- [ ] DX-02: Fast inner-loop helpers. `just lint-quick`/`just check-changed` to run fmt/clippy/tests on changed crates only.
+- [ ] DOC-05: Operator runbook. Minimal ops guide (restart steps, common errors, control commands, log filters) linked from README.
 - [wip] NEW-09: Newtype safety. Added validated newtypes (`EmailAddress`, `ServerId`, `BannerHostname`) in `empath-common`; SMTP session now uses `BannerHostname` for config/tests; SPF evaluator now accepts `EmailAddress`. Remaining: propagate to envelope sender/recipients and delivery identifiers.
 - [wip] NEW-10: Nightly feature stability plan. Added `docs/NIGHTLY_FEATURES.md`; stable CI lane (`stable-check`) added; low-friction gates removed (`result_option_map_or_default`, `iter_advance_by`, `ascii_char`, `once_cell_try`, `bstr`); remaining: associated_type_defaults, slice_pattern, fn_traits, unboxed_closures.
 
