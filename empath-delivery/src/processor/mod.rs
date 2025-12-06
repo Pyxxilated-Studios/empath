@@ -560,6 +560,40 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         ids
     }
 
+    fn queue_stats_snapshot(&self) -> crate::service::QueueSnapshot {
+        let mut snapshot = crate::service::QueueSnapshot::default();
+        let now = std::time::SystemTime::now();
+
+        for entry in self.queue.queue.iter() {
+            let info = entry.value();
+            snapshot.total += 1;
+
+            *snapshot
+                .by_status
+                .entry(format!("{:?}", info.status))
+                .or_insert(0) += 1;
+            *snapshot
+                .by_domain
+                .entry(info.recipient_domain.to_string())
+                .or_insert(0) += 1;
+
+            let age_secs = now
+                .duration_since(
+                    std::time::UNIX_EPOCH
+                        + std::time::Duration::from_millis(info.message_id.timestamp_ms()),
+                )
+                .unwrap_or_default()
+                .as_secs();
+            snapshot.oldest_message_age_secs = Some(
+                snapshot
+                    .oldest_message_age_secs
+                    .map_or(age_secs, |cur| cur.max(age_secs)),
+            );
+        }
+
+        snapshot
+    }
+
     fn update_status(
         &self,
         message_id: &empath_spool::SpooledMessageId,

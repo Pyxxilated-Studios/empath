@@ -60,6 +60,9 @@ pub trait DeliveryQueryService: Send + Sync {
     /// cloning full delivery records.
     fn list_message_ids(&self, status_filter: Option<&str>) -> Vec<SpooledMessageId>;
 
+    /// Snapshot lightweight queue stats without cloning full entries.
+    fn queue_stats_snapshot(&self) -> QueueSnapshot;
+
     /// Update the delivery status of a message
     ///
     /// This is used by control commands like `retry` to reset failed
@@ -150,4 +153,13 @@ pub trait DeliveryQueryService: Send + Sync {
 
     /// Replace domain configuration registry contents.
     fn replace_domains(&self, registry: crate::DomainConfigRegistry);
+}
+
+/// Lightweight view of queue statistics for control endpoints.
+#[derive(Debug, Default)]
+pub struct QueueSnapshot {
+    pub total: usize,
+    pub by_status: std::collections::HashMap<String, usize>,
+    pub by_domain: std::collections::HashMap<String, usize>,
+    pub oldest_message_age_secs: Option<u64>,
 }

@@ -617,34 +617,13 @@ impl EmpathControlHandler {
 
     /// Handle queue stats command
     fn handle_stats_command(&self) -> Response {
-        // Get all messages
-        let all_info = self.delivery.list_messages(None);
-
-        // Count by status
-        let mut by_status: HashMap<String, usize> = HashMap::new();
-        for info in &all_info {
-            *by_status.entry(format!("{:?}", info.status)).or_insert(0) += 1;
-        }
-
-        // Count by domain
-        let mut by_domain: HashMap<String, usize> = HashMap::new();
-        for info in &all_info {
-            *by_domain
-                .entry(info.recipient_domain.to_string())
-                .or_insert(0) += 1;
-        }
-
-        // Find oldest message
-        let oldest_age = all_info
-            .iter()
-            .map(|info| Self::age_secs_from_timestamp(info.message_id.timestamp_ms()))
-            .max();
+        let snapshot = self.delivery.queue_stats_snapshot();
 
         let stats = empath_control::protocol::QueueStats {
-            total: all_info.len(),
-            by_status,
-            by_domain,
-            oldest_message_age_secs: oldest_age,
+            total: snapshot.total,
+            by_status: snapshot.by_status,
+            by_domain: snapshot.by_domain,
+            oldest_message_age_secs: snapshot.oldest_message_age_secs,
         };
 
         Response::data(ResponseData::QueueStats(stats))
