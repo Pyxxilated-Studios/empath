@@ -202,12 +202,14 @@ fn create_test_context() -> Context {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_load_nonexistent_module() {
     let result = WasmModule::load("/nonexistent/path.wasm");
     assert!(result.is_err());
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_load_valid_module() {
     // Ensure epoch task has a runtime by entering it during load
     let rt = runtime();
@@ -221,6 +223,7 @@ fn test_load_valid_module() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_module_initialization() {
     let module = load_test_module();
     let init_result = module.initialize();
@@ -234,6 +237,7 @@ fn test_module_initialization() {
 // --- Validation Callback Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_connect_accept() {
     let module = init_test_module();
 
@@ -253,6 +257,7 @@ fn test_validate_connect_accept() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_ehlo_accept() {
     let module = init_test_module();
 
@@ -267,6 +272,7 @@ fn test_validate_ehlo_accept() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_mail_from_accept() {
     let module = init_test_module();
 
@@ -294,6 +300,7 @@ fn test_validate_mail_from_accept() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_mail_from_reject_spam_domain() {
     let module = init_test_module();
 
@@ -321,6 +328,7 @@ fn test_validate_mail_from_reject_spam_domain() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_rcpt_to_accept() {
     let module = init_test_module();
 
@@ -354,6 +362,7 @@ fn test_validate_rcpt_to_accept() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_rcpt_to_reject_too_many() {
     let module = init_test_module();
 
@@ -384,6 +393,7 @@ fn test_validate_rcpt_to_reject_too_many() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_data_accept() {
     let module = init_test_module();
 
@@ -406,6 +416,7 @@ fn test_validate_data_accept() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_data_reject_too_large() {
     let module = init_test_module();
 
@@ -427,6 +438,7 @@ fn test_validate_data_reject_too_large() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_data_reject_spam_content() {
     let module = init_test_module();
 
@@ -450,6 +462,7 @@ fn test_validate_data_reject_spam_content() {
 
 #[allow(clippy::expect_used, clippy::panic)]
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_data_timeout() {
     let module = init_test_module_with_timeout(Duration::from_millis(10));
 
@@ -467,6 +480,7 @@ fn test_validate_data_timeout() {
 
 #[allow(clippy::panic, clippy::expect_used)]
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_data_memory_limit() {
     // Set a low memory limit (just above module minimum) to force failure on growth
     let module = init_test_module_with_memory_limit(1_200_000);
@@ -484,6 +498,7 @@ fn test_validate_data_memory_limit() {
 
 #[allow(clippy::panic, clippy::expect_used)]
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_event_error_path_returns_err() {
     let module = init_test_module();
 
@@ -496,6 +511,7 @@ fn test_event_error_path_returns_err() {
 
 #[allow(clippy::panic, clippy::expect_used)]
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_context_survives_event_error() {
     let module = init_test_module();
 
@@ -521,6 +537,7 @@ fn test_context_survives_event_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_validate_starttls_accept() {
     let module = init_test_module();
 
@@ -537,6 +554,7 @@ fn test_validate_starttls_accept() {
 // --- Event Callback Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_connection_opened() {
     let module = init_test_module();
 
@@ -556,6 +574,7 @@ fn test_on_connection_opened() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_connection_closed() {
     let module = init_test_module();
 
@@ -574,6 +593,7 @@ fn test_on_connection_closed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_delivery_attempt() {
     let module = init_test_module();
 
@@ -590,6 +610,7 @@ fn test_on_delivery_attempt() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_delivery_success() {
     let module = init_test_module();
 
@@ -602,6 +623,7 @@ fn test_on_delivery_success() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_delivery_failure() {
     let module = init_test_module();
 
@@ -614,6 +636,7 @@ fn test_on_delivery_failure() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_smtp_error() {
     let module = init_test_module();
 
@@ -626,6 +649,7 @@ fn test_on_smtp_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_smtp_message_received() {
     let module = init_test_module();
 
@@ -646,6 +670,7 @@ fn test_on_smtp_message_received() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_on_dns_lookup() {
     let module = init_test_module();
 
@@ -660,6 +685,7 @@ fn test_on_dns_lookup() {
 // --- Context Modification Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_transaction_context_persistence() {
     let module = init_test_module();
 
@@ -699,6 +725,7 @@ fn test_transaction_context_persistence() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_session_context_persistence() {
     let module = init_test_module();
 
@@ -731,6 +758,7 @@ fn test_session_context_persistence() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_transaction_context_isolation_between_sessions() {
     let module = init_test_module();
 
@@ -761,6 +789,7 @@ fn test_transaction_context_isolation_between_sessions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_transaction_overwrite() {
     let module = init_test_module();
 
@@ -784,6 +813,7 @@ fn test_transaction_overwrite() {
 // --- Error Handling Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_unknown_callback_returns_zero() {
     let module = init_test_module();
 
@@ -802,6 +832,7 @@ fn test_unknown_callback_returns_zero() {
 // --- Module Configuration Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_with_timeout() {
     use std::time::Duration;
 
@@ -811,6 +842,7 @@ fn test_with_timeout() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_with_max_memory() {
     let module = load_test_module().with_max_memory(5_000_000);
 
@@ -818,6 +850,7 @@ fn test_with_max_memory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_module_path() {
     let module = load_test_module();
     assert!(

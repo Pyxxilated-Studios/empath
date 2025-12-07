@@ -1,5 +1,5 @@
 use core::fmt::{self, Display};
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use empath_common::{context::Context, internal};
 use empath_tracing::traced;
@@ -48,8 +48,22 @@ impl Shared {
 
     #[traced(instrument(level = tracing::Level::TRACE, skip(self, validate_context), ret), timing(precision = "us"))]
     pub(super) fn emit(&self, event: super::Event, validate_context: &mut Context) -> i32 {
-        self.module
-            .as_ref()
-            .map_or(0, |module| module.emit(event, validate_context))
+        let Some(module) = &self.module else {
+            return 0;
+        };
+
+        let callback_name = event.callback_name();
+        let start = Instant::now();
+        let result = module.emit(event, validate_context);
+
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            metrics.modules.record_execution(
+                "shared_library",
+                callback_name,
+                start.elapsed().as_secs_f64(),
+            );
+        }
+
+        result
     }
 }

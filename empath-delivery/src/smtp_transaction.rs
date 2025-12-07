@@ -545,6 +545,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn disabled_policy_skips_even_when_advertised() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
@@ -571,6 +572,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn opportunistic_skips_when_server_lacks_starttls() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
@@ -598,6 +600,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn opportunistic_retries_without_tls_on_failure() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
@@ -624,6 +627,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn require_tls_propagates_failure_as_permanent() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
@@ -669,6 +673,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn require_tls_succeeds_when_starttls_succeeds() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();

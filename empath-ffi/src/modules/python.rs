@@ -2,13 +2,17 @@
 //!
 //! This module provides integration between Python modules and the Empath module system.
 
-use std::{path::PathBuf, sync::OnceLock, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 
 use empath_common::{context::Context, internal};
-use empath_python::PythonModule;
+use empath_python::{PythonError, PythonModule};
 use serde::Deserialize;
 
-use super::{Error, Event, validate};
+use super::{Error, Event};
 
 /// Python module configuration (deserializable from RON)
 #[derive(Clone, Debug, Deserialize)]
@@ -65,28 +69,43 @@ impl Python {
         // Validation = ERROR (security-critical), Events = WARN (observability)
         let is_validation = matches!(event, Event::Validate(_));
 
-        // Map events to Python callback names
-        let callback_name = match event {
-            Event::Validate(validate::Event::Connect) => "validate_connect",
-            Event::Validate(validate::Event::Ehlo) => "validate_ehlo",
-            Event::Validate(validate::Event::MailFrom) => "validate_mail_from",
-            Event::Validate(validate::Event::RcptTo) => "validate_rcpt_to",
-            Event::Validate(validate::Event::Data) => "validate_data",
-            Event::Validate(validate::Event::StartTls) => "validate_starttls",
-            Event::Event(super::Ev::ConnectionOpened) => "on_connection_opened",
-            Event::Event(super::Ev::ConnectionClosed) => "on_connection_closed",
-            Event::Event(super::Ev::DeliveryAttempt) => "on_delivery_attempt",
-            Event::Event(super::Ev::DeliverySuccess) => "on_delivery_success",
-            Event::Event(super::Ev::DeliveryFailure) => "on_delivery_failure",
-            Event::Event(super::Ev::SmtpError) => "on_smtp_error",
-            Event::Event(super::Ev::SmtpMessageReceived) => "on_smtp_message_received",
-            Event::Event(super::Ev::DnsLookup) => "on_dns_lookup",
-        };
+        let callback_name = event.callback_name();
+        let module_path = self.path.to_string_lossy();
 
-        match module.execute_callback(callback_name, context) {
+        let start = Instant::now();
+        let result = module.execute_callback(callback_name, context);
+        let duration = start.elapsed();
+
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            metrics
+                .modules
+                .record_execution("python", callback_name, duration.as_secs_f64());
+        }
+
+        match result {
             Ok(true) => 0,  // Accept
             Ok(false) => 1, // Reject
             Err(e) => {
+                let timeout = matches!(e, PythonError::Timeout(_, _));
+                if let Some(metrics) = empath_metrics::try_metrics() {
+                    if timeout {
+                        metrics.modules.record_timeout(module_path.as_ref());
+                    }
+
+                    let error_kind = match (is_validation, timeout) {
+                        (true, true) => "validation_timeout",
+                        (true, false) => "validation_error",
+                        (false, true) => "timeout",
+                        (false, false) => "error",
+                    };
+
+                    metrics.modules.record_error_with_kind(
+                        "python",
+                        module_path.as_ref(),
+                        error_kind,
+                    );
+                }
+
                 internal!(
                     level = ERROR,
                     "Python module {} error in {callback_name}: {e}",

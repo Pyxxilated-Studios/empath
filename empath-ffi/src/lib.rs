@@ -3,7 +3,14 @@
 use core::slice::SlicePattern;
 use std::{borrow::Cow, ffi::CStr, sync::Arc};
 
-use empath_common::{address::Address, context::Context, status::Status};
+use empath_common::{
+    address::Address,
+    context::Context,
+    message_api::{
+        BodyLimits, BodyOpts, Charset, HeaderLimits, HeaderName, HeaderValue, NewlineStyle,
+    },
+    status::Status,
+};
 
 pub mod modules;
 pub mod string;
@@ -216,6 +223,27 @@ pub unsafe extern "C" fn em_context_get(
     }
 }
 
+fn header_name_from_cstr(name: &CStr) -> Option<HeaderName> {
+    name.to_str().ok().and_then(|n| HeaderName::new(n).ok())
+}
+
+fn header_value_from_cstr(value: &CStr) -> Option<HeaderValue> {
+    HeaderValue::new(value.to_bytes()).ok()
+}
+
+fn charset_from_cstr(charset: Option<&CStr>) -> Charset {
+    let normalized = charset
+        .map(CStr::to_string_lossy)
+        .map_or_else(|| "utf-8".to_string(), std::borrow::Cow::into_owned)
+        .to_ascii_lowercase();
+
+    match normalized.as_str() {
+        "ascii" | "us-ascii" => Charset::Ascii,
+        "utf-8" | "utf8" => Charset::Utf8,
+        other => Charset::Other(Cow::Owned(other.to_string())),
+    }
+}
+
 // ============================================================================
 // Session Context Functions
 // ============================================================================
@@ -374,6 +402,487 @@ pub unsafe extern "C" fn em_context_transaction_exists(
                 .is_ok_and(|key| validate_context.transaction.contains_key(key))
         }
     }
+}
+
+// ============================================================================
+// Message mutation helpers (headers + body)
+// ============================================================================
+
+/// # Safety
+/// `validate_context` must point to a valid context, and `name` must be a valid
+/// null-terminated C string when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_get(
+    validate_context: &mut Context,
+    name: *const libc::c_char,
+) -> crate::string::StringVector {
+    if name.is_null() {
+        return crate::string::StringVector::default();
+    }
+
+    let name = unsafe { CStr::from_ptr(name) };
+    let Some(hname) = header_name_from_cstr(name) else {
+        return crate::string::StringVector::default();
+    };
+
+    let values = match validate_context.with_message_parts_mut(|parts| {
+        let view = parts.headers_view();
+        view.get_all(&hname)
+            .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string())
+            .collect::<Vec<_>>()
+    }) {
+        Ok(Some(vals)) => vals,
+        Ok(None) | Err(_) => Vec::new(),
+    };
+
+    values.into()
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context, and `name` must be a valid
+/// null-terminated C string when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_contains(
+    validate_context: &mut Context,
+    name: *const libc::c_char,
+) -> bool {
+    if name.is_null() {
+        return false;
+    }
+
+    let name = unsafe { CStr::from_ptr(name) };
+    let Some(hname) = header_name_from_cstr(name) else {
+        return false;
+    };
+
+    match validate_context.with_message_parts_mut(|parts| parts.headers_view().contains(&hname)) {
+        Ok(Some(result)) => result,
+        Ok(None) | Err(_) => false,
+    }
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `name` and `value` must
+/// point to valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_set(
+    validate_context: &mut Context,
+    name: *const libc::c_char,
+    value: *const libc::c_char,
+) -> bool {
+    if name.is_null() || value.is_null() {
+        return false;
+    }
+
+    let name = unsafe { CStr::from_ptr(name) };
+    let value = unsafe { CStr::from_ptr(value) };
+
+    let Some(hname) = header_name_from_cstr(name) else {
+        return false;
+    };
+    let Some(hval) = header_value_from_cstr(value) else {
+        return false;
+    };
+
+    matches!(
+        validate_context.with_message_parts_mut(|parts| {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+            headers.set(&hname, &hval)
+        }),
+        Ok(Some(Ok(())))
+    )
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `name` and `value` must
+/// point to valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_append(
+    validate_context: &mut Context,
+    name: *const libc::c_char,
+    value: *const libc::c_char,
+) -> bool {
+    if name.is_null() || value.is_null() {
+        return false;
+    }
+
+    let name = unsafe { CStr::from_ptr(name) };
+    let value = unsafe { CStr::from_ptr(value) };
+
+    let Some(hname) = header_name_from_cstr(name) else {
+        return false;
+    };
+    let Some(hval) = header_value_from_cstr(value) else {
+        return false;
+    };
+
+    matches!(
+        validate_context.with_message_parts_mut(|parts| {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+            headers.append(&hname, &hval)
+        }),
+        Ok(Some(Ok(())))
+    )
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `name` and `value` must
+/// point to valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_set_if_absent(
+    validate_context: &mut Context,
+    name: *const libc::c_char,
+    value: *const libc::c_char,
+) -> bool {
+    if name.is_null() || value.is_null() {
+        return false;
+    }
+
+    let name = unsafe { CStr::from_ptr(name) };
+    let value = unsafe { CStr::from_ptr(value) };
+
+    let Some(hname) = header_name_from_cstr(name) else {
+        return false;
+    };
+    let Some(hval) = header_value_from_cstr(value) else {
+        return false;
+    };
+
+    match validate_context.with_message_parts_mut(|parts| {
+        let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+        headers.set_if_absent(&hname, &hval)
+    }) {
+        Ok(Some(Ok(updated))) => updated,
+        _ => false,
+    }
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `name` must point to a
+/// valid null-terminated C string when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_remove(
+    validate_context: &mut Context,
+    name: *const libc::c_char,
+) -> u32 {
+    if name.is_null() {
+        return 0;
+    }
+
+    let name = unsafe { CStr::from_ptr(name) };
+    let Some(hname) = header_name_from_cstr(name) else {
+        return 0;
+    };
+
+    match validate_context.with_message_parts_mut(|parts| {
+        let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+        u32::try_from(headers.remove(&hname)).unwrap_or(u32::MAX)
+    }) {
+        Ok(Some(count)) => count,
+        Ok(None) | Err(_) => 0,
+    }
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_ensure_message_id(
+    validate_context: &mut Context,
+) -> bool {
+    match validate_context.with_message_parts_mut(|parts| {
+        let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+        headers.ensure_message_id().map(|()| true)
+    }) {
+        Ok(Some(Ok(result))) => result,
+        _ => false,
+    }
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `value` must point to a
+/// valid null-terminated C string when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_set_content_type(
+    validate_context: &mut Context,
+    value: *const libc::c_char,
+) -> bool {
+    if value.is_null() {
+        return false;
+    }
+    let value = unsafe { CStr::from_ptr(value) };
+    let Some(hval) = header_value_from_cstr(value) else {
+        return false;
+    };
+    let Ok(hname) = HeaderName::new("Content-Type") else {
+        return false;
+    };
+
+    matches!(
+        validate_context.with_message_parts_mut(|parts| {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+            headers.set(&hname, &hval)
+        }),
+        Ok(Some(Ok(())))
+    )
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `value` must point to a
+/// valid null-terminated C string when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_headers_set_transfer_encoding(
+    validate_context: &mut Context,
+    value: *const libc::c_char,
+) -> bool {
+    if value.is_null() {
+        return false;
+    }
+    let value = unsafe { CStr::from_ptr(value) };
+    let Some(hval) = header_value_from_cstr(value) else {
+        return false;
+    };
+    let Ok(hname) = HeaderName::new("Content-Transfer-Encoding") else {
+        return false;
+    };
+
+    matches!(
+        validate_context.with_message_parts_mut(|parts| {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+            headers.set(&hname, &hval)
+        }),
+        Ok(Some(Ok(())))
+    )
+}
+
+fn mutate_body<F>(validate_context: &mut Context, f: F) -> bool
+where
+    F: FnMut(
+        &mut empath_common::message_api::BodyMut<'_>,
+    ) -> Result<(), empath_common::message_api::BodyError>,
+{
+    let mut op = f;
+    matches!(
+        validate_context.with_message_parts_mut(|parts| {
+            let mut body = parts.body_mut(BodyLimits::default(), None);
+            op(&mut body)
+        }),
+        Ok(Some(Ok(())))
+    )
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. If `data` is non-null, it
+/// must reference `len` bytes of valid memory.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_set_bytes(
+    validate_context: &mut Context,
+    data: *const u8,
+    len: usize,
+) -> bool {
+    let slice = if data.is_null() {
+        &[]
+    } else {
+        // SAFETY: Caller guarantees `data` is valid for `len` bytes.
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    mutate_body(validate_context, |body| {
+        body.set_bytes(slice, BodyOpts::default())
+    })
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. If `data` is non-null, it
+/// must reference `len` bytes of valid memory.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_append_bytes(
+    validate_context: &mut Context,
+    data: *const u8,
+    len: usize,
+) -> bool {
+    let slice = if data.is_null() {
+        &[]
+    } else {
+        // SAFETY: Caller guarantees `data` is valid for `len` bytes.
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    mutate_body(validate_context, |body| {
+        body.append_bytes(slice, BodyOpts::default())
+    })
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `text` and `charset`
+/// pointers must be valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_set_text(
+    validate_context: &mut Context,
+    text: *const libc::c_char,
+    charset: *const libc::c_char,
+) -> bool {
+    if text.is_null() {
+        return false;
+    }
+    let text = unsafe { CStr::from_ptr(text) };
+    let charset = if charset.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(charset) })
+    };
+    let charset = charset_from_cstr(charset);
+
+    text.to_str().ok().is_some_and(|txt| {
+        mutate_body(validate_context, |body| {
+            body.set_text(txt, &charset, BodyOpts::default())
+        })
+    })
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `text` and `charset`
+/// pointers must be valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_append_text(
+    validate_context: &mut Context,
+    text: *const libc::c_char,
+    charset: *const libc::c_char,
+) -> bool {
+    if text.is_null() {
+        return false;
+    }
+    let text = unsafe { CStr::from_ptr(text) };
+    let charset = if charset.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(charset) })
+    };
+    let charset = charset_from_cstr(charset);
+
+    text.to_str().ok().is_some_and(|txt| {
+        mutate_body(validate_context, |body| {
+            body.append_text(txt, &charset, BodyOpts::default())
+        })
+    })
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `html` and `charset`
+/// pointers must be valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_set_html(
+    validate_context: &mut Context,
+    html: *const libc::c_char,
+    charset: *const libc::c_char,
+) -> bool {
+    if html.is_null() {
+        return false;
+    }
+    let html = unsafe { CStr::from_ptr(html) };
+    let charset = if charset.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(charset) })
+    };
+    let charset = charset_from_cstr(charset);
+
+    html.to_str().ok().is_some_and(|txt| {
+        mutate_body(validate_context, |body| {
+            body.set_html(txt, &charset, BodyOpts::default())
+        })
+    })
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `html` and `charset`
+/// pointers must be valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_append_html(
+    validate_context: &mut Context,
+    html: *const libc::c_char,
+    charset: *const libc::c_char,
+) -> bool {
+    if html.is_null() {
+        return false;
+    }
+    let html = unsafe { CStr::from_ptr(html) };
+    let charset = if charset.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(charset) })
+    };
+    let charset = charset_from_cstr(charset);
+
+    html.to_str().ok().is_some_and(|txt| {
+        mutate_body(validate_context, |body| {
+            body.append_html(txt, &charset, BodyOpts::default())
+        })
+    })
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context. `text`, `html`, and
+/// `charset` pointers must be valid null-terminated C strings when non-null.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_set_alternative(
+    validate_context: &mut Context,
+    text: *const libc::c_char,
+    html: *const libc::c_char,
+    charset: *const libc::c_char,
+) -> bool {
+    if text.is_null() || html.is_null() {
+        return false;
+    }
+    let text = unsafe { CStr::from_ptr(text) };
+    let html = unsafe { CStr::from_ptr(html) };
+    let charset = if charset.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(charset) })
+    };
+    let charset = charset_from_cstr(charset);
+
+    match (text.to_str(), html.to_str()) {
+        (Ok(text_str), Ok(html_str)) => mutate_body(validate_context, |body| {
+            body.set_alternative(text_str, html_str, &charset, BodyOpts::default())
+        }),
+        _ => false,
+    }
+}
+
+/// # Safety
+/// `validate_context` must point to a valid context.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_message_body_newline_style(
+    validate_context: &mut Context,
+) -> crate::string::String {
+    let style =
+        match validate_context.with_message_parts_mut(|parts| parts.body_view().newline_style()) {
+            Ok(Some(style)) => style,
+            Ok(None) | Err(_) => NewlineStyle::Lf,
+        };
+
+    let name = match style {
+        NewlineStyle::Crlf => "crlf",
+        NewlineStyle::Lf => "lf",
+        NewlineStyle::Mixed => "mixed",
+    };
+    name.into()
 }
 
 // ============================================================================

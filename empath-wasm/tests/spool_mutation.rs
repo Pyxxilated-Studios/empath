@@ -70,6 +70,7 @@ fn find_wasm_artifact(dir: &Path) -> Option<PathBuf> {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn wasm_message_helpers_mutate_spool() {
     // Build guest module to WASI target
     let guest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/guest");

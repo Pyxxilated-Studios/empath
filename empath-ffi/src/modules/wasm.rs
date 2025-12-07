@@ -12,7 +12,7 @@ use empath_common::{context::Context, internal};
 use empath_wasm::{WasmError, WasmModule};
 use serde::Deserialize;
 
-use super::{Error, Event, validate};
+use super::{Error, Event};
 
 /// WebAssembly module configuration (deserializable from RON)
 #[derive(Deserialize)]
@@ -137,23 +137,7 @@ impl Wasm {
         // Validation = ERROR (security-critical), Events = WARN (observability)
         let is_validation = matches!(event, Event::Validate(_));
 
-        // Map events to WASM callback names (matching Python module naming)
-        let callback_name = match event {
-            Event::Validate(validate::Event::Connect) => "validate_connect",
-            Event::Validate(validate::Event::Ehlo) => "validate_ehlo",
-            Event::Validate(validate::Event::MailFrom) => "validate_mail_from",
-            Event::Validate(validate::Event::RcptTo) => "validate_rcpt_to",
-            Event::Validate(validate::Event::Data) => "validate_data",
-            Event::Validate(validate::Event::StartTls) => "validate_starttls",
-            Event::Event(super::Ev::ConnectionOpened) => "on_connection_opened",
-            Event::Event(super::Ev::ConnectionClosed) => "on_connection_closed",
-            Event::Event(super::Ev::DeliveryAttempt) => "on_delivery_attempt",
-            Event::Event(super::Ev::DeliverySuccess) => "on_delivery_success",
-            Event::Event(super::Ev::DeliveryFailure) => "on_delivery_failure",
-            Event::Event(super::Ev::SmtpError) => "on_smtp_error",
-            Event::Event(super::Ev::SmtpMessageReceived) => "on_smtp_message_received",
-            Event::Event(super::Ev::DnsLookup) => "on_dns_lookup",
-        };
+        let callback_name = event.callback_name();
 
         let module_path = self.path.to_string_lossy();
 

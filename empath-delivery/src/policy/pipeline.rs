@@ -291,6 +291,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_check_rate_limit_no_limiter() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
@@ -304,6 +305,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_check_rate_limit_with_limiter_allowed() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
@@ -396,6 +398,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_calculate_rate_limit_retry() {
         let wait_time = Duration::from_secs(10);
         let before = SystemTime::now();

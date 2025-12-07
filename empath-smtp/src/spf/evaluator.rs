@@ -878,6 +878,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_ip4_mechanism_match() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
@@ -902,6 +903,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_ip4_mechanism_no_match() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
@@ -923,6 +925,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_ip6_mechanism() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
@@ -943,6 +946,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_a_mechanism() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt("example.com", vec!["v=spf1 a -all".to_string()]);
@@ -962,6 +966,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_mx_mechanism() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt("example.com", vec!["v=spf1 mx -all".to_string()]);
@@ -988,6 +993,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_all_mechanism() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt("example.com", vec!["v=spf1 -all".to_string()]);
@@ -1006,6 +1012,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_softfail_qualifier() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt("example.com", vec!["v=spf1 ~all".to_string()]);
@@ -1023,6 +1030,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_neutral_qualifier() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt("example.com", vec!["v=spf1 ?all".to_string()]);
@@ -1040,6 +1048,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_include_mechanism_pass() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
@@ -1068,6 +1077,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_include_mechanism_no_match() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
@@ -1095,6 +1105,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_redirect_modifier() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
@@ -1119,6 +1130,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_dns_lookup_limit() {
         let resolver = Arc::new(MockDnsResolver::new());
 
@@ -1149,6 +1161,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_recursion_depth_limit() {
         let resolver = Arc::new(MockDnsResolver::new());
 
@@ -1185,6 +1198,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_no_spf_record() {
         let resolver = Arc::new(MockDnsResolver::new());
 
@@ -1201,6 +1215,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_exists_mechanism() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
@@ -1232,6 +1247,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_ptr_mechanism() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt("example.com", vec!["v=spf1 ptr -all".to_string()]);
@@ -1250,6 +1266,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_multiple_mechanisms() {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(

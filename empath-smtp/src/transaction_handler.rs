@@ -409,6 +409,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_spf_evaluation_integration() {
         use std::{net::IpAddr, sync::Mutex};
 

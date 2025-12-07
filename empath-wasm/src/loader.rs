@@ -708,6 +708,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_nonexistent_module() {
         let result = WasmModule::load("/nonexistent/path.wasm");
         assert!(result.is_err());

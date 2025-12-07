@@ -52,6 +52,28 @@ pub enum Event {
     Event(Ev),
 }
 
+impl Event {
+    #[must_use]
+    pub const fn callback_name(&self) -> &'static str {
+        match self {
+            Self::Validate(validate::Event::Connect) => "validate_connect",
+            Self::Validate(validate::Event::Ehlo) => "validate_ehlo",
+            Self::Validate(validate::Event::MailFrom) => "validate_mail_from",
+            Self::Validate(validate::Event::RcptTo) => "validate_rcpt_to",
+            Self::Validate(validate::Event::Data) => "validate_data",
+            Self::Validate(validate::Event::StartTls) => "validate_starttls",
+            Self::Event(Ev::ConnectionOpened) => "on_connection_opened",
+            Self::Event(Ev::ConnectionClosed) => "on_connection_closed",
+            Self::Event(Ev::DeliveryAttempt) => "on_delivery_attempt",
+            Self::Event(Ev::DeliverySuccess) => "on_delivery_success",
+            Self::Event(Ev::DeliveryFailure) => "on_delivery_failure",
+            Self::Event(Ev::SmtpError) => "on_smtp_error",
+            Self::Event(Ev::SmtpMessageReceived) => "on_smtp_message_received",
+            Self::Event(Ev::DnsLookup) => "on_dns_lookup",
+        }
+    }
+}
+
 #[derive(Debug)]
 #[repr(C)]
 pub enum Mod {
