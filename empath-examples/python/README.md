@@ -52,6 +52,17 @@ Empath(
 )
 ```
 
+### 3. Message Mutation Module (`message_mutator.py`)
+
+Demonstrates the mutation helpers added to `PyContext`:
+
+* Ensures `Message-ID` exists and records mutation metadata
+* Adds mutation-specific headers (`X-Processed-By`, `X-Mutation-Timestamp`, etc.)
+* Appends a footer to the message body and tracks the mutation time in `transaction`
+* Hooks both `validate_data` for synchronous mutation and `on_smtp_message_received`
+
+Use case: audit or enrich the SMTP payload before spooling/delivery.
+
 **Note**: The `timeout_secs` parameter is currently not enforced due to threading constraints (Python's signal module only works in the main thread, but callbacks run in worker threads). Keep your callbacks fast (< 1 second recommended) to avoid blocking SMTP sessions.
 
 ## Python Module API

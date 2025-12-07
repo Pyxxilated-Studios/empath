@@ -30,6 +30,10 @@ jobs:
           toolchain: nightly
           components: clippy
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -45,4 +49,4 @@ jobs:
 
       - name: Generate code coverage
         run: |
-          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120
+          cargo +nightly tarpaulin --all-features --workspace --timeout 120

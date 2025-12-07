@@ -72,6 +72,7 @@ jobs:
         with:
           toolchain: nightly
           components: clippy miri
+          targets: wasm32-wasip2
 
       - uses: actions/cache@v4
         with:

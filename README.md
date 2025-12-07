@@ -243,6 +243,7 @@ All code must pass `cargo clippy --all-targets --all-features`.
 - **CLAUDE.md** - Comprehensive technical documentation for development
 - **docker/README.md** - Docker environment documentation
 - **TODO.md** - Project roadmap and future work
+- **docs/message-mutation.md** - Examples for Python and C modules that mutate message headers/body
 
 ## License
 

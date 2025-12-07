@@ -1,4 +1,5 @@
 use std::{
+    env,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -50,6 +51,8 @@ fn build_all() -> Result<()> {
 fn build_c_examples() -> Result<()> {
     println!("Building C example modules...");
 
+    build_empath_header()?;
+
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| String::from("debug"));
     let lib_dir = format!("target/{profile}");
     let output_dir = PathBuf::from("target/modules");
@@ -69,6 +72,15 @@ fn build_c_examples() -> Result<()> {
     build_c_module(
         "empath-examples/shared/example.c",
         "example",
+        &lib_dir,
+        &output_dir,
+        &["log"],
+    )?;
+
+    // Build message mutation example (depends on log)
+    build_c_module(
+        "empath-examples/shared/message_mutation.c",
+        "message_mutation",
         &lib_dir,
         &output_dir,
         &["log"],
@@ -149,6 +161,25 @@ fn build_c_module(
     }
 
     println!("  ✅ Built {}", output_lib.display());
+    Ok(())
+}
+
+fn build_empath_header() -> Result<()> {
+    let profile = env::var("PROFILE").unwrap_or_else(|_| String::from("debug"));
+    let is_release = profile == "release";
+
+    println!("Ensuring `empath` C header is up to date (profile = {profile})...");
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build").arg("-p").arg("empath");
+    if is_release {
+        cmd.arg("--release");
+    }
+
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("cargo build -p empath failed");
+    }
+
     Ok(())
 }
 

@@ -3,6 +3,9 @@ use std::{env, path::PathBuf};
 use cbindgen::{Config, Language, ParseConfig};
 
 fn main() -> anyhow::Result<()> {
+    println!("cargo:rerun-if-changed=empath-ffi/src/lib.rs");
+    println!("cargo:rerun-if-changed=../empath-wasm/wit/empath.wit");
+
     let dependencies = vec![
         String::from("empath-common"),
         String::from("empath-delivery"),

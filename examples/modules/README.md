@@ -32,6 +32,7 @@ The reference module examples are located in `empath-ffi/examples/`:
 |--------|---------|----------|-------|
 | `example.c` | Validation listener demo | C | ~100 |
 | `event.c` | Event listener demo | C | ~50 |
+| `empath-examples/shared/message_mutation.c` | Message mutation demo | C | ~70 |
 
 ### example.c - Validation Listener
 
@@ -86,6 +87,22 @@ void on_connection_opened(Context* ctx) {
 ```bash
 cd empath-ffi/examples
 gcc event.c -fpic -shared -o libevent.so -I../../target -L../../target/debug -lempath
+```
+
+### message_mutation.c - Mutation Helper Demo
+
+**Purpose:** Showcases the new message mutation helpers by touching headers/body before spooling.
+
+**Features:**
+- Adds mutation headers (`X-Processed-By`, `X-Mutation-Timestamp`, `X-Mutation-Flag`)
+- Appends a footer via `em_message_body_append_text`
+- Logs a message so you can see the mutation in the Empath log stream
+
+**Build:**
+```bash
+cd empath-examples/shared
+gcc message_mutation.c log.c -fpic -shared -o libmessage_mutation.so \
+  -I../../target -L../../target/debug -lempath
 ```
 
 ---
