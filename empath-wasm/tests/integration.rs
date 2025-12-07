@@ -196,6 +196,8 @@ fn create_test_context() -> Context {
         capabilities: Vec::new(),
         delivery: None,
         tracking_id: None,
+        message_parts: None,
+        message_dirty: false,
     }
 }
 

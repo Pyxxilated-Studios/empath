@@ -14,7 +14,6 @@
 
 use std::{fmt::Write as _, sync::Arc, time::SystemTime};
 
-use ahash::AHashMap;
 use empath_common::{
     DeliveryStatus,
     address::{Address, AddressList},
@@ -181,18 +180,11 @@ pub fn generate_dsn(
 
     // Create a new Context for the DSN message
     let mut dsn_context = Context {
-        extended: false,
         envelope: Arc::new(Envelope::default()),
         id: ulid::Ulid::new().to_string(),
         data: Some(Arc::from(dsn_body.as_bytes())),
-        response: None,
-        session: AHashMap::default(),
-        transaction: AHashMap::default(),
         banner: Arc::from(config.reporting_mta.as_str()),
-        max_message_size: 0,
-        capabilities: Vec::new(),
-        delivery: None,
-        tracking_id: None,
+        ..Context::default()
     };
 
     // Set envelope: FROM postmaster, TO original sender

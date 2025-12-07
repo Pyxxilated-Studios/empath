@@ -305,6 +305,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
             modules::Event::Validate(modules::validate::Event::Data),
             ctx,
         );
+        // Persist any header/body mutations performed by modules.
+        ctx.persist_message_parts();
 
         // If validation passed, do the work (spooling)
         if valid {
@@ -500,15 +502,8 @@ mod tests {
             extended: true,
             envelope: Arc::new(envelope),
             id: "client.example.com".to_string(),
-            data: None,
-            response: None,
-            session: ahash::AHashMap::new(),
-            transaction: ahash::AHashMap::new(),
             banner: Arc::from("test.example.com"),
-            max_message_size: 0,
-            capabilities: Vec::new(),
-            delivery: None,
-            tracking_id: None,
+            ..Context::default()
         };
 
         // Call validate_mail_from which should perform SPF evaluation

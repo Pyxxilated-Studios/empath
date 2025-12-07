@@ -29,3 +29,6 @@ wasmtime-wasi.workspace = true
 [dev-dependencies]
 ahash.workspace = true
 tempfile.workspace = true
+empath-smtp.workspace = true
+empath-spool.workspace = true
+empath-ffi.workspace = true

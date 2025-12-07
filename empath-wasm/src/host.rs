@@ -14,7 +14,14 @@ use std::{
 };
 
 use bincode::{Decode, Encode};
-use empath_common::{context::Context, internal};
+use empath_common::{
+    context::Context,
+    internal,
+    message_api::{
+        BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
+        HeaderValue, HeadersMut, NewlineStyle,
+    },
+};
 use serde::{Deserialize, Serialize};
 use wasmtime::ResourceLimiter;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
@@ -177,20 +184,10 @@ impl ResourceLimiter for WasmStore {
     }
 }
 
-/// Implement the Host trait from generated WIT bindings
-///
-/// This provides the host functions that WASM component modules can import.
+/// Implement the Host trait from generated WIT bindings (core host + message helpers).
 ///
 /// All host functions gracefully handle poisoned mutexes by logging an error and
-/// returning a safe default value instead of panicking:
-///
-/// - **Functions returning `Option<T>`**: Return `None` on poisoned mutex
-/// - **Functions returning `bool`**: Return `false` on poisoned mutex
-/// - **Functions returning nothing**: Log error and return early
-///
-/// This ensures that a poisoned mutex (caused by a panic in another thread) doesn't
-/// crash the entire server. The WASM module execution will fail, but the server
-/// continues processing other requests.
+/// returning a safe default value instead of panicking.
 impl crate::bindings::empath::validator::host::Host for WasmStore {
     fn log(&mut self, message: String) {
         internal!(level = INFO, "[WASM] {}", message);
@@ -240,14 +237,251 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
     }
 }
 
+impl crate::bindings::empath::validator::message::Host for WasmStore {
+    fn headers_get(&mut self, name: String) -> Vec<String> {
+        let Ok(hname) = HeaderName::new(name) else {
+            return Vec::new();
+        };
+        self.try_lock_context()
+            .ok()
+            .and_then(|mut ctx| {
+                ctx.with_message_parts_mut(|parts| {
+                    let view = parts.headers_view();
+                    view.get_all(&hname)
+                        .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string())
+                        .collect::<Vec<_>>()
+                })
+                .ok()
+                .flatten()
+            })
+            .unwrap_or_default()
+    }
+
+    fn headers_contains(&mut self, name: String) -> bool {
+        let Ok(hname) = HeaderName::new(name) else {
+            return false;
+        };
+        self.try_lock_context()
+            .ok()
+            .and_then(|mut ctx| {
+                ctx.with_message_parts_mut(|parts| {
+                    let view = parts.headers_view();
+                    view.contains(&hname)
+                })
+                .ok()
+                .flatten()
+            })
+            .unwrap_or(false)
+    }
+
+    fn headers_set(&mut self, name: String, value: String) -> i32 {
+        self.with_headers_mut(&name, &value, |mut headers, n, v| headers.set(&n, &v))
+    }
+
+    fn headers_append(&mut self, name: String, value: String) -> i32 {
+        self.with_headers_mut(&name, &value, |mut headers, n, v| headers.append(&n, &v))
+    }
+
+    fn headers_set_if_absent(
+        &mut self,
+        name: String,
+        value: String,
+    ) -> std::result::Result<bool, i32> {
+        let Ok(mut ctx) = self.try_lock_context() else {
+            return Err(-1);
+        };
+        match ctx.with_message_parts_mut(|parts| {
+            let mut h = parts.headers_mut(HeaderLimits::default(), None);
+            let hname = HeaderName::new(name.clone()).map_err(|_| -1)?;
+            let hval = HeaderValue::new(value.as_bytes()).map_err(|_| -1)?;
+            h.set_if_absent(&hname, &hval).map_err(|_| -1)
+        }) {
+            Ok(Some(Ok(res))) => Ok(res),
+            _ => Err(-1),
+        }
+    }
+
+    fn headers_remove(&mut self, name: String) -> u32 {
+        let Ok(hname) = HeaderName::new(name) else {
+            return 0;
+        };
+        self.try_lock_context()
+            .ok()
+            .and_then(|mut ctx| {
+                ctx.with_message_parts_mut(|parts| {
+                    let mut h = parts.headers_mut(HeaderLimits::default(), None);
+                    u32::try_from(h.remove(&hname)).unwrap_or(u32::MAX)
+                })
+                .ok()
+                .flatten()
+            })
+            .unwrap_or(0)
+    }
+
+    fn headers_ensure_message_id(&mut self) -> i32 {
+        self.try_lock_context().map_or(-1, |mut ctx| {
+            match ctx.with_message_parts_mut(|parts| {
+                let mut h = parts.headers_mut(HeaderLimits::default(), None);
+                h.ensure_message_id().map(|()| 0).map_err(|_| -1)
+            }) {
+                Ok(Some(Ok(res))) => res,
+                _ => -1,
+            }
+        })
+    }
+
+    fn headers_set_content_type(&mut self, value: String) -> i32 {
+        self.with_headers_mut("Content-Type", &value, |mut headers, n, v| {
+            headers.set(&n, &v)
+        })
+    }
+
+    fn headers_set_transfer_encoding(&mut self, value: String) -> i32 {
+        self.with_headers_mut("Content-Transfer-Encoding", &value, |mut headers, n, v| {
+            headers.set(&n, &v)
+        })
+    }
+
+    fn body_bytes(&mut self) -> Vec<u8> {
+        self.try_lock_context()
+            .ok()
+            .and_then(|mut ctx| {
+                ctx.with_message_parts_mut(|parts| parts.body_view().as_bytes().to_vec())
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default()
+    }
+
+    fn body_newline_style(&mut self) -> String {
+        let style = self
+            .try_lock_context()
+            .ok()
+            .and_then(|mut ctx| {
+                ctx.with_message_parts_mut(|parts| parts.body_view().newline_style())
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or(NewlineStyle::Lf);
+        match style {
+            NewlineStyle::Crlf => "crlf",
+            NewlineStyle::Lf => "lf",
+            NewlineStyle::Mixed => "mixed",
+        }
+        .to_string()
+    }
+
+    fn body_set_bytes(&mut self, data: Vec<u8>) -> i32 {
+        self.with_body_mut(data.as_slice(), |mut body, buf| {
+            body.set_bytes(buf, BodyOpts::default())
+        })
+    }
+
+    fn body_append_bytes(&mut self, data: Vec<u8>) -> i32 {
+        self.with_body_mut(data.as_slice(), |mut body, buf| {
+            body.append_bytes(buf, BodyOpts::default())
+        })
+    }
+
+    fn body_set_text(&mut self, text: String, charset: String) -> i32 {
+        let bytes = text.into_bytes();
+        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+            let charset = charset_from_string(&charset);
+            body.set_text(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
+        })
+    }
+
+    fn body_append_text(&mut self, text: String, charset: String) -> i32 {
+        let bytes = text.into_bytes();
+        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+            let charset = charset_from_string(&charset);
+            body.append_text(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
+        })
+    }
+
+    fn body_set_html(&mut self, html: String, charset: String) -> i32 {
+        let bytes = html.into_bytes();
+        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+            let charset = charset_from_string(&charset);
+            body.set_html(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
+        })
+    }
+
+    fn body_append_html(&mut self, html: String, charset: String) -> i32 {
+        let bytes = html.into_bytes();
+        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+            let charset = charset_from_string(&charset);
+            body.append_html(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
+        })
+    }
+
+    fn body_set_alternative(&mut self, text: String, html: String, charset: String) -> i32 {
+        self.try_lock_context().map_or(-1, |mut ctx| {
+            match ctx.with_message_parts_mut(|parts| {
+                let mut body = parts.body_mut(BodyLimits::default(), None);
+                let charset = charset_from_string(&charset);
+                body.set_alternative(&text, &html, &charset, BodyOpts::default())
+                    .map(|()| 0)
+                    .map_err(|_| -1)
+            }) {
+                Ok(Some(Ok(res))) => res,
+                _ => -1,
+            }
+        })
+    }
+}
+
+impl WasmStore {
+    fn with_headers_mut<F>(&self, name: &str, value: &str, mut f: F) -> i32
+    where
+        F: FnMut(HeadersMut<'_>, HeaderName, HeaderValue) -> std::result::Result<(), HeaderError>,
+    {
+        self.try_lock_context().map_or(-1, |mut ctx| {
+            match ctx.with_message_parts_mut(|parts| {
+                let h = parts.headers_mut(HeaderLimits::default(), None);
+                let hname = HeaderName::new(name).map_err(|_| -1)?;
+                let hval = HeaderValue::new(value.as_bytes()).map_err(|_| -1)?;
+                f(h, hname, hval).map(|()| 0).map_err(|_| -1)
+            }) {
+                Ok(Some(Ok(res))) => res,
+                _ => -1,
+            }
+        })
+    }
+
+    fn with_body_mut<F>(&self, data: &[u8], mut f: F) -> i32
+    where
+        F: FnMut(BodyMut<'_>, &[u8]) -> std::result::Result<(), BodyError>,
+    {
+        self.try_lock_context().map_or(-1, |mut ctx| {
+            match ctx.with_message_parts_mut(|parts| {
+                let body = parts.body_mut(BodyLimits::default(), None);
+                f(body, data).map(|()| 0).map_err(|_| -1)
+            }) {
+                Ok(Some(Ok(res))) => res,
+                _ => -1,
+            }
+        })
+    }
+}
+
+fn charset_from_string(s: &str) -> Charset {
+    match s.to_ascii_lowercase().as_str() {
+        "us-ascii" | "ascii" => Charset::Ascii,
+        "utf-8" | "utf8" => Charset::Utf8,
+        other => Charset::Other(Cow::Owned(other.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
+    use empath_common::message_api::MessageParts;
     use wasmtime_wasi::WasiCtxBuilder;
 
     use super::*;
-    use crate::bindings::empath::validator::host::Host;
+    use crate::bindings::empath::validator::{host::Host, message::Host as MessageHost};
 
     fn poison_context(context: &Arc<Mutex<Context>>) {
         let ctx_clone = Arc::clone(context);
@@ -298,5 +532,39 @@ mod tests {
         assert!(store.memory_growing(0, 512, None).unwrap());
         // Reject growth above limit
         assert!(!store.memory_growing(0, 2048, None).unwrap());
+    }
+
+    #[test]
+    fn message_helpers_persist_changes() {
+        let msg = b"Subject: Old\r\n\r\nBody";
+        let context = Arc::new(Mutex::new(Context {
+            data: Some(Arc::from(msg.as_slice())),
+            ..Context::default()
+        }));
+        let mut store = make_store(Arc::clone(&context));
+
+        assert_eq!(
+            MessageHost::headers_set(&mut store, "X-Test".into(), "ok".into()),
+            0
+        );
+        assert_eq!(
+            MessageHost::body_append_text(&mut store, " tail".into(), "utf-8".into()),
+            0
+        );
+
+        let data = {
+            let ctx = context.lock().unwrap();
+            ctx.data.as_deref().unwrap().to_vec()
+        };
+        let parts = MessageParts::from_bytes(&data).expect("parse");
+
+        let headers = parts.headers_view();
+        let value = headers
+            .get(&HeaderName::new("X-Test").unwrap())
+            .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string());
+        assert_eq!(value.as_deref(), Some("ok"));
+
+        let body = String::from_utf8_lossy(parts.body_view().as_bytes()).to_string();
+        assert!(body.ends_with("Body tail"));
     }
 }

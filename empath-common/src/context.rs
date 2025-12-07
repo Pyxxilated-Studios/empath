@@ -12,6 +12,7 @@ use ulid::Ulid;
 use crate::{
     email::{EmailAddress, ServerId},
     envelope::Envelope,
+    message_api::MessageParts,
     message_id::SpooledMessageId,
     status::Status,
 };
@@ -150,6 +151,9 @@ pub struct Context {
     pub id: String,
     pub data: Option<Arc<[u8]>>,
     pub response: Option<(Status, Cow<'static, str>)>,
+    /// Cached parsed message parts (headers/body) for mutation.
+    #[serde(skip)]
+    pub message_parts: Option<MessageParts>,
     /// Session-level context (persists across RSET, tied to connection lifetime)
     ///
     /// Examples: TLS state ("tls", "protocol", "cipher"), connection properties,
@@ -176,6 +180,9 @@ pub struct Context {
     pub delivery: Option<DeliveryContext>,
     /// Spool tracking ID (assigned when message is spooled)
     pub tracking_id: Option<SpooledMessageId>,
+    /// Tracks whether parsed message parts have been mutated and need persistence.
+    #[serde(skip)]
+    pub message_dirty: bool,
 }
 
 impl Default for Context {
@@ -186,6 +193,7 @@ impl Default for Context {
             id: String::new(),
             data: None,
             response: None,
+            message_parts: None,
             session: AHashMap::new(),
             transaction: AHashMap::new(),
             banner: Arc::from(""),
@@ -193,6 +201,7 @@ impl Default for Context {
             capabilities: Vec::new(),
             delivery: None,
             tracking_id: None,
+            message_dirty: false,
         }
     }
 }
@@ -240,5 +249,87 @@ impl Context {
         self.envelope.recipients().map_or_else(Vec::new, |addrs| {
             addrs.iter().map(|addr| addr.email().clone()).collect()
         })
+    }
+
+    /// Load and cache parsed message parts for mutation.
+    ///
+    /// Returns `Ok(None)` if no message data is present.
+    ///
+    /// # Errors
+    /// Returns `MessageParseError` if the raw message cannot be parsed.
+    fn ensure_message_parts(&mut self) -> Result<(), crate::error::MessageParseError> {
+        if self.message_parts.is_none()
+            && let Some(raw) = &self.data
+        {
+            let parts = MessageParts::from_bytes(raw)?;
+            self.message_parts = Some(parts);
+        }
+        Ok(())
+    }
+
+    /// Run a mutable operation over message parts and persist back into `data`.
+    ///
+    /// Returns `Ok(None)` when no message data is present.
+    ///
+    /// # Errors
+    /// Returns `MessageParseError` if the message body cannot be parsed.
+    pub fn with_message_parts_mut<F, R>(
+        &mut self,
+        mut f: F,
+    ) -> Result<Option<R>, crate::error::MessageParseError>
+    where
+        F: FnMut(&mut MessageParts) -> R,
+    {
+        self.ensure_message_parts()?;
+        let Some(parts) = self.message_parts.as_mut() else {
+            return Ok(None);
+        };
+
+        let result = f(parts);
+        self.message_dirty = parts.is_dirty();
+        self.persist_message_parts();
+        Ok(Some(result))
+    }
+
+    /// Persist cached message parts back into the raw message buffer.
+    ///
+    /// Call after header/body mutations to update `data`.
+    pub fn persist_message_parts(&mut self) {
+        if self.message_dirty {
+            if let Some(parts) = &mut self.message_parts {
+                self.data = Some(Arc::from(parts.clone().into_bytes()));
+                parts.clear_dirty();
+            }
+            self.message_dirty = false;
+        }
+    }
+
+    /// Convenience to fetch a header-only view without cloning the full message.
+    /// Convenience to get a headers view (non-mutating).
+    ///
+    /// # Errors
+    /// Returns `MessageParseError` if the message cannot be parsed into parts.
+    pub fn headers_view(
+        &mut self,
+    ) -> Result<Option<crate::message_api::HeadersView<'_>>, crate::error::MessageParseError> {
+        self.ensure_message_parts()?;
+        Ok(self
+            .message_parts
+            .as_ref()
+            .map(crate::message_api::MessageParts::headers_view))
+    }
+
+    /// Convenience to fetch a body view (non-mutating).
+    ///
+    /// # Errors
+    /// Returns `MessageParseError` if the message cannot be parsed into parts.
+    pub fn body_view(
+        &mut self,
+    ) -> Result<Option<crate::message_api::BodyView<'_>>, crate::error::MessageParseError> {
+        self.ensure_message_parts()?;
+        Ok(self
+            .message_parts
+            .as_ref()
+            .map(crate::message_api::MessageParts::body_view))
     }
 }

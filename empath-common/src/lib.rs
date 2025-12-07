@@ -13,6 +13,7 @@ pub mod error;
 pub mod listener;
 pub mod logging;
 pub mod message;
+pub mod message_api;
 pub mod message_id;
 pub mod mime;
 pub mod status;

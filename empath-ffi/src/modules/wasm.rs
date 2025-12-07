@@ -62,6 +62,24 @@ impl Clone for Wasm {
 }
 
 impl Wasm {
+    /// Construct a WASM module definition from a file path for programmatic/tests use.
+    #[must_use]
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "PathBuf initialization is not const-capable"
+    )]
+    pub fn from_path(path: PathBuf) -> Self {
+        Self {
+            path,
+            timeout_secs: None,
+            max_memory_bytes: None,
+            enable_wasi: false,
+            wasi_dirs: Vec::new(),
+            wasi_inherit_env: false,
+            module: OnceLock::new(),
+        }
+    }
+
     /// Initialize the WASM module
     ///
     /// # Errors

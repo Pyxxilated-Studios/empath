@@ -3,6 +3,31 @@
 
 package empath:validator@0.1.0;
 
+/// Message mutation helper interface (experimental, breaking).
+interface message {
+    // header helpers
+    headers-get: func(name: string) -> list<string>;
+    headers-contains: func(name: string) -> bool;
+    headers-set: func(name: string, value: string) -> s32;
+    headers-append: func(name: string, value: string) -> s32;
+    headers-set-if-absent: func(name: string, value: string) -> result<bool, s32>;
+    headers-remove: func(name: string) -> u32;
+    headers-ensure-message-id: func() -> s32;
+    headers-set-content-type: func(value: string) -> s32;
+    headers-set-transfer-encoding: func(value: string) -> s32;
+
+    // body helpers
+    body-bytes: func() -> list<u8>;
+    body-newline-style: func() -> string; // "crlf" | "lf" | "mixed"
+    body-set-bytes: func(data: list<u8>) -> s32;
+    body-append-bytes: func(data: list<u8>) -> s32;
+    body-set-text: func(text: string, charset: string) -> s32;
+    body-append-text: func(text: string, charset: string) -> s32;
+    body-set-html: func(html: string, charset: string) -> s32;
+    body-append-html: func(html: string, charset: string) -> s32;
+    body-set-alternative: func(text: string, html: string, charset: string) -> s32;
+}
+
 /// Core validation interface for SMTP message processing
 interface validation {
     /// Context passed to validation callbacks
@@ -125,6 +150,8 @@ interface host {
 world validator {
     /// Import host functions (guest can call these)
     import host;
+    /// Import message helper functions (host) for mutation
+    import message;
 
     /// Export validation functions (host will call these)
     export validation;
@@ -132,4 +159,5 @@ world validator {
     /// Optionally export event listener functions
     /// Modules can implement this to receive lifecycle events
     export events;
+
 }

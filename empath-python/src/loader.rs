@@ -190,7 +190,6 @@ impl Clone for PythonModule {
 mod tests {
     use std::borrow::Cow;
 
-    use ahash::AHashMap;
     use empath_common::envelope::Envelope;
 
     use super::*;
@@ -200,17 +199,9 @@ mod tests {
 
         Context {
             envelope: Arc::new(Envelope::default()),
-            data: None,
             id: "test.example.com".to_string(),
-            extended: false,
-            session: AHashMap::new(),
-            transaction: AHashMap::new(),
-            response: None,
             banner: Arc::from("test.example.com"),
-            max_message_size: 0,
-            capabilities: Vec::new(),
-            delivery: None,
-            tracking_id: None,
+            ..Context::default()
         }
     }
 
