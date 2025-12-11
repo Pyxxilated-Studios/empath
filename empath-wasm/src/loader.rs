@@ -189,74 +189,11 @@ fn call_validation_callback(
     store: &mut Store<WasmStore>,
     wit_context: &wit::Context,
 ) -> Result<i32> {
-    // Capture timeout before calling (to avoid borrow issues)
-    let timeout_secs = store.data().timeout.as_secs();
-
-    let result = match callback_name {
-        "validate_connect" => validator
-            .empath_validator_validation()
-            .call_validate_connect(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "validate_ehlo" => validator
-            .empath_validator_validation()
-            .call_validate_ehlo(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "validate_mail_from" => validator
-            .empath_validator_validation()
-            .call_validate_mail_from(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "validate_rcpt_to" => validator
-            .empath_validator_validation()
-            .call_validate_rcpt_to(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "validate_data" => validator
-            .empath_validator_validation()
-            .call_validate_data(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "validate_starttls" => validator
-            .empath_validator_validation()
-            .call_validate_starttls(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        _ => return Ok(-1), // Unknown callback
+    let Some(validation) = WasmValidation::from_name(callback_name) else {
+        return Ok(-1); // Unknown callback
     };
 
-    Ok(validation_result_to_code(callback_name, result))
+    validation.dispatch(validator, store, wit_context)
 }
 
 /// Call an event callback
@@ -269,95 +206,11 @@ fn call_event_callback(
     store: &mut Store<WasmStore>,
     wit_context: &wit::Context,
 ) -> Result<()> {
-    // Capture timeout before calling (to avoid borrow issues)
-    let timeout_secs = store.data().timeout.as_secs();
+    let Some(event) = WasmEvent::from_name(callback_name) else {
+        return Ok(()); // Unknown callback
+    };
 
-    match callback_name {
-        "on_connection_opened" => validator
-            .empath_validator_events()
-            .call_on_connection_opened(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "on_connection_closed" => validator
-            .empath_validator_events()
-            .call_on_connection_closed(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "on_delivery_attempt" => validator
-            .empath_validator_events()
-            .call_on_delivery_attempt(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "on_delivery_success" => validator
-            .empath_validator_events()
-            .call_on_delivery_success(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "on_delivery_failure" => validator
-            .empath_validator_events()
-            .call_on_delivery_failure(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "on_smtp_error" => validator
-            .empath_validator_events()
-            .call_on_smtp_error(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "on_smtp_message_received" => validator
-            .empath_validator_events()
-            .call_on_smtp_message_received(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        "on_dns_lookup" => validator
-            .empath_validator_events()
-            .call_on_dns_lookup(store, wit_context)
-            .map_err(|e| {
-                if is_timeout_error(&e) {
-                    WasmError::Timeout(callback_name.to_string(), timeout_secs)
-                } else {
-                    e.into()
-                }
-            })?,
-        _ => return Ok(()), // Unknown callback
-    }
-
-    internal!(level = DEBUG, "WASM callback '{callback_name}' completed");
-    Ok(())
+    event.dispatch(validator, store, wit_context)
 }
 
 /// WebAssembly component wrapper
@@ -702,6 +555,184 @@ impl WasmModule {
     }
 }
 
+macro_rules! define_wasm_validations {
+    (
+        $(
+            $variant:ident {
+                name: $name:literal,
+                call: $call:ident,
+            }
+        ),+ $(,)?
+    ) => {
+        #[allow(clippy::enum_variant_names)]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+        enum WasmValidation {
+            $( $variant ),*
+        }
+
+        impl WasmValidation {
+            const fn name(self) -> &'static str {
+                match self {
+                    $( WasmValidation::$variant => $name ),*
+                }
+            }
+
+            fn from_name(name: &str) -> Option<Self> {
+                match name {
+                    $( $name => Some(WasmValidation::$variant) ),*,
+                    _ => None,
+                }
+            }
+
+            fn dispatch(
+                self,
+                validator: &Validator,
+                store: &mut Store<WasmStore>,
+                wit_context: &wit::Context,
+            ) -> Result<i32> {
+                let callback_name = self.name();
+                let timeout_secs = store.data().timeout.as_secs();
+
+                let call_result = match self {
+                    $(
+                        WasmValidation::$variant => validator
+                            .empath_validator_validation()
+                            .$call(store, wit_context),
+                    )*
+                };
+
+                let result = call_result.map_err(|e| {
+                    if is_timeout_error(&e) {
+                        WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                    } else {
+                        e.into()
+                    }
+                })?;
+
+                Ok(validation_result_to_code(callback_name, result))
+            }
+        }
+    };
+}
+
+define_wasm_validations! {
+    Connect {
+        name: "validate_connect",
+        call: call_validate_connect,
+    },
+    Ehlo {
+        name: "validate_ehlo",
+        call: call_validate_ehlo,
+    },
+    MailFrom {
+        name: "validate_mail_from",
+        call: call_validate_mail_from,
+    },
+    RcptTo {
+        name: "validate_rcpt_to",
+        call: call_validate_rcpt_to,
+    },
+    Data {
+        name: "validate_data",
+        call: call_validate_data,
+    },
+    Starttls {
+        name: "validate_starttls",
+        call: call_validate_starttls,
+    },
+}
+
+macro_rules! define_wasm_events {
+    (
+        $(
+            $variant:ident {
+                name: $name:literal,
+                call: $call:ident,
+            }
+        ),+ $(,)?
+    ) => {
+        #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+        enum WasmEvent {
+            $( $variant ),*
+        }
+
+        impl WasmEvent {
+            const fn name(self) -> &'static str {
+                match self {
+                    $( WasmEvent::$variant => $name ),*
+                }
+            }
+
+            fn from_name(name: &str) -> Option<Self> {
+                match name {
+                    $( $name => Some(WasmEvent::$variant) ),*,
+                    _ => None,
+                }
+            }
+
+            fn dispatch(
+                self,
+                validator: &Validator,
+                store: &mut Store<WasmStore>,
+                wit_context: &wit::Context,
+            ) -> Result<()> {
+                let callback_name = self.name();
+                let timeout_secs = store.data().timeout.as_secs();
+
+                let call_result = match self {
+                    $( WasmEvent::$variant => validator.empath_validator_events().$call(store, wit_context) ),*
+                };
+
+                call_result.map_err(|e| {
+                    if is_timeout_error(&e) {
+                        WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                    } else {
+                        e.into()
+                    }
+                })?;
+
+                internal!(level = DEBUG, "WASM callback '{callback_name}' completed");
+                Ok(())
+            }
+        }
+    };
+}
+
+define_wasm_events! {
+    ConnectionOpened {
+        name: "on_connection_opened",
+        call: call_on_connection_opened,
+    },
+    ConnectionClosed {
+        name: "on_connection_closed",
+        call: call_on_connection_closed,
+    },
+    DeliveryAttempt {
+        name: "on_delivery_attempt",
+        call: call_on_delivery_attempt,
+    },
+    DeliverySuccess {
+        name: "on_delivery_success",
+        call: call_on_delivery_success,
+    },
+    DeliveryFailure {
+        name: "on_delivery_failure",
+        call: call_on_delivery_failure,
+    },
+    SmtpError {
+        name: "on_smtp_error",
+        call: call_on_smtp_error,
+    },
+    SmtpMessageReceived {
+        name: "on_smtp_message_received",
+        call: call_on_smtp_message_received,
+    },
+    DnsLookup {
+        name: "on_dns_lookup",
+        call: call_on_dns_lookup,
+    },
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "Inside tests")]
 mod tests {
@@ -752,5 +783,51 @@ mod tests {
             !is_timeout_error(&other_err),
             "non-interrupt traps should not be treated as timeout"
         );
+    }
+
+    #[test]
+    fn wasm_event_mapping_round_trip() {
+        let pairs = [
+            ("on_connection_opened", WasmEvent::ConnectionOpened),
+            ("on_connection_closed", WasmEvent::ConnectionClosed),
+            ("on_delivery_attempt", WasmEvent::DeliveryAttempt),
+            ("on_delivery_success", WasmEvent::DeliverySuccess),
+            ("on_delivery_failure", WasmEvent::DeliveryFailure),
+            ("on_smtp_error", WasmEvent::SmtpError),
+            ("on_smtp_message_received", WasmEvent::SmtpMessageReceived),
+            ("on_dns_lookup", WasmEvent::DnsLookup),
+        ];
+
+        for (name, event) in pairs {
+            assert_eq!(WasmEvent::from_name(name), Some(event));
+            assert_eq!(event.name(), name);
+        }
+    }
+
+    #[test]
+    fn wasm_event_from_name_unknown_returns_none() {
+        assert!(WasmEvent::from_name("on_unknown_event").is_none());
+    }
+
+    #[test]
+    fn wasm_validation_mapping_round_trip() {
+        let pairs = [
+            ("validate_connect", WasmValidation::Connect),
+            ("validate_ehlo", WasmValidation::Ehlo),
+            ("validate_mail_from", WasmValidation::MailFrom),
+            ("validate_rcpt_to", WasmValidation::RcptTo),
+            ("validate_data", WasmValidation::Data),
+            ("validate_starttls", WasmValidation::Starttls),
+        ];
+
+        for (name, validation) in pairs {
+            assert_eq!(WasmValidation::from_name(name), Some(validation));
+            assert_eq!(validation.name(), name);
+        }
+    }
+
+    #[test]
+    fn wasm_validation_from_name_unknown_returns_none() {
+        assert!(WasmValidation::from_name("validate_unknown").is_none());
     }
 }
