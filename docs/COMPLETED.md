@@ -1,13 +1,22 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2025-12-04
-> **Total Completed**: 71 tasks
+> **Last Updated**: 2025-12-11
+> **Total Completed**: 72 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
 ---
 
 ## Recently Completed (Last 30 Days)
+
+### Week of 2025-12-11
+
+#### ✅ TODO cleanup & archiving
+**Completed**: 2025-12-11
+**Effort**: 30 minutes (actual: 30 minutes)
+**Priority**: Medium (Housekeeping)
+
+Pruned `TODO.md` to keep only actionable items by removing the `[x]` entries and pointing TODO readers to this archive for resolved work. Added the new TLS/security/SMTP backlog items to keep future work visible.
 
 ### Week of 2025-12-04
 
