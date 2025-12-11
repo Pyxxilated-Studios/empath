@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use empath_common::{outgoing, tracing};
+use empath_common::{message::END_OF_BODY, outgoing, tracing};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -340,18 +340,19 @@ impl SmtpClient {
         // Send the data
         connection.send(data.as_bytes()).await?;
 
-        // Ensure data ends with CRLF (handle both \n and \r\n cases)
-        if data.ends_with("\r\n") {
-            // Already has proper CRLF, do nothing
+        let ending: Option<&[u8]> = if data.ends_with("\r\n") {
+            None
         } else if data.ends_with('\n') {
-            // Has \n but not \r\n, send just \r
-            connection.send(b"\r").await?;
+            Some(&b"\r"[..])
         } else {
-            // No line ending, send full CRLF
-            connection.send(b"\r\n").await?;
+            Some(&b"\r\n"[..])
+        };
+
+        if let Some(bytes) = ending {
+            connection.send(bytes).await?;
         }
 
-        if !data.ends_with("\r\n.\r\n.") {
+        if !data.as_bytes().ends_with(END_OF_BODY) {
             // Send end-of-data marker
             connection.send(b".\r\n").await?;
         }
