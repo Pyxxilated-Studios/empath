@@ -23,6 +23,8 @@ const BUFFER_SIZE: usize = 8192;
 
 /// Maximum size of the read buffer to prevent unbounded growth (1MB).
 const MAX_BUFFER_SIZE: usize = 1024 * 1024;
+const CRLF: &[u8] = b"\r\n";
+const CR: &[u8] = b"\r";
 
 /// An SMTP client connection that can be either plain TCP or TLS-wrapped.
 enum ClientConnection {
@@ -340,15 +342,7 @@ impl SmtpClient {
         // Send the data
         connection.send(data.as_bytes()).await?;
 
-        let ending: Option<&[u8]> = if data.ends_with("\r\n") {
-            None
-        } else if data.ends_with('\n') {
-            Some(&b"\r"[..])
-        } else {
-            Some(&b"\r\n"[..])
-        };
-
-        if let Some(bytes) = ending {
+        if let Some(bytes) = missing_line_ending(data) {
             connection.send(bytes).await?;
         }
 
@@ -459,5 +453,28 @@ impl SmtpClient {
             let n = connection.read(&mut self.buffer[self.buffer_pos..]).await?;
             self.buffer_pos += n;
         }
+    }
+}
+
+fn missing_line_ending(data: &str) -> Option<&'static [u8]> {
+    let bytes = data.as_bytes();
+    if bytes.ends_with(CRLF) {
+        None
+    } else if bytes.last().is_some_and(|b| *b == b'\n') {
+        Some(CR)
+    } else {
+        Some(CRLF)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CR, CRLF, missing_line_ending};
+
+    #[test]
+    fn missing_line_ending_variants() {
+        assert_eq!(missing_line_ending("message\r\n"), None);
+        assert_eq!(missing_line_ending("message\n"), Some(CR));
+        assert_eq!(missing_line_ending("message"), Some(CRLF));
     }
 }
