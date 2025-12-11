@@ -49,6 +49,18 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-WASM-04: Component Model with WIT interfaces. Optional but aligns with NEW-WASM-16.
 - [ ] NEW-21: Trace context propagation verification (blocked on span instrumentation readiness). E2E trace_id preservation SMTP→spool→delivery + JoinSet tasks, docs.
 - [ ] NEW-19 dependency follow-ups: ensure control socket auth (0.13) decision once DR documented.
+- [ ] NEW-TLS-01: TLS credential hot reload. Add a control command or config signal so certificates/keys can be reloaded without restarting the MTA, minimizing downtime during rotations.
+- [ ] NEW-TLS-02: TLS visibility dashboard. Provide a way to inspect which cert/key pairs are currently loaded (thumbprint, expiry, SANs) via control socket or metrics to confirm what the active credentials are.
+- [ ] NEW-TLS-03: TLS chain validation watchdog. Periodically verify cert/key files (and bundles) on disk for expiry or misconfiguration, surface metrics/alerts before rotation, and flag mismatches via control/metrics so operators know when reloads will fail.
+- [ ] NEW-TLS-04: Dual-stack TLS profiles. Support configuring multiple cert/key pairs per listener (e.g., “default” and “rotation” profiles) and provide control operations to switch active profiles or drain sockets without aborting in-flight connections.
+- [ ] NEW-OBS-XX: TLS handshake telemetry. Emit structured logs/metrics for TLS accept duration, cipher/protocol selection, and handshake errors so slow or failing clients can be diagnosed before they hit a queue.
+- [ ] NEW-CTL-XX: Binding inspection. Extend the control socket to list outbound bindings and show which binding each queued message currently prefers, optionally allowing runtime enabling/disabling for diagnoses.
+- [ ] NEW-SEC-XX: Control socket roles. Add authenticated control sessions with roles (read-only, admin) so sensitive ops like TLS reloads, binding edits, or DR actions require dedicated ACLs.
+- [ ] NEW-SEC-DKIM-01: DKIM verification telemetry. Add enforced DKIM signature verification plus metrics/logs for failures, and consider signing support for outbound messages where missing.
+- [ ] NEW-SEC-DMARC-01: DMARC policy enforcement. Track SPF/DKIM/DMARC observability, surface enforcement decisions via metrics/logs, and provide control/debug tools for rejected/filtered messages.
+- [ ] NEW-SEC-ARC-01: ARC seal handling. Validate incoming ARC seals, detect replayed seals, and add regression tests to ensure archived ARC chains keep passing through the delivery pipeline.
+- [ ] NEW-SMTP-XX: Extended command coverage. Add support for RFC commands such as `NOOP`, `VRFY`, `EXPN`, `ETRN`, `TURN` (and any other common extensions besides `BDAT`) so the MTA can pass compatibility checks with legacy clients.
+- [ ] NEW-CAP-XX: Capability toggles. Allow modules or control handlers to add/remove advertised SMTP capabilities (e.g., hide `AUTH` until STARTTLS completes) at runtime so operators can enforce policies dynamically without restarting the listener.
 
 ## P3 — Deferred / Nice to Have
 - [ ] 0.13 Control socket auth (multi-user/ACL) — currently satisfied via Unix perms.
@@ -65,6 +77,12 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## New Ideas / Quick Wins
 - [x] IDEA-WASM-01: Deterministic timeout test harness using a tiny Wasm module that sleeps via busy loop; drive epoch counter to assert host returns timeout code (unblocks NEW-WASM-13 timeout test).
+- [ ] NEW-OBS-ARC-02: DMARC sampling dashboard. Surface a sampled subset of DMARC-failed messages (sender, IP, policy) in metrics/logs to help tune enforcement without sifting through entire logs.
+- [ ] NEW-SEC-ROT-01: Secret rotation helpers. Provide tooling (maybe via `just rotate-secrets`) that mirrors control socket TLS reloads but also rotates API tokens, HMAC keys, cert bundles, etc., to streamline ops.
+- [ ] NEW-WASM-18: Guest module linting. Extend the WASM harness to pre-validate required exports/events/contexts so modules fail fast during test runs before hitting production.
+- [ ] NEW-QUEUE-01: Priority spool tiers. Allow modules or policies to opt messages into priority delivery tiers and adjust routing/delivery pacing based on queue age/throttles.
+- [ ] NEW-CTL-OBS-01: Control command rate limiting. Throttle control socket commands (reloads, requeues, bindings) per client to prevent automation floods during maintenance windows.
+- [ ] NEW-EXPE-01: WASM module fuzz harness. Generate randomized SMTP contexts/events against the WASM API to catch panics/resource leaks in validation modules before deployment.
 
 ## Notes
 - Prefer `just test-nextest` locally; `just ci` before PRs.
