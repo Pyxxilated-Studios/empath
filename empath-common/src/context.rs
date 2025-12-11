@@ -70,6 +70,19 @@ impl DeliveryStatus {
     pub fn matches_filter(&self, filter: &str) -> bool {
         self.to_string().eq_ignore_ascii_case(filter)
     }
+
+    /// Human-readable label that can be reused without allocations.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Pending => PENDING_STR,
+            Self::InProgress => IN_PROGRESS_STR,
+            Self::Completed => COMPLETED_STR,
+            Self::Failed(_) => FAILED_STR,
+            Self::Retry { .. } => RETRY_STR,
+            Self::Expired => EXPIRED_STR,
+        }
+    }
 }
 
 /// Represents a single delivery attempt

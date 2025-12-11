@@ -159,7 +159,7 @@ pub trait DeliveryQueryService: Send + Sync {
 #[derive(Debug, Default)]
 pub struct QueueSnapshot {
     pub total: usize,
-    pub by_status: std::collections::HashMap<String, usize>,
+    pub by_status: std::collections::HashMap<&'static str, usize>,
     pub by_domain: std::collections::HashMap<String, usize>,
     pub oldest_message_age_secs: Option<u64>,
 }

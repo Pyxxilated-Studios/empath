@@ -619,9 +619,15 @@ impl EmpathControlHandler {
     fn handle_stats_command(&self) -> Response {
         let snapshot = self.delivery.queue_stats_snapshot();
 
+        let by_status = snapshot
+            .by_status
+            .iter()
+            .map(|(status, count)| (status.to_string(), *count))
+            .collect();
+
         let stats = empath_control::protocol::QueueStats {
             total: snapshot.total,
-            by_status: snapshot.by_status,
+            by_status,
             by_domain: snapshot.by_domain,
             oldest_message_age_secs: snapshot.oldest_message_age_secs,
         };

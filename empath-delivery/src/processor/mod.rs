@@ -5,7 +5,7 @@ pub mod delivery;
 pub mod process;
 pub mod scan;
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use empath_common::{Signal, internal};
 use empath_tracing::traced;
@@ -562,16 +562,14 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
 
     fn queue_stats_snapshot(&self) -> crate::service::QueueSnapshot {
         let mut snapshot = crate::service::QueueSnapshot::default();
+        let mut status_counts: HashMap<&'static str, usize> = HashMap::new();
         let now = std::time::SystemTime::now();
 
         for entry in self.queue.queue.iter() {
             let info = entry.value();
             snapshot.total += 1;
 
-            *snapshot
-                .by_status
-                .entry(format!("{:?}", info.status))
-                .or_insert(0) += 1;
+            *status_counts.entry(info.status.label()).or_insert(0) += 1;
             *snapshot
                 .by_domain
                 .entry(info.recipient_domain.to_string())
@@ -590,6 +588,8 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
                     .map_or(age_secs, |cur| cur.max(age_secs)),
             );
         }
+
+        snapshot.by_status = status_counts;
 
         snapshot
     }

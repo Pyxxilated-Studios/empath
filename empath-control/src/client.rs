@@ -106,7 +106,8 @@ impl ControlClient {
     /// Send a request using a one-shot connection (traditional mode)
     async fn send_request_oneshot(&self, request: Request) -> Result<Response> {
         let mut stream = self.connect().await?;
-        self.send_and_receive(&mut stream, request).await
+        let mut request = request;
+        self.send_and_receive(&mut stream, &mut request).await
     }
 
     /// Send a request using persistent connection with automatic reconnection
@@ -115,43 +116,36 @@ impl ControlClient {
         request: Request,
         persistent: &Arc<Mutex<Option<UnixStream>>>,
     ) -> Result<Response> {
-        let mut guard = persistent.lock().await;
+        let mut request = request;
 
-        // Try to use existing connection, or create new one
-        let result = if let Some(stream) = guard.as_mut() {
-            self.send_and_receive(stream, request.clone()).await
-        } else {
-            // No connection exists, create new one
-            let mut stream = self.connect().await?;
-            let result = self.send_and_receive(&mut stream, request.clone()).await;
-            if result.is_ok() {
-                *guard = Some(stream);
-            }
-            result
+        let stream = {
+            let mut guard = persistent.lock().await;
+            guard.take()
         };
 
-        // If connection failed, try to reconnect once
-        if result.is_err() {
+        let mut stream = match stream {
+            Some(stream) => stream,
+            None => self.connect().await?,
+        };
+
+        if let Ok(response) = self.send_and_receive(&mut stream, &mut request).await {
+            self.store_stream(persistent, stream).await;
+            Ok(response)
+        } else {
             warn!(
                 "Persistent connection failed, reconnecting to {}",
                 self.socket_path
             );
-            *guard = None;
-            drop(guard); // Release lock before reconnecting
 
-            // Reconnect and retry
-            let mut stream = self.connect().await?;
-            let result = self.send_and_receive(&mut stream, request).await;
+            // Attempt to reconnect and retry
+            let mut new_stream = self.connect().await?;
+            let retry_result = self.send_and_receive(&mut new_stream, &mut request).await;
 
-            // Store new connection if successful
-            if result.is_ok() {
-                let mut guard = persistent.lock().await;
-                *guard = Some(stream);
+            if retry_result.is_ok() {
+                self.store_stream(persistent, new_stream).await;
             }
 
-            result
-        } else {
-            result
+            retry_result
         }
     }
 
@@ -163,7 +157,7 @@ impl ControlClient {
     async fn send_and_receive(
         &self,
         stream: &mut UnixStream,
-        mut request: Request,
+        request: &mut Request,
     ) -> Result<Response> {
         // Add authentication token if configured
         if let Some(token) = &self.token {
@@ -225,6 +219,12 @@ impl ControlClient {
         }
 
         Ok(response)
+    }
+
+    /// Store a working stream back into the persistent connection slot
+    async fn store_stream(&self, persistent: &Arc<Mutex<Option<UnixStream>>>, stream: UnixStream) {
+        let mut guard = persistent.lock().await;
+        *guard = Some(stream);
     }
 
     /// Check if the control server is reachable
