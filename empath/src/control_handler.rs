@@ -18,6 +18,7 @@ use empath_control::{
     SystemCommand, protocol::ResponseData, server::CommandHandler,
 };
 use empath_delivery::DeliveryQueryService;
+use empath_smtp::TlsContextRegistry;
 use empath_spool::BackingStore;
 use ron::Options;
 use tracing_subscriber::filter::LevelFilter;
@@ -28,6 +29,8 @@ use crate::controller::Empath;
 pub struct EmpathControlHandler {
     /// Reference to the delivery query service for operations
     delivery: Arc<dyn DeliveryQueryService>,
+    /// Optional TLS registry for runtime reloads
+    tls_registry: Option<Arc<TlsContextRegistry>>,
     /// Server start time for uptime calculation
     start_time: Instant,
 }
@@ -135,9 +138,13 @@ fn find_config_file() -> anyhow::Result<PathBuf> {
 impl EmpathControlHandler {
     /// Create a new control handler
     #[must_use]
-    pub fn new(delivery: Arc<dyn DeliveryQueryService>) -> Self {
+    pub fn new(
+        delivery: Arc<dyn DeliveryQueryService>,
+        tls_registry: Option<Arc<TlsContextRegistry>>,
+    ) -> Self {
         Self {
             delivery,
+            tls_registry,
             start_time: Instant::now(),
         }
     }
@@ -303,6 +310,24 @@ impl EmpathControlHandler {
                 Ok(message) => Ok(Response::data(ResponseData::Message(message))),
                 Err(e) => Err(ControlError::ServerError(e)),
             },
+
+            SystemCommand::ReloadTls => {
+                let registry = self.tls_registry.as_ref().ok_or_else(|| {
+                    ControlError::ServerError("TLS is not configured for this instance".to_string())
+                })?;
+
+                match registry.reload_all() {
+                    Ok(0) => Ok(Response::data(ResponseData::Message(
+                        "No TLS contexts configured".to_string(),
+                    ))),
+                    Ok(count) => Ok(Response::data(ResponseData::Message(format!(
+                        "Reloaded TLS credentials for {count} context(s)",
+                    )))),
+                    Err(err) => Err(ControlError::ServerError(format!(
+                        "Failed to reload TLS credentials: {err}"
+                    ))),
+                }
+            }
 
             SystemCommand::ConnectionStats => {
                 let stats = self.delivery.connection_stats();

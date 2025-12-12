@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Write},
-    sync::Arc,
     time::Instant,
 };
 
@@ -9,10 +8,7 @@ use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{
     TlsAcceptor,
-    rustls::{
-        ProtocolVersion, ServerConfig, ServerConnection, SupportedCipherSuite,
-        pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-    },
+    rustls::{ProtocolVersion, ServerConnection, SupportedCipherSuite},
     server::TlsStream,
 };
 
@@ -107,35 +103,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    fn load_certs<P: AsRef<std::path::Path> + Debug>(
-        path: &P,
-    ) -> TlsResult<CertificateDer<'static>> {
-        CertificateDer::from_pem_file(path).map_err(|e| TlsError::KeyLoad {
-            path: format!("{path:?}"),
-            reason: e.to_string(),
-        })
-    }
-
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    fn load_keys<P: AsRef<std::path::Path> + Debug>(path: &P) -> TlsResult<PrivateKeyDer<'static>> {
-        PrivateKeyDer::from_pem_file(path).map_err(|e| TlsError::KeyLoad {
-            path: format!("{path:?}"),
-            reason: e.to_string(),
-        })
-    }
-
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn upgrade(self, tls_context: &TlsContext) -> TlsResult<(Self, TlsInfo)> {
         tracing::debug!("Upgrading connection ...");
 
-        let certs = Self::load_certs(&tls_context.certificate)?;
-        let keys = Self::load_keys(&tls_context.key)?;
-
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(vec![certs], keys)?;
-
-        let acceptor = TlsAcceptor::from(Arc::new(config));
+        let config = tls_context.server_config()?;
+        let acceptor = TlsAcceptor::from(config);
         let start = Instant::now();
 
         let handshake: TlsResult<(Self, TlsInfo)> = match self {

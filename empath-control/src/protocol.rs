@@ -84,6 +84,8 @@ pub enum SystemCommand {
     Status,
     /// Reload configuration (graceful shutdown/reload)
     ReloadConfig,
+    /// Reload server TLS certificates/keys from disk
+    ReloadTls,
     /// Runtime connection/rate-limit stats
     ConnectionStats,
     /// Adjust runtime log level (e.g., "info", "debug", "trace")

@@ -8,7 +8,7 @@ use empath_common::{Signal, controller::Controller, internal, logging, tracing};
 use empath_control::{ControlAuthConfig, ControlServer, DEFAULT_CONTROL_SOCKET};
 use empath_ffi::modules::{self, Module};
 use empath_health::{HealthChecker, HealthConfig, HealthServer};
-use empath_smtp::Smtp;
+use empath_smtp::{Smtp, TlsContextRegistry};
 use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -154,13 +154,15 @@ impl Empath {
         });
 
         // Configure SMTP with spool and SPF DNS resolver
+        let tls_registry = Arc::new(TlsContextRegistry::new());
         let spf_resolver_clone = spf_dns_resolver.clone();
-        self.smtp_controller.map_args(|args| {
+        let registry_for_args = Arc::clone(&tls_registry);
+        self.smtp_controller.map_args(move |args| {
             let mut args = args.with_spool(backing_store.clone());
             if let Some(resolver) = spf_resolver_clone.clone() {
                 args = args.with_spf_dns_resolver(resolver);
             }
-            args
+            args.with_tls_context_registry(&registry_for_args)
         });
 
         self.smtp_controller.init()?;
@@ -171,7 +173,10 @@ impl Empath {
         // Create control server
         let delivery_arc = Arc::new(self.delivery);
         let delivery_service = delivery_arc.clone();
-        let control_handler = Arc::new(EmpathControlHandler::new(delivery_service));
+        let control_handler = Arc::new(EmpathControlHandler::new(
+            delivery_service,
+            Some(Arc::clone(&tls_registry)),
+        ));
         let control_server = ControlServer::with_auth(
             &self.control_socket_path,
             control_handler,

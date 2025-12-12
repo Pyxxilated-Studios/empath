@@ -1,9 +1,23 @@
-use std::{borrow::Cow, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    borrow::Cow,
+    io as std_io,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use ahash::AHashMap;
 use empath_common::{email::BannerHostname, tracing};
 use empath_tracing::traced;
-use serde::Deserialize;
+use parking_lot::RwLock;
+use serde::{Deserialize, Deserializer, de::Error as _};
+use tokio_rustls::rustls::{
+    ServerConfig,
+    pki_types::{
+        CertificateDer, PrivateKeyDer,
+        pem::{Error as PemError, PemObject},
+    },
+};
 
 use crate::{
     State,
@@ -31,10 +45,178 @@ pub struct Context {
 
 pub type Response = (Option<Vec<String>>, Event);
 
-#[derive(Clone, Debug, Deserialize)]
 pub struct TlsContext {
-    pub certificate: PathBuf,
-    pub key: PathBuf,
+    inner: Arc<TlsContextInner>,
+}
+
+#[derive(Debug)]
+struct TlsContextInner {
+    certificate: PathBuf,
+    key: PathBuf,
+    server_config: RwLock<Option<Arc<ServerConfig>>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTlsContext {
+    certificate: PathBuf,
+    key: PathBuf,
+}
+
+impl Clone for TlsContext {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl std::fmt::Debug for TlsContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsContext")
+            .field("certificate", &self.inner.certificate)
+            .field("key", &self.inner.key)
+            .finish()
+    }
+}
+
+impl<'de> Deserialize<'de> for TlsContext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawTlsContext::deserialize(deserializer)?;
+        Self::new(raw.certificate, raw.key).map_err(D::Error::custom)
+    }
+}
+
+impl TlsContext {
+    /// Create a TLS context from certificate and key paths.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the certificate or private key file cannot be read or parsed.
+    pub fn new(certificate: PathBuf, key: PathBuf) -> crate::error::TlsResult<Self> {
+        Ok(Self {
+            inner: Arc::new(TlsContextInner {
+                certificate,
+                key,
+                server_config: RwLock::new(None),
+            }),
+        })
+    }
+
+    fn build_server_config(
+        cert_path: &Path,
+        key_path: &Path,
+    ) -> crate::error::TlsResult<ServerConfig> {
+        let certificate = CertificateDer::from_pem_file(cert_path).map_err(|source| {
+            crate::error::TlsError::CertificateLoad {
+                path: cert_path.display().to_string(),
+                source: std_io::Error::new(std_io::ErrorKind::InvalidData, source),
+            }
+        })?;
+
+        let key = PrivateKeyDer::from_pem_file(key_path).map_err(|err: PemError| {
+            crate::error::TlsError::KeyLoad {
+                path: key_path.display().to_string(),
+                reason: err.to_string(),
+            }
+        })?;
+
+        ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .map_err(|e| crate::error::TlsError::Rustls(e.to_string()))
+    }
+
+    pub(crate) fn certificate_path(&self) -> &Path {
+        &self.inner.certificate
+    }
+
+    pub(crate) fn key_path(&self) -> &Path {
+        &self.inner.key
+    }
+
+    pub(crate) fn server_config(&self) -> crate::error::TlsResult<Arc<ServerConfig>> {
+        {
+            let guard = self.inner.server_config.read();
+            if let Some(config) = guard.clone() {
+                return Ok(config);
+            }
+        }
+
+        let updated = Self::build_server_config(self.certificate_path(), self.key_path())?;
+        let config = Arc::new(updated);
+
+        {
+            let mut guard = self.inner.server_config.write();
+            *guard = Some(Arc::clone(&config));
+        }
+
+        Ok(config)
+    }
+
+    pub(crate) fn reload(&self) -> crate::error::TlsResult<()> {
+        let updated = Self::build_server_config(self.certificate_path(), self.key_path())?;
+        let config = Arc::new(updated);
+
+        {
+            let mut guard = self.inner.server_config.write();
+            *guard = Some(Arc::clone(&config));
+        }
+
+        Ok(())
+    }
+}
+
+/// Registry used to keep track of every configured TLS context.
+#[derive(Default)]
+pub struct TlsContextRegistry {
+    contexts: RwLock<Vec<TlsContext>>,
+}
+
+impl TlsContextRegistry {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            contexts: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Register all TLS contexts referenced by the provided extensions.
+    pub fn register_extensions(&self, extensions: &[Extension]) {
+        let mut guard = self.contexts.write();
+        for ext in extensions {
+            if let Extension::Starttls(ctx) = ext {
+                guard.push(ctx.clone());
+            }
+        }
+    }
+
+    /// Reload all registered contexts and return the number reloaded.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any TLS reload error encountered while rebuilding a context.
+    pub fn reload_all(&self) -> crate::error::TlsResult<usize> {
+        let contexts = {
+            let guard = self.contexts.read();
+            guard.clone()
+        };
+
+        let mut reloaded = 0;
+        for ctx in contexts {
+            ctx.reload()?;
+            reloaded += 1;
+        }
+
+        Ok(reloaded)
+    }
+
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.contexts.read().len()
+    }
 }
 
 pub struct SessionConfig {

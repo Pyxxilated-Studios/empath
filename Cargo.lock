@@ -1074,6 +1074,7 @@ dependencies = [
  "empath-spool",
  "empath-tracing",
  "ipnetwork",
+ "parking_lot",
  "phf",
  "proptest",
  "rustls-native-certs",

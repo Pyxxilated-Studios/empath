@@ -106,6 +106,8 @@ enum SystemAction {
     Status,
     /// Reload configuration (triggers graceful shutdown/reload)
     ReloadConfig,
+    /// Reload TLS certificate/key pairs without restarting the daemon
+    ReloadTls,
     /// Set runtime log level (e.g., info, debug, trace)
     SetLogLevel {
         /// New log level
@@ -412,6 +414,7 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
         SystemAction::ReloadConfig => {
             Request::new(RequestCommand::System(SystemCommand::ReloadConfig))
         }
+        SystemAction::ReloadTls => Request::new(RequestCommand::System(SystemCommand::ReloadTls)),
         SystemAction::SetLogLevel { level } => {
             Request::new(RequestCommand::System(SystemCommand::SetLogLevel { level }))
         }

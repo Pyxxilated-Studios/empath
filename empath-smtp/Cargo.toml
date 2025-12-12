@@ -29,6 +29,7 @@ ipnetwork.workspace = true
 phf.workspace = true
 rustls-native-certs.workspace = true
 serde.workspace = true
+parking_lot.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

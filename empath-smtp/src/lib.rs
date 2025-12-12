@@ -18,6 +18,7 @@ pub use command::MailParameters;
 use empath_common::{error::ProtocolError, traits::protocol::Protocol};
 use empath_tracing::traced;
 use serde::Deserialize;
+pub use session::{Session, TlsContextRegistry};
 // Re-export the type-safe state machine from the state module
 pub use state::State;
 use tokio::net::TcpStream;
@@ -173,6 +174,13 @@ impl SmtpArgs {
         self.spf_config = config;
         self
     }
+
+    /// Register TLS contexts with the shared registry so certs can be reloaded at runtime.
+    #[must_use]
+    pub fn with_tls_context_registry(self, registry: &Arc<TlsContextRegistry>) -> Self {
+        registry.register_extensions(&self.extensions);
+        self
+    }
 }
 
 impl Protocol for Smtp {
@@ -226,21 +234,20 @@ impl Protocol for Smtp {
             .iter()
             .find(|arg| matches!(arg, Extension::Starttls(_)))
         {
-            if !tls.certificate.try_exists()? {
+            let cert_path = tls.certificate_path();
+            if !cert_path.try_exists()? {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!(
-                        "Unable to find TLS Certificate {}",
-                        tls.certificate.display()
-                    ),
+                    format!("Unable to find TLS Certificate {}", cert_path.display()),
                 )
                 .into());
             }
 
-            if !tls.key.try_exists()? {
+            let key_path = tls.key_path();
+            if !key_path.try_exists()? {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Unable to find TLS Key {}", tls.key.display()),
+                    format!("Unable to find TLS Key {}", key_path.display()),
                 )
                 .into());
             }
