@@ -66,58 +66,76 @@ graph TB
 
 ## Component Architecture
 
-### 7-Crate Workspace
+### Workspace Overview
 
 ```mermaid
 graph TD
-    subgraph "Binary Crate"
+    subgraph "Binary & Control"
         Main[empath<br/>Main orchestrator]
+        Control[empath-control<br/>Control socket IPC]
+        Health[empath-health<br/>HTTP health endpoints]
     end
 
-    subgraph "Core Libraries"
-        Common[empath-common<br/>Core traits & types]
+    subgraph "Shared Libraries"
+        Common[empath-common<br/>Core traits & context]
         Tracing[empath-tracing<br/>Instrumentation macros]
+        Metrics[empath-metrics<br/>OpenTelemetry helpers]
+        Python[empath-python<br/>Python module support]
     end
 
-    subgraph "Protocol Layer"
+    subgraph "Protocol & Delivery"
         SMTP[empath-smtp<br/>SMTP implementation]
+        Delivery[empath-delivery<br/>Outbound queue]
+        Spool[empath-spool<br/>Persistence]
     end
 
-    subgraph "Storage Layer"
-        Spool[empath-spool<br/>Message persistence]
+    subgraph "Module Surface"
+        FFI[empath-ffi<br/>C module APIs]
+        WasmHost[empath-wasm<br/>WASM host]
+        WasmGuest[empath-wasm-guest<br/>WASM samples]
+        WasmMacros[empath-wasm-guest-macros<br/>WASI helpers]
     end
 
-    subgraph "Delivery Layer"
-        Delivery[empath-delivery<br/>Outbound delivery]
+    subgraph "Tooling"
+        Examples[empath-examples<br/>Usage samples]
+        Xt[xtask<br/>build helpers]
     end
 
-    subgraph "Extension Layer"
-        FFI[empath-ffi<br/>C API & modules]
-    end
-
+    Main --> Control
+    Main --> Health
     Main --> Common
     Main --> SMTP
-    Main --> Spool
     Main --> Delivery
+    Main --> Spool
+    Main --> Metrics
+    Main --> Python
     Main --> FFI
+    Main --> WasmHost
 
     SMTP --> Common
     SMTP --> Tracing
-    Spool --> Common
     Delivery --> Common
     Delivery --> Spool
     FFI --> Common
+    Metrics --> Common
 ```
 
 **Crate Responsibilities:**
 
-- **empath**: Main binary, configuration, controller orchestration
-- **empath-common**: Core abstractions (Protocol, FSM, Controller, Listener traits)
-- **empath-smtp**: SMTP protocol implementation with finite state machine
-- **empath-delivery**: Outbound mail delivery queue and processor
-- **empath-spool**: Message persistence to filesystem with watching
-- **empath-ffi**: C-compatible API for embedding and dynamic modules
-- **empath-tracing**: `#[traced]` procedural macro for instrumentation
+- **empath**: Main daemon, config parsing, controller orchestration, queue coordinator
+- **empath-common**: Protocol/FSM/controller/listener traits plus shared context helpers
+- **empath-smtp**: SMTP listener/session FSM with TLS, modules, and control integration
+- **empath-delivery**: Outbound queue scanner, delivery processor, rate limiting, retries
+- **empath-spool**: File/memory spool backends and persistence helpers
+- **empath-control**: Control socket protocol for queue health, metrics, and DNS cache commands
+- **empath-health**: HTTP health endpoints (`/health/live`, `/health/ready`) for Kubernetes
+- **empath-metrics**: OpenTelemetry metrics exporter and helpers for delivery instrumentation
+- **empath-ffi**: C FFI modules and shared library loader
+- **empath-python**: Python validation/event module support (PyO3)
+- **empath-tracing**: `#[traced]` procedural macro plus instrumentation helpers
+- **empath-wasm / empath-wasm-guest / empath-wasm-guest-macros**: WASM runtime and example guests for module development
+- **empath-examples / empath-examples/wasm**: Sample configs and modules that illustrate integration
+- **xtask**: Custom build helpers (example/module compilation, docs generation)
 
 ---
 

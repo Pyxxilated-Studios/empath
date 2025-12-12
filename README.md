@@ -101,7 +101,7 @@ just ci          # Full CI check locally
 
 # Testing
 just test        # Run all tests
-just test-quick  # Fast test run
+just test-fast   # Fast test run (skips slow integration suites)
 
 # Linting (STRICT - clippy::all + pedantic + nursery)
 just lint        # Run clippy with strict rules
@@ -244,6 +244,7 @@ All code must pass `cargo clippy --all-targets --all-features`.
 - **docker/README.md** - Docker environment documentation
 - **TODO.md** - Project roadmap and future work
 - **docs/message-mutation.md** - Examples for Python and C modules that mutate message headers/body
+- **docs/DEV_TOOLS.md** - Explanation of `just doctor`, `just check-changed`, and other helper scripts
 
 ## License
 

@@ -130,15 +130,19 @@ Work through these steps in order. Each should take 1-3 minutes.
 
 **📊 Visual Guide:** See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for comprehensive diagrams including component architecture, data flow, and state machines.
 
-**7-Crate Workspace:**
+**Workspace Snapshot:**
 
-1. **empath** - Main binary, orchestrates all components
-2. **empath-common** - Core traits (Protocol, FSM, Controller, Listener)
-3. **empath-smtp** - SMTP protocol implementation
-4. **empath-delivery** - Outbound mail delivery queue
-5. **empath-spool** - Message persistence to filesystem
-6. **empath-ffi** - C API for plugins/modules
-7. **empath-tracing** - Procedural macros for instrumentation
+1. **empath** - Main daemon, configuration loader, controller orchestration
+2. **empath-common** - Shared protocols, FSM traits, context helpers
+3. **empath-smtp** - SMTP listener/FSM, TLS/STARTTLS handling, module integration
+4. **empath-delivery** - Delivery queue scanner, retry scheduler, rate limiting
+5. **empath-spool** - File/memory spool backends that persist queued messages
+6. **empath-control** - Control socket + CLI helpers for queue/metrics/dns operations
+7. **empath-health** - HTTP health endpoints (`/health/live`, `/health/ready`) used by Kubernetes
+8. **empath-metrics** - OpenTelemetry exporter, metrics builder, and helpers
+9. **empath-ffi** / **empath-python** / **empath-wasm** - Module surfaces for C, Python, and WASM extensions (plus wasm-guest and wasm-guest-macros helpers)
+10. **empath-tracing** - `#[traced]` procedural macro plus instrumentation utilities
+11. **empath-examples** & **xtask** - Sample configurations/modules and build helpers for examples/extensions
 
 **Data Flow:**
 ```

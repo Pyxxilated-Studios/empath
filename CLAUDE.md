@@ -82,6 +82,8 @@ just docker-down       # Stop stack
 
 See [`docker/README.md`](docker/README.md) for details.
 
+See [`docs/DEV_TOOLS.md`](docs/DEV_TOOLS.md) for a quick explanation of `just doctor`, `just check-changed`, and the supporting scripts that keep formatting/linting consistent.
+
 ## Clippy Configuration
 
 STRICT linting enforced at workspace level:

@@ -175,7 +175,7 @@ sudo chmod 755 /var/run/empath
 
 ```bash
 # Copy example configuration
-sudo cp examples/config/production.ron /etc/empath/empath.config.ron
+sudo cp empath-examples/config/production.ron /etc/empath/empath.config.ron
 sudo chown empath:empath /etc/empath/empath.config.ron
 sudo chmod 600 /etc/empath/empath.config.ron
 
