@@ -185,6 +185,7 @@ fn init_test_module_with_memory_limit(max_memory_bytes: usize) -> WasmModule {
 fn create_test_context() -> Context {
     Context {
         envelope: Arc::new(Envelope::default()),
+        data_len: None,
         data: None,
         id: "test-session-123".to_string(),
         extended: false,

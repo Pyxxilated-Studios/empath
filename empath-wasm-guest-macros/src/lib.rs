@@ -152,6 +152,10 @@ pub fn bindings(input: TokenStream) -> TokenStream {
                 MutationResult, NewlineStyle,
             };
 
+            pub fn raw_bytes() -> ::alloc::vec::Vec<u8> {
+                crate::empath::validator::message::raw_bytes()
+            }
+
             pub fn headers_get(name: &str) -> ::alloc::vec::Vec<::alloc::string::String> {
                 crate::empath::validator::message::headers_get(name)
             }

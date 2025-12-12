@@ -239,6 +239,9 @@ fn build_wasm_examples() -> Result<()> {
     let wasm_artifact = wasm_dir.join(format!(
         "target/wasm32-wasip2/{profile_dir}/simple_validator.wasm"
     ));
+    let workspace_artifact = PathBuf::from(format!(
+        "target/wasm32-wasip2/{profile_dir}/simple_validator.wasm"
+    ));
     let dest = output_dir.join("simple_validator.wasm");
 
     let sources = [
@@ -293,12 +296,28 @@ fn build_wasm_examples() -> Result<()> {
     }
 
     // Copy output to target/modules/
-    if wasm_artifact.exists() {
-        std::fs::copy(&wasm_artifact, &dest)?;
-        println!("  ✅ Built {}", dest.display());
+    let built_artifact = if wasm_artifact.exists() {
+        wasm_artifact.clone()
+    } else if workspace_artifact.exists() {
+        workspace_artifact.clone()
     } else {
-        anyhow::bail!("WASM artifact not found at {}", wasm_artifact.display());
+        anyhow::bail!(
+            "WASM artifact not found at {} or {}",
+            wasm_artifact.display(),
+            workspace_artifact.display()
+        );
+    };
+
+    if !dest.exists() || needs_rebuild(&built_artifact, &dest) {
+        std::fs::copy(&built_artifact, &dest)?;
     }
+    if built_artifact != wasm_artifact {
+        if let Some(parent) = wasm_artifact.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&built_artifact, &wasm_artifact)?;
+    }
+    println!("  ✅ Built {}", dest.display());
 
     println!("✅ WASM example built successfully");
     Ok(())

@@ -79,35 +79,32 @@ impl ValidationGuest for Validator {
     }
 
     /// Validate DATA command (message content)
-    fn validate_data(ctx: Context) -> ValidationResult {
-        if let Some(data) = ctx.data() {
-            if data.starts_with(b"timeout") {
-                let mut spins: u64 = 0;
-                loop {
-                    spins = spins.wrapping_add(1);
-                    if spins % 1_000_000 == 0 {
-                        core::hint::spin_loop();
-                    }
+    fn validate_data(_ctx: Context) -> ValidationResult {
+        let data: Vec<u8> = empath::validator::message::raw_bytes();
+
+        if data.starts_with(b"timeout") {
+            let mut spins: u64 = 0;
+            loop {
+                spins = spins.wrapping_add(1);
+                if spins.is_multiple_of(1_000_000) {
+                    core::hint::spin_loop();
                 }
             }
         }
 
-        if let Some(data) = ctx.data() {
-            if let Some(rest) = data.strip_prefix(b"alloc:") {
-                if let Some(size) = core::str::from_utf8(rest)
-                    .ok()
-                    .and_then(|s| s.parse::<usize>().ok())
-                {
-                    let mut buffer = Vec::with_capacity(size);
-                    for i in 0..size {
-                        buffer.push((i % 256) as u8);
-                    }
-                    core::mem::forget(buffer);
-                }
+        if let Some(rest) = data.strip_prefix(b"alloc:")
+            && let Some(size) = core::str::from_utf8(rest)
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+        {
+            let mut buffer = Vec::with_capacity(size);
+            for i in 0..size {
+                buffer.push((i % 256) as u8);
             }
+            core::mem::forget(buffer);
         }
 
-        let data_size = ctx.data().map_or(0, |d| d.len());
+        let data_size = data.len();
 
         host::log(format!(
             "WASM: validate_data - message size: {data_size} bytes"
@@ -121,17 +118,15 @@ impl ValidationGuest for Validator {
             return reject(552, "Message exceeds maximum size (1MB)");
         }
 
-        if let Some(data) = ctx.data() {
-            if let Ok(msg_str) = core::str::from_utf8(data) {
-                let spam_keywords = ["viagra", "pills", "enlarge"];
-                for keyword in &spam_keywords {
-                    if msg_str.to_lowercase().contains(keyword) {
-                        host::log(format!("WASM: Spam keyword detected: {keyword}"));
+        if let Ok(msg_str) = core::str::from_utf8(&data) {
+            let spam_keywords = ["viagra", "pills", "enlarge"];
+            for keyword in &spam_keywords {
+                if msg_str.to_lowercase().contains(keyword) {
+                    host::log(format!("WASM: Spam keyword detected: {keyword}"));
 
-                        host::transaction_set("spam_keyword", keyword);
+                    host::transaction_set("spam_keyword", keyword);
 
-                        return reject(550, "Message contains spam content");
-                    }
+                    return reject(550, "Message contains spam content");
                 }
             }
         }
@@ -167,7 +162,7 @@ impl EventsGuest for Validator {
             ctx.session_id()
         ));
 
-        host::session_set("connection_opened_at", &format!("{}", ctx.session_id()));
+        host::session_set("connection_opened_at", ctx.session_id());
     }
 
     /// Called when a client connection is closed
@@ -229,7 +224,8 @@ impl EventsGuest for Validator {
     /// Called when a complete message is received
     fn on_smtp_message_received(ctx: Context) {
         maybe_trigger_event_error(&ctx);
-        let data_size = ctx.data().map_or(0, |d| d.len());
+        // Use host-backed view to avoid relying on inlined context data.
+        let data_size = empath::validator::message::raw_bytes().len();
 
         host::log(format!(
             "WASM Event: Message received - {} bytes from sender: {}",

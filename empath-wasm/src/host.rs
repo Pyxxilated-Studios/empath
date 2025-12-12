@@ -39,6 +39,7 @@ pub struct SerializableContext {
     pub id: String,
     pub sender: Option<String>,
     pub recipients: Vec<String>,
+    // Body is not inlined; modules should fetch via host::message APIs when needed.
     pub data: Option<Vec<u8>>,
     pub max_message_size: usize,
     pub transaction: Vec<(String, String)>,
@@ -54,7 +55,8 @@ impl From<&Context> for SerializableContext {
             recipients: ctx.envelope.recipients().map_or_else(Vec::new, |addrs| {
                 addrs.iter().map(ToString::to_string).collect()
             }),
-            data: ctx.data.as_ref().map(|d| d.to_vec()),
+            // Do not inline message data; modules can request body bytes via host functions.
+            data: None,
             max_message_size: ctx.max_message_size,
             transaction: ctx
                 .transaction
@@ -238,6 +240,13 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
 }
 
 impl crate::bindings::empath::validator::message::Host for WasmStore {
+    fn raw_bytes(&mut self) -> Vec<u8> {
+        self.try_lock_context()
+            .ok()
+            .and_then(|ctx| ctx.data.as_deref().map(<[u8]>::to_vec))
+            .unwrap_or_default()
+    }
+
     fn headers_get(&mut self, name: String) -> Vec<String> {
         let Ok(hname) = HeaderName::new(name) else {
             return Vec::new();
@@ -532,6 +541,22 @@ mod tests {
         assert!(store.memory_growing(0, 512, None).unwrap());
         // Reject growth above limit
         assert!(!store.memory_growing(0, 2048, None).unwrap());
+    }
+
+    #[test]
+    fn raw_bytes_exposes_message_data() {
+        let context = Context {
+            data: Some(Arc::from(b"hello world".to_vec())),
+            ..Default::default()
+        };
+
+        let mut store = make_store(Arc::new(Mutex::new(context)));
+
+        assert_eq!(
+            <WasmStore as MessageHost>::raw_bytes(&mut store),
+            b"hello world".to_vec(),
+            "raw_bytes should surface original message data"
+        );
     }
 
     #[test]

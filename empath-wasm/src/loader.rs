@@ -109,7 +109,8 @@ fn context_to_wit(ctx: &Context) -> wit::Context {
         id: ctx.id.clone(),
         sender: Some(ctx.sender()),
         recipients: ctx.recipients(),
-        data: ctx.data.as_ref().map(|arc| arc.to_vec()),
+        // Do not inline message data; modules can fetch via host APIs if needed.
+        data: None,
         max_message_size: ctx.max_message_size as u64,
         transaction: ctx
             .transaction

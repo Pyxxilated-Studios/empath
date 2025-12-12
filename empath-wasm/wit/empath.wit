@@ -16,6 +16,9 @@ interface message {
     headers-set-content-type: func(value: string) -> s32;
     headers-set-transfer-encoding: func(value: string) -> s32;
 
+    /// Full raw message (headers + body) as received.
+    raw-bytes: func() -> list<u8>;
+
     // body helpers
     body-bytes: func() -> list<u8>;
     body-newline-style: func() -> string; // "crlf" | "lf" | "mixed"

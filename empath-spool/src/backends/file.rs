@@ -299,6 +299,9 @@ impl BackingStore for FileBackingStore {
         // Serialize metadata to bincode (omit body to keep metadata lightweight)
         let mut metadata_context = context.clone();
         metadata_context.data = None;
+        metadata_context.data_len = metadata_context
+            .data_len
+            .or_else(|| context.data.as_ref().map(|d| d.len()));
         let metadata = bincode::serde::encode_to_vec(&metadata_context, bincode::config::legacy())
             .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
@@ -375,6 +378,13 @@ impl BackingStore for FileBackingStore {
 
         // Ensure body is not retained from metadata (older files may contain it)
         context.data = None;
+        if context.data_len.is_none() {
+            let data_filename = format!("{tracking_str}.eml");
+            let data_path = self.path.join(&data_filename);
+            if let Ok(meta) = fs::metadata(&data_path).await {
+                context.data_len = usize::try_from(meta.len()).ok();
+            }
+        }
 
         Ok(context)
     }
@@ -404,6 +414,8 @@ impl BackingStore for FileBackingStore {
         context.data = if data_bytes.is_empty() {
             None
         } else {
+            let len = data_bytes.len();
+            context.data_len = Some(len);
             Some(Arc::from(data_bytes))
         };
 
@@ -418,8 +430,12 @@ impl BackingStore for FileBackingStore {
         let data_filename = format!("{tracking_str}.eml");
         let data_path = self.path.join(&data_filename);
 
-        let metadata = fs::metadata(&data_path).await?;
-        Ok(usize::try_from(metadata.len()).ok())
+        // Prefer metadata syscall over reading the body to determine size.
+        match fs::metadata(&data_path).await {
+            Ok(metadata) => Ok(usize::try_from(metadata.len()).ok()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     async fn read_metadata_summary(
@@ -445,7 +461,9 @@ impl BackingStore for FileBackingStore {
                 .map(|d| u32::try_from(d.attempt_history.len()).unwrap_or_default()),
         };
 
-        let size = {
+        let size = if let Some(len) = context.data_len {
+            Some(len)
+        } else {
             let data_filename = format!("{tracking_str}.eml");
             let data_path = self.path.join(&data_filename);
             fs::metadata(&data_path)

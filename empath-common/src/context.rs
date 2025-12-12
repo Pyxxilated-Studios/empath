@@ -163,6 +163,8 @@ pub struct Context {
     pub envelope: Arc<Envelope>,
     pub id: String,
     pub data: Option<Arc<[u8]>>,
+    /// Cached body length when available to avoid recomputing sizes.
+    pub data_len: Option<usize>,
     pub response: Option<(Status, Cow<'static, str>)>,
     /// Cached parsed message parts (headers/body) for mutation.
     #[serde(skip)]
@@ -205,6 +207,7 @@ impl Default for Context {
             envelope: Arc::new(Envelope::default()),
             id: String::new(),
             data: None,
+            data_len: None,
             response: None,
             message_parts: None,
             session: AHashMap::new(),
