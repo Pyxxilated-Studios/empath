@@ -30,9 +30,9 @@ pub async fn scan_spool_internal(
             continue;
         }
 
-        // Read the message to get context (potentially with delivery state)
+        // Read only metadata to avoid pulling full message bodies during scans
         let context = spool
-            .read(&msg_id)
+            .read_metadata(&msg_id)
             .await
             .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
 

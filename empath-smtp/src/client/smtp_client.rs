@@ -1,6 +1,6 @@
 //! SMTP client implementation with support for TLS and STARTTLS.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use empath_common::{message::END_OF_BODY, outgoing, tracing};
 use tokio::{
@@ -60,24 +60,6 @@ impl ClientConnection {
     async fn upgrade_to_tls(self, domain: &str, accept_invalid_certs: bool) -> Result<Self> {
         match self {
             Self::Plain(stream) => {
-                let mut root_store = RootCertStore::empty();
-
-                // Add system certificates
-                let certs = rustls_native_certs::load_native_certs();
-                for cert in certs.certs {
-                    root_store.add(cert).map_err(|e| {
-                        ClientError::TlsError(format!("Failed to add certificate: {e}"))
-                    })?;
-                }
-                // Log errors but don't fail if some certs couldn't be loaded
-                if !certs.errors.is_empty() {
-                    tracing::warn!(?certs.errors, "Some certificates could not be loaded");
-                }
-
-                let mut config = ClientConfig::builder()
-                    .with_root_certificates(root_store)
-                    .with_no_client_auth();
-
                 // SECURITY WARNING: Allow invalid certificates if explicitly configured
                 // This should only be used for testing or development with self-signed certificates
                 if accept_invalid_certs {
@@ -86,12 +68,10 @@ impl ClientConnection {
                         "SECURITY WARNING: TLS certificate validation is disabled for this connection. \
                          This should only be used for testing or development environments."
                     );
-                    config
-                        .dangerous()
-                        .set_certificate_verifier(Arc::new(NoVerifier));
                 }
 
-                let connector = TlsConnector::from(Arc::new(config));
+                let config = tls_config(accept_invalid_certs)?;
+                let connector = TlsConnector::from(Arc::clone(&config));
                 let server_name = ServerName::try_from(domain.to_string())
                     .map_err(|e| ClientError::TlsError(format!("Invalid domain: {e}")))?;
 
@@ -196,6 +176,57 @@ pub struct SmtpClient {
     responses: Vec<Response>,
     server_domain: String,
     accept_invalid_certs: bool,
+}
+
+// Cache TLS client configs so we avoid rebuilding root stores and configs per connection.
+// We keep a strict config and an "accept invalid certs" config for test-only scenarios.
+static STRICT_TLS_CONFIG: LazyLock<std::result::Result<Arc<ClientConfig>, ClientError>> =
+    LazyLock::new(|| build_tls_config(false));
+static INSECURE_TLS_CONFIG: LazyLock<std::result::Result<Arc<ClientConfig>, ClientError>> =
+    LazyLock::new(|| build_tls_config(true));
+
+/// Build a rustls `ClientConfig`, optionally allowing invalid certificates.
+fn build_tls_config(
+    accept_invalid_certs: bool,
+) -> std::result::Result<Arc<ClientConfig>, ClientError> {
+    let mut root_store = RootCertStore::empty();
+
+    // Add system certificates
+    let certs = rustls_native_certs::load_native_certs();
+    for cert in certs.certs {
+        root_store
+            .add(cert)
+            .map_err(|e| ClientError::TlsError(format!("Failed to add certificate: {e}")))?;
+    }
+    if !certs.errors.is_empty() {
+        tracing::warn!(?certs.errors, "Some certificates could not be loaded");
+    }
+
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    if accept_invalid_certs {
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoVerifier));
+    }
+
+    Ok(Arc::new(config))
+}
+
+/// Get a cached TLS config (strict or insecure) for client connections.
+fn tls_config(accept_invalid_certs: bool) -> Result<Arc<ClientConfig>> {
+    let cached = if accept_invalid_certs {
+        &*INSECURE_TLS_CONFIG
+    } else {
+        &*STRICT_TLS_CONFIG
+    };
+
+    cached
+        .as_ref()
+        .map(Arc::clone)
+        .map_err(|e| ClientError::TlsError(e.to_string()))
 }
 
 impl SmtpClient {

@@ -1,19 +1,16 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{LitStr, Result as SynResult};
+use syn::LitStr;
 
-fn wit_source() -> SynResult<LitStr> {
+fn wit_path_literal() -> LitStr {
+    // Embed an absolute path to the canonical WIT file; this avoids inlining the
+    // contents (which can trigger duplicate package errors in wit-bindgen) and
+    // lets wit-bindgen read directly from disk.
     let wit_path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../empath-wasm-guest/wit/empath.wit"
     );
-    let wit = std::fs::read_to_string(wit_path).map_err(|err| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            format!("failed to read WIT from {wit_path}: {err}"),
-        )
-    })?;
-    Ok(LitStr::new(&wit, proc_macro2::Span::call_site()))
+    LitStr::new(wit_path, proc_macro2::Span::call_site())
 }
 /// Generate Empath guest bindings plus helper shims.
 #[proc_macro]
@@ -28,14 +25,11 @@ pub fn bindings(input: TokenStream) -> TokenStream {
         .into();
     }
 
-    let wit = match wit_source() {
-        Ok(wit) => wit,
-        Err(err) => return err.to_compile_error().into(),
-    };
+    let wit_path = wit_path_literal();
 
     quote! {
         ::wit_bindgen::generate!({
-            inline: #wit,
+            path: #wit_path,
             world: "validator",
         });
 

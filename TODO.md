@@ -7,8 +7,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 > **Completed items** are archived in `docs/COMPLETED.md`; TODO now lists only active work.
 
 ## P1 — Focus Now
-- [ ] NEW-WASM-02: `empath-wasm-guest` helper crate (proc macro + host bindings). Effort ~3d. Success: ergonomic Context API, reject/accept mapping, example module rewritten, docs/migration.
-- [ ] NEW-WASM-03: Multi-language WASM examples (Go/TinyGo, C/Emscripten, AssemblyScript). Effort ~4d. Success: each builds <100KB, README with toolchain steps, tests/CI hook.
+- [x] NEW-WASM-02: `empath-wasm-guest` helper crate (proc macro + host bindings). Effort ~3d. Success: ergonomic Context API, reject/accept mapping, example module rewritten, docs/migration.
 - [ ] NEW-18: Load & stress testing. Use k6/Locust; measure throughput (1k/10k/100k msg/day), CPU/mem/disk. Add docs + (optional) CI smoke.
 - [ ] 2.2 Connection pooling for SMTP client. Pool per-domain with idle cleanup, health check, metrics (hits/misses/size).
 - [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
@@ -19,7 +18,6 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-23c: Outbound binding observability. Per-binding counters and latency histograms (connect/EHLO); add Grafana panels.
 - [ ] NEW-23d: Control inspection for bindings. Control command to show binding selection for a queued message and toggle/disable a binding at runtime.
 - [ ] NEW-23e: Module binding ergonomics. Typed binding-name enum in FFI/WASM so modules can list/choose configured bindings; validate names with tests.
-- [ ] NEW-23f: Binding config linting. Detect unmapped/unknown binding names and missing interfaces at startup; emit warnings/errors early.
 - [ ] NEW-24: Per-domain bounce classification. Track temp vs perm failures by domain, expose metrics, and feed retry policy tuning.
 - [ ] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
 - [ ] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
@@ -62,6 +60,9 @@ _See `docs/COMPLETED.md` for the full archive of resolved work._
 - [ ] NEW-EXPE-01: WASM module fuzz harness. Generate randomized SMTP contexts/events against the WASM API to catch panics/resource leaks in validation modules before deployment.
 - [x] NEW-OPT-01: Allow `ControlClient::send_request_persistent` to drop the mutex before awaiting `send_and_receive` (and avoid cloning `Request` when unnecessary) so concurrent requests can reuse a healthy stream instead of serializing on the lock.
 - [x] NEW-OPT-02: Optimize `DeliveryProcessor::queue_stats_snapshot` by reusing static status keys (e.g., `DeliveryStatus` variants) and avoiding repeated `format!`/`to_string()` per entry to keep queue stats queries fast for large queues.
+- [x] NEW-OPT-03: Cache SMTP client TLS configs (strict + accept_invalid) instead of rebuilding `RootCertStore`/`ClientConfig` on every STARTTLS, reducing handshake CPU and syscalls.
+- [x] NEW-OPT-04: Make spool scanning metadata-only (avoid loading `.eml` bodies) and add incremental/delta tracking so large queues don’t force full directory walks.
+- [x] NEW-OPT-05: Eliminate extra DATA buffer clone at SMTP session completion by moving the buffer once (or sharing via `Arc<[u8]>`) before handing it to validation context.
 
 ## Notes
 - Prefer `just test-nextest` locally; `just ci` before PRs.

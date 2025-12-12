@@ -8,4 +8,4 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-wit-bindgen.workspace = true
+wit-bindgen = "0.49"

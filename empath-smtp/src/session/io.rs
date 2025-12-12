@@ -48,7 +48,8 @@ impl Session {
 
             self.context = Context {
                 state: State::PostDot(state::PostDot),
-                message: message.clone(),
+                // Fresh empty buffer for subsequent commands; the body was moved into data.
+                message: Vec::new(),
                 sent: false,
             };
 

@@ -50,10 +50,7 @@ impl ValidationGuest for Validator {
 
             host::transaction_set("rejection_reason", "sender_blocked_spam_domain");
 
-            return reject(
-                550,
-                "Sender from spam.example.com is not allowed",
-            );
+            return reject(550, "Sender from spam.example.com is not allowed");
         }
 
         host::transaction_set("validated_sender", sender);
@@ -73,10 +70,7 @@ impl ValidationGuest for Validator {
 
             host::transaction_set("rejection_reason", "too_many_recipients");
 
-            return reject(
-                452,
-                "Too many recipients (max 10)",
-            );
+            return reject(452, "Too many recipients (max 10)");
         }
 
         host::transaction_set("recipient_count", &ctx.recipients().len().to_string());
@@ -100,8 +94,9 @@ impl ValidationGuest for Validator {
 
         if let Some(data) = ctx.data() {
             if let Some(rest) = data.strip_prefix(b"alloc:") {
-                if let Some(size) =
-                    core::str::from_utf8(rest).ok().and_then(|s| s.parse::<usize>().ok())
+                if let Some(size) = core::str::from_utf8(rest)
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
                 {
                     let mut buffer = Vec::with_capacity(size);
                     for i in 0..size {
@@ -123,10 +118,7 @@ impl ValidationGuest for Validator {
 
             host::transaction_set("rejection_reason", "message_too_large");
 
-            return reject(
-                552,
-                "Message exceeds maximum size (1MB)",
-            );
+            return reject(552, "Message exceeds maximum size (1MB)");
         }
 
         if let Some(data) = ctx.data() {
@@ -138,10 +130,7 @@ impl ValidationGuest for Validator {
 
                         host::transaction_set("spam_keyword", keyword);
 
-                        return reject(
-                            550,
-                            "Message contains spam content",
-                        );
+                        return reject(550, "Message contains spam content");
                     }
                 }
             }

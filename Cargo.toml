@@ -6,6 +6,7 @@ members = [
     "empath-control",
     "empath-delivery",
     "empath-examples",
+    "empath-examples/wasm",
     "empath-ffi",
     "empath-health",
     "empath-metrics",
