@@ -14,6 +14,28 @@ This validator demonstrates:
 - **Transaction context**: Stores metadata that persists to spool for delivery modules
 - **Host function usage**: Calls back to Empath for logging and context management
 
+## Rust helper crate
+
+The example uses the `empath-wasm-guest` proc macro, which bundles the canonical WIT definitions and layers ergonomic helpers for host calls and validation results.
+
+```rust
+#![no_main]
+
+empath_wasm_guest::bindings!();
+
+use empath_wasm_guest::{accept, host, Context, ContextExt, ValidationGuest, ValidationResult};
+
+struct Validator;
+export!(Validator);
+
+impl ValidationGuest for Validator {
+    fn validate_connect(ctx: Context) -> ValidationResult {
+        host::log(format!("hello {}", ctx.session_id()));
+        accept()
+    }
+}
+```
+
 ## Building
 
 ### Prerequisites
@@ -51,7 +73,7 @@ Empath (
         modules: [
             (
                 type: "Wasm",
-                path: "./examples/modules/wasm/simple_validator.wasm",
+                path: "./target/modules/simple_validator.wasm",
                 timeout_secs: 5,
                 max_memory_bytes: 10485760,  // 10MB
             ),
@@ -65,7 +87,7 @@ Empath (
 
 ### WIT Interface
 
-The module implements the `empath:validator` world defined in `wit/empath.wit`:
+The module implements the `empath:validator` world defined in the canonical WIT shipped with `empath-wasm` (pulled in automatically by `empath-wasm-guest`):
 
 - **Exports** (validation interface):
   - `validate-connect`: Called when client connects
@@ -99,15 +121,12 @@ The module implements the `empath:validator` world defined in `wit/empath.wit`:
 
 ```rust
 if sender.ends_with("@spam.example.com") {
-    empath::validator::host::transaction_set(
-        "rejection_reason",
-        "sender_blocked_spam_domain",
-    );
+    host::transaction_set("rejection_reason", "sender_blocked_spam_domain");
 
-    return ValidationResult::Reject(Rejection {
-        code: 550,
-        message: "Sender from spam.example.com is not allowed".to_string(),
-    });
+    return empath_wasm_guest::reject(
+        550,
+        "Sender from spam.example.com is not allowed",
+    );
 }
 ```
 
@@ -117,10 +136,7 @@ if sender.ends_with("@spam.example.com") {
 let spam_keywords = ["viagra", "pills", "enlarge"];
 for keyword in &spam_keywords {
     if msg_str.to_lowercase().contains(keyword) {
-        return ValidationResult::Reject(Rejection {
-            code: 550,
-            message: "Message contains spam content".to_string(),
-        });
+        return empath_wasm_guest::reject(550, "Message contains spam content");
     }
 }
 ```
@@ -128,22 +144,19 @@ for keyword in &spam_keywords {
 ### Recipient Limiting
 
 ```rust
-if ctx.recipients.len() > 10 {
-    return ValidationResult::Reject(Rejection {
-        code: 452,
-        message: "Too many recipients (max 10)".to_string(),
-    });
+if ctx.recipients().len() > 10 {
+    return empath_wasm_guest::reject(452, "Too many recipients (max 10)");
 }
 ```
 
 ## Development
 
-The module is built using `wit-bindgen` to generate Rust bindings from the WIT interface definition. This provides:
+The module uses the `empath-wasm-guest::bindings!` macro, which wraps `wit-bindgen` with the canonical Empath WIT interface and adds:
 
-- Type-safe API
-- Automatic serialization/deserialization
-- Component Model support
-- WASIp2 capabilities
+- Type-safe context helpers (`ContextExt`) instead of manual field access
+- `accept()`/`reject*()` helpers so you never assemble `ValidationResult` directly
+- Host helper namespaces (`host::*`, `message::*`) with typed error handling
+- Automatic rebuilds when the upstream WIT changes
 
 ## Performance
 
@@ -164,4 +177,4 @@ The module is built using `wit-bindgen` to generate Rust bindings from the WIT i
 - [WIT specification](https://component-model.bytecodealliance.org/design/wit.html)
 - [Component Model](https://component-model.bytecodealliance.org/)
 - [wasmtime documentation](https://docs.wasmtime.dev/)
-- [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen)
+- [wit-bindgen](https://github.com/bytecodealliance/wit-bindgen) (used under the hood by `empath-wasm-guest`)

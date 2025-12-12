@@ -1,0 +1,25 @@
+[package]
+name = "empath-wasm-guest"
+version = "0.0.1"
+description = "Helper crate for building Empath WASM validation modules"
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "empath_wasm_guest"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+empath-wasm-guest-macros.workspace = true
+wit-bindgen.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

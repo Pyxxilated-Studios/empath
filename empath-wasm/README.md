@@ -11,54 +11,55 @@ WebAssembly (WASM) module support for Empath MTA, enabling validation modules wr
 - **Epoch-based timeouts**: Precise timeout enforcement without fuel overhead
 - **Event-driven**: Receive events for SMTP validation and lifecycle hooks
 
-## Quick Start
-
-### 1. Write a WASM Module
+## Quick Start (Rust guest modules)
 
 ```rust
-#![no_std]
+#![no_main]
 
-#[no_mangle]
-pub extern "C" fn init() -> i32 {
-    0 // Success
-}
+empath_wasm_guest::bindings!();
 
-#[no_mangle]
-pub extern "C" fn validate_connect() -> i32 {
-    // Return 0 to accept, non-zero to reject
-    0
+use empath_wasm_guest::{accept, host, Context, ContextExt, ValidationGuest, ValidationResult};
+
+struct Validator;
+export!(Validator);
+
+impl ValidationGuest for Validator {
+    fn validate_connect(ctx: Context) -> ValidationResult {
+        host::log(format!("hello {}", ctx.session_id()));
+        accept()
+    }
 }
 ```
 
-### 2. Compile to WASM
+Build (WASIp2 target):
 
 ```bash
-rustc --target wasm32-unknown-unknown --crate-type=cdylib -O \
-  your_module.rs -o your_module.wasm
+rustup target add wasm32-wasip2
+cargo build -p simple-validator --manifest-path empath-examples/wasm/Cargo.toml \
+  --target wasm32-wasip2 --release
 ```
 
-### 3. Configure in Empath
-
-Add to your `empath.config.ron`:
+Configure Empath to load the resulting component (copied to `target/modules/simple_validator.wasm` by `xtask build-all`):
 
 ```ron
 Empath(
     modules: [
         {
             type: "Wasm",
-            path: "/path/to/your_module.wasm",
-            timeout_secs: 5,           // Optional, default: 5
-            max_memory_bytes: 10485760, // Optional, default: 10 MB
-            enable_wasi: false,         // Optional, default: false
+            path: "target/modules/simple_validator.wasm",
+            timeout_secs: 5,
+            max_memory_bytes: 10485760,
+            enable_wasi: false,
         },
     ],
-    // ... rest of config
 )
 ```
 
+For other languages, use the canonical WIT at `empath-wasm/wit/empath.wit`.
+
 ## Available Callbacks
 
-### Validation Callbacks (return 0 to accept, non-zero to reject)
+### Validation Callbacks (return Accept/Reject)
 
 - `validate_connect()` - Validate SMTP connection
 - `validate_ehlo()` - Validate EHLO/HELO command
@@ -82,20 +83,12 @@ All callbacks are optional. Missing callbacks are treated as "allow".
 
 ## Host Functions
 
-WASM modules can call these host functions:
+Guest modules can call these host helpers (all exposed under `host::*` via `empath-wasm-guest`):
 
-```c
-// Memory management
-u32 em_alloc(u32 size);           // Allocate memory
-void em_free(u32 ptr);            // Free memory (no-op)
-
-// Context access
-u32 em_get_context_size();        // Get context size
-u32 em_get_context(u32 ptr, u32 max_len); // Read context
-
-// Logging
-void em_log(u32 ptr, u32 len);    // Log message
-```
+- Logging: `log(message: &str)`
+- Session context (per-connection, not persisted): `session_set/get/exists`
+- Transaction context (persisted to spool): `transaction_set/get/exists`
+- Message mutation helpers (under `message::*`): header set/append/remove, message-id insertion, content-type helpers, body getters/setters/appenders, and newline-style inspection
 
 ## Context Serialization
 
@@ -169,7 +162,7 @@ All errors use a **fail-open** policy to prevent service disruption.
 
 ## Examples
 
-See `examples/modules/wasm/simple_validator.rs` for a complete example.
+See `empath-examples/wasm/src/lib.rs` for a complete example built with `empath-wasm-guest`.
 
 ## Architecture
 

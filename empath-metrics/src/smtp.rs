@@ -36,6 +36,12 @@ pub struct SmtpMetrics {
     /// Distribution of message sizes in bytes
     message_size_bytes: Histogram<u64>,
 
+    /// TLS handshake duration in seconds
+    tls_handshake_duration: Histogram<f64>,
+
+    /// TLS handshake failures
+    tls_handshake_failures: Counter<u64>,
+
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     connections_total_count: Arc<AtomicU64>,
     messages_received_count: Arc<AtomicU64>,
@@ -104,6 +110,16 @@ impl SmtpMetrics {
             .with_description("Distribution of received message sizes")
             .build();
 
+        let tls_handshake_duration = meter
+            .f64_histogram("empath.smtp.tls.handshake.duration.seconds")
+            .with_description("TLS handshake duration for SMTP connections")
+            .build();
+
+        let tls_handshake_failures = meter
+            .u64_counter("empath.smtp.tls.handshake.failures")
+            .with_description("Count of TLS handshake failures for SMTP connections")
+            .build();
+
         // Observable gauge for SMTP error rate (failed / total connections)
         // Pre-calculated for easier alerting
         let total_for_error_rate = connections_total_ref.clone();
@@ -134,6 +150,8 @@ impl SmtpMetrics {
             session_duration,
             command_duration,
             message_size_bytes,
+            tls_handshake_duration,
+            tls_handshake_failures,
             connections_total_count: connections_total_ref,
             messages_received_count: messages_received_ref,
             connections_failed_count: connections_failed_ref,
@@ -173,6 +191,22 @@ impl SmtpMetrics {
         // Fast atomic increment instead of Counter::add() (80-120ns → <10ns)
         self.messages_received_count.fetch_add(1, Ordering::Relaxed);
         self.message_size_bytes.record(size_bytes, &[]);
+    }
+
+    /// Record a TLS handshake success
+    pub fn record_tls_handshake(&self, duration_secs: f64, proto: &str, cipher: &str) {
+        let attributes = [
+            KeyValue::new("protocol", proto.to_string()),
+            KeyValue::new("cipher", cipher.to_string()),
+        ];
+        self.tls_handshake_duration
+            .record(duration_secs, &attributes);
+    }
+
+    /// Record a TLS handshake failure
+    pub fn record_tls_handshake_failure(&self, reason: &str) {
+        let attributes = [KeyValue::new("reason", reason.to_string())];
+        self.tls_handshake_failures.add(1, &attributes);
     }
 
     /// Get the current number of active connections

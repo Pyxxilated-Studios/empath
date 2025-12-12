@@ -1,6 +1,7 @@
 use std::{
     fmt::{Debug, Write},
     sync::Arc,
+    time::Instant,
 };
 
 use empath_common::tracing;
@@ -48,6 +49,17 @@ impl TlsInfo {
             .suite()
             .as_str()
             .map_or_else(String::new, str::to_string)
+    }
+}
+
+const fn tls_error_reason(err: &TlsError) -> &'static str {
+    match err {
+        TlsError::Io(_) => "io",
+        TlsError::CertificateLoad { .. } => "certificate_load",
+        TlsError::KeyLoad { .. } => "key_load",
+        TlsError::UpgradeFailed(_) => "handshake",
+        TlsError::ProtocolInfoMissing(_) => "protocol_info_missing",
+        TlsError::Rustls(_) => "rustls",
     }
 }
 
@@ -124,18 +136,22 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
             .with_single_cert(vec![certs], keys)?;
 
         let acceptor = TlsAcceptor::from(Arc::new(config));
+        let start = Instant::now();
 
-        Ok(match self {
+        let handshake: TlsResult<(Self, TlsInfo)> = match self {
             Self::Plain {
                 stream,
                 read_buf,
                 read_pos,
                 read_len,
             } => {
-                let stream = acceptor.accept(stream).await?;
+                let stream = acceptor
+                    .accept(stream)
+                    .await
+                    .map_err(|e| TlsError::UpgradeFailed(e.to_string()))?;
                 let info = TlsInfo::of(stream.get_ref().1)?;
 
-                (
+                Ok((
                     Self::Tls {
                         stream: Box::new(stream),
                         read_buf,
@@ -143,7 +159,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                         read_len,
                     },
                     info,
-                )
+                ))
             }
             Self::Tls {
                 stream,
@@ -151,9 +167,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                 read_pos,
                 read_len,
             } => {
-                let (stream, connection) = acceptor.accept(stream).await?.into_inner();
+                let (stream, connection) = acceptor
+                    .accept(stream)
+                    .await
+                    .map_err(|e| TlsError::UpgradeFailed(e.to_string()))?
+                    .into_inner();
 
-                (
+                Ok((
                     Self::Tls {
                         stream,
                         read_buf,
@@ -161,9 +181,49 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                         read_len,
                     },
                     TlsInfo::of(&connection)?,
-                )
+                ))
             }
-        })
+        };
+
+        let duration_secs = start.elapsed().as_secs_f64();
+
+        match handshake {
+            Ok((conn, info)) => {
+                let proto = info.proto();
+                let cipher = info.cipher();
+
+                if let Some(metrics) = empath_metrics::try_metrics() {
+                    metrics
+                        .smtp
+                        .record_tls_handshake(duration_secs, &proto, &cipher);
+                }
+
+                tracing::info!(
+                    duration_seconds = duration_secs,
+                    protocol = proto,
+                    cipher,
+                    "TLS handshake succeeded"
+                );
+
+                Ok((conn, info))
+            }
+            Err(err) => {
+                if let Some(metrics) = empath_metrics::try_metrics() {
+                    metrics
+                        .smtp
+                        .record_tls_handshake_failure(tls_error_reason(&err));
+                }
+
+                tracing::warn!(
+                    duration_seconds = duration_secs,
+                    reason = tls_error_reason(&err),
+                    error = %err,
+                    "TLS handshake failed"
+                );
+
+                Err(err)
+            }
+        }
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]

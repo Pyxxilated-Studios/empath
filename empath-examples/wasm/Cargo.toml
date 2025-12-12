@@ -6,7 +6,8 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-wit-bindgen = "0.49.0"
+empath-wasm-guest.workspace = true
+wit-bindgen.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

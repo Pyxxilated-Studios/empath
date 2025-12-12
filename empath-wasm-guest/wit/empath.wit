@@ -1,0 +1,163 @@
+// Empath MTA WebAssembly Component Interface
+// This defines the contract between the host (Empath) and guest (validation modules)
+
+package empath:validator@0.1.0;
+
+/// Message mutation helper interface (experimental, breaking).
+interface message {
+    // header helpers
+    headers-get: func(name: string) -> list<string>;
+    headers-contains: func(name: string) -> bool;
+    headers-set: func(name: string, value: string) -> s32;
+    headers-append: func(name: string, value: string) -> s32;
+    headers-set-if-absent: func(name: string, value: string) -> result<bool, s32>;
+    headers-remove: func(name: string) -> u32;
+    headers-ensure-message-id: func() -> s32;
+    headers-set-content-type: func(value: string) -> s32;
+    headers-set-transfer-encoding: func(value: string) -> s32;
+
+    // body helpers
+    body-bytes: func() -> list<u8>;
+    body-newline-style: func() -> string; // "crlf" | "lf" | "mixed"
+    body-set-bytes: func(data: list<u8>) -> s32;
+    body-append-bytes: func(data: list<u8>) -> s32;
+    body-set-text: func(text: string, charset: string) -> s32;
+    body-append-text: func(text: string, charset: string) -> s32;
+    body-set-html: func(html: string, charset: string) -> s32;
+    body-append-html: func(html: string, charset: string) -> s32;
+    body-set-alternative: func(text: string, html: string, charset: string) -> s32;
+}
+
+/// Core validation interface for SMTP message processing
+interface validation {
+    /// Context passed to validation callbacks
+    /// Contains all information about the current SMTP transaction
+    record context {
+        /// Whether EHLO was used (extended SMTP)
+        extended: bool,
+        /// Unique session/connection identifier
+        id: string,
+        /// Sender email address (from MAIL FROM)
+        sender: option<string>,
+        /// List of recipient email addresses (from RCPT TO)
+        recipients: list<string>,
+        /// Message data (from DATA command)
+        data: option<list<u8>>,
+        /// Maximum allowed message size in bytes
+        max-message-size: u64,
+        /// Transaction context key-value pairs (persisted to spool)
+        transaction: list<tuple<string, string>>,
+        /// Optional tracking ID for correlation
+        tracking-id: option<string>,
+    }
+
+    /// Rejection details
+    record rejection {
+        /// SMTP error code (e.g., 550)
+        /// Must be in range 400-599 per RFC 5321.
+        /// Invalid codes are replaced with 550 (Requested action not taken).
+        code: u32,
+        /// Human-readable rejection message
+        message: string,
+    }
+
+    /// Validation result
+    variant validation-result {
+        /// Accept the message/connection
+        accept,
+        /// Reject with SMTP error code and message
+        reject(rejection),
+    }
+
+    /// Validate connection (called when client connects)
+    validate-connect: func(ctx: context) -> validation-result;
+
+    /// Validate EHLO/HELO command
+    validate-ehlo: func(ctx: context) -> validation-result;
+
+    /// Validate MAIL FROM command (sender)
+    validate-mail-from: func(ctx: context) -> validation-result;
+
+    /// Validate RCPT TO command (recipient)
+    validate-rcpt-to: func(ctx: context) -> validation-result;
+
+    /// Validate DATA command (message content)
+    validate-data: func(ctx: context) -> validation-result;
+
+    /// Validate STARTTLS command
+    validate-starttls: func(ctx: context) -> validation-result;
+}
+
+/// Event listener interface for connection lifecycle events
+/// These callbacks don't return validation results - they're for observability and side effects
+interface events {
+    /// Context passed to event callbacks (same as validation context)
+    use validation.{context};
+
+    /// Called when a client connection is opened
+    on-connection-opened: func(ctx: context);
+
+    /// Called when a client connection is closed
+    on-connection-closed: func(ctx: context);
+
+    /// Called before attempting delivery to a mail server
+    on-delivery-attempt: func(ctx: context);
+
+    /// Called when delivery succeeds
+    on-delivery-success: func(ctx: context);
+
+    /// Called when delivery fails (temporary or permanent)
+    on-delivery-failure: func(ctx: context);
+
+    /// Called when an SMTP command returns an error response (4xx/5xx)
+    on-smtp-error: func(ctx: context);
+
+    /// Called when a complete message is received from a client
+    on-smtp-message-received: func(ctx: context);
+
+    /// Called after a DNS lookup completes
+    on-dns-lookup: func(ctx: context);
+}
+
+/// Host functions that guest modules can call
+interface host {
+    /// Log a message from the guest module
+    /// Messages are logged at INFO level with [WASM] prefix
+    log: func(message: string);
+
+    /// Set a session context value (not persisted to spool)
+    /// Session context persists across RSET within same connection
+    session-set: func(key: string, value: string);
+
+    /// Get a session context value
+    session-get: func(key: string) -> option<string>;
+
+    /// Check if session context key exists
+    session-exists: func(key: string) -> bool;
+
+    /// Set a transaction context value (persisted to spool)
+    /// Transaction context is saved with the message for delivery
+    transaction-set: func(key: string, value: string);
+
+    /// Get a transaction context value
+    transaction-get: func(key: string) -> option<string>;
+
+    /// Check if transaction context key exists
+    transaction-exists: func(key: string) -> bool;
+}
+
+/// Main validator world - what a validation module must implement
+world validator {
+    /// Import host functions (guest can call these)
+    import host;
+    /// Import message helper functions (host) for mutation
+    import message;
+
+    /// Export validation functions (host will call these)
+    export validation;
+
+    /// Optionally export event listener functions
+    /// Modules can implement this to receive lifecycle events
+    export events;
+
+}
