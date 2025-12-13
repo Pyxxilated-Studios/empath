@@ -7,9 +7,11 @@
 use std::{borrow::Cow, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use empath_common::{context::Context, status::Status};
 use empath_ffi::modules;
 use empath_spool::BackingStore;
+use ulid::Ulid;
 
 use crate::State;
 
@@ -177,6 +179,7 @@ impl DefaultSmtpTransactionHandler {
     ///
     /// * `ctx` - Business context containing the message data
     async fn spool_message(&self, ctx: &mut Context) {
+        self.insert_received_header(ctx);
         let tracking_id = if let Some(spool) = &self.spool
             && ctx.data.is_some()
         {
@@ -226,6 +229,68 @@ impl DefaultSmtpTransactionHandler {
 
         // Dispatch message received event
         modules::dispatch(modules::Event::Event(modules::Ev::SmtpMessageReceived), ctx);
+    }
+
+    fn insert_received_header(&self, ctx: &mut Context) {
+        let Some(existing_data) = ctx.data.as_ref() else {
+            return;
+        };
+
+        let header = self.build_received_header(ctx, Utc::now());
+        let mut buffer = Vec::with_capacity(header.len() + existing_data.len());
+        buffer.extend_from_slice(header.as_bytes());
+        buffer.extend_from_slice(existing_data);
+
+        ctx.data = Some(Arc::from(buffer));
+    }
+
+    fn build_received_header(&self, ctx: &Context, timestamp: DateTime<Utc>) -> String {
+        let client_ip = self.peer.ip();
+        let ip_repr = format!("[{client_ip}]");
+        let helo = ctx.id().trim();
+        let from_value = if helo.is_empty() {
+            format!("from {ip_repr}")
+        } else {
+            format!("from {helo} ({helo} {ip_repr})")
+        };
+
+        let server = if ctx.banner.is_empty() {
+            "localhost"
+        } else {
+            ctx.banner.as_ref()
+        };
+
+        let is_tls = ctx
+            .session
+            .get("tls")
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+
+        let mut proto = if ctx.extended {
+            "ESMTP".to_string()
+        } else {
+            "SMTP".to_string()
+        };
+        if is_tls {
+            proto.push('S');
+        }
+
+        let recipients = ctx
+            .recipient_emails()
+            .into_iter()
+            .map(|addr| format!("<{addr}>"))
+            .collect::<Vec<_>>();
+        let for_segment = if recipients.is_empty() {
+            String::new()
+        } else {
+            format!(" for {}", recipients.join(", "))
+        };
+
+        let id = Ulid::new();
+        let timestamp_str = timestamp.to_rfc2822();
+
+        format!(
+            "Received: {from_value} by {server} (Empath) with {proto} id <{id}>{for_segment}; {timestamp_str}\r\n"
+        )
     }
 }
 
@@ -352,8 +417,13 @@ pub const fn requires_validation(state: &State) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use empath_common::{
+        address::{Address, AddressList},
+        address_parser,
+    };
+
     use super::*;
     use crate::MailParameters;
 
@@ -406,6 +476,48 @@ mod tests {
         assert!(!requires_validation(&State::Invalid(Invalid {
             reason: String::new()
         })));
+    }
+
+    #[test]
+    fn received_header_is_inserted_before_body() {
+        let handler = DefaultSmtpTransactionHandler::new(
+            None,
+            "203.0.113.5:2525".parse().unwrap(),
+            None,
+            crate::spf::SpfConfig::default(),
+        );
+
+        let message = b"Subject: hello\r\n\r\nhello world";
+        let mut ctx = Context {
+            data: Some(Arc::from(message.as_ref())),
+            id: "client.example.com".to_string(),
+            extended: true,
+            banner: Arc::from("mail.example.com"),
+            ..Context::default()
+        };
+
+        let recipient_mailbox =
+            address_parser::parse_forward_path("<recipient@example.com>").unwrap();
+        let recipient_address = Address::from(recipient_mailbox);
+        Arc::make_mut(&mut ctx.envelope)
+            .recipients_mut()
+            .replace(AddressList::from(vec![recipient_address]));
+
+        ctx.session.insert(Cow::Borrowed("tls"), "true".to_string());
+
+        handler.insert_received_header(&mut ctx);
+
+        let data = ctx.data.as_ref().expect("message data");
+        let header_end = data
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .expect("missing CRLF");
+        let first_line = std::str::from_utf8(&data[..header_end]).unwrap();
+
+        assert!(first_line.starts_with("Received: from client.example.com"));
+        assert!(first_line.contains(" by mail.example.com (Empath)"));
+        assert!(first_line.contains(" with ESMTPS id <"));
+        assert!(first_line.contains(" for <recipient@example.com>"));
     }
 
     #[tokio::test]

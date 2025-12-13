@@ -55,20 +55,12 @@ fn resolved_module_path() -> &'static Path {
             );
 
             let profile = cargo_profile();
-            let wasm_path = workspace_root
-                .join("empath-examples/wasm/target/wasm32-wasip2")
-                .join(&profile)
-                .join("simple_validator.wasm");
 
             let cached_path = workspace_root
                 .join("target/modules")
                 .join("simple_validator.wasm");
 
             let source_mtime = latest_source_mtime(&workspace_root);
-
-            if module_fresh(&wasm_path, source_mtime) {
-                return wasm_path;
-            }
 
             if module_fresh(&cached_path, source_mtime) {
                 return cached_path;
@@ -80,12 +72,12 @@ fn resolved_module_path() -> &'static Path {
             );
 
             assert!(
-                wasm_path.exists(),
+                cached_path.exists(),
                 "expected WASM test module at {} after xtask build, build may have failed",
-                wasm_path.display()
+                cached_path.display()
             );
 
-            wasm_path
+            cached_path
         })
         .as_path()
 }

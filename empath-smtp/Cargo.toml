@@ -20,6 +20,7 @@ crate-type = ["cdylib", "rlib"]
 ahash.workspace = true
 arrayvec.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 empath-common.workspace = true
 empath-ffi.workspace = true
 empath-metrics.workspace = true
@@ -34,6 +35,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tracing.workspace = true
+ulid.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

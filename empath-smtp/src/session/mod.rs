@@ -643,8 +643,10 @@ mod test {
         assert_eq!(mock_spool.message_count(), 1);
         let ids = mock_spool.list().await.unwrap();
         let spooled_msg_id = ids.first().unwrap();
-        let spooled_msg = mock_spool.read(spooled_msg_id).await.unwrap();
-        assert_eq!(spooled_msg.data.as_deref(), Some(test_data.as_ref()));
+        let mut spooled_msg = mock_spool.read(spooled_msg_id).await.unwrap();
+        assert!(spooled_msg.body_view().is_ok_and(|body| {
+            body.is_some_and(|body| body.as_str_lossy() == "Hello World\r\n.\r\n")
+        }));
     }
 
     #[tokio::test]
