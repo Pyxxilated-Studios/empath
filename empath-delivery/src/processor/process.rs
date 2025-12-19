@@ -55,7 +55,7 @@ async fn process_single_message(
         return; // Skip delivery
     }
 
-    if let Err(e) = prepare_message(&processor, &info.message_id, &spool).await {
+    if let Err(e) = Box::pin(prepare_message(&processor, &info.message_id, &spool)).await {
         error!(
             message_id = ?info.message_id,
             error = %e,
@@ -227,7 +227,12 @@ pub async fn process_queue_internal(
                 let spool_clone = Arc::clone(&spool);
 
                 join_set.spawn(async move {
-                    process_single_message(processor_clone, spool_clone, msg_info).await;
+                    Box::pin(process_single_message(
+                        processor_clone,
+                        spool_clone,
+                        msg_info,
+                    ))
+                    .await;
                 });
             }
         }
@@ -239,7 +244,12 @@ pub async fn process_queue_internal(
                 let spool_clone = Arc::clone(&spool);
 
                 join_set.spawn(async move {
-                    process_single_message(processor_clone, spool_clone, msg_info).await;
+                    Box::pin(process_single_message(
+                        processor_clone,
+                        spool_clone,
+                        msg_info,
+                    ))
+                    .await;
                 });
             }
         }

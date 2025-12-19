@@ -8,13 +8,18 @@ use async_trait::async_trait;
 use empath_common::{Signal, context::Context, internal};
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::fs;
+use tokio::{
+    fs,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
+};
 
 use crate::{
     SpoolError, ValidationError,
-    r#trait::{BackingStore, MessageMetadata},
+    r#trait::{BackingStore, MessageMetadata, SpoolScanCursor, SpoolScanMode},
     types::SpooledMessageId,
 };
+
+const MANIFEST_FILENAME: &str = ".spool_manifest";
 
 /// File-based backing store implementation
 ///
@@ -190,6 +195,7 @@ impl FileBackingStore {
 
         // Clean up any orphaned .deleted files from previous crashes
         self.cleanup_deleted_files()?;
+        self.ensure_manifest()?;
 
         Ok(())
     }
@@ -243,6 +249,21 @@ impl FileBackingStore {
                 Ok(())
             }
         }
+    }
+
+    fn manifest_path(&self) -> PathBuf {
+        self.path.join(MANIFEST_FILENAME)
+    }
+
+    fn ensure_manifest(&self) -> crate::Result<()> {
+        let manifest_path = self.manifest_path();
+        if !manifest_path.exists() {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(manifest_path)?;
+        }
+        Ok(())
     }
 }
 
@@ -309,6 +330,16 @@ impl BackingStore for FileBackingStore {
         // Atomically rename both files
         fs::rename(&temp_data_path, &data_path).await?;
         fs::rename(&temp_meta_path, &meta_path).await?;
+
+        let mut manifest = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.manifest_path())
+            .await?;
+        manifest
+            .write_all(format!("{tracking_id}\n").as_bytes())
+            .await?;
+        manifest.flush().await?;
 
         internal!(
             level = DEBUG,
@@ -506,6 +537,9 @@ impl BackingStore for FileBackingStore {
         // Serialize metadata to bincode (omit body to keep metadata compact)
         let mut metadata_context = context.clone();
         metadata_context.data = None;
+        metadata_context.data_len = metadata_context
+            .data_len
+            .or_else(|| context.data.as_ref().map(|data| data.len()));
         let metadata = bincode::serde::encode_to_vec(&metadata_context, bincode::config::legacy())
             .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
@@ -516,6 +550,75 @@ impl BackingStore for FileBackingStore {
         internal!(level = DEBUG, "Updated message {msg_id} metadata in spool");
 
         Ok(())
+    }
+
+    async fn list_delta(
+        &self,
+        cursor: &mut SpoolScanCursor,
+        mode: SpoolScanMode,
+    ) -> crate::Result<Vec<SpooledMessageId>> {
+        let manifest_path = self.manifest_path();
+        let manifest_len = match fs::metadata(&manifest_path).await {
+            Ok(metadata) => metadata.len(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&manifest_path)
+                    .await?;
+                0
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        if matches!(mode, SpoolScanMode::Full) {
+            let messages = self.list().await?;
+            cursor.offset = manifest_len;
+            return Ok(messages);
+        }
+
+        if cursor.offset >= manifest_len {
+            return Ok(Vec::new());
+        }
+
+        let mut file = fs::File::open(&manifest_path).await?;
+        file.seek(std::io::SeekFrom::Start(cursor.offset)).await?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).await?;
+
+        let Some(last_newline) = buffer.iter().rposition(|b| *b == b'\n') else {
+            return Ok(Vec::new());
+        };
+
+        let mut ids = Vec::new();
+        for line in buffer[..=last_newline].split(|b| *b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            let line_str = std::str::from_utf8(line).unwrap_or_default();
+            if let Some(msg_id) = SpooledMessageId::from_filename(&format!("{line_str}.bin")) {
+                ids.push(msg_id);
+            }
+        }
+
+        cursor.offset = cursor
+            .offset
+            .saturating_add(u64::try_from(last_newline + 1).unwrap_or(0));
+
+        Ok(ids)
+    }
+
+    async fn open_message_stream(
+        &self,
+        msg_id: &SpooledMessageId,
+    ) -> crate::Result<crate::r#trait::MessageStream> {
+        let tracking_str = msg_id.to_string();
+        let data_filename = format!("{tracking_str}.eml");
+        let data_path = self.path.join(&data_filename);
+
+        let file = fs::File::open(&data_path).await?;
+        Ok(Box::pin(BufReader::new(file)))
     }
 
     /// Delete a message from the spool

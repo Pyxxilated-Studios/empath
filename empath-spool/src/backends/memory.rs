@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{io::Cursor, sync::Arc};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -94,6 +94,9 @@ impl BackingStore for MemoryBackingStore {
 
         // Set the tracking ID in the context
         context.tracking_id = Some(id.clone());
+        context.data_len = context
+            .data_len
+            .or_else(|| context.data.as_ref().map(|data| data.len()));
 
         // Check capacity before inserting (don't count if overwriting existing)
         if let Some(cap) = self.capacity
@@ -140,6 +143,9 @@ impl BackingStore for MemoryBackingStore {
 
     async fn read_metadata(&self, id: &SpooledMessageId) -> crate::Result<Context> {
         let mut context = self.read(id).await?;
+        if context.data_len.is_none() {
+            context.data_len = context.data.as_ref().map(|data| data.len());
+        }
         context.data = None;
         Ok(context)
     }
@@ -151,11 +157,24 @@ impl BackingStore for MemoryBackingStore {
 
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
         if self.messages.contains_key(id) {
-            self.messages.insert(id.clone(), context.clone());
+            let mut updated = context.clone();
+            updated.data_len = updated
+                .data_len
+                .or_else(|| context.data.as_ref().map(|data| data.len()));
+            self.messages.insert(id.clone(), updated);
             Ok(())
         } else {
             Err(SpoolError::NotFound(id.clone()))
         }
+    }
+
+    async fn open_message_stream(
+        &self,
+        id: &SpooledMessageId,
+    ) -> crate::Result<crate::r#trait::MessageStream> {
+        let context = self.read(id).await?;
+        let data = context.data.unwrap_or_else(|| Arc::from(Vec::<u8>::new()));
+        Ok(Box::pin(Cursor::new(data)))
     }
 
     async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()> {

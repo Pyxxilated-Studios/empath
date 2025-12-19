@@ -60,7 +60,7 @@ pub async fn prepare_message(
     }
 
     let mut context = spool
-        .read(message_id)
+        .read_metadata(message_id)
         .await
         .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
     let info = processor.queue.get(message_id).ok_or_else(|| {
@@ -175,7 +175,15 @@ pub async fn prepare_message(
     );
 
     // Deliver the message via SMTP (including DATA command)
-    let result = deliver_message(processor, &mx_address, &context, &info).await;
+    let result = Box::pin(deliver_message(
+        processor,
+        spool,
+        message_id,
+        &mx_address,
+        &context,
+        &info,
+    ))
+    .await;
 
     match result {
         Ok(()) => {
@@ -524,6 +532,8 @@ pub async fn persist_delivery_state(
 /// Returns an error if any part of the SMTP transaction fails
 async fn deliver_message(
     processor: &DeliveryProcessor,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    message_id: &SpooledMessageId,
     server_address: &str,
     context: &Context,
     delivery_info: &DeliveryInfo,
@@ -552,7 +562,8 @@ async fn deliver_message(
         require_tls,
         accept_invalid_certs,
         &processor.smtp_timeouts,
-    );
+    )
+    .with_spool_body(spool, message_id);
 
-    transaction.execute().await
+    Box::pin(transaction.execute()).await
 }

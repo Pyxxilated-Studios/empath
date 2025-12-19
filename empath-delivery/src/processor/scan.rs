@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use empath_common::tracing::warn;
+use empath_spool::{SpoolError, SpoolScanMode};
 
 use crate::{
     error::{DeliveryError, SystemError},
@@ -17,11 +18,15 @@ use crate::{
 pub async fn scan_spool_internal(
     processor: &DeliveryProcessor,
     spool: &Arc<dyn empath_spool::BackingStore>,
+    mode: SpoolScanMode,
 ) -> Result<usize, DeliveryError> {
-    let message_ids = spool
-        .list()
-        .await
-        .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+    let message_ids = {
+        let mut cursor = processor.spool_scan_cursor.lock().await;
+        spool
+            .list_delta(&mut cursor, mode)
+            .await
+            .map_err(|e| SystemError::SpoolRead(e.to_string()))?
+    };
     let mut added = 0;
 
     for msg_id in message_ids {
@@ -31,10 +36,18 @@ pub async fn scan_spool_internal(
         }
 
         // Read only metadata to avoid pulling full message bodies during scans
-        let context = spool
-            .read_metadata(&msg_id)
-            .await
-            .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+        let context = match spool.read_metadata(&msg_id).await {
+            Ok(context) => context,
+            Err(e) => {
+                let is_not_found = matches!(e, SpoolError::NotFound(_))
+                    || matches!(e, SpoolError::Io(ref io) if io.kind() == std::io::ErrorKind::NotFound);
+                if is_not_found {
+                    warn!("Message {:?} disappeared during scan, skipping", msg_id);
+                    continue;
+                }
+                return Err(SystemError::SpoolRead(e.to_string()).into());
+            }
+        };
 
         // Check if this message already has delivery state persisted
         if let Some(delivery_ctx) = &context.delivery {

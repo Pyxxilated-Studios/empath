@@ -8,11 +8,12 @@
 //! - DATA command and message content transmission
 //! - QUIT command for connection cleanup
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use empath_common::{context::Context, tracing};
 use empath_smtp::client::{ClientError, Response as ClientResponse, SmtpClient};
+use empath_spool::{BackingStore, SpooledMessageId};
 use empath_tracing::traced;
 
 use crate::{
@@ -48,6 +49,8 @@ fn extract_email_address(address: &empath_common::address::Address) -> String {
 pub struct SmtpTransaction<'a> {
     /// The message context containing envelope and data
     context: &'a Context,
+    /// The body source used for DATA transmission
+    body_source: MessageBodySource<'a>,
     /// The SMTP server address (host:port)
     server_address: String,
     /// Whether TLS should be attempted at all (disabled policy skips STARTTLS)
@@ -58,6 +61,14 @@ pub struct SmtpTransaction<'a> {
     accept_invalid_certs: bool,
     /// Timeout configuration for SMTP operations
     smtp_timeouts: &'a SmtpTimeouts,
+}
+
+enum MessageBodySource<'a> {
+    Context,
+    Spool {
+        spool: &'a Arc<dyn BackingStore>,
+        message_id: &'a SpooledMessageId,
+    },
 }
 
 #[async_trait]
@@ -98,12 +109,23 @@ impl<'a> SmtpTransaction<'a> {
     ) -> Self {
         Self {
             context,
+            body_source: MessageBodySource::Context,
             server_address,
             attempt_tls,
             require_tls,
             accept_invalid_certs,
             smtp_timeouts,
         }
+    }
+
+    #[must_use]
+    pub fn with_spool_body(
+        mut self,
+        spool: &'a Arc<dyn BackingStore>,
+        message_id: &'a SpooledMessageId,
+    ) -> Self {
+        self.body_source = MessageBodySource::Spool { spool, message_id };
+        self
     }
 
     /// Connect to SMTP server and read greeting
@@ -209,7 +231,7 @@ impl<'a> SmtpTransaction<'a> {
         self.send_rcpt_to(&mut client).await?;
 
         // Send DATA command and message content
-        self.send_message_data(&mut client).await?;
+        Box::pin(self.send_message_data(&mut client)).await?;
 
         // Send QUIT to cleanly close the connection
         // Note: We don't fail the delivery if QUIT fails since the message was already delivered
@@ -443,23 +465,39 @@ impl<'a> SmtpTransaction<'a> {
             };
         }
 
-        // Send the actual message data
-        let message_data = self
-            .context
-            .data
-            .as_ref()
-            .ok_or_else(|| SystemError::Internal("No message data to send".to_string()))?;
+        let send_response = match self.body_source {
+            MessageBodySource::Context => {
+                let message_data =
+                    self.context.data.as_ref().ok_or_else(|| {
+                        SystemError::Internal("No message data to send".to_string())
+                    })?;
 
-        let data_str = std::str::from_utf8(message_data.as_ref())
-            .map_err(|e| SystemError::Internal(format!("Message data is not valid UTF-8: {e}")))?;
+                tokio::time::timeout(data_timeout, client.send_data_bytes(message_data.as_ref()))
+                    .await
+                    .map_err(|_| {
+                        TemporaryError::Timeout(format!(
+                            "Sending message data timed out after {data_timeout:?}"
+                        ))
+                    })??
+            }
+            MessageBodySource::Spool { spool, message_id } => {
+                let body_stream = spool
+                    .open_message_stream(message_id)
+                    .await
+                    .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
 
-        let send_response = tokio::time::timeout(data_timeout, client.send_data(data_str))
-            .await
-            .map_err(|_| {
-                TemporaryError::Timeout(format!(
-                    "Sending message data timed out after {data_timeout:?}"
+                Box::pin(tokio::time::timeout(
+                    data_timeout,
+                    client.send_data_stream(body_stream),
                 ))
-            })??;
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!(
+                        "Sending message data timed out after {data_timeout:?}"
+                    ))
+                })??
+            }
+        };
 
         if !send_response.is_success() {
             let code = send_response.code;

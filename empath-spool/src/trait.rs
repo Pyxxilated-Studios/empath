@@ -1,7 +1,23 @@
+use std::{io::Cursor, pin::Pin, sync::Arc};
+
 use async_trait::async_trait;
 use empath_common::context::Context;
+use tokio::io::AsyncRead;
 
 use crate::types::SpooledMessageId;
+
+pub type MessageStream = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SpoolScanCursor {
+    pub offset: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SpoolScanMode {
+    Full,
+    Delta,
+}
 
 /// Minimal metadata view for control/spool listings.
 #[derive(Debug, Clone)]
@@ -45,6 +61,17 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     /// # Errors
     /// Returns an error if the backing store cannot be read
     async fn list(&self) -> crate::Result<Vec<SpooledMessageId>>;
+
+    /// List message identifiers using an incremental cursor when supported.
+    ///
+    /// Default implementation falls back to a full list scan.
+    async fn list_delta(
+        &self,
+        _cursor: &mut SpoolScanCursor,
+        _mode: SpoolScanMode,
+    ) -> crate::Result<Vec<SpooledMessageId>> {
+        self.list().await
+    }
 
     /// Read a specific message and return its full context
     ///
@@ -121,6 +148,19 @@ pub trait BackingStore: Send + Sync + std::fmt::Debug {
     /// # Errors
     /// Returns an error if the message cannot be found or updated
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()>;
+
+    /// Open a streaming reader for the message body.
+    ///
+    /// Default implementation loads the message into memory and returns a cursor.
+    /// Backends should override this to avoid buffering large messages.
+    ///
+    /// # Errors
+    /// Returns an error if the message cannot be found or read
+    async fn open_message_stream(&self, id: &SpooledMessageId) -> crate::Result<MessageStream> {
+        let context = self.read(id).await?;
+        let data = context.data.unwrap_or_else(|| Arc::from(Vec::<u8>::new()));
+        Ok(Box::pin(Cursor::new(data)))
+    }
 
     /// Delete a message
     ///

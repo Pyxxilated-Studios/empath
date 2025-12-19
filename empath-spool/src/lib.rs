@@ -10,5 +10,5 @@ pub use backends::{FileBackingStore, MemoryBackingStore, TestBackingStore};
 pub use config::{MemoryConfig, SpoolConfig};
 pub use error::{Result, SerializationError, SpoolError, ValidationError};
 pub use spool::{FileSpool, MemorySpool, Spool, TestSpool};
-pub use r#trait::BackingStore;
+pub use r#trait::{BackingStore, SpoolScanCursor, SpoolScanMode};
 pub use types::SpooledMessageId;

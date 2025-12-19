@@ -4,7 +4,7 @@ use std::sync::{Arc, LazyLock};
 
 use empath_common::{message::END_OF_BODY, outgoing, tracing};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
 use tokio_rustls::{
@@ -23,6 +23,7 @@ const BUFFER_SIZE: usize = 8192;
 
 /// Maximum size of the read buffer to prevent unbounded growth (1MB).
 const MAX_BUFFER_SIZE: usize = 1024 * 1024;
+const STREAM_BUFFER_SIZE: usize = 16 * 1024;
 const CRLF: &[u8] = b"\r\n";
 const CR: &[u8] = b"\r";
 
@@ -365,24 +366,73 @@ impl SmtpClient {
     ///
     /// Returns an error if sending fails.
     pub async fn send_data(&mut self, data: &str) -> Result<Response> {
+        self.send_data_bytes(data.as_bytes()).await
+    }
+
+    /// Sends the message data followed by a dot on its own line.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sending fails.
+    pub async fn send_data_bytes(&mut self, data: &[u8]) -> Result<Response> {
         let connection = self
             .connection
             .as_mut()
             .ok_or(ClientError::ConnectionClosed)?;
 
         // Send the data
-        connection.send(data.as_bytes()).await?;
+        connection.send(data).await?;
 
-        if let Some(bytes) = missing_line_ending(data) {
+        if let Some(bytes) = missing_line_ending_bytes(data, !data.is_empty()) {
             connection.send(bytes).await?;
         }
 
-        if !data.as_bytes().ends_with(END_OF_BODY) {
+        if !data.ends_with(END_OF_BODY) {
             // Send end-of-data marker
             connection.send(b".\r\n").await?;
         }
 
         // Read the response
+        self.read_response().await
+    }
+
+    /// Streams message data followed by a dot on its own line.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sending fails.
+    pub async fn send_data_stream<R>(&mut self, mut reader: R) -> Result<Response>
+    where
+        R: AsyncRead + Unpin + Send,
+    {
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or(ClientError::ConnectionClosed)?;
+
+        let mut buf = [0u8; STREAM_BUFFER_SIZE];
+        let mut tail = Vec::new();
+        let mut sent_any = false;
+
+        loop {
+            let read_bytes = reader.read(&mut buf).await?;
+            if read_bytes == 0 {
+                break;
+            }
+            sent_any = true;
+            let chunk = &buf[..read_bytes];
+            connection.send(chunk).await?;
+            update_tail(&mut tail, chunk);
+        }
+
+        if let Some(bytes) = missing_line_ending_bytes(&tail, sent_any) {
+            connection.send(bytes).await?;
+        }
+
+        if !tail.ends_with(END_OF_BODY) {
+            connection.send(b".\r\n").await?;
+        }
+
         self.read_response().await
     }
 
@@ -487,25 +537,43 @@ impl SmtpClient {
     }
 }
 
-fn missing_line_ending(data: &str) -> Option<&'static [u8]> {
-    let bytes = data.as_bytes();
-    if bytes.ends_with(CRLF) {
+fn missing_line_ending_bytes(last_bytes: &[u8], has_data: bool) -> Option<&'static [u8]> {
+    if !has_data {
+        return Some(CRLF);
+    }
+
+    if last_bytes.ends_with(CRLF) {
         None
-    } else if bytes.last().is_some_and(|b| *b == b'\n') {
+    } else if last_bytes.last().is_some_and(|b| *b == b'\n') {
         Some(CR)
     } else {
         Some(CRLF)
     }
 }
 
+fn update_tail(tail: &mut Vec<u8>, chunk: &[u8]) {
+    if chunk.len() >= END_OF_BODY.len() {
+        tail.clear();
+        tail.extend_from_slice(&chunk[chunk.len() - END_OF_BODY.len()..]);
+        return;
+    }
+
+    tail.extend_from_slice(chunk);
+    if tail.len() > END_OF_BODY.len() {
+        let excess = tail.len() - END_OF_BODY.len();
+        tail.drain(0..excess);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CR, CRLF, missing_line_ending};
+    use super::{CR, CRLF, missing_line_ending_bytes};
 
     #[test]
-    fn missing_line_ending_variants() {
-        assert_eq!(missing_line_ending("message\r\n"), None);
-        assert_eq!(missing_line_ending("message\n"), Some(CR));
-        assert_eq!(missing_line_ending("message"), Some(CRLF));
+    fn missing_line_ending_bytes_variants() {
+        assert_eq!(missing_line_ending_bytes(b"message\r\n", true), None);
+        assert_eq!(missing_line_ending_bytes(b"message\n", true), Some(CR));
+        assert_eq!(missing_line_ending_bytes(b"message", true), Some(CRLF));
+        assert_eq!(missing_line_ending_bytes(b"", false), Some(CRLF));
     }
 }

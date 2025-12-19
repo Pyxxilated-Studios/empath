@@ -8,9 +8,13 @@ pub mod scan;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use empath_common::{Signal, internal};
+use empath_spool::SpoolScanCursor;
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::{pin, sync::Notify};
+use tokio::{
+    pin,
+    sync::{Mutex, Notify},
+};
 
 use crate::{
     circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
@@ -195,6 +199,10 @@ pub struct DeliveryProcessor {
     /// Notifier to trigger immediate scan/process from control commands
     #[serde(skip)]
     process_now_notifier: Notify,
+
+    /// Cursor for incremental spool scans
+    #[serde(skip)]
+    pub(crate) spool_scan_cursor: Mutex<SpoolScanCursor>,
 }
 
 impl Default for DeliveryProcessor {
@@ -223,6 +231,7 @@ impl Default for DeliveryProcessor {
             circuit_breaker_instance: None,
             domain_resolver: None,
             process_now_notifier: Notify::new(),
+            spool_scan_cursor: Mutex::new(SpoolScanCursor::default()),
         }
     }
 }
@@ -366,7 +375,7 @@ impl DeliveryProcessor {
 
         // Perform initial spool scan at startup to load existing messages
         // This ensures `empathctl queue list` works immediately
-        match scan::scan_spool_internal(&self, spool).await {
+        match scan::scan_spool_internal(&self, spool, empath_spool::SpoolScanMode::Full).await {
             Ok(count) if count > 0 => {
                 internal!("Initial spool scan found {count} messages");
             }
@@ -398,7 +407,10 @@ impl DeliveryProcessor {
                 () = &mut process_now => {
                     processing.store(true, std::sync::atomic::Ordering::SeqCst);
 
-                    if let Err(e) = scan::scan_spool_internal(&self, spool).await {
+                    if let Err(e) =
+                        scan::scan_spool_internal(&self, spool, empath_spool::SpoolScanMode::Delta)
+                            .await
+                    {
                         empath_common::tracing::error!("Error scanning spool: {e}");
                     }
 
@@ -415,7 +427,13 @@ impl DeliveryProcessor {
                     process_now.set(self.process_now_notifier.notified());
                 }
                 _ = scan_timer.tick() => {
-                    match scan::scan_spool_internal(&self, spool).await {
+                    match scan::scan_spool_internal(
+                        &self,
+                        spool,
+                        empath_spool::SpoolScanMode::Delta,
+                    )
+                    .await
+                    {
                         Ok(count) if count > 0 => {
                             empath_common::tracing::info!("Scanned spool, found {count} new messages");
                         }
