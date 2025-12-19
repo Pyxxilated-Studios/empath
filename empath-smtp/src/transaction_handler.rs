@@ -227,8 +227,8 @@ impl DefaultSmtpTransactionHandler {
             );
         }
 
-        // Dispatch message received event
-        modules::dispatch(modules::Event::Event(modules::Ev::SmtpMessageReceived), ctx);
+        // Dispatch message received event (fail open).
+        let _ = modules::dispatch(modules::Event::Event(modules::Ev::SmtpMessageReceived), ctx);
     }
 
     fn insert_received_header(&self, ctx: &mut Context) {
@@ -297,20 +297,26 @@ impl DefaultSmtpTransactionHandler {
 #[async_trait]
 impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
     async fn validate_connect(&mut self, ctx: &mut Context) -> bool {
-        // Dispatch connection opened event first
-        modules::dispatch(modules::Event::Event(modules::Ev::ConnectionOpened), ctx);
+        // Dispatch connection opened event first (fail open).
+        let _ = modules::dispatch(modules::Event::Event(modules::Ev::ConnectionOpened), ctx);
 
         // Then validate
-        modules::dispatch(
-            modules::Event::Validate(modules::validate::Event::Connect),
-            ctx,
+        matches!(
+            modules::dispatch(
+                modules::Event::Validate(modules::validate::Event::Connect),
+                ctx,
+            ),
+            modules::DispatchResult::Accept
         )
     }
 
     async fn validate_ehlo(&mut self, ctx: &mut Context) -> bool {
-        modules::dispatch(
-            modules::Event::Validate(modules::validate::Event::Ehlo),
-            ctx,
+        matches!(
+            modules::dispatch(
+                modules::Event::Validate(modules::validate::Event::Ehlo),
+                ctx,
+            ),
+            modules::DispatchResult::Accept
         )
     }
 
@@ -351,24 +357,33 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         }
 
         // Dispatch to modules for additional validation
-        modules::dispatch(
-            modules::Event::Validate(modules::validate::Event::MailFrom),
-            ctx,
+        matches!(
+            modules::dispatch(
+                modules::Event::Validate(modules::validate::Event::MailFrom),
+                ctx,
+            ),
+            modules::DispatchResult::Accept
         )
     }
 
     async fn validate_rcpt_to(&mut self, ctx: &mut Context) -> bool {
-        modules::dispatch(
-            modules::Event::Validate(modules::validate::Event::RcptTo),
-            ctx,
+        matches!(
+            modules::dispatch(
+                modules::Event::Validate(modules::validate::Event::RcptTo),
+                ctx,
+            ),
+            modules::DispatchResult::Accept
         )
     }
 
     async fn handle_message(&mut self, ctx: &mut Context) -> bool {
         // Dispatch validation
-        let valid = modules::dispatch(
-            modules::Event::Validate(modules::validate::Event::Data),
-            ctx,
+        let valid = matches!(
+            modules::dispatch(
+                modules::Event::Validate(modules::validate::Event::Data),
+                ctx,
+            ),
+            modules::DispatchResult::Accept
         );
         // Persist any header/body mutations performed by modules.
         ctx.persist_message_parts();
@@ -623,7 +638,7 @@ mod tests {
         let _result = handler.validate_mail_from(&mut ctx).await;
 
         // Check that SPF result was stored in transaction context
-        // (Note: modules::dispatch may return false when no modules loaded,
+        // (Note: modules::dispatch may return a non-accept result when no modules loaded,
         // but SPF evaluation should still have occurred)
         assert!(ctx.transaction.contains_key("spf_result"));
         let spf_result = ctx.transaction.get("spf_result").unwrap();

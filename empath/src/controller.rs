@@ -1,8 +1,4 @@
-use std::{
-    future::{self, Future},
-    pin::Pin,
-    sync::{Arc, LazyLock},
-};
+use std::sync::{Arc, LazyLock};
 
 use empath_common::{Signal, controller::Controller, internal, logging, tracing};
 use empath_control::{ControlAuthConfig, ControlServer, DEFAULT_CONTROL_SOCKET};
@@ -11,7 +7,7 @@ use empath_health::{HealthChecker, HealthConfig, HealthServer};
 use empath_smtp::{Smtp, TlsContextRegistry};
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::sync::broadcast;
+use tokio::{sync::broadcast, task::JoinSet};
 
 use crate::control_handler::EmpathControlHandler;
 
@@ -44,10 +40,20 @@ pub struct Empath {
     /// Audit logging configuration
     #[serde(alias = "audit", default)]
     audit: empath_common::audit::AuditConfig,
+    /// Shutdown drain timeout in seconds.
+    #[serde(
+        alias = "shutdown_timeout_secs",
+        default = "default_shutdown_timeout_secs"
+    )]
+    shutdown_timeout_secs: u64,
 }
 
 fn default_control_socket() -> String {
     DEFAULT_CONTROL_SOCKET.to_string()
+}
+
+const fn default_shutdown_timeout_secs() -> u64 {
+    10
 }
 
 pub static SHUTDOWN_BROADCAST: LazyLock<broadcast::Sender<Signal>> = LazyLock::new(|| {
@@ -206,56 +212,124 @@ impl Empath {
             None
         };
 
-        let mut health_future = health_server.map(|server| {
-            Box::pin(server.serve(SHUTDOWN_BROADCAST.subscribe()))
-                as Pin<Box<dyn Future<Output = Result<(), empath_health::HealthError>> + Send>>
+        let mut join_set: JoinSet<(&'static str, anyhow::Result<()>)> = JoinSet::new();
+
+        let smtp_controller = self.smtp_controller;
+        join_set.spawn(async move {
+            (
+                "smtp",
+                smtp_controller
+                    .control(vec![SHUTDOWN_BROADCAST.subscribe()])
+                    .await
+                    .map_err(anyhow::Error::from),
+            )
         });
 
-        let ret = tokio::select! {
-            r = self.smtp_controller.control(vec![SHUTDOWN_BROADCAST.subscribe()]) => {
-                match r {
-                    Ok(v) => Ok(v),
-                    Err(e) => Err(anyhow::anyhow!(e)),
-                }
-            }
-            r = spool.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                match r {
-                    Ok(v) => Ok(v),
-                    Err(e) => Err(anyhow::anyhow!(e)),
-                }
-            }
-            r = delivery_arc.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                match r {
-                    Ok(v) => Ok(v),
-                    Err(e) => Err(anyhow::anyhow!(e)),
-                }
-            }
-            r = control_server.serve(SHUTDOWN_BROADCAST.subscribe()) => {
-                match r {
-                    Ok(v) => Ok(v),
-                    Err(e) => Err(anyhow::anyhow!("Control server error: {e}")),
-                }
-            }
-            r = async {
-                match &mut health_future {
-                    Some(fut) => {
-                        fut.as_mut()
-                            .await
-                            .map_err(|e| anyhow::anyhow!("Health server error: {e}"))
+        join_set.spawn(async move {
+            (
+                "spool",
+                spool
+                    .serve(SHUTDOWN_BROADCAST.subscribe())
+                    .await
+                    .map_err(anyhow::Error::from),
+            )
+        });
+
+        let delivery_handle = Arc::clone(&delivery_arc);
+        join_set.spawn(async move {
+            (
+                "delivery",
+                delivery_handle
+                    .serve(SHUTDOWN_BROADCAST.subscribe())
+                    .await
+                    .map_err(anyhow::Error::from),
+            )
+        });
+
+        join_set.spawn(async move {
+            (
+                "control",
+                control_server
+                    .serve(SHUTDOWN_BROADCAST.subscribe())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Control server error: {e}")),
+            )
+        });
+
+        if let Some(server) = health_server {
+            join_set.spawn(async move {
+                (
+                    "health",
+                    server
+                        .serve(SHUTDOWN_BROADCAST.subscribe())
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Health server error: {e}")),
+                )
+            });
+        }
+
+        join_set.spawn(async move { ("shutdown", shutdown().await) });
+
+        let mut first_error: Option<anyhow::Error> = None;
+        if let Some(result) = join_set.join_next().await {
+            match result {
+                Ok((name, res)) => {
+                    internal!(level = INFO, "Service {name} exited");
+                    if let Err(err) = res {
+                        first_error = Some(err);
                     }
-                    None => future::pending::<anyhow::Result<()>>().await,
                 }
-            } => {
-                r
+                Err(join_err) => {
+                    first_error = Some(anyhow::anyhow!("Join error: {join_err}"));
+                }
             }
-            r = shutdown() => {
-                r
+        }
+
+        let _ = SHUTDOWN_BROADCAST.send(Signal::Shutdown);
+
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(self.shutdown_timeout_secs);
+        while !join_set.is_empty() {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                internal!(
+                    level = WARN,
+                    "Shutdown drain timeout reached, aborting tasks"
+                );
+                join_set.abort_all();
+                break;
             }
-        };
+
+            let timeout = deadline.saturating_duration_since(now);
+            match tokio::time::timeout(timeout, join_set.join_next()).await {
+                Ok(Some(result)) => match result {
+                    Ok((name, res)) => {
+                        internal!(level = DEBUG, "Service {name} exited");
+                        if first_error.is_none()
+                            && let Err(err) = res
+                        {
+                            first_error = Some(err);
+                        }
+                    }
+                    Err(join_err) => {
+                        if first_error.is_none() {
+                            first_error =
+                                Some(anyhow::anyhow!("Join error after shutdown: {join_err}"));
+                        }
+                    }
+                },
+                Ok(None) => break,
+                Err(_) => {
+                    internal!(level = WARN, "Shutdown drain timed out, aborting tasks");
+                    join_set.abort_all();
+                    break;
+                }
+            }
+        }
 
         internal!("Shutting down...");
 
-        ret
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Snapshot delivery-related config needed for in-process reloads.

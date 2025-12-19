@@ -14,7 +14,13 @@ pub type MutationResult = Result<(), MessageMutationError>;
 /// Read failure surfaced from host helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageReadError {
-    /// Host context was unavailable or data could not be parsed.
+    /// No message data was available in the host context.
+    MissingData,
+    /// Host failed to parse the message body into parts.
+    ParseFailed,
+    /// Requested offset/length was outside the message bounds.
+    OutOfRange,
+    /// Host context was unavailable.
     HostUnavailable,
     /// Host returned an unexpected empty chunk before EOF.
     Truncated,
@@ -43,12 +49,15 @@ pub const fn map_status(status: i32) -> MutationResult {
     }
 }
 
-/// Convert host `Result<T, i32>` into a typed read result.
+/// Convert host `Result<T, ReadError>` into a typed read result.
 ///
 /// # Errors
-/// Returns `MessageReadError::HostUnavailable` when the host reports a failure.
-pub fn map_read_result<T>(result: Result<T, i32>) -> ReadResult<T> {
-    result.map_err(|_| MessageReadError::HostUnavailable)
+/// Returns a `MessageReadError` matching the host error.
+pub fn map_read_result<T, E>(result: Result<T, E>) -> ReadResult<T>
+where
+    E: Into<MessageReadError>,
+{
+    result.map_err(Into::into)
 }
 
 /// Convert host `Result<bool, i32>` into a typed result.

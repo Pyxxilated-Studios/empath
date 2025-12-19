@@ -23,7 +23,7 @@ impl Session {
         if let Some((status, _)) = &validate_context.response {
             // Dispatch error event for 4xx and 5xx responses
             if status.is_temporary() || status.is_permanent() {
-                empath_ffi::modules::dispatch(
+                let _ = empath_ffi::modules::dispatch(
                     empath_ffi::modules::Event::Event(empath_ffi::modules::Ev::SmtpError),
                     validate_context,
                 );

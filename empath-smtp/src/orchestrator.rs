@@ -157,7 +157,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
 
         // Connection closed
         internal!("Connection closed");
-        empath_ffi::modules::dispatch(
+        let _ = empath_ffi::modules::dispatch(
             empath_ffi::modules::Event::Event(empath_ffi::modules::Ev::ConnectionClosed),
             &mut validate_context,
         );
@@ -289,9 +289,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             ..Default::default()
         };
 
-        if empath_ffi::modules::dispatch(
-            empath_ffi::modules::Event::Validate(empath_ffi::modules::validate::Event::StartTls),
-            validate_context,
+        if matches!(
+            empath_ffi::modules::dispatch(
+                empath_ffi::modules::Event::Validate(
+                    empath_ffi::modules::validate::Event::StartTls
+                ),
+                validate_context,
+            ),
+            empath_ffi::modules::DispatchResult::Accept
         ) {
             internal!(
                 level = DEBUG,

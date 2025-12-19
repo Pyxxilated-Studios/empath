@@ -404,7 +404,7 @@ impl HickoryDnsResolver {
                     Cow::Borrowed("dns_cache_size"),
                     self.cache.len().to_string(),
                 );
-                modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
+                let _ = modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
 
                 return Ok(Arc::clone(&cached.servers));
             }
@@ -450,7 +450,7 @@ impl HickoryDnsResolver {
             Cow::Borrowed("dns_cache_size"),
             self.cache.len().to_string(),
         );
-        modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
+        let _ = modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
 
         debug!(
             "Cached result for {domain}, DNS TTL: {dns_ttl}s, cache TTL: {cache_ttl}s, {} server(s)",

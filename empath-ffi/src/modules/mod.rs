@@ -1,9 +1,10 @@
 use std::{
+    borrow::Cow,
     fmt::{self, Display},
     sync::{Arc, OnceLock, RwLock},
 };
 
-use empath_common::{context::Context, internal};
+use empath_common::{context::Context, internal, status::Status};
 use empath_tracing::traced;
 use serde::Deserialize;
 use thiserror::Error;
@@ -168,6 +169,32 @@ pub enum Module {
 /// Module store using Arc for lock-free concurrent reads after initialization
 pub static MODULE_STORE: OnceLock<Arc<[Module]>> = OnceLock::new();
 
+/// Error category reported by module dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchErrorKind {
+    /// Module store was not initialized.
+    NotInitialized,
+    /// Module returned a non-zero code.
+    ModuleFailed { code: i32 },
+}
+
+/// Result of dispatching an event to the module pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchResult {
+    /// All modules accepted the event or no validation was required.
+    Accept,
+    /// A validation module rejected the operation.
+    Reject {
+        status: Status,
+        message: Cow<'static, str>,
+    },
+    /// Dispatch encountered an error that should be logged by the caller.
+    Error {
+        module: String,
+        kind: DispatchErrorKind,
+    },
+}
+
 impl Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -253,17 +280,46 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
     Ok(())
 }
 
+fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
+    let status_code = u32::try_from(code).unwrap_or(451);
+    let status = Status::from(status_code);
+    let message = context
+        .response
+        .as_ref()
+        .and_then(|(existing_status, message)| {
+            if existing_status.is_temporary() || existing_status.is_permanent() {
+                Some(message.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(Cow::Borrowed("Rejected"));
+
+    if context.response.is_none()
+        || context
+            .response
+            .as_ref()
+            .is_some_and(|(existing_status, _)| {
+                !existing_status.is_temporary() && !existing_status.is_permanent()
+            })
+    {
+        context.response = Some((status, message.clone()));
+    }
+
+    DispatchResult::Reject { status, message }
+}
+
 /// Dispatch an event to all modules
 ///
-/// Returns `true` if all modules handled the event successfully (returned 0),
-/// or `false` if any module failed or modules not initialized.
+/// Validation events fail closed (non-zero results reject).
+/// Event callbacks fail open (non-zero results are logged and ignored).
 ///
 /// # Errors
 /// The events being dispatched are handled with a panic handler, which should
 /// catch some possible errors. If these are caught, they are returned to the
 /// caller to handle.
 ///
-pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
+pub fn dispatch(event: Event, validate_context: &mut Context) -> DispatchResult {
     let modules = if let Some(modules) = MODULE_STORE.get() {
         Arc::clone(modules)
     } else {
@@ -271,15 +327,48 @@ pub fn dispatch(event: Event, validate_context: &mut Context) -> bool {
             level = ERROR,
             "Module store not initialized. Treating as dispatch failure."
         );
-        return false;
+        if matches!(event, Event::Validate(_)) {
+            validate_context.response = Some((
+                Status::ActionUnavailable,
+                Cow::Borrowed("Validation modules unavailable"),
+            ));
+        }
+        return DispatchResult::Error {
+            module: "module-store".to_string(),
+            kind: DispatchErrorKind::NotInitialized,
+        };
     };
 
     internal!("Dispatching: {event:?}");
 
-    modules
-        .iter()
-        .inspect(|m| internal!(level = DEBUG, "{m}"))
-        .all(|module| module.emit(event, validate_context) == 0)
+    let mut event_error: Option<DispatchResult> = None;
+    for module in modules.iter().inspect(|m| internal!(level = DEBUG, "{m}")) {
+        let code = module.emit(event, validate_context);
+        if code == 0 {
+            continue;
+        }
+
+        match event {
+            Event::Validate(_) => {
+                return rejection_from_code(code, validate_context);
+            }
+            Event::Event(_) => {
+                let module_name = format!("{module}");
+                internal!(
+                    level = WARN,
+                    "Event module {module_name} returned non-zero code {code}"
+                );
+                if event_error.is_none() {
+                    event_error = Some(DispatchResult::Error {
+                        module: module_name,
+                        kind: DispatchErrorKind::ModuleFailed { code },
+                    });
+                }
+            }
+        }
+    }
+
+    event_error.unwrap_or(DispatchResult::Accept)
 }
 
 pub mod test {

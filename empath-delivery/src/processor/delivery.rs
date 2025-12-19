@@ -82,7 +82,7 @@ pub async fn prepare_message(
             current_server_index: info.current_server_index,
         });
 
-        modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
+        let _ = modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
     }
 
     // Create delivery pipeline to orchestrate DNS → Rate Limit → SMTP stages
@@ -136,7 +136,7 @@ pub async fn prepare_message(
         next_retry_at: info.next_retry_at,
         current_server_index: info.current_server_index,
     });
-    modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
+    let _ = modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
 
     // Stage 2: Check rate limit before attempting delivery
     match pipeline.check_rate_limit(message_id, &info.recipient_domain) {
@@ -226,7 +226,7 @@ pub async fn prepare_message(
                 next_retry_at: info.next_retry_at,
                 current_server_index: info.current_server_index,
             });
-            modules::dispatch(Event::Event(Ev::DeliverySuccess), &mut context);
+            let _ = modules::dispatch(Event::Event(Ev::DeliverySuccess), &mut context);
 
             // Audit log: Delivery successful
             let duration_ms = info.queued_at.elapsed().map_or(0, |d| d.as_millis());
@@ -389,7 +389,7 @@ pub async fn handle_delivery_error(
         current_server_index: updated_info.current_server_index,
     });
 
-    modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
+    let _ = modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
 
     // Audit log: Delivery failed
     empath_common::audit::log_delivery_failure(

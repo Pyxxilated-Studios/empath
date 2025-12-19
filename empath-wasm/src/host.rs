@@ -240,22 +240,32 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
 }
 
 impl crate::bindings::empath::validator::message::Host for WasmStore {
-    fn raw_len(&mut self) -> std::result::Result<u64, i32> {
+    fn raw_len(
+        &mut self,
+    ) -> std::result::Result<u64, crate::bindings::empath::validator::message::ReadError> {
+        use crate::bindings::empath::validator::message::ReadError;
+
         self.try_lock_context()
-            .ok()
-            .and_then(|ctx| ctx.data.as_deref().map(|data| data.len() as u64))
-            .ok_or(-1)
+            .map_err(|_| ReadError::HostUnavailable)
+            .and_then(|ctx| {
+                let data = ctx.data.as_deref().ok_or(ReadError::MissingData)?;
+                Ok(data.len() as u64)
+            })
     }
 
-    fn raw_read(&mut self, offset: u64, len: u32) -> std::result::Result<Vec<u8>, i32> {
+    fn raw_read(
+        &mut self,
+        offset: u64,
+        len: u32,
+    ) -> std::result::Result<Vec<u8>, crate::bindings::empath::validator::message::ReadError> {
+        use crate::bindings::empath::validator::message::ReadError;
+
         self.try_lock_context()
-            .ok()
+            .map_err(|_| ReadError::HostUnavailable)
             .and_then(|ctx| {
-                ctx.data
-                    .as_deref()
-                    .map(|data| slice_bytes(data, offset, len))
+                let data = ctx.data.as_deref().ok_or(ReadError::MissingData)?;
+                slice_bytes(data, offset, len)
             })
-            .unwrap_or(Err(-1))
     }
 
     fn headers_get(&mut self, name: String) -> Vec<String> {
@@ -362,29 +372,39 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
         })
     }
 
-    fn body_len(&mut self) -> std::result::Result<u64, i32> {
-        self.try_lock_context()
-            .ok()
-            .and_then(|mut ctx| {
-                ctx.with_message_parts_mut(|parts| parts.body_view().as_bytes().len() as u64)
-                    .ok()
-                    .flatten()
-            })
-            .ok_or(-1)
+    fn body_len(
+        &mut self,
+    ) -> std::result::Result<u64, crate::bindings::empath::validator::message::ReadError> {
+        use crate::bindings::empath::validator::message::ReadError;
+
+        let mut ctx = self
+            .try_lock_context()
+            .map_err(|_| ReadError::HostUnavailable)?;
+        match ctx.with_message_parts_mut(|parts| parts.body_view().as_bytes().len() as u64) {
+            Ok(Some(size)) => Ok(size),
+            Ok(None) => Err(ReadError::MissingData),
+            Err(_) => Err(ReadError::ParseFailed),
+        }
     }
 
-    fn body_read(&mut self, offset: u64, len: u32) -> std::result::Result<Vec<u8>, i32> {
-        self.try_lock_context()
-            .ok()
-            .and_then(|mut ctx| {
-                ctx.with_message_parts_mut(|parts| {
-                    let body = parts.body_view().as_bytes();
-                    slice_bytes(body, offset, len)
-                })
-                .ok()
-                .flatten()
-            })
-            .unwrap_or(Err(-1))
+    fn body_read(
+        &mut self,
+        offset: u64,
+        len: u32,
+    ) -> std::result::Result<Vec<u8>, crate::bindings::empath::validator::message::ReadError> {
+        use crate::bindings::empath::validator::message::ReadError;
+
+        let mut ctx = self
+            .try_lock_context()
+            .map_err(|_| ReadError::HostUnavailable)?;
+        match ctx.with_message_parts_mut(|parts| {
+            let body = parts.body_view().as_bytes();
+            slice_bytes(body, offset, len)
+        }) {
+            Ok(Some(result)) => result,
+            Ok(None) => Err(ReadError::MissingData),
+            Err(_) => Err(ReadError::ParseFailed),
+        }
     }
 
     fn body_newline_style(&mut self) -> String {
@@ -499,15 +519,21 @@ impl WasmStore {
     }
 }
 
-fn slice_bytes(data: &[u8], offset: u64, len: u32) -> std::result::Result<Vec<u8>, i32> {
+fn slice_bytes(
+    data: &[u8],
+    offset: u64,
+    len: u32,
+) -> std::result::Result<Vec<u8>, crate::bindings::empath::validator::message::ReadError> {
+    use crate::bindings::empath::validator::message::ReadError;
+
     let Ok(start) = usize::try_from(offset) else {
-        return Err(-1);
+        return Err(ReadError::OutOfRange);
     };
     if start >= data.len() {
-        return Err(-1);
+        return Err(ReadError::OutOfRange);
     }
     let Ok(mut length) = usize::try_from(len) else {
-        return Err(-1);
+        return Err(ReadError::OutOfRange);
     };
     let remaining = data.len() - start;
     if length > remaining {
@@ -610,8 +636,28 @@ mod tests {
         };
         let mut store = make_store(Arc::new(Mutex::new(context)));
 
-        assert_eq!(MessageHost::body_len(&mut store), Err(-1));
-        assert_eq!(MessageHost::body_read(&mut store, 0, 8), Err(-1));
+        assert_eq!(
+            MessageHost::body_len(&mut store),
+            Err(crate::bindings::empath::validator::message::ReadError::ParseFailed)
+        );
+        assert_eq!(
+            MessageHost::body_read(&mut store, 0, 8),
+            Err(crate::bindings::empath::validator::message::ReadError::ParseFailed)
+        );
+    }
+
+    #[test]
+    fn raw_read_reports_missing_data() {
+        let mut store = make_store(Arc::new(Mutex::new(Context::default())));
+
+        assert_eq!(
+            MessageHost::raw_len(&mut store),
+            Err(crate::bindings::empath::validator::message::ReadError::MissingData)
+        );
+        assert_eq!(
+            MessageHost::raw_read(&mut store, 0, 4),
+            Err(crate::bindings::empath::validator::message::ReadError::MissingData)
+        );
     }
 
     #[test]

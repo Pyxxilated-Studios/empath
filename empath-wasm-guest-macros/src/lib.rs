@@ -80,6 +80,27 @@ pub fn bindings(input: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::core::convert::From<crate::empath::validator::message::ReadError>
+            for ::empath_wasm_guest::message_helpers::MessageReadError
+        {
+            fn from(err: crate::empath::validator::message::ReadError) -> Self {
+                match err {
+                    crate::empath::validator::message::ReadError::MissingData => {
+                        Self::MissingData
+                    }
+                    crate::empath::validator::message::ReadError::ParseFailed => {
+                        Self::ParseFailed
+                    }
+                    crate::empath::validator::message::ReadError::OutOfRange => {
+                        Self::OutOfRange
+                    }
+                    crate::empath::validator::message::ReadError::HostUnavailable => {
+                        Self::HostUnavailable
+                    }
+                }
+            }
+        }
+
         pub use ::empath_wasm_guest::prelude::*;
 
         #[must_use]

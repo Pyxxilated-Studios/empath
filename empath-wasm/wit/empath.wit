@@ -5,6 +5,13 @@ package empath:validator@0.1.0;
 
 /// Message mutation helper interface (experimental, breaking).
 interface message {
+    /// Error codes returned by message read helpers.
+    enum read-error {
+        missing-data,
+        parse-failed,
+        out-of-range,
+        host-unavailable,
+    }
     // header helpers
     headers-get: func(name: string) -> list<string>;
     headers-contains: func(name: string) -> bool;
@@ -17,13 +24,13 @@ interface message {
     headers-set-transfer-encoding: func(value: string) -> s32;
 
     /// Full raw message size (headers + body) as received.
-    raw-len: func() -> result<u64, s32>;
+    raw-len: func() -> result<u64, read-error>;
     /// Read a slice of the raw message starting at `offset`.
-    raw-read: func(offset: u64, len: u32) -> result<list<u8>, s32>;
+    raw-read: func(offset: u64, len: u32) -> result<list<u8>, read-error>;
 
     // body helpers
-    body-len: func() -> result<u64, s32>;
-    body-read: func(offset: u64, len: u32) -> result<list<u8>, s32>;
+    body-len: func() -> result<u64, read-error>;
+    body-read: func(offset: u64, len: u32) -> result<list<u8>, read-error>;
     body-newline-style: func() -> string; // "crlf" | "lf" | "mixed"
     body-set-bytes: func(data: list<u8>) -> s32;
     body-append-bytes: func(data: list<u8>) -> s32;
