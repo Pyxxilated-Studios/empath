@@ -11,6 +11,17 @@ pub enum MessageMutationError {
 
 pub type MutationResult = Result<(), MessageMutationError>;
 
+/// Read failure surfaced from host helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageReadError {
+    /// Host context was unavailable or data could not be parsed.
+    HostUnavailable,
+    /// Host returned an unexpected empty chunk before EOF.
+    Truncated,
+}
+
+pub type ReadResult<T> = Result<T, MessageReadError>;
+
 /// Line ending style of the current message body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewlineStyle {
@@ -30,6 +41,14 @@ pub const fn map_status(status: i32) -> MutationResult {
     } else {
         Err(MessageMutationError::InvalidInput)
     }
+}
+
+/// Convert host `Result<T, i32>` into a typed read result.
+///
+/// # Errors
+/// Returns `MessageReadError::HostUnavailable` when the host reports a failure.
+pub fn map_read_result<T>(result: Result<T, i32>) -> ReadResult<T> {
+    result.map_err(|_| MessageReadError::HostUnavailable)
 }
 
 /// Convert host `Result<bool, i32>` into a typed result.

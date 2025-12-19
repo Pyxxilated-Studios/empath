@@ -80,7 +80,13 @@ impl ValidationGuest for Validator {
 
     /// Validate DATA command (message content)
     fn validate_data(_ctx: Context) -> ValidationResult {
-        let data: Vec<u8> = message::raw_bytes();
+        let data = match message::raw_bytes() {
+            Ok(data) => data,
+            Err(err) => {
+                host::log(format!("WASM: Failed to read raw message data: {err:?}"));
+                return reject(451, "Unable to read message data");
+            }
+        };
 
         if data.starts_with(b"timeout") {
             let mut spins: u64 = 0;
@@ -225,7 +231,13 @@ impl EventsGuest for Validator {
     fn on_smtp_message_received(ctx: Context) {
         maybe_trigger_event_error(&ctx);
         // Use host-backed view to avoid relying on inlined context data.
-        let data_size = message::raw_len() as usize;
+        let data_size = match message::raw_len() {
+            Ok(size) => size as usize,
+            Err(err) => {
+                host::log(format!("WASM Event: Failed to read message size: {err:?}"));
+                return;
+            }
+        };
 
         host::log(format!(
             "WASM Event: Message received - {} bytes from sender: {}",

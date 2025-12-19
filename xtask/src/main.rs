@@ -248,6 +248,8 @@ fn build_wasm_examples() -> Result<()> {
         wasm_dir.join("src/lib.rs"),
         wasm_dir.join("Cargo.toml"),
         PathBuf::from("empath-wasm/wit/empath.wit"),
+        PathBuf::from("empath-wasm-guest/wit/empath.wit"),
+        wasm_dir.join("wit/empath.wit"),
     ];
 
     if artifact_is_fresh(&wasm_artifact, &sources) {

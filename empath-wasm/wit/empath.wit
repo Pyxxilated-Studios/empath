@@ -17,13 +17,13 @@ interface message {
     headers-set-transfer-encoding: func(value: string) -> s32;
 
     /// Full raw message size (headers + body) as received.
-    raw-len: func() -> u64;
+    raw-len: func() -> result<u64, s32>;
     /// Read a slice of the raw message starting at `offset`.
-    raw-read: func(offset: u64, len: u32) -> list<u8>;
+    raw-read: func(offset: u64, len: u32) -> result<list<u8>, s32>;
 
     // body helpers
-    body-len: func() -> u64;
-    body-read: func(offset: u64, len: u32) -> list<u8>;
+    body-len: func() -> result<u64, s32>;
+    body-read: func(offset: u64, len: u32) -> result<list<u8>, s32>;
     body-newline-style: func() -> string; // "crlf" | "lf" | "mixed"
     body-set-bytes: func(data: list<u8>) -> s32;
     body-append-bytes: func(data: list<u8>) -> s32;

@@ -104,6 +104,8 @@ fn latest_source_mtime(workspace_root: &Path) -> Option<SystemTime> {
         workspace_root.join("empath-examples/wasm/src/lib.rs"),
         workspace_root.join("empath-examples/wasm/Cargo.toml"),
         workspace_root.join("empath-wasm/wit/empath.wit"),
+        workspace_root.join("empath-wasm-guest/wit/empath.wit"),
+        workspace_root.join("empath-examples/wasm/wit/empath.wit"),
     ] {
         if let Ok(meta) = std::fs::metadata(path) {
             times.push(meta.modified().ok()?);
