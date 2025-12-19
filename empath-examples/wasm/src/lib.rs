@@ -80,7 +80,7 @@ impl ValidationGuest for Validator {
 
     /// Validate DATA command (message content)
     fn validate_data(_ctx: Context) -> ValidationResult {
-        let data: Vec<u8> = empath::validator::message::raw_bytes();
+        let data: Vec<u8> = message::raw_bytes();
 
         if data.starts_with(b"timeout") {
             let mut spins: u64 = 0;
@@ -225,7 +225,7 @@ impl EventsGuest for Validator {
     fn on_smtp_message_received(ctx: Context) {
         maybe_trigger_event_error(&ctx);
         // Use host-backed view to avoid relying on inlined context data.
-        let data_size = empath::validator::message::raw_bytes().len();
+        let data_size = message::raw_len() as usize;
 
         host::log(format!(
             "WASM Event: Message received - {} bytes from sender: {}",

@@ -14,12 +14,6 @@ pub trait ContextExt {
     /// Recipients for the transaction.
     fn recipients(&self) -> &[String];
 
-    /// Message body bytes, if available.
-    fn data(&self) -> Option<&[u8]>;
-
-    /// UTF-8 view of the message body when valid.
-    fn data_utf8(&self) -> Option<&str>;
-
     /// Tracking identifier if supplied by the host.
     fn tracking_id(&self) -> Option<&str>;
 

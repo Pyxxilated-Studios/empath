@@ -1,6 +1,3 @@
-#![feature(slice_pattern)]
-
-use core::slice::SlicePattern;
 use std::{borrow::Cow, ffi::CStr, sync::Arc};
 
 use empath_common::{
@@ -86,7 +83,7 @@ pub extern "C" fn em_context_get_data(validate_context: &Context) -> crate::stri
         .data
         .as_ref()
         .map_or_else(Default::default, |data| {
-            crate::string::String::try_from(data.as_slice()).unwrap_or_default()
+            crate::string::String::try_from(data.as_ref()).unwrap_or_default()
         })
 }
 

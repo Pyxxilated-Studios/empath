@@ -54,16 +54,6 @@ pub fn bindings(input: TokenStream) -> TokenStream {
                 &self.recipients
             }
 
-            fn data(&self) -> Option<&[u8]> {
-                self.data.as_deref()
-            }
-
-            fn data_utf8(&self) -> Option<&str> {
-                self.data
-                    .as_deref()
-                    .and_then(|data| ::core::str::from_utf8(data).ok())
-            }
-
             fn tracking_id(&self) -> Option<&str> {
                 self.tracking_id.as_deref()
             }
@@ -152,8 +142,32 @@ pub fn bindings(input: TokenStream) -> TokenStream {
                 MutationResult, NewlineStyle,
             };
 
+            const DEFAULT_READ_CHUNK: u32 = 64 * 1024;
+
+            pub fn raw_len() -> u64 {
+                crate::empath::validator::message::raw_len()
+            }
+
+            pub fn raw_read(offset: u64, len: u32) -> ::alloc::vec::Vec<u8> {
+                crate::empath::validator::message::raw_read(offset, len)
+            }
+
             pub fn raw_bytes() -> ::alloc::vec::Vec<u8> {
-                crate::empath::validator::message::raw_bytes()
+                let total = raw_len();
+                let mut out =
+                    ::alloc::vec::Vec::with_capacity(usize::try_from(total).unwrap_or(0));
+                let mut offset = 0u64;
+                while offset < total {
+                    let remaining = total - offset;
+                    let to_read = remaining.min(u64::from(DEFAULT_READ_CHUNK)) as u32;
+                    let chunk = raw_read(offset, to_read);
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    offset = offset.saturating_add(chunk.len() as u64);
+                    out.extend_from_slice(&chunk);
+                }
+                out
             }
 
             pub fn headers_get(name: &str) -> ::alloc::vec::Vec<::alloc::string::String> {
@@ -197,8 +211,30 @@ pub fn bindings(input: TokenStream) -> TokenStream {
                 map_status(crate::empath::validator::message::headers_set_transfer_encoding(value))
             }
 
+            pub fn body_len() -> u64 {
+                crate::empath::validator::message::body_len()
+            }
+
+            pub fn body_read(offset: u64, len: u32) -> ::alloc::vec::Vec<u8> {
+                crate::empath::validator::message::body_read(offset, len)
+            }
+
             pub fn body_bytes() -> ::alloc::vec::Vec<u8> {
-                crate::empath::validator::message::body_bytes()
+                let total = body_len();
+                let mut out =
+                    ::alloc::vec::Vec::with_capacity(usize::try_from(total).unwrap_or(0));
+                let mut offset = 0u64;
+                while offset < total {
+                    let remaining = total - offset;
+                    let to_read = remaining.min(u64::from(DEFAULT_READ_CHUNK)) as u32;
+                    let chunk = body_read(offset, to_read);
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    offset = offset.saturating_add(chunk.len() as u64);
+                    out.extend_from_slice(&chunk);
+                }
+                out
             }
 
             pub fn body_newline_style() -> NewlineStyle {

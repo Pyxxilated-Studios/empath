@@ -63,7 +63,7 @@ _See `docs/COMPLETED.md` for the full archive of resolved work._
 - [x] NEW-OPT-03: Cache SMTP client TLS configs (strict + accept_invalid) instead of rebuilding `RootCertStore`/`ClientConfig` on every STARTTLS, reducing handshake CPU and syscalls.
 - [x] NEW-OPT-04: Make spool scanning metadata-only (avoid loading `.eml` bodies) and add incremental/delta tracking so large queues don’t force full directory walks.
 - [x] NEW-OPT-05: Eliminate extra DATA buffer clone at SMTP session completion by moving the buffer once (or sharing via `Arc<[u8]>`) before handing it to validation context.
-- [ ] NEW-OPT-06: WASM context bodies zero-copy. Avoid cloning message data into WIT structs; expose host handles/streaming reads so callbacks don’t duplicate large payloads.
+- [x] NEW-OPT-06: WASM context bodies zero-copy. Avoid cloning message data into WIT structs; expose host handles/streaming reads so callbacks don’t duplicate large payloads.
 - [ ] NEW-OPT-07: Persist spool body sizes. Store message length in metadata and prefer fs metadata over reading `.eml` to serve size queries/stats without extra I/O.
 - [ ] NEW-OPT-08: Stream delivery send path. Pipe spool files to SMTP client without materializing full bodies in memory; keep a buffered streaming writer for large messages.
 - [ ] NEW-OPT-09: Incremental spool indexing. Add notify/manifest-based delta tracking so spool scans are O(delta) instead of full directory walks for large queues.

@@ -16,11 +16,14 @@ interface message {
     headers-set-content-type: func(value: string) -> s32;
     headers-set-transfer-encoding: func(value: string) -> s32;
 
-    /// Full raw message (headers + body) as received.
-    raw-bytes: func() -> list<u8>;
+    /// Full raw message size (headers + body) as received.
+    raw-len: func() -> u64;
+    /// Read a slice of the raw message starting at `offset`.
+    raw-read: func(offset: u64, len: u32) -> list<u8>;
 
     // body helpers
-    body-bytes: func() -> list<u8>;
+    body-len: func() -> u64;
+    body-read: func(offset: u64, len: u32) -> list<u8>;
     body-newline-style: func() -> string; // "crlf" | "lf" | "mixed"
     body-set-bytes: func(data: list<u8>) -> s32;
     body-append-bytes: func(data: list<u8>) -> s32;
@@ -44,8 +47,6 @@ interface validation {
         sender: option<string>,
         /// List of recipient email addresses (from RCPT TO)
         recipients: list<string>,
-        /// Message data (from DATA command)
-        data: option<list<u8>>,
         /// Maximum allowed message size in bytes
         max-message-size: u64,
         /// Transaction context key-value pairs (persisted to spool)

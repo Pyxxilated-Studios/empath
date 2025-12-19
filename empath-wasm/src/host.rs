@@ -240,10 +240,21 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
 }
 
 impl crate::bindings::empath::validator::message::Host for WasmStore {
-    fn raw_bytes(&mut self) -> Vec<u8> {
+    fn raw_len(&mut self) -> u64 {
         self.try_lock_context()
             .ok()
-            .and_then(|ctx| ctx.data.as_deref().map(<[u8]>::to_vec))
+            .and_then(|ctx| ctx.data.as_deref().map(|data| data.len() as u64))
+            .unwrap_or(0)
+    }
+
+    fn raw_read(&mut self, offset: u64, len: u32) -> Vec<u8> {
+        self.try_lock_context()
+            .ok()
+            .and_then(|ctx| {
+                ctx.data
+                    .as_deref()
+                    .map(|data| slice_bytes(data, offset, len))
+            })
             .unwrap_or_default()
     }
 
@@ -351,13 +362,27 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
         })
     }
 
-    fn body_bytes(&mut self) -> Vec<u8> {
+    fn body_len(&mut self) -> u64 {
         self.try_lock_context()
             .ok()
             .and_then(|mut ctx| {
-                ctx.with_message_parts_mut(|parts| parts.body_view().as_bytes().to_vec())
+                ctx.with_message_parts_mut(|parts| parts.body_view().as_bytes().len() as u64)
                     .ok()
                     .flatten()
+            })
+            .unwrap_or(0)
+    }
+
+    fn body_read(&mut self, offset: u64, len: u32) -> Vec<u8> {
+        self.try_lock_context()
+            .ok()
+            .and_then(|mut ctx| {
+                ctx.with_message_parts_mut(|parts| {
+                    let body = parts.body_view().as_bytes();
+                    slice_bytes(body, offset, len)
+                })
+                .ok()
+                .flatten()
             })
             .unwrap_or_default()
     }
@@ -474,6 +499,23 @@ impl WasmStore {
     }
 }
 
+fn slice_bytes(data: &[u8], offset: u64, len: u32) -> Vec<u8> {
+    let Ok(start) = usize::try_from(offset) else {
+        return Vec::new();
+    };
+    if start >= data.len() {
+        return Vec::new();
+    }
+    let Ok(mut length) = usize::try_from(len) else {
+        return Vec::new();
+    };
+    let remaining = data.len() - start;
+    if length > remaining {
+        length = remaining;
+    }
+    data[start..start + length].to_vec()
+}
+
 fn charset_from_string(s: &str) -> Charset {
     match s.to_ascii_lowercase().as_str() {
         "us-ascii" | "ascii" => Charset::Ascii,
@@ -544,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_bytes_exposes_message_data() {
+    fn raw_read_exposes_message_data() {
         let context = Context {
             data: Some(Arc::from(b"hello world".to_vec())),
             ..Default::default()
@@ -552,10 +594,11 @@ mod tests {
 
         let mut store = make_store(Arc::new(Mutex::new(context)));
 
+        assert_eq!(MessageHost::raw_len(&mut store), 11);
         assert_eq!(
-            <WasmStore as MessageHost>::raw_bytes(&mut store),
-            b"hello world".to_vec(),
-            "raw_bytes should surface original message data"
+            MessageHost::raw_read(&mut store, 6, 5),
+            b"world".to_vec(),
+            "raw_read should surface original message data"
         );
     }
 
