@@ -12,6 +12,10 @@
 - `just test` or `cargo test` — full test suite; `just test-nextest` for faster runs; `just test-e2e` for end-to-end; `cargo bench` / `just bench` for benchmarks.
 - Docker stack: `just docker-up` / `just docker-down` to run the observability environment.
 
+## Agent Runbook
+- Before reporting completion: run `cargo fmt --all` and `cargo clippy --all-targets --all-features`.
+- Always ask before committing or running any tests.
+
 ## Coding Style & Naming Conventions
 - Rust nightly (see `rust-toolchain.toml`); format with `cargo fmt --all` (imports grouped per `rustfmt.toml`).
 - Clippy is strict (`clippy::all + pedantic + nursery`); run via `just lint` and keep warnings at zero.
