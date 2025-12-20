@@ -108,6 +108,16 @@ impl DomainPolicyResolver {
             .and_then(|config| config.accept_invalid_certs)
             .unwrap_or(self.global_accept_invalid_certs)
     }
+
+    /// Resolve outbound binding override for a domain.
+    ///
+    /// Returns `Some(binding_name)` if configured, otherwise `None`.
+    #[must_use]
+    pub fn binding_override(&self, domain: &str) -> Option<String> {
+        self.domains
+            .get(domain)
+            .and_then(|config| config.binding.clone())
+    }
 }
 
 /// Parse MX override string into `MailServer`

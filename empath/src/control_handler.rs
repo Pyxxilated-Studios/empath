@@ -339,6 +339,26 @@ impl EmpathControlHandler {
                 )))
             }
 
+            SystemCommand::ListBindings => {
+                let registry = self.delivery.outbound_bindings();
+                let mut bindings: Vec<empath_control::protocol::OutboundBindingInfo> = registry
+                    .bindings
+                    .into_iter()
+                    .map(
+                        |(name, binding)| empath_control::protocol::OutboundBindingInfo {
+                            name,
+                            source_ip: binding.source_ip.map(|ip| ip.to_string()),
+                            source_interface: binding.source_interface,
+                            helo_domain: binding.helo_domain,
+                            attempt_starttls: binding.tls.attempt_starttls,
+                        },
+                    )
+                    .collect();
+                bindings.sort_by(|a, b| a.name.cmp(&b.name));
+
+                Ok(Response::data(ResponseData::OutboundBindings(bindings)))
+            }
+
             SystemCommand::SetRateLimit {
                 domain,
                 messages_per_second,

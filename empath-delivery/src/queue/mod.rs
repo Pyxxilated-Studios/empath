@@ -80,6 +80,13 @@ impl DeliveryQueue {
         }
     }
 
+    /// Set the outbound binding for a message
+    pub fn set_binding(&self, message_id: &SpooledMessageId, binding: Option<String>) {
+        if let Some(mut entry) = self.queue.get_mut(message_id) {
+            entry.value_mut().binding = binding;
+        }
+    }
+
     /// Try the next MX server for a message.
     ///
     /// Returns `true` if there is another server to try, `false` if all exhausted.

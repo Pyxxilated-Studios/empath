@@ -116,6 +116,9 @@ pub struct DeliveryContext {
     pub error: Option<String>,
     /// Number of delivery attempts made
     pub attempts: Option<u32>,
+    /// Selected outbound binding name (if any)
+    #[serde(default)]
+    pub binding: Option<String>,
 
     // Queue state fields for persistent delivery tracking
     /// Current delivery status
@@ -148,6 +151,7 @@ impl Default for DeliveryContext {
             server: None,
             error: None,
             attempts: None,
+            binding: None,
             status: DeliveryStatus::default(),
             attempt_history: Vec::new(),
             queued_at: SystemTime::UNIX_EPOCH,

@@ -70,6 +70,7 @@ fn create_test_context_with_delivery_state(
         server: Some(ServerId::new("mx.example.com:25").unwrap()),
         error: Some("Connection refused".to_string()),
         attempts: Some(attempts),
+        binding: Some("primary".to_string()),
         status,
         attempt_history,
         queued_at: SystemTime::now() - Duration::from_secs(300),
@@ -184,6 +185,7 @@ async fn test_queue_restoration_across_restart() {
                 recipient_domain: delivery_ctx.domain.clone(),
                 mail_servers: Arc::new(Vec::new()),
                 current_server_index: delivery_ctx.current_server_index,
+                binding: delivery_ctx.binding.clone(),
                 queued_at: delivery_ctx.queued_at,
                 next_retry_at: delivery_ctx.next_retry_at,
             };
@@ -220,6 +222,11 @@ async fn test_queue_restoration_across_restart() {
     assert!(
         restored_info.next_retry_at.is_some(),
         "next_retry_at should be restored"
+    );
+    assert_eq!(
+        restored_info.binding.as_deref(),
+        Some("primary"),
+        "binding should be restored"
     );
 
     let restored_retry_time = restored_info.next_retry_at.unwrap();
@@ -330,6 +337,7 @@ async fn test_queue_restoration_with_multiple_messages() {
                 recipient_domain: delivery_ctx.domain.clone(),
                 mail_servers: Arc::new(Vec::new()),
                 current_server_index: delivery_ctx.current_server_index,
+                binding: delivery_ctx.binding.clone(),
                 queued_at: delivery_ctx.queued_at,
                 next_retry_at: delivery_ctx.next_retry_at,
             };

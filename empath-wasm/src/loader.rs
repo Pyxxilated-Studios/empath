@@ -100,22 +100,21 @@ fn start_epoch_manager(engine: Arc<Engine>) {
     }
 }
 
-/// Convert Empath Context to WIT context record
-///
-/// This creates the typed context structure that component validation functions expect.
-fn context_to_wit(ctx: &Context) -> wit::Context {
-    wit::Context {
-        extended: ctx.extended,
-        id: ctx.id.clone(),
-        sender: Some(ctx.sender()),
-        recipients: ctx.recipients(),
-        max_message_size: ctx.max_message_size as u64,
-        transaction: ctx
-            .transaction
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.clone()))
-            .collect(),
-        tracking_id: ctx.tracking_id.as_ref().map(ToString::to_string),
+impl From<&Context> for wit::Context {
+    fn from(ctx: &Context) -> Self {
+        Self {
+            extended: ctx.extended,
+            id: ctx.id.clone(),
+            sender: Some(ctx.sender()),
+            recipients: ctx.recipients(),
+            max_message_size: ctx.max_message_size as u64,
+            transaction: ctx
+                .transaction
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+            tracking_id: ctx.tracking_id.as_ref().map(ToString::to_string),
+        }
     }
 }
 
@@ -437,7 +436,7 @@ impl WasmModule {
             let ctx_lock = context_arc
                 .lock()
                 .map_err(|e| WasmError::Internal(format!("Failed to lock context mutex: {e}")))?;
-            context_to_wit(&ctx_lock)
+            wit::Context::from(&*ctx_lock)
         };
 
         // Call the appropriate validation or event function based on callback name

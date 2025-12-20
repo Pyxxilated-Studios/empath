@@ -9,7 +9,7 @@ use chrono::{TimeZone, Utc, offset::LocalResult};
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Format timestamp (milliseconds since epoch) as human-readable
 fn format_timestamp(timestamp_ms: u64) -> String {
@@ -88,6 +88,8 @@ pub enum SystemCommand {
     ReloadTls,
     /// Runtime connection/rate-limit stats
     ConnectionStats,
+    /// List configured outbound bindings
+    ListBindings,
     /// Adjust runtime log level (e.g., "info", "debug", "trace")
     SetLogLevel {
         /// New log level
@@ -210,6 +212,8 @@ pub enum ResponseData {
     SystemStatus(SystemStatus),
     /// Connection/rate-limit statistics
     ConnectionStats(ConnectionStats),
+    /// Outbound binding configuration listing
+    OutboundBindings(Vec<OutboundBindingInfo>),
     /// Queue message list
     QueueList(QueueListPage),
     /// Queue message details
@@ -257,6 +261,21 @@ pub struct ConnectionStats {
     pub queue_size: usize,
     /// Number of active rate-limiter buckets
     pub rate_limit_domains: usize,
+}
+
+/// Outbound binding configuration for control responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutboundBindingInfo {
+    /// Binding name
+    pub name: String,
+    /// Source IP address (if set)
+    pub source_ip: Option<String>,
+    /// Source interface name (if set)
+    pub source_interface: Option<String>,
+    /// HELO/EHLO domain override (if set)
+    pub helo_domain: Option<String>,
+    /// Whether to attempt STARTTLS
+    pub attempt_starttls: bool,
 }
 
 /// Paginated queue list

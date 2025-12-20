@@ -70,6 +70,7 @@ pub async fn scan_spool_internal(
                 recipient_domain: delivery_ctx.domain.clone(),
                 mail_servers: Arc::new(Vec::new()), // Will be resolved again if needed
                 current_server_index: delivery_ctx.current_server_index,
+                binding: delivery_ctx.binding.clone(),
                 queued_at: delivery_ctx.queued_at,
                 next_retry_at: delivery_ctx.next_retry_at,
             };

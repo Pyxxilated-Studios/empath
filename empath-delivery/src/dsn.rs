@@ -377,6 +377,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: None,
             current_server_index: 0,
+            binding: None,
             mail_servers: Arc::new(vec![]),
         };
 
@@ -402,6 +403,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: None,
             current_server_index: 0,
+            binding: None,
             mail_servers: Arc::new(vec![]),
         };
 
@@ -433,6 +435,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: Some(SystemTime::now()),
             current_server_index: 0,
+            binding: None,
             mail_servers: Arc::new(vec![]),
         };
 
@@ -475,6 +478,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: None,
             current_server_index: 0,
+            binding: None,
             mail_servers: Arc::new(vec![]),
         };
 

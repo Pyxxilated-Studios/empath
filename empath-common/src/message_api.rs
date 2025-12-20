@@ -1,4 +1,4 @@
-use std::{borrow::Cow, marker::PhantomData};
+use std::{borrow::Cow, ffi::CStr, marker::PhantomData};
 
 use ulid::Ulid;
 
@@ -188,6 +188,32 @@ impl HeaderValue {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl TryFrom<&CStr> for HeaderValue {
+    type Error = HeaderError;
+
+    fn try_from(value: &CStr) -> Result<Self, Self::Error> {
+        Self::new(value.to_bytes())
+    }
+}
+
+impl From<Option<&CStr>> for Charset {
+    fn from(charset: Option<&CStr>) -> Self {
+        let normalized = charset
+            .map(CStr::to_string_lossy)
+            .map_or_else(
+                || Cow::Borrowed("utf-8"),
+                |value| Cow::Owned(value.into_owned()),
+            )
+            .to_ascii_lowercase();
+
+        match normalized.as_str() {
+            "ascii" | "us-ascii" => Self::Ascii,
+            "utf-8" | "utf8" => Self::Utf8,
+            other => Self::Other(Cow::Owned(other.to_string())),
+        }
     }
 }
 

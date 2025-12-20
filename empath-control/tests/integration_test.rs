@@ -111,6 +111,9 @@ impl CommandHandler for MockHandler {
                         rate_limit_domains: 3,
                     }),
                 )),
+                SystemCommand::ListBindings => {
+                    Ok(Response::data(ResponseData::OutboundBindings(Vec::new())))
+                }
                 SystemCommand::SetRateLimit {
                     domain,
                     messages_per_second,

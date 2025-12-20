@@ -601,12 +601,29 @@ Empath(
             quit_secs: 10,         // QUIT command
         ),
 
+        // Outbound binding configuration (optional)
+        outbound_bindings: (
+            default: "primary",
+            bindings: {
+                "primary": (
+                    source_ip: "192.0.2.10",
+                    helo_domain: "mx1.company.com",
+                    tls: (attempt_starttls: true),
+                ),
+                "backup": (
+                    source_interface: "eth1",
+                    helo_domain: "mx2.company.com",
+                ),
+            },
+        ),
+
         // Per-domain configuration
         domains: {
             // Example: Internal relay with self-signed cert
             "internal.company.com": (
                 mx_override: "relay.company.com:25",
                 accept_invalid_certs: false,  // Still validate certs!
+                binding: "backup",
             ),
         },
     ),

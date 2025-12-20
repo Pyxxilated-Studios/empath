@@ -17,6 +17,7 @@ use tokio::{
 };
 
 use crate::{
+    binding::OutboundBindingRegistry,
     circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
     dns::{DnsConfig, DnsResolver, HickoryDnsResolver},
     domain_config::DomainConfigRegistry,
@@ -111,6 +112,10 @@ pub struct DeliveryProcessor {
     /// Per-domain delivery configuration
     #[serde(default)]
     pub domains: DomainConfigRegistry,
+
+    /// Outbound binding configuration
+    #[serde(default)]
+    pub outbound_bindings: OutboundBindingRegistry,
 
     /// SMTP operation timeout configuration
     #[serde(default)]
@@ -216,6 +221,7 @@ impl Default for DeliveryProcessor {
             accept_invalid_certs: false,
             dns: DnsConfig::default(),
             domains: DomainConfigRegistry::default(),
+            outbound_bindings: OutboundBindingRegistry::default(),
             smtp_timeouts: SmtpTimeouts::default(),
             dsn: DsnConfig::default(),
             rate_limit: RateLimitConfig::default(),
@@ -273,6 +279,7 @@ impl DeliveryProcessor {
         // Initialize delivery metrics
         match empath_metrics::DeliveryMetrics::new(10, Vec::default()) {
             Ok(metrics) => {
+                metrics.register_bindings(self.outbound_bindings.names());
                 self.metrics = Some(metrics);
                 internal!("Delivery metrics initialized");
             }
@@ -646,6 +653,10 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
 
     fn domains(&self) -> &DomainConfigRegistry {
         &self.domains
+    }
+
+    fn outbound_bindings(&self) -> crate::OutboundBindingRegistry {
+        self.outbound_bindings.clone()
     }
 
     fn request_process_now(&self) {

@@ -1,11 +1,15 @@
 //! SMTP client implementation with support for TLS and STARTTLS.
 
-use std::sync::{Arc, LazyLock};
+use std::{
+    io,
+    net::{IpAddr, SocketAddr},
+    sync::{Arc, LazyLock},
+};
 
 use empath_common::{message::END_OF_BODY, outgoing, tracing};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::{TcpSocket, TcpStream},
 };
 use tokio_rustls::{
     TlsConnector,
@@ -179,6 +183,21 @@ pub struct SmtpClient {
     accept_invalid_certs: bool,
 }
 
+/// Connection configuration for outbound SMTP clients.
+#[derive(Debug, Clone, Default)]
+pub struct ConnectConfig {
+    /// Optional source IP to bind before connecting.
+    pub local_ip: Option<IpAddr>,
+    /// Optional source interface name to bind to (Linux only).
+    pub local_interface: Option<String>,
+}
+
+impl ConnectConfig {
+    const fn is_empty(&self) -> bool {
+        self.local_ip.is_none() && self.local_interface.is_none()
+    }
+}
+
 // Cache TLS client configs so we avoid rebuilding root stores and configs per connection.
 // We keep a strict config and an "accept invalid certs" config for test-only scenarios.
 static STRICT_TLS_CONFIG: LazyLock<std::result::Result<Arc<ClientConfig>, ClientError>> =
@@ -247,6 +266,51 @@ impl SmtpClient {
             server_domain,
             accept_invalid_certs: false, // Default to false for security
         })
+    }
+
+    /// Creates a new SMTP client with explicit local bind configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails or if the binding configuration is invalid.
+    pub async fn connect_with_config(
+        addr: &str,
+        server_domain: String,
+        config: &ConnectConfig,
+    ) -> Result<Self> {
+        if config.is_empty() {
+            return Self::connect(addr, server_domain).await;
+        }
+
+        let mut last_error: Option<ClientError> = None;
+        let addrs = tokio::net::lookup_host(addr)
+            .await
+            .map_err(ClientError::Io)?;
+
+        for addr in addrs {
+            match connect_with_binding(addr, config).await {
+                Ok(stream) => {
+                    return Ok(Self {
+                        connection: Some(ClientConnection::Plain(stream)),
+                        buffer: vec![0u8; BUFFER_SIZE],
+                        buffer_pos: 0,
+                        responses: Vec::new(),
+                        server_domain: server_domain.clone(),
+                        accept_invalid_certs: false,
+                    });
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            ClientError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "No resolved addresses for outbound SMTP connection",
+            ))
+        }))
     }
 
     /// Sets whether to accept invalid TLS certificates.
@@ -535,6 +599,94 @@ impl SmtpClient {
             self.buffer_pos += n;
         }
     }
+}
+
+async fn connect_with_binding(addr: SocketAddr, config: &ConnectConfig) -> Result<TcpStream> {
+    if let Some(interface) = config.local_interface.as_deref() {
+        #[cfg(target_os = "linux")]
+        return connect_with_interface(addr, config.local_ip, interface).await;
+        #[cfg(not(target_os = "linux"))]
+        return connect_with_interface(addr, config.local_ip, interface);
+    }
+
+    connect_with_socket(addr, config.local_ip).await
+}
+
+async fn connect_with_socket(addr: SocketAddr, local_ip: Option<IpAddr>) -> Result<TcpStream> {
+    let socket = if addr.is_ipv4() {
+        TcpSocket::new_v4().map_err(ClientError::Io)?
+    } else {
+        TcpSocket::new_v6().map_err(ClientError::Io)?
+    };
+
+    if let Some(local_ip) = local_ip {
+        socket
+            .bind(SocketAddr::new(local_ip, 0))
+            .map_err(ClientError::Io)?;
+    }
+
+    socket.connect(addr).await.map_err(ClientError::Io)
+}
+
+#[cfg(target_os = "linux")]
+async fn connect_with_interface(
+    addr: SocketAddr,
+    local_ip: Option<IpAddr>,
+    interface: &str,
+) -> Result<TcpStream> {
+    let domain = if addr.is_ipv4() {
+        socket2::Domain::IPV4
+    } else {
+        socket2::Domain::IPV6
+    };
+    let socket = socket2::Socket::new(domain, socket2::Type::STREAM, Some(socket2::Protocol::TCP))
+        .map_err(ClientError::Io)?;
+
+    socket
+        .bind_device(Some(interface.as_bytes()))
+        .map_err(ClientError::Io)?;
+
+    if let Some(local_ip) = local_ip {
+        socket
+            .bind(&SocketAddr::new(local_ip, 0).into())
+            .map_err(ClientError::Io)?;
+    }
+
+    socket.set_nonblocking(true).map_err(ClientError::Io)?;
+    let connect_result = socket.connect(&addr.into());
+    if let Err(err) = connect_result {
+        let mut retryable = err.kind() == io::ErrorKind::WouldBlock;
+        #[cfg(unix)]
+        {
+            if err.raw_os_error() == Some(libc::EINPROGRESS) {
+                retryable = true;
+            }
+        }
+
+        if !retryable {
+            return Err(ClientError::Io(err));
+        }
+    }
+
+    let stream = TcpStream::from_std(socket.into()).map_err(ClientError::Io)?;
+    stream.writable().await.map_err(ClientError::Io)?;
+    if let Some(err) = stream.take_error().map_err(ClientError::Io)? {
+        return Err(ClientError::Io(err));
+    }
+
+    Ok(stream)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn connect_with_interface(
+    _addr: SocketAddr,
+    _local_ip: Option<IpAddr>,
+    _interface: &str,
+) -> Result<TcpStream> {
+    Err(ClientError::Io(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Interface binding is only supported on Linux",
+    )))
 }
 
 fn missing_line_ending_bytes(last_bytes: &[u8], has_data: bool) -> Option<&'static [u8]> {

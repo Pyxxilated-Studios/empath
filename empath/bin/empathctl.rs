@@ -115,6 +115,8 @@ enum SystemAction {
     },
     /// Show connection and rate-limit statistics
     ConnectionStats,
+    /// List configured outbound bindings
+    Bindings,
     /// Update rate limits (global or per-domain)
     SetRateLimit {
         /// Target domain (omit for global defaults)
@@ -390,6 +392,7 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
             }
             ResponseData::SystemStatus(_)
             | ResponseData::ConnectionStats(_)
+            | ResponseData::OutboundBindings(_)
             | ResponseData::QueueList(_)
             | ResponseData::QueueMessageDetails(_)
             | ResponseData::QueueStats(_)
@@ -421,6 +424,7 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
         SystemAction::ConnectionStats => {
             Request::new(RequestCommand::System(SystemCommand::ConnectionStats))
         }
+        SystemAction::Bindings => Request::new(RequestCommand::System(SystemCommand::ListBindings)),
         SystemAction::SetRateLimit { domain, mps, burst } => {
             Request::new(RequestCommand::System(SystemCommand::SetRateLimit {
                 domain,
@@ -451,6 +455,26 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                 println!("=== Connection Stats ===\n");
                 println!("Queue size:             {}", stats.queue_size);
                 println!("Rate limit buckets:     {}", stats.rate_limit_domains);
+            }
+            ResponseData::OutboundBindings(bindings) => {
+                println!("=== Outbound Bindings ===\n");
+                if bindings.is_empty() {
+                    println!("No outbound bindings configured");
+                } else {
+                    for binding in bindings {
+                        println!("- {}", binding.name);
+                        if let Some(source_ip) = binding.source_ip {
+                            println!("  source_ip: {source_ip}");
+                        }
+                        if let Some(source_interface) = binding.source_interface {
+                            println!("  source_interface: {source_interface}");
+                        }
+                        if let Some(helo_domain) = binding.helo_domain {
+                            println!("  helo_domain: {helo_domain}");
+                        }
+                        println!("  attempt_starttls: {}", binding.attempt_starttls);
+                    }
+                }
             }
             ResponseData::Message(msg) => {
                 println!("✓ {msg}");
@@ -621,6 +645,7 @@ fn handle_queue_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::MxOverrides(_)
             | ResponseData::SystemStatus(_)
             | ResponseData::ConnectionStats(_)
+            | ResponseData::OutboundBindings(_)
             | ResponseData::SpoolList(_)
             | ResponseData::SpoolStats(_) => {
                 println!("Unexpected response for queue command: {data:?}");
@@ -751,7 +776,8 @@ fn handle_spool_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::SystemStatus(_)
             | ResponseData::QueueList(_)
             | ResponseData::QueueStats(_)
-            | ResponseData::ConnectionStats(_) => {
+            | ResponseData::ConnectionStats(_)
+            | ResponseData::OutboundBindings(_) => {
                 println!("Unexpected response for spool command: {data:?}");
             }
         },

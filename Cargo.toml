@@ -139,6 +139,7 @@ ron = "0.12"
 rustls-native-certs = "0.8"
 serde = { version = "1", default-features = false, features = ["derive", "rc"] }
 sha2 = "0.10"
+socket2 = "0.5"
 syn = "2"
 sysinfo = "0.37"
 tempfile = "3"

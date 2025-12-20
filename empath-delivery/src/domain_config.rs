@@ -56,6 +56,12 @@ pub struct DomainConfig {
     /// Prevents being flagged as spam or hitting recipient quotas.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub rate_limit: Option<u32>,
+
+    /// Outbound binding override for this domain
+    ///
+    /// Overrides the default binding selection for deliveries to this domain.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub binding: Option<String>,
 }
 
 impl DomainConfig {
@@ -207,6 +213,7 @@ mod tests {
         assert!(config.accept_invalid_certs.is_none());
         assert!(config.max_connections.is_none());
         assert!(config.rate_limit.is_none());
+        assert!(config.binding.is_none());
     }
 
     #[test]
@@ -252,6 +259,7 @@ mod tests {
                 require_tls: true,
                 accept_invalid_certs: None,
                 mx_override: None,
+                binding: None,
             },
         );
         registry.insert(

@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use empath_common::{context::Context, tracing};
-use empath_smtp::client::{ClientError, Response as ClientResponse, SmtpClient};
+use empath_smtp::client::{ClientError, ConnectConfig, Response as ClientResponse, SmtpClient};
 use empath_spool::{BackingStore, SpooledMessageId};
 use empath_tracing::traced;
 
@@ -61,6 +61,10 @@ pub struct SmtpTransaction<'a> {
     accept_invalid_certs: bool,
     /// Timeout configuration for SMTP operations
     smtp_timeouts: &'a SmtpTimeouts,
+    /// Optional HELO/EHLO override
+    helo_domain: Option<String>,
+    /// Optional local bind configuration
+    connect_config: Option<ConnectConfig>,
 }
 
 enum MessageBodySource<'a> {
@@ -115,6 +119,8 @@ impl<'a> SmtpTransaction<'a> {
             require_tls,
             accept_invalid_certs,
             smtp_timeouts,
+            helo_domain: None,
+            connect_config: None,
         }
     }
 
@@ -128,6 +134,22 @@ impl<'a> SmtpTransaction<'a> {
         self
     }
 
+    #[must_use]
+    pub fn with_helo_domain(mut self, helo_domain: Option<String>) -> Self {
+        self.helo_domain = helo_domain;
+        self
+    }
+
+    #[must_use]
+    pub fn with_connect_config(mut self, connect_config: Option<ConnectConfig>) -> Self {
+        self.connect_config = connect_config;
+        self
+    }
+
+    fn helo_domain(&self) -> &str {
+        self.helo_domain.as_deref().unwrap_or(&self.context.id)
+    }
+
     /// Connect to SMTP server and read greeting
     ///
     /// # Errors
@@ -135,16 +157,25 @@ impl<'a> SmtpTransaction<'a> {
     async fn connect_and_greet(&self) -> Result<SmtpClient, DeliveryError> {
         // Connect to the SMTP server
         // Automatic From<ClientError> conversion handles connection errors
-        let mut client = SmtpClient::connect(&self.server_address, self.server_address.clone())
-            .await
-            .map_err(|e| {
-                // Add context about which server we tried to connect to
-                TemporaryError::ConnectionFailed(format!(
-                    "Failed to connect to {}: {e}",
-                    self.server_address
-                ))
-            })?
-            .accept_invalid_certs(self.accept_invalid_certs);
+        let mut client = match &self.connect_config {
+            Some(config) => {
+                SmtpClient::connect_with_config(
+                    &self.server_address,
+                    self.server_address.clone(),
+                    config,
+                )
+                .await
+            }
+            None => SmtpClient::connect(&self.server_address, self.server_address.clone()).await,
+        }
+        .map_err(|e| {
+            // Add context about which server we tried to connect to
+            TemporaryError::ConnectionFailed(format!(
+                "Failed to connect to {}: {e}",
+                self.server_address
+            ))
+        })?
+        .accept_invalid_certs(self.accept_invalid_certs);
 
         // Read greeting
         let greeting = client.read_greeting().await?;
@@ -202,7 +233,7 @@ impl<'a> SmtpTransaction<'a> {
             client = self.connect_and_greet().await?;
 
             // Perform EHLO without attempting TLS
-            let helo_domain = &self.context.id;
+            let helo_domain = self.helo_domain();
             let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
             let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
                 .await
@@ -266,7 +297,7 @@ impl<'a> SmtpTransaction<'a> {
             return Ok(TlsNegotiationOutcome::Skipped);
         }
 
-        let helo_domain = &self.context.id;
+        let helo_domain = self.helo_domain();
 
         // Send initial EHLO
         let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);

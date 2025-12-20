@@ -96,4 +96,4 @@ pub use error::{ClientError, Result};
 pub use message::{Attachment, MessageBuilder};
 pub use quit_after::QuitAfter;
 pub use response::{Response, ResponseLine};
-pub use smtp_client::SmtpClient;
+pub use smtp_client::{ConnectConfig, SmtpClient};

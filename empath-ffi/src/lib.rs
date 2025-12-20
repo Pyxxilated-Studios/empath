@@ -224,23 +224,6 @@ fn header_name_from_cstr(name: &CStr) -> Option<HeaderName> {
     name.to_str().ok().and_then(|n| HeaderName::new(n).ok())
 }
 
-fn header_value_from_cstr(value: &CStr) -> Option<HeaderValue> {
-    HeaderValue::new(value.to_bytes()).ok()
-}
-
-fn charset_from_cstr(charset: Option<&CStr>) -> Charset {
-    let normalized = charset
-        .map(CStr::to_string_lossy)
-        .map_or_else(|| "utf-8".to_string(), std::borrow::Cow::into_owned)
-        .to_ascii_lowercase();
-
-    match normalized.as_str() {
-        "ascii" | "us-ascii" => Charset::Ascii,
-        "utf-8" | "utf8" => Charset::Utf8,
-        other => Charset::Other(Cow::Owned(other.to_string())),
-    }
-}
-
 // ============================================================================
 // Session Context Functions
 // ============================================================================
@@ -480,7 +463,7 @@ pub unsafe extern "C" fn em_message_headers_set(
     let Some(hname) = header_name_from_cstr(name) else {
         return false;
     };
-    let Some(hval) = header_value_from_cstr(value) else {
+    let Some(hval) = HeaderValue::try_from(value).ok() else {
         return false;
     };
 
@@ -513,7 +496,7 @@ pub unsafe extern "C" fn em_message_headers_append(
     let Some(hname) = header_name_from_cstr(name) else {
         return false;
     };
-    let Some(hval) = header_value_from_cstr(value) else {
+    let Some(hval) = HeaderValue::try_from(value).ok() else {
         return false;
     };
 
@@ -546,7 +529,7 @@ pub unsafe extern "C" fn em_message_headers_set_if_absent(
     let Some(hname) = header_name_from_cstr(name) else {
         return false;
     };
-    let Some(hval) = header_value_from_cstr(value) else {
+    let Some(hval) = HeaderValue::try_from(value).ok() else {
         return false;
     };
 
@@ -615,7 +598,7 @@ pub unsafe extern "C" fn em_message_headers_set_content_type(
         return false;
     }
     let value = unsafe { CStr::from_ptr(value) };
-    let Some(hval) = header_value_from_cstr(value) else {
+    let Some(hval) = HeaderValue::try_from(value).ok() else {
         return false;
     };
     let Ok(hname) = HeaderName::new("Content-Type") else {
@@ -644,7 +627,7 @@ pub unsafe extern "C" fn em_message_headers_set_transfer_encoding(
         return false;
     }
     let value = unsafe { CStr::from_ptr(value) };
-    let Some(hval) = header_value_from_cstr(value) else {
+    let Some(hval) = HeaderValue::try_from(value).ok() else {
         return false;
     };
     let Ok(hname) = HeaderName::new("Content-Transfer-Encoding") else {
@@ -737,7 +720,7 @@ pub unsafe extern "C" fn em_message_body_set_text(
     } else {
         Some(unsafe { CStr::from_ptr(charset) })
     };
-    let charset = charset_from_cstr(charset);
+    let charset = Charset::from(charset);
 
     text.to_str().ok().is_some_and(|txt| {
         mutate_body(validate_context, |body| {
@@ -765,7 +748,7 @@ pub unsafe extern "C" fn em_message_body_append_text(
     } else {
         Some(unsafe { CStr::from_ptr(charset) })
     };
-    let charset = charset_from_cstr(charset);
+    let charset = Charset::from(charset);
 
     text.to_str().ok().is_some_and(|txt| {
         mutate_body(validate_context, |body| {
@@ -793,7 +776,7 @@ pub unsafe extern "C" fn em_message_body_set_html(
     } else {
         Some(unsafe { CStr::from_ptr(charset) })
     };
-    let charset = charset_from_cstr(charset);
+    let charset = Charset::from(charset);
 
     html.to_str().ok().is_some_and(|txt| {
         mutate_body(validate_context, |body| {
@@ -821,7 +804,7 @@ pub unsafe extern "C" fn em_message_body_append_html(
     } else {
         Some(unsafe { CStr::from_ptr(charset) })
     };
-    let charset = charset_from_cstr(charset);
+    let charset = Charset::from(charset);
 
     html.to_str().ok().is_some_and(|txt| {
         mutate_body(validate_context, |body| {
@@ -851,7 +834,7 @@ pub unsafe extern "C" fn em_message_body_set_alternative(
     } else {
         Some(unsafe { CStr::from_ptr(charset) })
     };
-    let charset = charset_from_cstr(charset);
+    let charset = Charset::from(charset);
 
     match (text.to_str(), html.to_str()) {
         (Ok(text_str), Ok(html_str)) => mutate_body(validate_context, |body| {

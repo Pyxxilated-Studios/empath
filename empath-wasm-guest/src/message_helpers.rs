@@ -79,12 +79,19 @@ pub fn parse_newline_style(raw: &str) -> NewlineStyle {
     }
 }
 
-/// Convert a newline style back into its raw string value for host interop.
-pub const fn newline_style_to_str(style: &NewlineStyle) -> &str {
-    match style {
-        NewlineStyle::Crlf => "crlf",
-        NewlineStyle::Lf => "lf",
-        NewlineStyle::Mixed => "mixed",
-        NewlineStyle::Unknown(raw) => raw.as_str(),
+impl AsRef<str> for NewlineStyle {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Crlf => "crlf",
+            Self::Lf => "lf",
+            Self::Mixed => "mixed",
+            Self::Unknown(raw) => raw.as_str(),
+        }
     }
+}
+
+/// Convert a newline style back into its raw string value for host interop.
+#[must_use]
+pub fn newline_style_to_str(style: &NewlineStyle) -> &str {
+    style.as_ref()
 }

@@ -10,9 +10,11 @@ use empath_common::{
     tracing::{error, info, warn},
 };
 use empath_ffi::modules::{self, Ev, Event};
+use empath_smtp::client::ConnectConfig;
 use empath_spool::SpooledMessageId;
 
 use crate::{
+    OutboundBinding,
     error::{DeliveryError, SystemError},
     processor::DeliveryProcessor,
     types::DeliveryInfo,
@@ -63,27 +65,9 @@ pub async fn prepare_message(
         .read_metadata(message_id)
         .await
         .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
-    let info = processor.queue.get(message_id).ok_or_else(|| {
+    let mut info = processor.queue.get(message_id).ok_or_else(|| {
         SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
     })?;
-
-    // Dispatch DeliveryAttempt event to modules
-    {
-        context.delivery = Some(DeliveryContext {
-            message_id: message_id.clone(),
-            domain: info.recipient_domain.clone(),
-            server: None, // Server not yet determined at this point
-            error: None,
-            attempts: Some(info.attempt_count()),
-            status: info.status.clone(),
-            attempt_history: info.attempts.clone(),
-            queued_at: info.queued_at,
-            next_retry_at: info.next_retry_at,
-            current_server_index: info.current_server_index,
-        });
-
-        let _ = modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
-    }
 
     // Create delivery pipeline to orchestrate DNS → Rate Limit → SMTP stages
     let dns_resolver = processor.dns_resolver.as_ref().ok_or_else(|| {
@@ -94,6 +78,46 @@ pub async fn prepare_message(
             "Domain policy resolver not initialized. Call init() first.".to_string(),
         )
     })?;
+
+    if info.binding.is_none() {
+        let binding_name = processor.outbound_bindings.resolve_binding_name(
+            &context,
+            &info.recipient_domain,
+            domain_resolver,
+        )?;
+        if binding_name.is_some() {
+            processor
+                .queue
+                .set_binding(message_id, binding_name.clone());
+            info.binding = binding_name;
+            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+                warn!(
+                    message_id = %message_id,
+                    error = %e,
+                    "Failed to persist delivery state after binding selection"
+                );
+            }
+        }
+    }
+
+    // Dispatch DeliveryAttempt event to modules
+    {
+        context.delivery = Some(DeliveryContext {
+            message_id: message_id.clone(),
+            domain: info.recipient_domain.clone(),
+            server: None, // Server not yet determined at this point
+            error: None,
+            attempts: Some(info.attempt_count()),
+            binding: info.binding.clone(),
+            status: info.status.clone(),
+            attempt_history: info.attempts.clone(),
+            queued_at: info.queued_at,
+            next_retry_at: info.next_retry_at,
+            current_server_index: info.current_server_index,
+        });
+
+        let _ = modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
+    }
 
     let pipeline = crate::policy::DeliveryPipeline::new(
         &**dns_resolver,
@@ -130,6 +154,7 @@ pub async fn prepare_message(
         server: Some(mx_server_id.clone()),
         error: None,
         attempts: Some(info.attempt_count()),
+        binding: info.binding.clone(),
         status: info.status.clone(),
         attempt_history: info.attempts.clone(),
         queued_at: info.queued_at,
@@ -228,6 +253,7 @@ pub async fn prepare_message(
                 server: Some(mx_server_id.clone()),
                 error: None,
                 attempts: Some(info.attempt_count()),
+                binding: info.binding.clone(),
                 status: info.status.clone(),
                 attempt_history: info.attempts.clone(),
                 queued_at: info.queued_at,
@@ -390,6 +416,7 @@ pub async fn handle_delivery_error(
         server: Some(server),
         error: Some(error.to_string()),
         attempts: Some(updated_info.attempt_count()),
+        binding: updated_info.binding.clone(),
         status: updated_info.status.clone(),
         attempt_history: updated_info.attempts.clone(),
         queued_at: updated_info.queued_at,
@@ -508,6 +535,7 @@ pub async fn persist_delivery_state(
             _ => None,
         },
         attempts: Some(info.attempt_count()),
+        binding: info.binding.clone(),
         status: info.status.clone(),
         attempt_history: info.attempts.clone(),
         queued_at: info.queued_at,
@@ -554,16 +582,54 @@ async fn deliver_message(
     let accept_invalid_certs =
         domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain);
 
+    let binding = if let Some(name) = delivery_info.binding.as_deref() {
+        Some(processor.outbound_bindings.get(name).ok_or_else(|| {
+            SystemError::Configuration(format!("Unknown outbound binding '{name}'"))
+        })?)
+    } else {
+        None
+    };
+    let attempt_tls = binding.is_none_or(|binding| binding.tls.attempt_starttls);
+    if require_tls && !attempt_tls {
+        return Err(SystemError::Configuration(
+            "Binding disables STARTTLS but recipient domain requires TLS".to_string(),
+        )
+        .into());
+    }
+
+    if let Some(metrics) = &processor.metrics {
+        metrics.record_binding_selected(delivery_info.binding.as_deref());
+    }
+
+    let connect_config = binding
+        .map(ConnectConfig::from)
+        .filter(|config: &ConnectConfig| {
+            config.local_ip.is_some() || config.local_interface.is_some()
+        });
+
+    let helo_domain = binding.and_then(|binding| binding.helo_domain.clone());
+
     // Create and execute the SMTP transaction
     let transaction = crate::smtp_transaction::SmtpTransaction::new(
         context,
         server_address.to_string(),
-        true,
+        attempt_tls,
         require_tls,
         accept_invalid_certs,
         &processor.smtp_timeouts,
     )
+    .with_helo_domain(helo_domain)
+    .with_connect_config(connect_config)
     .with_spool_body(spool, message_id);
 
     Box::pin(transaction.execute()).await
+}
+
+impl From<&OutboundBinding> for ConnectConfig {
+    fn from(binding: &OutboundBinding) -> Self {
+        Self {
+            local_ip: binding.source_ip,
+            local_interface: binding.source_interface.clone(),
+        }
+    }
 }

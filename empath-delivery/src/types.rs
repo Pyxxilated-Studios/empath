@@ -124,6 +124,8 @@ pub struct DeliveryInfo {
     pub mail_servers: Arc<Vec<MailServer>>,
     /// Index of the current mail server being tried
     pub current_server_index: usize,
+    /// Selected outbound binding name (if any)
+    pub binding: Option<String>,
     /// When this message was first queued for delivery
     pub queued_at: SystemTime,
     /// When the next retry should be attempted (None for immediate retry)
@@ -141,6 +143,7 @@ impl DeliveryInfo {
             recipient_domain: empath_common::Domain::new(recipient_domain),
             mail_servers: Arc::new(Vec::new()),
             current_server_index: 0,
+            binding: None,
             queued_at: SystemTime::now(),
             next_retry_at: None,
         }

@@ -55,6 +55,9 @@ pub struct DeliveryMetrics {
     /// Total number of circuit breaker recoveries (Closed state resumed)
     circuit_breaker_recoveries_total: Counter<u64>,
 
+    /// Total number of outbound binding selections/usages
+    binding_selected_total: Counter<u64>,
+
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     messages_delivered_count: Arc<AtomicU64>,
     messages_failed_count: Arc<AtomicU64>,
@@ -62,6 +65,9 @@ pub struct DeliveryMetrics {
 
     // Per-domain circuit breaker state (0=Closed, 1=Open, 2=HalfOpen)
     circuit_breaker_states: Arc<DashMap<String, Arc<AtomicU64>>>,
+
+    /// Known outbound binding names for label validation
+    binding_names: Arc<DashMap<String, ()>>,
 
     // Local counters for queue size tracking (shared with observable gauge callback)
     queue_pending: Arc<AtomicU64>,
@@ -224,6 +230,11 @@ impl DeliveryMetrics {
             .with_description("Distribution of rate limit delay durations")
             .build();
 
+        let binding_selected_total = meter
+            .u64_counter("empath.delivery.bindings.selected.total")
+            .with_description("Total number of deliveries using each outbound binding")
+            .build();
+
         let circuit_breaker_trips_total = meter
             .u64_counter("empath.delivery.circuit_breaker.trips.total")
             .with_description(
@@ -350,6 +361,7 @@ impl DeliveryMetrics {
             oldest_message_seconds: oldest_message_ref,
             rate_limited_total,
             rate_limit_delay_seconds,
+            binding_selected_total,
             circuit_breaker_trips_total,
             circuit_breaker_recoveries_total,
             messages_delivered_count: messages_delivered_ref,
@@ -368,7 +380,31 @@ impl DeliveryMetrics {
             tracked_domains: Arc::new(DashMap::new()),
             tracked_domains_count: Arc::new(AtomicU64::new(0)),
             bucketed_domains_count: bucketed_domains_ref,
+            binding_names: Arc::new(DashMap::new()),
         })
+    }
+
+    /// Register configured outbound bindings for metrics labeling.
+    pub fn register_bindings(&self, bindings: Vec<String>) {
+        for name in bindings {
+            self.binding_names.insert(name, ());
+        }
+    }
+
+    /// Record a binding selection or usage.
+    pub fn record_binding_selected(&self, binding: Option<&str>) {
+        let label = match binding {
+            Some(name)
+                if self.binding_names.is_empty() || self.binding_names.contains_key(name) =>
+            {
+                name
+            }
+            Some(_) => "other",
+            None => "none",
+        };
+
+        self.binding_selected_total
+            .add(1, &[KeyValue::new("binding", label.to_string())]);
     }
 
     /// Bucket a domain name to limit cardinality

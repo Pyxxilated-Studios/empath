@@ -98,6 +98,25 @@ Empath (
             quit_secs: 10,         // QUIT command
         ),
 
+        // Outbound binding configuration (optional)
+        // Bindings control source IP/interface and HELO/TLS behavior per delivery.
+        // Modules can override by setting transaction["outbound_binding"].
+        "outbound_bindings": (
+            default: "primary",
+            bindings: {
+                "primary": (
+                    source_ip: "192.0.2.10",
+                    helo_domain: "mx1.example.com",
+                    tls: (attempt_starttls: true),
+                ),
+                "backup": (
+                    source_interface: "eth1",
+                    helo_domain: "mx2.example.com",
+                    tls: (attempt_starttls: true),
+                ),
+            },
+        ),
+
         // Per-domain configuration for testing and custom settings
         "domains": {
             // Route test.example.com to local SMTP server for integration testing
@@ -105,6 +124,8 @@ Empath (
                 mx_override: "localhost:1025",
                 // Accept self-signed certs for this test domain only
                 accept_invalid_certs: true,
+                // Prefer the backup binding for this domain
+                binding: "backup",
             ),
             // Example: Require TLS for a specific domain
             "secure.example.com": (

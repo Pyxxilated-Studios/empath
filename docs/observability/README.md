@@ -263,6 +263,7 @@ Warnings are inhibited when related critical alerts fire:
 | `empath.delivery.circuit_breaker.trips.total{domain}` | Counter | Circuit breaker trips per domain | CircuitBreakerStormDetected |
 | `empath.delivery.circuit_breaker.state{domain}` | Gauge | Circuit breaker state (0=Closed, 1=Open, 2=HalfOpen) | CircuitBreakerOpen |
 | `empath.delivery.rate_limited.total{domain}` | Counter | Rate limit delays per domain | RateLimitingExcessive |
+| `empath.delivery.bindings.selected.total{binding}` | Counter | Delivery attempts per outbound binding | - |
 
 ### SMTP Metrics
 
