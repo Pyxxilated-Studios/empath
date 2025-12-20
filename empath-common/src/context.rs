@@ -157,6 +157,25 @@ impl Default for DeliveryContext {
     }
 }
 
+/// Lightweight persisted context snapshot for spooling.
+///
+/// This omits session-only state and cached message parsing to keep metadata
+/// storage and serialization lean.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextMetadata {
+    pub extended: bool,
+    pub envelope: Arc<Envelope>,
+    pub id: String,
+    pub data_len: Option<usize>,
+    pub response: Option<(Status, Cow<'static, str>)>,
+    pub transaction: AHashMap<Cow<'static, str>, String>,
+    pub banner: Arc<str>,
+    pub max_message_size: usize,
+    pub capabilities: Vec<Capability>,
+    pub delivery: Option<DeliveryContext>,
+    pub tracking_id: Option<SpooledMessageId>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Context {
     pub extended: bool,
@@ -223,6 +242,48 @@ impl Default for Context {
 }
 
 impl Context {
+    /// Build a lightweight metadata snapshot for spooling.
+    #[must_use]
+    pub fn to_metadata(&self) -> ContextMetadata {
+        ContextMetadata {
+            extended: self.extended,
+            envelope: Arc::clone(&self.envelope),
+            id: self.id.clone(),
+            data_len: self
+                .data_len
+                .or_else(|| self.data.as_ref().map(|d| d.len())),
+            response: self.response.clone(),
+            transaction: self.transaction.clone(),
+            banner: Arc::clone(&self.banner),
+            max_message_size: self.max_message_size,
+            capabilities: self.capabilities.clone(),
+            delivery: self.delivery.clone(),
+            tracking_id: self.tracking_id.clone(),
+        }
+    }
+
+    /// Reconstruct a `Context` from a metadata snapshot.
+    #[must_use]
+    pub fn from_metadata(metadata: ContextMetadata) -> Self {
+        Self {
+            extended: metadata.extended,
+            envelope: metadata.envelope,
+            id: metadata.id,
+            data: None,
+            data_len: metadata.data_len,
+            response: metadata.response,
+            message_parts: None,
+            session: AHashMap::new(),
+            transaction: metadata.transaction,
+            banner: metadata.banner,
+            max_message_size: metadata.max_message_size,
+            capabilities: metadata.capabilities,
+            delivery: metadata.delivery,
+            tracking_id: metadata.tracking_id,
+            message_dirty: false,
+        }
+    }
+
     /// Returns a reference to the id of this [`Context`].
     #[inline]
     pub const fn id(&self) -> &str {
@@ -231,12 +292,20 @@ impl Context {
 
     #[inline]
     pub fn message(&self) -> String {
-        self.data.as_deref().map_or_else(Default::default, |data| {
-            charset::Charset::for_encoding(encoding_rs::UTF_8)
-                .decode(data)
-                .0
-                .to_string()
-        })
+        self.message_cow().into_owned()
+    }
+
+    /// Returns a lossy UTF-8 view of the message body without forcing allocation.
+    #[inline]
+    pub fn message_cow(&self) -> Cow<'_, str> {
+        self.data.as_deref().map_or_else(
+            || Cow::Borrowed(""),
+            |data| {
+                charset::Charset::for_encoding(encoding_rs::UTF_8)
+                    .decode(data)
+                    .0
+            },
+        )
     }
 
     /// Returns the sender of this [`Context`].
@@ -257,6 +326,20 @@ impl Context {
         self.envelope.recipients().map_or_else(Vec::new, |addrs| {
             addrs.iter().map(|addr| format!("RCPT TO:{addr}")).collect()
         })
+    }
+
+    /// Returns an iterator over recipient addresses without allocating.
+    pub fn recipient_addresses_iter(&self) -> impl Iterator<Item = &crate::address::Address> + '_ {
+        self.envelope
+            .recipients()
+            .into_iter()
+            .flat_map(|addrs| addrs.iter())
+    }
+
+    /// Returns an iterator over recipient emails without allocating.
+    pub fn recipient_emails_iter(&self) -> impl Iterator<Item = &EmailAddress> + '_ {
+        self.recipient_addresses_iter()
+            .map(crate::address::Address::email)
     }
 
     /// Returns the recipients as validated [`EmailAddress`] values.

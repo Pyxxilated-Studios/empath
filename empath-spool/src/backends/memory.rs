@@ -110,11 +110,12 @@ impl BackingStore for MemoryBackingStore {
             )));
         }
 
-        // Clear session context before storing (it's not persisted)
-        // This ensures consistent behavior with file-backed spool where
-        // session has #[serde(skip)] and won't be serialized
-        let mut context_to_store = context.clone();
-        context_to_store.session.clear();
+        // Store a metadata-based copy to avoid persisting session/parsed data.
+        let mut context_to_store = Context::from_metadata(context.to_metadata());
+        context_to_store.data.clone_from(&context.data);
+        context_to_store.data_len = context_to_store
+            .data_len
+            .or_else(|| context.data.as_ref().map(|data| data.len()));
 
         self.messages.insert(id.clone(), context_to_store);
 
@@ -157,7 +158,8 @@ impl BackingStore for MemoryBackingStore {
 
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
         if self.messages.contains_key(id) {
-            let mut updated = context.clone();
+            let mut updated = Context::from_metadata(context.to_metadata());
+            updated.data.clone_from(&context.data);
             updated.data_len = updated
                 .data_len
                 .or_else(|| context.data.as_ref().map(|data| data.len()));

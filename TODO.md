@@ -58,6 +58,9 @@ _See `docs/COMPLETED.md` for the full archive of resolved work._
 - [ ] NEW-QUEUE-01: Priority spool tiers. Allow modules or policies to opt messages into priority delivery tiers and adjust routing/delivery pacing based on queue age/throttles.
 - [ ] NEW-CTL-OBS-01: Control command rate limiting. Throttle control socket commands (reloads, requeues, bindings) per client to prevent automation floods during maintenance windows.
 - [ ] NEW-EXPE-01: WASM module fuzz harness. Generate randomized SMTP contexts/events against the WASM API to catch panics/resource leaks in validation modules before deployment.
+- [x] NEW-OPT-10: Spool metadata snapshot. Persist a lightweight `ContextMetadata` (no `message_parts`, no session data) to avoid cloning full `Context` during spool write/update; reconstruct `Context` on read.
+- [x] NEW-OPT-11: Delivery queue scan without cloning `DeliveryInfo`. Collect pending IDs and reload per task (or provide `with_entry` helper) to cut per-tick clones.
+- [x] NEW-OPT-12: Borrowing accessors in `Context` for recipients/message body to reduce allocation churn in hot paths.
 - [x] NEW-OPT-01: Allow `ControlClient::send_request_persistent` to drop the mutex before awaiting `send_and_receive` (and avoid cloning `Request` when unnecessary) so concurrent requests can reuse a healthy stream instead of serializing on the lock.
 - [x] NEW-OPT-02: Optimize `DeliveryProcessor::queue_stats_snapshot` by reusing static status keys (e.g., `DeliveryStatus` variants) and avoiding repeated `format!`/`to_string()` per entry to keep queue stats queries fast for large queues.
 - [x] NEW-OPT-03: Cache SMTP client TLS configs (strict + accept_invalid) instead of rebuilding `RootCertStore`/`ClientConfig` on every STARTTLS, reducing handshake CPU and syscalls.

@@ -109,7 +109,7 @@ pub async fn process_queue_internal(
     let now = SystemTime::now();
 
     // Vector to collect messages ready for parallel delivery
-    let mut pending_messages = Vec::new();
+    let mut pending_message_ids = Vec::new();
     let mut to_persist = Vec::new();
     let mut oldest_pending_age_secs = 0u64;
 
@@ -186,7 +186,7 @@ pub async fn process_queue_internal(
 
         // Collect Pending messages for parallel processing
         if matches!(info.status, DeliveryStatus::Pending) {
-            pending_messages.push(info.clone());
+            pending_message_ids.push(info.message_id.clone());
         }
     }
 
@@ -209,47 +209,41 @@ pub async fn process_queue_internal(
     }
 
     // Process pending messages in parallel using JoinSet
-    if !pending_messages.is_empty() {
+    if !pending_message_ids.is_empty() {
         info!(
-            pending_count = pending_messages.len(),
+            pending_count = pending_message_ids.len(),
             max_concurrent = processor.max_concurrent_deliveries,
             "Processing delivery queue with parallel workers"
         );
 
         let mut join_set: JoinSet<()> = JoinSet::new();
-        let mut pending_iter = pending_messages.into_iter();
+        let mut pending_iter = pending_message_ids.into_iter();
 
         // Spawn initial batch of tasks (up to max_concurrent_deliveries)
         for _ in 0..processor.max_concurrent_deliveries.min(pending_iter.len()) {
-            if let Some(msg_info) = pending_iter.next() {
+            if let Some(message_id) = pending_iter.next() {
                 // Clone Arc for this task
                 let processor_clone = Arc::clone(&processor);
                 let spool_clone = Arc::clone(&spool);
 
                 join_set.spawn(async move {
-                    Box::pin(process_single_message(
-                        processor_clone,
-                        spool_clone,
-                        msg_info,
-                    ))
-                    .await;
+                    if let Some(info) = processor_clone.queue.get(&message_id) {
+                        Box::pin(process_single_message(processor_clone, spool_clone, info)).await;
+                    }
                 });
             }
         }
 
         // As tasks complete, spawn new ones for remaining messages
         while join_set.join_next().await.is_some() {
-            if let Some(msg_info) = pending_iter.next() {
+            if let Some(message_id) = pending_iter.next() {
                 let processor_clone = Arc::clone(&processor);
                 let spool_clone = Arc::clone(&spool);
 
                 join_set.spawn(async move {
-                    Box::pin(process_single_message(
-                        processor_clone,
-                        spool_clone,
-                        msg_info,
-                    ))
-                    .await;
+                    if let Some(info) = processor_clone.queue.get(&message_id) {
+                        Box::pin(process_single_message(processor_clone, spool_clone, info)).await;
+                    }
                 });
             }
         }

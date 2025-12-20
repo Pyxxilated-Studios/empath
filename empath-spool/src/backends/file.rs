@@ -5,7 +5,11 @@ use std::{
 };
 
 use async_trait::async_trait;
-use empath_common::{Signal, context::Context, internal};
+use empath_common::{
+    Signal,
+    context::{Context, ContextMetadata},
+    internal,
+};
 use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::{
@@ -318,13 +322,9 @@ impl BackingStore for FileBackingStore {
         }
 
         // Serialize metadata to bincode (omit body to keep metadata lightweight)
-        let mut metadata_context = context.clone();
-        metadata_context.data = None;
-        metadata_context.data_len = metadata_context
-            .data_len
-            .or_else(|| context.data.as_ref().map(|d| d.len()));
-        let metadata = bincode::serde::encode_to_vec(&metadata_context, bincode::config::legacy())
-            .map_err(crate::error::SerializationError::from)?;
+        let metadata =
+            bincode::serde::encode_to_vec(context.to_metadata(), bincode::config::legacy())
+                .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically rename both files
@@ -403,9 +403,19 @@ impl BackingStore for FileBackingStore {
 
         // Read and deserialize metadata
         let meta_content = fs::read(&meta_path).await?;
-        let (mut context, _): (Context, _) =
-            bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
-                .map_err(crate::error::SerializationError::from)?;
+        let mut context = if let Ok((metadata, _)) =
+            bincode::serde::decode_from_slice::<ContextMetadata, _>(
+                &meta_content,
+                bincode::config::legacy(),
+            ) {
+            Context::from_metadata(metadata)
+        } else {
+            let (mut legacy, _): (Context, _) =
+                bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
+                    .map_err(crate::error::SerializationError::from)?;
+            legacy.data = None;
+            legacy
+        };
 
         // Ensure body is not retained from metadata (older files may contain it)
         context.data = None;
@@ -535,13 +545,9 @@ impl BackingStore for FileBackingStore {
         let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
 
         // Serialize metadata to bincode (omit body to keep metadata compact)
-        let mut metadata_context = context.clone();
-        metadata_context.data = None;
-        metadata_context.data_len = metadata_context
-            .data_len
-            .or_else(|| context.data.as_ref().map(|data| data.len()));
-        let metadata = bincode::serde::encode_to_vec(&metadata_context, bincode::config::legacy())
-            .map_err(crate::error::SerializationError::from)?;
+        let metadata =
+            bincode::serde::encode_to_vec(context.to_metadata(), bincode::config::legacy())
+                .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically replace the existing metadata file
