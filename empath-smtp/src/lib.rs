@@ -1,6 +1,8 @@
 pub mod client;
 pub mod command;
 pub mod connection;
+pub mod dkim;
+pub mod dmarc;
 pub mod error;
 pub mod extensions;
 pub mod fsm;

@@ -62,6 +62,12 @@ pub struct DomainConfig {
     /// Overrides the default binding selection for deliveries to this domain.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub binding: Option<String>,
+
+    /// Whether to fetch MTA-STS policy for this domain (override)
+    ///
+    /// Uses global `mta_sts` configuration when `None`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mta_sts_enabled: Option<bool>,
 }
 
 impl DomainConfig {
@@ -260,6 +266,7 @@ mod tests {
                 accept_invalid_certs: None,
                 mx_override: None,
                 binding: None,
+                mta_sts_enabled: None,
             },
         );
         registry.insert(

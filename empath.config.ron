@@ -98,6 +98,16 @@ Empath (
             quit_secs: 10,         // QUIT command
         ),
 
+        // MTA-STS policy fetching and enforcement
+        // When enabled, Empath fetches the policy and enforces it if the
+        // policy mode is "enforce". When disabled, no policy is fetched.
+        // Default: enabled
+        "mta_sts": (
+            enabled: true,
+            min_cache_age_secs: 300,   // Minimum cached policy age (seconds)
+            max_cache_age_secs: 86400, // Maximum cached policy age (seconds)
+        ),
+
         // Outbound binding configuration (optional)
         // Bindings control source IP/interface and HELO/TLS behavior per delivery.
         // Modules can override by setting transaction["outbound_binding"].
@@ -108,11 +118,14 @@ Empath (
                     source_ip: "192.0.2.10",
                     helo_domain: "mx1.example.com",
                     tls: (attempt_starttls: true),
+                    // Override whether MTA-STS is fetched for this binding
+                    // mta_sts_enabled: true,
                 ),
                 "backup": (
                     source_interface: "eth1",
                     helo_domain: "mx2.example.com",
                     tls: (attempt_starttls: true),
+                    // mta_sts_enabled: false,
                 ),
             },
         ),
@@ -126,6 +139,8 @@ Empath (
                 accept_invalid_certs: true,
                 // Prefer the backup binding for this domain
                 binding: "backup",
+                // Disable MTA-STS fetch for this domain
+                // mta_sts_enabled: false,
             ),
             // Example: Require TLS for a specific domain
             "secure.example.com": (

@@ -15,6 +15,7 @@ mod dns;
 mod domain_config;
 mod dsn;
 mod error;
+mod mta_sts;
 mod policy;
 mod processor;
 pub mod queue;

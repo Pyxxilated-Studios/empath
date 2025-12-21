@@ -21,6 +21,48 @@ use crate::{
     error::{DeliveryError, PermanentError, SystemError, TemporaryError},
 };
 
+#[derive(Debug, Clone, Copy)]
+enum TlsRequirement {
+    Optional,
+    Required { failure_is_temporary: bool },
+}
+
+impl TlsRequirement {
+    const fn is_required(self) -> bool {
+        matches!(self, Self::Required { .. })
+    }
+
+    const fn failure_is_temporary(self) -> bool {
+        matches!(
+            self,
+            Self::Required {
+                failure_is_temporary: true
+            }
+        )
+    }
+
+    const fn with_failure_temporary(self, temporary: bool) -> Self {
+        match self {
+            Self::Optional => Self::Optional,
+            Self::Required { .. } => Self::Required {
+                failure_is_temporary: temporary,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TlsValidation {
+    Strict,
+    AllowInvalid,
+}
+
+impl TlsValidation {
+    const fn accepts_invalid(self) -> bool {
+        matches!(self, Self::AllowInvalid)
+    }
+}
+
 /// Outcome of TLS negotiation attempt
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TlsNegotiationOutcome {
@@ -55,10 +97,10 @@ pub struct SmtpTransaction<'a> {
     server_address: String,
     /// Whether TLS should be attempted at all (disabled policy skips STARTTLS)
     attempt_tls: bool,
-    /// Whether TLS is required for this delivery
-    require_tls: bool,
-    /// Whether to accept invalid TLS certificates
-    accept_invalid_certs: bool,
+    /// TLS requirement policy
+    tls_requirement: TlsRequirement,
+    /// TLS certificate validation policy
+    tls_validation: TlsValidation,
     /// Timeout configuration for SMTP operations
     smtp_timeouts: &'a SmtpTimeouts,
     /// Optional HELO/EHLO override
@@ -111,13 +153,26 @@ impl<'a> SmtpTransaction<'a> {
         accept_invalid_certs: bool,
         smtp_timeouts: &'a SmtpTimeouts,
     ) -> Self {
+        let tls_requirement = if require_tls {
+            TlsRequirement::Required {
+                failure_is_temporary: false,
+            }
+        } else {
+            TlsRequirement::Optional
+        };
+        let tls_validation = if accept_invalid_certs {
+            TlsValidation::AllowInvalid
+        } else {
+            TlsValidation::Strict
+        };
+
         Self {
             context,
             body_source: MessageBodySource::Context,
             server_address,
             attempt_tls,
-            require_tls,
-            accept_invalid_certs,
+            tls_requirement,
+            tls_validation,
             smtp_timeouts,
             helo_domain: None,
             connect_config: None,
@@ -141,6 +196,12 @@ impl<'a> SmtpTransaction<'a> {
     }
 
     #[must_use]
+    pub const fn with_tls_failure_is_temporary(mut self, temporary: bool) -> Self {
+        self.tls_requirement = self.tls_requirement.with_failure_temporary(temporary);
+        self
+    }
+
+    #[must_use]
     pub fn with_connect_config(mut self, connect_config: Option<ConnectConfig>) -> Self {
         self.connect_config = connect_config;
         self
@@ -148,6 +209,14 @@ impl<'a> SmtpTransaction<'a> {
 
     fn helo_domain(&self) -> &str {
         self.helo_domain.as_deref().unwrap_or(&self.context.id)
+    }
+
+    fn require_tls_error(&self, message: String) -> DeliveryError {
+        if self.tls_requirement.failure_is_temporary() {
+            TemporaryError::TlsHandshakeFailed(message).into()
+        } else {
+            PermanentError::TlsRequired(message).into()
+        }
     }
 
     /// Connect to SMTP server and read greeting
@@ -175,7 +244,7 @@ impl<'a> SmtpTransaction<'a> {
                 self.server_address
             ))
         })?
-        .accept_invalid_certs(self.accept_invalid_certs);
+        .accept_invalid_certs(self.tls_validation.accepts_invalid());
 
         // Read greeting
         let greeting = client.read_greeting().await?;
@@ -208,7 +277,7 @@ impl<'a> SmtpTransaction<'a> {
     #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(server = %self.server_address, message_id = %self.context.id)), timing(precision = "ms"))]
     pub async fn execute(self) -> Result<(), DeliveryError> {
         // Log security warning if certificate validation is disabled
-        if self.accept_invalid_certs {
+        if self.tls_validation.accepts_invalid() {
             tracing::warn!(
                 server = %self.server_address,
                 "SECURITY WARNING: TLS certificate validation is disabled for this connection"
@@ -323,11 +392,11 @@ impl<'a> SmtpTransaction<'a> {
             .any(|line: &str| line.to_uppercase().contains("STARTTLS"));
 
         // If server doesn't support STARTTLS and it's not required, skip TLS
-        if !supports_starttls && !self.require_tls {
+        if !supports_starttls && !self.tls_requirement.is_required() {
             return Ok(TlsNegotiationOutcome::Skipped);
         }
 
-        if self.require_tls || supports_starttls {
+        if self.tls_requirement.is_required() || supports_starttls {
             let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
 
             // Attempt STARTTLS command
@@ -340,9 +409,8 @@ impl<'a> SmtpTransaction<'a> {
             let starttls_response: ClientResponse = match starttls_result {
                 Ok(response) => response,
                 Err(error_msg) => {
-                    if self.require_tls {
-                        // TLS required but failed - permanent error
-                        return Err(PermanentError::TlsRequired(error_msg).into());
+                    if self.tls_requirement.is_required() {
+                        return Err(self.require_tls_error(error_msg));
                     }
                     // Opportunistic TLS failed - should retry without TLS per RFC 3207
                     tracing::info!(
@@ -356,9 +424,8 @@ impl<'a> SmtpTransaction<'a> {
 
             if !starttls_response.is_success() {
                 let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
-                if self.require_tls {
-                    // TLS required but server rejected - permanent error
-                    return Err(PermanentError::TlsRequired(message).into());
+                if self.tls_requirement.is_required() {
+                    return Err(self.require_tls_error(message));
                 }
                 // Opportunistic TLS rejected - should retry without TLS per RFC 3207
                 tracing::info!(

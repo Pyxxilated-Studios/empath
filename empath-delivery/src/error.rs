@@ -96,6 +96,10 @@ pub enum TemporaryError {
     /// TLS handshake failed.
     #[error("TLS handshake failed: {0}")]
     TlsHandshakeFailed(String),
+
+    /// Delivery policy violation (MTA-STS, TLS policy, etc.).
+    #[error("Policy violation: {0}")]
+    PolicyViolation(String),
 }
 
 /// System-level errors that indicate internal problems.

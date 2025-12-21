@@ -28,6 +28,10 @@ pub struct OutboundBinding {
     /// TLS policy for this binding.
     #[serde(default)]
     pub tls: BindingTlsConfig,
+
+    /// Whether to fetch MTA-STS policy when using this binding (override).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mta_sts_enabled: Option<bool>,
 }
 
 /// TLS policy for a binding.

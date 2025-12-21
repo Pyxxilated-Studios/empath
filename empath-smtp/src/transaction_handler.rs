@@ -13,7 +13,7 @@ use empath_ffi::modules;
 use empath_spool::BackingStore;
 use ulid::Ulid;
 
-use crate::State;
+use crate::{State, dkim, dmarc};
 
 /// SMTP transaction handler for business logic.
 ///
@@ -342,6 +342,12 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 Cow::Borrowed("spf_result"),
                 spf_evaluation.result.to_string(),
             );
+            if let Some(sender_domain) = dmarc::domain_from_address(sender.as_str()) {
+                ctx.transaction
+                    .insert(Cow::Borrowed("spf_domain"), sender_domain);
+            }
+            ctx.transaction
+                .insert(Cow::Borrowed("spf_helo_domain"), helo_domain.clone());
             if let Some(explanation) = spf_evaluation.explanation {
                 ctx.transaction
                     .insert(Cow::Borrowed("spf_explanation"), explanation);
@@ -377,6 +383,9 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
     }
 
     async fn handle_message(&mut self, ctx: &mut Context) -> bool {
+        self.evaluate_dkim(ctx).await;
+        self.evaluate_dmarc(ctx).await;
+
         // Dispatch validation
         let valid = matches!(
             modules::dispatch(
@@ -404,6 +413,147 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
 
         valid
     }
+}
+
+impl DefaultSmtpTransactionHandler {
+    async fn evaluate_dkim(&self, ctx: &mut Context) {
+        let Some(raw) = ctx.data.as_ref() else {
+            ctx.transaction
+                .insert(Cow::Borrowed("dkim_result"), "none".to_string());
+            ctx.transaction.insert(
+                Cow::Borrowed("dkim_reason"),
+                "missing_message_data".to_string(),
+            );
+            return;
+        };
+
+        let evaluation = dkim::verify(raw).await;
+
+        ctx.transaction
+            .insert(Cow::Borrowed("dkim_result"), evaluation.result.to_string());
+        if let Some(domain) = evaluation.domain {
+            ctx.transaction.insert(Cow::Borrowed("dkim_domain"), domain);
+        }
+        if let Some(selector) = evaluation.selector {
+            ctx.transaction
+                .insert(Cow::Borrowed("dkim_selector"), selector);
+        }
+        if let Some(error) = evaluation.error {
+            ctx.transaction.insert(Cow::Borrowed("dkim_error"), error);
+        }
+    }
+
+    async fn evaluate_dmarc(&self, ctx: &mut Context) {
+        let Some(resolver) = &self.spf_dns_resolver else {
+            return;
+        };
+
+        let from_domain = match ctx.headers_view() {
+            Ok(Some(headers)) => dmarc::extract_from_domain(&headers),
+            Ok(None) => {
+                ctx.transaction
+                    .insert(Cow::Borrowed("dmarc_result"), "none".to_string());
+                ctx.transaction.insert(
+                    Cow::Borrowed("dmarc_reason"),
+                    "missing_message_data".to_string(),
+                );
+                return;
+            }
+            Err(err) => {
+                ctx.transaction
+                    .insert(Cow::Borrowed("dmarc_result"), "permerror".to_string());
+                ctx.transaction
+                    .insert(Cow::Borrowed("dmarc_error"), err.to_string());
+                return;
+            }
+        };
+
+        let dkim_result = normalize_dkim_result(ctx);
+        if ctx.transaction.get("dkim_domain").is_none()
+            && let Ok(Some(headers)) = ctx.headers_view()
+            && let Some(info) = dmarc::extract_dkim_info(&headers)
+        {
+            ctx.transaction
+                .insert(Cow::Borrowed("dkim_domain"), info.domain.clone());
+            if let Some(selector) = info.selector {
+                ctx.transaction
+                    .insert(Cow::Borrowed("dkim_selector"), selector);
+            }
+            if dkim_result.is_none() {
+                ctx.transaction
+                    .insert(Cow::Borrowed("dkim_result"), "none".to_string());
+            }
+        }
+
+        let Some(from_domain) = from_domain else {
+            ctx.transaction
+                .insert(Cow::Borrowed("dmarc_result"), "none".to_string());
+            ctx.transaction
+                .insert(Cow::Borrowed("dmarc_reason"), "missing_from".to_string());
+            return;
+        };
+
+        let mail_from_domain = ctx
+            .sender_email()
+            .and_then(|sender| dmarc::domain_from_address(sender.as_str()));
+        let spf_result = ctx.transaction.get("spf_result").map(String::as_str);
+        let dkim_result = dkim_result
+            .as_deref()
+            .or_else(|| ctx.transaction.get("dkim_result").map(String::as_str));
+        let dkim_domain = ctx.transaction.get("dkim_domain").map(String::as_str);
+
+        let evaluation = dmarc::evaluate(
+            &**resolver,
+            &from_domain,
+            mail_from_domain.as_deref(),
+            spf_result,
+            dkim_result,
+            dkim_domain,
+        )
+        .await;
+
+        ctx.transaction
+            .insert(Cow::Borrowed("dmarc_domain"), from_domain);
+        ctx.transaction
+            .insert(Cow::Borrowed("dmarc_result"), evaluation.result.to_string());
+        if let Some(policy) = evaluation.policy {
+            ctx.transaction
+                .insert(Cow::Borrowed("dmarc_policy"), policy);
+        }
+        ctx.transaction.insert(
+            Cow::Borrowed("dmarc_spf_aligned"),
+            evaluation.spf_aligned.to_string(),
+        );
+        ctx.transaction.insert(
+            Cow::Borrowed("dmarc_dkim_aligned"),
+            evaluation.dkim_aligned.to_string(),
+        );
+        if let Some(error) = evaluation.error {
+            ctx.transaction.insert(Cow::Borrowed("dmarc_error"), error);
+        }
+    }
+}
+
+fn normalize_dkim_result(ctx: &mut Context) -> Option<String> {
+    if let Some(result) = ctx.transaction.get("dkim_result") {
+        return Some(result.clone());
+    }
+
+    let verified = ctx.transaction.get("dkim_verified")?;
+
+    let normalized =
+        if verified.eq_ignore_ascii_case("true") || verified.eq_ignore_ascii_case("pass") {
+            "pass"
+        } else if verified.eq_ignore_ascii_case("false") || verified.eq_ignore_ascii_case("fail") {
+            "fail"
+        } else {
+            return None;
+        };
+
+    let normalized = normalized.to_string();
+    ctx.transaction
+        .insert(Cow::Borrowed("dkim_result"), normalized.clone());
+    Some(normalized)
 }
 
 /// Helper function to determine if state requires validation.

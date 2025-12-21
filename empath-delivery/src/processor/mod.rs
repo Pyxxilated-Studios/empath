@@ -109,6 +109,10 @@ pub struct DeliveryProcessor {
     #[serde(default)]
     pub dns: DnsConfig,
 
+    /// MTA-STS configuration
+    #[serde(default)]
+    pub mta_sts: crate::mta_sts::MtaStsConfig,
+
     /// Per-domain delivery configuration
     #[serde(default)]
     pub domains: DomainConfigRegistry,
@@ -181,6 +185,10 @@ pub struct DeliveryProcessor {
     #[serde(skip)]
     pub(crate) dns_resolver: Option<Arc<dyn DnsResolver>>,
 
+    /// MTA-STS policy cache (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) mta_sts_cache: crate::mta_sts::MtaStsPolicyCache,
+
     /// Cleanup queue for failed spool deletions (initialized in `init()`)
     #[serde(skip)]
     pub cleanup_queue: crate::queue::cleanup::CleanupQueue,
@@ -220,6 +228,7 @@ impl Default for DeliveryProcessor {
             message_expiration_secs: None,
             accept_invalid_certs: false,
             dns: DnsConfig::default(),
+            mta_sts: crate::mta_sts::MtaStsConfig::default(),
             domains: DomainConfigRegistry::default(),
             outbound_bindings: OutboundBindingRegistry::default(),
             smtp_timeouts: SmtpTimeouts::default(),
@@ -231,6 +240,9 @@ impl Default for DeliveryProcessor {
             spool: None,
             queue: DeliveryQueue::new(),
             dns_resolver: None,
+            mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::new(
+                crate::mta_sts::MtaStsConfig::default(),
+            ),
             cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
             metrics: None,
             rate_limiter: None,
@@ -275,6 +287,8 @@ impl DeliveryProcessor {
             );
             Some(resolver)
         };
+
+        self.mta_sts_cache = crate::mta_sts::MtaStsPolicyCache::new(self.mta_sts.clone());
 
         // Initialize delivery metrics
         match empath_metrics::DeliveryMetrics::new(10, Vec::default()) {

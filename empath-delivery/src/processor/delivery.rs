@@ -1,6 +1,6 @@
 //! Message delivery logic and error handling
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use empath_common::{
     DeliveryStatus,
@@ -15,7 +15,7 @@ use empath_spool::SpooledMessageId;
 
 use crate::{
     OutboundBinding,
-    error::{DeliveryError, SystemError},
+    error::{DeliveryError, SystemError, TemporaryError},
     processor::DeliveryProcessor,
     types::DeliveryInfo,
 };
@@ -24,6 +24,90 @@ pub(super) fn server_id_from(address: &str) -> Result<ServerId, DeliveryError> {
     ServerId::new(address.to_owned()).map_err(|e| {
         SystemError::Internal(format!("Invalid server identifier '{address}': {e}")).into()
     })
+}
+
+struct DeliverMessageArgs<'a> {
+    processor: &'a DeliveryProcessor,
+    spool: &'a Arc<dyn empath_spool::BackingStore>,
+    message_id: &'a SpooledMessageId,
+    server_address: &'a str,
+    context: &'a Context,
+    delivery_info: &'a DeliveryInfo,
+    mta_sts_policy: Option<&'a crate::mta_sts::MtaStsPolicy>,
+}
+
+fn resolve_mta_sts_fetch_enabled(
+    processor: &DeliveryProcessor,
+    domain: &str,
+    binding: Option<&OutboundBinding>,
+) -> bool {
+    let global_enabled = processor.mta_sts.enabled;
+    let domain_enabled = processor
+        .domains
+        .get(domain)
+        .and_then(|config| config.mta_sts_enabled)
+        .unwrap_or(global_enabled);
+    binding
+        .and_then(|binding| binding.mta_sts_enabled)
+        .unwrap_or(domain_enabled)
+}
+
+fn extract_host(address: &str) -> String {
+    let host = match address.rsplit_once(':') {
+        Some((host, _)) => host,
+        None => address,
+    };
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string()
+}
+
+async fn record_mta_sts(
+    context: &mut Context,
+    resolver: &dyn crate::DnsResolver,
+    cache: &crate::mta_sts::MtaStsPolicyCache,
+    domain: &str,
+    enabled: bool,
+) -> Option<crate::mta_sts::MtaStsPolicy> {
+    if !enabled {
+        context
+            .transaction
+            .insert(Cow::Borrowed("mta_sts_result"), "disabled".to_string());
+        return None;
+    }
+
+    let evaluation = cache.evaluate_cached(resolver, domain).await;
+
+    context
+        .transaction
+        .insert(Cow::Borrowed("mta_sts_domain"), domain.to_string());
+    context.transaction.insert(
+        Cow::Borrowed("mta_sts_result"),
+        evaluation.result.to_string(),
+    );
+    if let Some(policy_id) = evaluation.policy_id {
+        context
+            .transaction
+            .insert(Cow::Borrowed("mta_sts_id"), policy_id);
+    }
+    if let Some(policy) = &evaluation.policy {
+        context
+            .transaction
+            .insert(Cow::Borrowed("mta_sts_mode"), policy.mode.to_string());
+        context
+            .transaction
+            .insert(Cow::Borrowed("mta_sts_mx"), policy.mx.join(","));
+        context
+            .transaction
+            .insert(Cow::Borrowed("mta_sts_max_age"), policy.max_age.to_string());
+    }
+    if let Some(error) = evaluation.error {
+        context
+            .transaction
+            .insert(Cow::Borrowed("mta_sts_error"), error);
+    }
+
+    evaluation.policy
 }
 
 /// Prepare a message for delivery using SMTP client (but don't actually send it yet)
@@ -99,6 +183,21 @@ pub async fn prepare_message(
             }
         }
     }
+
+    let binding_ref = info
+        .binding
+        .as_deref()
+        .and_then(|name| processor.outbound_bindings.get(name));
+    let mta_sts_fetch_enabled =
+        resolve_mta_sts_fetch_enabled(processor, &info.recipient_domain, binding_ref);
+    let mta_sts_policy = record_mta_sts(
+        &mut context,
+        &**dns_resolver,
+        &processor.mta_sts_cache,
+        &info.recipient_domain,
+        mta_sts_fetch_enabled,
+    )
+    .await;
 
     // Dispatch DeliveryAttempt event to modules
     {
@@ -200,14 +299,15 @@ pub async fn prepare_message(
     );
 
     // Deliver the message via SMTP (including DATA command)
-    let result = Box::pin(deliver_message(
+    let result = Box::pin(deliver_message(DeliverMessageArgs {
         processor,
         spool,
         message_id,
-        &mx_address,
-        &context,
-        &info,
-    ))
+        server_address: &mx_address,
+        context: &context,
+        delivery_info: &info,
+        mta_sts_policy: mta_sts_policy.as_ref(),
+    }))
     .await;
 
     match result {
@@ -558,14 +658,16 @@ pub async fn persist_delivery_state(
 ///
 /// # Errors
 /// Returns an error if any part of the SMTP transaction fails
-async fn deliver_message(
-    processor: &DeliveryProcessor,
-    spool: &Arc<dyn empath_spool::BackingStore>,
-    message_id: &SpooledMessageId,
-    server_address: &str,
-    context: &Context,
-    delivery_info: &DeliveryInfo,
-) -> Result<(), DeliveryError> {
+async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryError> {
+    let DeliverMessageArgs {
+        processor,
+        spool,
+        message_id,
+        server_address,
+        context,
+        delivery_info,
+        mta_sts_policy,
+    } = args;
     // Get the domain policy resolver (already checked earlier in prepare_delivery)
     let Some(domain_resolver) = &processor.domain_resolver else {
         return Err(SystemError::NotInitialized(
@@ -575,12 +677,37 @@ async fn deliver_message(
     };
 
     // Check if TLS is required for this domain
-    let require_tls = domain_resolver.requires_tls(&delivery_info.recipient_domain);
+    let mut require_tls = domain_resolver.requires_tls(&delivery_info.recipient_domain);
 
     // Determine if we should accept invalid certificates
     // Priority: per-domain override > global configuration
-    let accept_invalid_certs =
+    let mut accept_invalid_certs =
         domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain);
+    let mut tls_failure_is_temporary = false;
+
+    if let Some(policy) = mta_sts_policy {
+        if policy.mode == crate::mta_sts::MtaStsMode::Enforce {
+            require_tls = true;
+            accept_invalid_certs = false;
+            tls_failure_is_temporary = true;
+            let mx_host = extract_host(server_address);
+            if !crate::mta_sts::mx_matches(policy, &mx_host) {
+                return Err(TemporaryError::PolicyViolation(format!(
+                    "MTA-STS policy does not permit MX host '{mx_host}'"
+                ))
+                .into());
+            }
+        }
+    } else if context
+        .transaction
+        .get("mta_sts_result")
+        .is_some_and(|value| value.eq_ignore_ascii_case("temperror"))
+        && context.transaction.contains_key("mta_sts_id")
+    {
+        return Err(
+            TemporaryError::PolicyViolation("MTA-STS policy fetch failed".to_string()).into(),
+        );
+    }
 
     let binding = if let Some(name) = delivery_info.binding.as_deref() {
         Some(processor.outbound_bindings.get(name).ok_or_else(|| {
@@ -620,6 +747,7 @@ async fn deliver_message(
     )
     .with_helo_domain(helo_domain)
     .with_connect_config(connect_config)
+    .with_tls_failure_is_temporary(tls_failure_is_temporary)
     .with_spool_body(spool, message_id);
 
     Box::pin(transaction.execute()).await

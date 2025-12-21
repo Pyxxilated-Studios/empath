@@ -28,6 +28,7 @@ empath-spool.workspace = true
 empath-tracing.workspace = true
 ipnetwork.workspace = true
 libc.workspace = true
+mail-auth.workspace = true
 parking_lot.workspace = true
 phf.workspace = true
 rustls-native-certs.workspace = true
