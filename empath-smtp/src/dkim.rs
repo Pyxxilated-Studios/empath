@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use mail_auth::{AuthenticatedMessage, DkimOutput, DkimResult, Resolver};
+use mail_auth::{AuthenticatedMessage, DkimOutput, DkimResult, MessageAuthenticator};
 
 #[derive(Debug, Clone)]
 pub struct DkimEvaluation {
@@ -34,14 +34,14 @@ pub async fn verify(raw_message: &[u8]) -> DkimEvaluation {
         };
     };
 
-    let outputs = resolver.verify_dkim(&message).await;
+    let outputs: Vec<DkimOutput<'_>> = resolver.verify_dkim(&message).await;
     summarize(outputs.as_slice())
 }
 
-fn dkim_resolver() -> Option<Arc<Resolver>> {
-    static RESOLVER: OnceLock<Option<Arc<Resolver>>> = OnceLock::new();
+fn dkim_resolver() -> Option<Arc<MessageAuthenticator>> {
+    static RESOLVER: OnceLock<Option<Arc<MessageAuthenticator>>> = OnceLock::new();
     RESOLVER
-        .get_or_init(|| Resolver::new_system_conf().ok().map(Arc::new))
+        .get_or_init(|| MessageAuthenticator::new_system_conf().ok().map(Arc::new))
         .clone()
 }
 

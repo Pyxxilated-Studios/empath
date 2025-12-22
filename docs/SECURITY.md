@@ -124,7 +124,7 @@ Empath MTA exposes the following attack surfaces:
 - **SMTP command parsing:** Zero-allocation parsing with strict RFC 5321 compliance
 - **ESMTP parameter validation:** Duplicate detection, type checking, SIZE=0 rejection
 - **State machine enforcement:** Type-safe state transitions prevent invalid command sequences
-- **Email address validation:** RFC 5321 compliant parsing via mailparse library
+- **Email address validation:** RFC 5321 compliant parsing
 
 **Residual Risk:** LOW for SMTP protocol. Header injection still possible if modules don't validate content.
 
@@ -369,7 +369,7 @@ health: (
 **Security Features:**
 - ✅ Case-insensitive command matching
 - ✅ Zero-allocation prefix matching (performance)
-- ✅ RFC 5321 compliant email address parsing (via mailparse library)
+- ✅ RFC 5321 compliant email address parsing
 - ✅ ESMTP parameter parsing with validation
 - ✅ State machine enforcement (type-safe transitions)
 

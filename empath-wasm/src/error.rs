@@ -29,12 +29,8 @@ pub enum WasmError {
     InvalidReturn(String, String),
 
     /// Serialization/deserialization error
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::error::EncodeError),
-
-    /// Deserialization error
-    #[error("Deserialization error: {0}")]
-    Deserialization(#[from] bincode::error::DecodeError),
+    #[error("Protocol error: {0}")]
+    Protocol(#[from] postcard::Error),
 
     /// I/O error
     #[error("I/O error: {0}")]

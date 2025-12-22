@@ -165,7 +165,7 @@ impl ControlClient {
         }
 
         // Serialize request
-        let request_bytes = bincode::serde::encode_to_vec(&request, bincode::config::standard())?;
+        let request_bytes = postcard::to_allocvec(request)?;
         let request_len = u32::try_from(request_bytes.len())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
@@ -183,11 +183,9 @@ impl ControlClient {
 
         // Validate response size to prevent DoS attacks
         if response_len > MAX_RESPONSE_SIZE {
-            return Err(ControlError::ProtocolDeserialization(
-                bincode::error::DecodeError::OtherString(format!(
-                    "Response too large: {response_len} bytes (max {MAX_RESPONSE_SIZE})"
-                )),
-            ));
+            return Err(ControlError::ProtocolDeserialization(format!(
+                "Response too large: {response_len} bytes (max {MAX_RESPONSE_SIZE})"
+            )));
         }
 
         trace!("Receiving response: {response_len} bytes");
@@ -197,20 +195,15 @@ impl ControlClient {
         stream.read_exact(&mut response_bytes).await?;
 
         // Deserialize response
-        let (response, _): (Response, _) = bincode::serde::decode_from_slice(
-            response_bytes.as_slice(),
-            bincode::config::standard(),
-        )?;
+        let response: Response = postcard::from_bytes::<Response>(response_bytes.as_slice())?;
 
         // Validate protocol version
         if !response.is_version_compatible() {
-            return Err(ControlError::ProtocolDeserialization(
-                bincode::error::DecodeError::OtherString(format!(
-                    "Incompatible protocol version: server={}, client={}",
-                    response.version,
-                    crate::PROTOCOL_VERSION
-                )),
-            ));
+            return Err(ControlError::ProtocolDeserialization(format!(
+                "Incompatible protocol version: server={}, client={}",
+                response.version,
+                crate::PROTOCOL_VERSION
+            )));
         }
 
         // Check for server error

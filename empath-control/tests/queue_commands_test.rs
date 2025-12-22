@@ -24,11 +24,9 @@ async fn test_queue_list_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
-        .expect("Failed to serialize request");
-    let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
-            .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
+        .expect("Failed to deserialize request");
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::List {
@@ -55,11 +53,9 @@ async fn test_queue_list_with_status_filter() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
-        .expect("Failed to serialize request");
-    let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
-            .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
+        .expect("Failed to deserialize request");
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::List {
@@ -115,11 +111,9 @@ async fn test_queue_message_response_serialization() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(response, bincode::config::standard())
-        .expect("Failed to serialize response");
-    let (deserialized, _): (Response, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
-            .expect("Failed to deserialize response");
+    let serialized = postcard::to_allocvec(&response).expect("Failed to serialize response");
+    let deserialized = postcard::from_bytes::<Response>(serialized.as_slice())
+        .expect("Failed to deserialize response");
 
     match deserialized.payload {
         ResponsePayload::Data(data) => match *data {
@@ -158,11 +152,9 @@ async fn test_queue_stats_command() {
     let request = Request::new(RequestCommand::Queue(QueueCommand::Stats));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
-        .expect("Failed to serialize request");
-    let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
-            .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
+        .expect("Failed to deserialize request");
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::Stats) => {
@@ -183,11 +175,9 @@ async fn test_queue_view_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
-        .expect("Failed to serialize request");
-    let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
-            .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
+        .expect("Failed to deserialize request");
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::View {
@@ -212,11 +202,9 @@ async fn test_queue_delete_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
-        .expect("Failed to serialize request");
-    let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
-            .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
+        .expect("Failed to deserialize request");
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::Delete { message_id }) => {
@@ -236,11 +224,9 @@ async fn test_queue_retry_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = bincode::serde::encode_to_vec(request, bincode::config::standard())
-        .expect("Failed to serialize request");
-    let (deserialized, _): (Request, _) =
-        bincode::serde::decode_from_slice(serialized.as_slice(), bincode::config::standard())
-            .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
+        .expect("Failed to deserialize request");
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::Retry { message_id, force }) => {

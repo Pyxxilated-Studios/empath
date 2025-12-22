@@ -42,5 +42,4 @@ tracing.workspace = true
 ulid.workspace = true
 
 [dev-dependencies]
-mailparse = "0.16"
 ron.workspace = true

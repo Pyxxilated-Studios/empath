@@ -19,7 +19,7 @@ crate-type = ["rlib"]
 [dependencies]
 empath-common.workspace = true
 anyhow.workspace = true
-bincode.workspace = true
+postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

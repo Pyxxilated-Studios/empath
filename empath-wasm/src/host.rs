@@ -13,7 +13,6 @@ use std::{
     time::Duration,
 };
 
-use bincode::{Decode, Encode};
 use empath_common::{
     context::Context,
     internal,
@@ -33,7 +32,7 @@ use crate::error::{Result, WasmError};
 /// This is a simplified view of Context that only includes fields
 /// needed by WASM modules. The session field is intentionally excluded
 /// as it's ephemeral and not persisted.
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableContext {
     pub extended: bool,
     pub id: String,
@@ -145,9 +144,8 @@ impl WasmStore {
                 })?;
                 SerializableContext::from(&*ctx_lock)
             };
-            // Use bincode for serialization (for backward compat with core modules)
-            bincode::encode_to_vec(serializable, bincode::config::standard())
-                .map_err(WasmError::Serialization)?
+
+            postcard::to_allocvec(&serializable).map_err(WasmError::Protocol)?
         };
 
         Ok(Self {

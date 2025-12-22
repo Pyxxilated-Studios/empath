@@ -47,13 +47,9 @@ pub enum SpoolError {
 /// Serialization and deserialization errors.
 #[derive(Debug, Error)]
 pub enum SerializationError {
-    /// Bincode serialization failed.
-    #[error("Bincode encode error: {0}")]
-    Encode(#[from] bincode::error::EncodeError),
-
-    /// Bincode deserialization failed.
-    #[error("Bincode decode error: {0}")]
-    Decode(#[from] bincode::error::DecodeError),
+    /// Protocol (de)serialization failed.
+    #[error("Serialization error: {0}")]
+    Protocol(#[from] postcard::Error),
 
     /// Invalid message format (corrupted data).
     #[error("Invalid message format: {0}")]

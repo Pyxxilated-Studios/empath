@@ -423,7 +423,7 @@ Implemented comprehensive WebAssembly module support via Wasmtime 39.0, enabling
 
 **Accomplishments**:
 - ✅ Created `empath-wasm` crate with Wasmtime 39.0 integration
-- ✅ Context serialization via bincode for WASM interop
+- ✅ Context serialization via postcard for WASM interop
 - ✅ Host import functions for Context access, memory management, logging
 - ✅ ResourceLimiter implementation for memory caps (10 MB default)
 - ✅ Epoch-based timeout enforcement (5 seconds default)
@@ -452,7 +452,7 @@ Implemented comprehensive WebAssembly module support via Wasmtime 39.0, enabling
 
 **Architecture**:
 - **Runtime**: Wasmtime 39.0 (faster and more secure than Wasmer)
-- **Communication**: Linear memory + bincode serialization (~35ns)
+- **Communication**: Linear memory + postcard serialization (~35ns)
 - **Sandboxing**: Full WASM isolation + ResourceLimiter + epoch timeouts
 - **Performance**: ~1-2ms overhead (vs ~5-10ms Python, ~50ns C)
 - **Languages**: Rust, C, Go, AssemblyScript, Zig, TinyGo, C++
@@ -566,7 +566,7 @@ Implemented comprehensive WebAssembly (WASM) module support via Wasmtime 39.0 em
 
 **Accomplishments**:
 - ✅ Created `empath-wasm` crate with Wasmtime 39.0 integration
-- ✅ Implemented Context serialization via bincode for WASM interop
+- ✅ Implemented Context serialization via postcard for WASM interop
 - ✅ Host import functions for Context access, memory management, and logging
 - ✅ ResourceLimiter implementation for memory caps (10 MB default)
 - ✅ Epoch-based timeout enforcement (5 seconds default)
@@ -580,7 +580,7 @@ Implemented comprehensive WebAssembly (WASM) module support via Wasmtime 39.0 em
 **Files Created** (7 new files, 900+ lines):
 - `empath-wasm/Cargo.toml` - Crate configuration with Wasmtime dependencies
 - `empath-wasm/src/lib.rs` - Public API (60 lines)
-- `empath-wasm/src/error.rs` - Error types with bincode support (51 lines)
+- `empath-wasm/src/error.rs` - Error types with postcard support (51 lines)
 - `empath-wasm/src/loader.rs` - Module loader with resource limits (215 lines)
 - `empath-wasm/src/host.rs` - Host import functions and Context serialization (250 lines)
 - `empath-wasm/examples/simple_validator.rs` - Example WASM module (100 lines)
@@ -595,7 +595,7 @@ Implemented comprehensive WebAssembly (WASM) module support via Wasmtime 39.0 em
 
 **WASM Architecture**:
 - **Runtime**: Wasmtime 39.0 (faster and more secure than Wasmer)
-- **Communication**: Linear memory + bincode serialization (fastest method)
+- **Communication**: Linear memory + postcard serialization (fastest method)
 - **Sandboxing**: Full WASM isolation + ResourceLimiter + epoch-based timeouts
 - **Performance**: ~1-2ms overhead (vs ~5-10ms Python, ~50ns C)
 - **Languages**: Rust, C, Go, AssemblyScript, Zig, TinyGo, C++
@@ -651,7 +651,7 @@ pub extern "C" fn validate_connect() -> i32 {
 
 **Performance Profile**:
 - Callback overhead: ~1-2ms (5-10x faster than Python)
-- Context serialization: ~35ns (bincode)
+- Context serialization: ~35ns (postcard)
 - Module loading: ~10-50ms (one-time at startup)
 - Memory per module: <20 MB
 - Zero host memory access (full sandboxing)

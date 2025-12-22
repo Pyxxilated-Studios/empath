@@ -92,7 +92,7 @@ Guest modules can call these host helpers (all exposed under `host::*` via `empa
 
 ## Context Serialization
 
-The `Context` is serialized using bincode and passed to WASM modules. Fields include:
+The `Context` is serialized using postcard and passed to WASM modules. Fields include:
 
 - `id`: Session ID
 - `sender`: Envelope sender (MAIL FROM)

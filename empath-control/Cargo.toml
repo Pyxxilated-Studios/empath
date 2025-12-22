@@ -13,11 +13,11 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
-bincode.workspace = true
 chrono.workspace = true
 empath-common.workspace = true
 hex.workspace = true
 libc.workspace = true
+postcard.workspace = true
 serde.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
@@ -25,4 +25,4 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

@@ -5,7 +5,7 @@
 //! - Query queue statistics
 //! - Check system health
 //!
-//! The protocol uses bincode for efficient serialization.
+//! The protocol uses postcard for efficient serialization.
 
 pub mod auth;
 pub mod client;

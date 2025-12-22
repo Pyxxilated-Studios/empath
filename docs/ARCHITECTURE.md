@@ -533,7 +533,7 @@ graph TB
         end
     end
 
-    CLI -->|bincode protocol| Socket
+    CLI -->|postcard protocol| Socket
     Socket --> Handler
 
     Handler -->|System Commands| System[System Status, Ping]
@@ -546,7 +546,7 @@ graph TB
     System -->|status<br/>ping| Handler
 
     Handler -->|Response| Socket
-    Socket -->|bincode| CLI
+    Socket -->|postcard| CLI
 ```
 
 **Available Commands:**

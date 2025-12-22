@@ -35,7 +35,7 @@ struct Cli {
     #[arg(short, long, default_value = "/tmp/spool/empath")]
     spool_path: PathBuf,
 
-    /// Path to the queue state file (bincode format)
+    /// Path to the queue state file (postcard format)
     #[arg(short, long)]
     queue_state: Option<PathBuf>,
 

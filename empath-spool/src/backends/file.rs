@@ -30,7 +30,7 @@ const MANIFEST_FILENAME: &str = ".spool_manifest";
 /// This implementation stores messages as files in a directory using ULID
 /// (Universally Unique Lexicographically Sortable Identifier) for filenames:
 /// - Data files: `{tracking_id}.eml` - Contains the raw message data
-/// - Metadata files: `{tracking_id}.bin` - Contains message metadata as bincode
+/// - Metadata files: `{tracking_id}.bin` - Contains message metadata as postcard
 ///
 /// The tracking ID is a 26-character ULID that encodes both timestamp and
 /// randomness, ensuring global uniqueness and lexicographic sortability.
@@ -321,10 +321,9 @@ impl BackingStore for FileBackingStore {
             fs::write(&temp_data_path, b"").await?;
         }
 
-        // Serialize metadata to bincode (omit body to keep metadata lightweight)
-        let metadata =
-            bincode::serde::encode_to_vec(context.to_metadata(), bincode::config::legacy())
-                .map_err(crate::error::SerializationError::from)?;
+        // Serialize metadata to postcard (omit body to keep metadata lightweight)
+        let metadata = postcard::to_allocvec(&context.to_metadata())
+            .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically rename both files
@@ -403,19 +402,15 @@ impl BackingStore for FileBackingStore {
 
         // Read and deserialize metadata
         let meta_content = fs::read(&meta_path).await?;
-        let mut context = if let Ok((metadata, _)) =
-            bincode::serde::decode_from_slice::<ContextMetadata, _>(
-                &meta_content,
-                bincode::config::legacy(),
-            ) {
-            Context::from_metadata(metadata)
-        } else {
-            let (mut legacy, _): (Context, _) =
-                bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
+        let mut context =
+            if let Ok(metadata) = postcard::from_bytes::<ContextMetadata>(&meta_content) {
+                Context::from_metadata(metadata)
+            } else {
+                let mut legacy = postcard::from_bytes::<Context>(&meta_content)
                     .map_err(crate::error::SerializationError::from)?;
-            legacy.data = None;
-            legacy
-        };
+                legacy.data = None;
+                legacy
+            };
 
         // Ensure body is not retained from metadata (older files may contain it)
         context.data = None;
@@ -433,11 +428,11 @@ impl BackingStore for FileBackingStore {
     /// Read a specific message from the spool
     ///
     /// Reads both the metadata (.bin) and data (.eml) files for a message.
-    /// The metadata is deserialized from bincode, and the data is read as raw bytes.
+    /// The metadata is deserialized from postcard, and the data is read as raw bytes.
     ///
     /// # Errors
     /// - If either file cannot be read (doesn't exist, permission denied, etc.)
-    /// - If the metadata bincode is malformed
+    /// - If the metadata postcard payload is malformed
     ///
     /// # Performance Note
     /// This involves two file reads. For large message bodies, consider whether
@@ -488,21 +483,25 @@ impl BackingStore for FileBackingStore {
         let meta_path = self.path.join(&meta_filename);
 
         let meta_content = fs::read(&meta_path).await?;
-        let (mut context, _): (Context, _) =
-            bincode::serde::decode_from_slice(&meta_content, bincode::config::legacy())
-                .map_err(crate::error::SerializationError::from)?;
-        context.data = None;
+        let (delivery, data_len) =
+            if let Ok(metadata) = postcard::from_bytes::<ContextMetadata>(&meta_content) {
+                (metadata.delivery, metadata.data_len)
+            } else {
+                let mut legacy = postcard::from_bytes::<Context>(&meta_content)
+                    .map_err(crate::error::SerializationError::from)?;
+                legacy.data = None;
+                (legacy.delivery, legacy.data_len)
+            };
 
         let meta = MessageMetadata {
-            status: context.delivery.as_ref().map(|d| format!("{:?}", d.status)),
-            domain: context.delivery.as_ref().map(|d| d.domain.to_string()),
-            attempts: context
-                .delivery
+            status: delivery.as_ref().map(|d| format!("{:?}", d.status)),
+            domain: delivery.as_ref().map(|d| d.domain.to_string()),
+            attempts: delivery
                 .as_ref()
                 .map(|d| u32::try_from(d.attempt_history.len()).unwrap_or_default()),
         };
 
-        let size = if let Some(len) = context.data_len {
+        let size = if let Some(len) = data_len {
             Some(len)
         } else {
             let data_filename = format!("{tracking_str}.eml");
@@ -544,10 +543,9 @@ impl BackingStore for FileBackingStore {
         // Write to temporary file first, then atomically rename
         let temp_meta_path = self.path.join(format!(".tmp_{meta_filename}"));
 
-        // Serialize metadata to bincode (omit body to keep metadata compact)
-        let metadata =
-            bincode::serde::encode_to_vec(context.to_metadata(), bincode::config::legacy())
-                .map_err(crate::error::SerializationError::from)?;
+        // Serialize metadata to postcard (omit body to keep metadata compact)
+        let metadata = postcard::to_allocvec(&context.to_metadata())
+            .map_err(crate::error::SerializationError::from)?;
         fs::write(&temp_meta_path, &metadata).await?;
 
         // Atomically replace the existing metadata file
