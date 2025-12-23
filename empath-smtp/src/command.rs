@@ -277,7 +277,10 @@ pub enum Command {
     MailFrom(Option<Address>, MailParameters),
     RcptTo(AddressList),
     Rset,
-    Auth,
+    Auth {
+        mechanism: String,
+        initial_response: Option<String>,
+    },
     Data,
     Quit,
     Noop(Option<String>),
@@ -484,8 +487,25 @@ impl Command {
             Ok(Self::StartTLS)
         } else if trimmed.eq_ignore_ascii_case("HELP") {
             Ok(Self::Help)
-        } else if trimmed.eq_ignore_ascii_case("AUTH") {
-            Ok(Self::Auth)
+        } else if prefix.eq_ignore_ascii_case("AUTH") {
+            let mut parts = trimmed.split_whitespace();
+            let _ = parts.next();
+            let Some(mechanism) = parts.next() else {
+                return Some(Err(Self::Invalid(String::from(
+                    "Expected mechanism in AUTH command",
+                ))));
+            };
+            let initial_response = parts.next().map(str::to_string);
+            if parts.next().is_some() {
+                return Some(Err(Self::Invalid(String::from(
+                    "Too many arguments in AUTH command",
+                ))));
+            }
+
+            Ok(Self::Auth {
+                mechanism: mechanism.to_ascii_uppercase(),
+                initial_response,
+            })
         } else if trimmed.eq_ignore_ascii_case("RSET") {
             Ok(Self::Rset)
         } else {
@@ -538,7 +558,16 @@ impl Display for Command {
             Self::Invalid(s) => fmt.write_str(s),
             Self::Help => fmt.write_str("HELP"),
             Self::Rset => fmt.write_str("Rset"),
-            Self::Auth => fmt.write_str("AUTH"),
+            Self::Auth {
+                mechanism,
+                initial_response,
+            } => {
+                if let Some(initial_response) = initial_response {
+                    fmt.write_fmt(format_args!("AUTH {mechanism} {initial_response}"))
+                } else {
+                    fmt.write_fmt(format_args!("AUTH {mechanism}"))
+                }
+            }
         }
     }
 }
@@ -822,10 +851,24 @@ mod test {
             assert_eq!(Command::try_from(comm), Ok(Command::Rset));
         }
 
-        assert_eq!(Command::try_from("AUTH"), Ok(Command::Auth));
+        assert!(Command::try_from("AUTH").is_err());
         for comm in string_casing("auth") {
-            assert_eq!(Command::try_from(comm), Ok(Command::Auth));
+            assert!(Command::try_from(comm).is_err());
         }
+        assert_eq!(
+            Command::try_from("AUTH PLAIN"),
+            Ok(Command::Auth {
+                mechanism: "PLAIN".to_string(),
+                initial_response: None,
+            })
+        );
+        assert_eq!(
+            Command::try_from("AUTH PLAIN dGVzdA=="),
+            Ok(Command::Auth {
+                mechanism: "PLAIN".to_string(),
+                initial_response: Some("dGVzdA==".to_string()),
+            })
+        );
 
         assert_eq!(Command::try_from("HELP"), Ok(Command::Help));
         for comm in string_casing("help") {

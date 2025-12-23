@@ -36,16 +36,7 @@ fn validate_connect(validation_context: &mut Context) -> i32 {
     0
 }
 
-fn validate_ehlo(validation_context: &mut Context) -> i32 {
-    validation_context.response = Some((
-        Status::Ok,
-        Cow::Owned(format!(
-            "{} says hello to {}",
-            validation_context.banner,
-            validation_context.id()
-        )),
-    ));
-
+const fn validate_ehlo(_validation_context: &mut Context) -> i32 {
     0
 }
 
@@ -86,6 +77,10 @@ const fn validate_start_tls(_validation_context: &mut Context) -> i32 {
     0
 }
 
+const fn validate_auth(_validation_context: &mut Context) -> i32 {
+    0
+}
+
 /// Dispatch validation event to core module handlers
 #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
 pub(super) fn emit(
@@ -100,6 +95,7 @@ pub(super) fn emit(
         Event::Validate(validate::Event::RcptTo) => validate_rcpt_to(validation_context),
         Event::Validate(validate::Event::Data) => validate_data(validation_context),
         Event::Validate(validate::Event::StartTls) => validate_start_tls(validation_context),
+        Event::Validate(validate::Event::Auth) => validate_auth(validation_context),
         Event::Event(_) => 0, // Core module doesn't handle connection lifecycle events
     }
 }

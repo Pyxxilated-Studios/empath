@@ -41,6 +41,12 @@ pub struct Context {
     pub state: State,
     pub message: Vec<u8>,
     pub sent: bool,
+    pub auth_pending: Option<AuthPending>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthPending {
+    pub mechanism: String,
 }
 
 pub type Response = (Option<Vec<String>>, Event);
@@ -756,6 +762,10 @@ mod test {
             }
 
             async fn validate_rcpt_to(&mut self, _ctx: &mut Context) -> bool {
+                false
+            }
+
+            async fn validate_auth(&mut self, _ctx: &mut Context) -> bool {
                 false
             }
 

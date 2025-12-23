@@ -12,6 +12,7 @@ pub enum Event {
     RcptTo,
     Data,
     StartTls,
+    Auth,
 }
 
 #[derive(Debug)]
@@ -24,6 +25,7 @@ pub struct Validators {
     pub validate_rcpt_to: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_data: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_starttls: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
+    pub validate_auth: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
 }
 
 #[derive(Debug)]
@@ -62,6 +64,9 @@ impl Validation {
             },
             super::Event::Validate(Event::StartTls) => unsafe {
                 self.validators.validate_starttls.map(|func| func(context))
+            },
+            super::Event::Validate(Event::Auth) => unsafe {
+                self.validators.validate_auth.map(|func| func(context))
             },
             _ => None,
         }

@@ -47,6 +47,13 @@ pub struct Help {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StartTls;
 
+/// Authentication in progress or completed
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Auth {
+    pub mechanism: String,
+    pub awaiting_response: bool,
+}
+
 /// After MAIL FROM command (beginning of mail transaction)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailFrom {
@@ -100,6 +107,7 @@ impl sealed::Sealed for Ehlo {}
 impl sealed::Sealed for Helo {}
 impl sealed::Sealed for Help {}
 impl sealed::Sealed for StartTls {}
+impl sealed::Sealed for Auth {}
 impl sealed::Sealed for MailFrom {}
 impl sealed::Sealed for RcptTo {}
 impl sealed::Sealed for Data {}
@@ -115,6 +123,7 @@ impl SmtpState for Ehlo {}
 impl SmtpState for Helo {}
 impl SmtpState for Help {}
 impl SmtpState for StartTls {}
+impl SmtpState for Auth {}
 impl SmtpState for MailFrom {}
 impl SmtpState for RcptTo {}
 impl SmtpState for Data {}
@@ -137,6 +146,7 @@ pub enum State {
     Helo(Helo),
     Help(Help),
     StartTls(StartTls),
+    Auth(Auth),
     MailFrom(MailFrom),
     RcptTo(RcptTo),
     Data(Data),
@@ -164,6 +174,7 @@ impl Display for State {
             Self::Helo(_) => "HELO",
             Self::Help(_) => "HELP",
             Self::StartTls(_) => "STARTTLS",
+            Self::Auth(_) => "AUTH",
             Self::MailFrom(_) => "MAIL",
             Self::RcptTo(_) => "RCPT",
             Self::Data(_) => "DATA",
@@ -210,6 +221,21 @@ impl State {
                 | Command::Turn
                 | Command::Xclient(_),
             ) => state,
+
+            (
+                Self::Ehlo(_)
+                | Self::Helo(_)
+                | Self::StartTls(_)
+                | Self::Help(_)
+                | Self::PostDot(_),
+                Command::Auth {
+                    mechanism,
+                    initial_response,
+                },
+            ) => Self::Auth(Auth {
+                mechanism,
+                awaiting_response: initial_response.as_ref().is_none_or(|value| value == "="),
+            }),
 
             // Connect state transitions
             (Self::Connect(_), Command::Helo(HeloVariant::Ehlo(id))) => {
@@ -300,11 +326,6 @@ impl State {
 
             // QUIT from any state
             (_, Command::Quit) => Self::Quit(Quit),
-
-            // AUTH not yet implemented - return invalid for now
-            (_, Command::Auth) => Self::Invalid(Invalid {
-                reason: "AUTH not implemented".to_string(),
-            }),
 
             // Invalid transitions
             (Self::Invalid(state), _) => Self::Invalid(state),
@@ -531,16 +552,22 @@ mod test {
     }
 
     #[test]
-    fn auth_returns_invalid() {
+    fn auth_transitions_to_auth_state() {
         let mut ctx = Context::default();
         let state = State::Ehlo(Ehlo {
             id: "test".to_string(),
         });
 
-        let state = state.transition(Command::Auth, &mut ctx);
-        assert!(matches!(state, State::Invalid(_)));
-        if let State::Invalid(invalid) = state {
-            assert!(invalid.reason.contains("not implemented"));
+        let state = state.transition(
+            Command::Auth {
+                mechanism: "PLAIN".to_string(),
+                initial_response: None,
+            },
+            &mut ctx,
+        );
+        assert!(matches!(state, State::Auth(_)));
+        if let State::Auth(auth) = state {
+            assert!(auth.awaiting_response);
         }
     }
 

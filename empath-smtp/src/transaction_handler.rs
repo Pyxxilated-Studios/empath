@@ -102,6 +102,19 @@ pub trait SmtpTransactionHandler: Send + Sync {
     /// `true` if the RCPT TO should be accepted, `false` to reject
     async fn validate_rcpt_to(&mut self, ctx: &mut Context) -> bool;
 
+    /// Validate an AUTH command
+    ///
+    /// Called after the client submits authentication credentials.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - Business context for validation and response
+    ///
+    /// # Returns
+    ///
+    /// `true` if the AUTH should be accepted, `false` to reject
+    async fn validate_auth(&mut self, ctx: &mut Context) -> bool;
+
     /// Validate and process a complete message (after DATA)
     ///
     /// Called after the client sends the complete message (after ".").
@@ -402,6 +415,33 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         )
     }
 
+    async fn validate_auth(&mut self, ctx: &mut Context) -> bool {
+        let accepted = matches!(
+            modules::dispatch(
+                modules::Event::Validate(modules::validate::Event::Auth),
+                ctx,
+            ),
+            modules::DispatchResult::Accept
+        );
+
+        if accepted {
+            ctx.session
+                .insert(Cow::Borrowed("auth"), "true".to_string());
+            if ctx.response.is_none() {
+                ctx.response = Some((
+                    Status::Unknown(235),
+                    Cow::Borrowed("Authentication successful"),
+                ));
+            }
+        } else {
+            ctx.session.remove("auth");
+        }
+
+        ctx.session.remove("auth_password");
+
+        accepted
+    }
+
     async fn handle_message(&mut self, ctx: &mut Context) -> bool {
         self.evaluate_dkim(ctx).await;
         self.evaluate_dmarc(ctx).await;
@@ -595,6 +635,7 @@ pub const fn requires_validation(state: &State) -> bool {
         State::Connect(_)
             | State::Ehlo(_)
             | State::Helo(_)
+            | State::Auth(_)
             | State::MailFrom(_)
             | State::RcptTo(_)
             | State::PostDot(_)
@@ -653,6 +694,10 @@ mod tests {
         assert!(requires_validation(&State::MailFrom(MailFrom {
             sender: None,
             params: MailParameters::default()
+        })));
+        assert!(requires_validation(&State::Auth(Auth {
+            mechanism: "PLAIN".to_string(),
+            awaiting_response: false,
         })));
 
         // States that don't require validation

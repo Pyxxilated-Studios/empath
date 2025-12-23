@@ -4,8 +4,9 @@ use empath_common::{context, incoming, status::Status, traits::fsm::FiniteStateM
 
 use crate::{
     State,
+    auth::decode_plain_auth,
     command::{Command, XclientParameters},
-    session::{Context, Session},
+    session::{AuthPending, Context, Session},
     session_state::SessionState,
     state,
 };
@@ -51,6 +52,7 @@ impl Session {
                 // Fresh empty buffer for subsequent commands; the body was moved into data.
                 message: Vec::new(),
                 sent: false,
+                auth_pending: None,
             };
 
             validate_context.data = Some(message.into());
@@ -65,10 +67,21 @@ impl Session {
         received: &[u8],
         validate_context: &mut context::Context,
     ) {
+        if let Some(pending) = self.context.auth_pending.take() {
+            self.handle_auth_response(received, &pending, validate_context);
+            return;
+        }
+
         let command = Command::try_from(received).unwrap_or_else(|e| e);
         let message = command.inner().as_bytes().to_vec();
 
         incoming!("{command}");
+
+        if self.handle_auth_command(&command, validate_context) {
+            self.context.message = message;
+            self.context.sent = false;
+            return;
+        }
 
         Self::apply_command_response(&command, validate_context);
 
@@ -91,6 +104,7 @@ impl Session {
             state: new_state,
             message,
             sent: false,
+            auth_pending: self.context.auth_pending.take(),
         };
 
         // Sync protocol state back to business context
@@ -158,6 +172,171 @@ impl Session {
         }
         if let Some(port) = params.get("PORT") {
             apply_value(validate_context, "client_port", port);
+        }
+    }
+
+    fn handle_auth_command(
+        &mut self,
+        command: &Command,
+        validate_context: &mut context::Context,
+    ) -> bool {
+        let Command::Auth {
+            mechanism,
+            initial_response,
+        } = command
+        else {
+            return false;
+        };
+
+        self.context.sent = false;
+
+        if self.context.state.in_transaction() {
+            validate_context.response = Some((
+                Status::InvalidCommandSequence,
+                Cow::Borrowed("Bad sequence of commands"),
+            ));
+            return true;
+        }
+
+        if !validate_context.extended {
+            validate_context.response = Some((
+                Status::InvalidCommandSequence,
+                Cow::Borrowed("EHLO required before AUTH"),
+            ));
+            return true;
+        }
+
+        if !validate_context
+            .capabilities
+            .iter()
+            .any(|cap| cap.as_str() == "AUTH")
+        {
+            validate_context.response =
+                Some((Status::Unknown(502), Cow::Borrowed("AUTH not available")));
+            return true;
+        }
+
+        if validate_context.session.get("tls").is_none() {
+            validate_context.response = Some((
+                Status::Unknown(530),
+                Cow::Borrowed("Must issue STARTTLS first"),
+            ));
+            return true;
+        }
+
+        if !mechanism.eq_ignore_ascii_case("PLAIN") {
+            validate_context.response = Some((
+                Status::Unknown(504),
+                Cow::Borrowed("Unrecognized authentication type"),
+            ));
+            return true;
+        }
+
+        if initial_response.as_ref().is_some_and(|value| value == "=") {
+            self.context.auth_pending = Some(AuthPending {
+                mechanism: mechanism.clone(),
+            });
+            self.context.state = State::Auth(state::Auth {
+                mechanism: mechanism.clone(),
+                awaiting_response: true,
+            });
+            validate_context.response = Some((Status::Unknown(334), Cow::Borrowed("")));
+            return true;
+        }
+
+        if let Some(initial_response) = initial_response {
+            if let Err(err) = Self::apply_plain_auth(initial_response, validate_context) {
+                validate_context.response =
+                    Some((Status::Unknown(535), Cow::Owned(err.to_string())));
+                return true;
+            }
+
+            self.context.state = State::Auth(state::Auth {
+                mechanism: mechanism.clone(),
+                awaiting_response: false,
+            });
+            return true;
+        }
+
+        self.context.auth_pending = Some(AuthPending {
+            mechanism: mechanism.clone(),
+        });
+        self.context.state = State::Auth(state::Auth {
+            mechanism: mechanism.clone(),
+            awaiting_response: true,
+        });
+        validate_context.response = Some((Status::Unknown(334), Cow::Borrowed("")));
+        true
+    }
+
+    fn handle_auth_response(
+        &mut self,
+        received: &[u8],
+        pending: &AuthPending,
+        validate_context: &mut context::Context,
+    ) {
+        let response = std::str::from_utf8(received)
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches('\r')
+            .trim_end_matches('\n')
+            .to_string();
+
+        if response == "*" {
+            validate_context.response = Some((
+                Status::Unknown(501),
+                Cow::Borrowed("Authentication canceled"),
+            ));
+            self.context.state = Self::ready_state(validate_context);
+            self.context.sent = false;
+            return;
+        }
+
+        if let Err(err) = Self::apply_plain_auth(&response, validate_context) {
+            validate_context.response = Some((Status::Unknown(535), Cow::Owned(err.to_string())));
+            self.context.state = Self::ready_state(validate_context);
+            self.context.sent = false;
+            return;
+        }
+
+        self.context.state = State::Auth(state::Auth {
+            mechanism: pending.mechanism.clone(),
+            awaiting_response: false,
+        });
+        self.context.sent = false;
+    }
+
+    fn apply_plain_auth(
+        response: &str,
+        validate_context: &mut context::Context,
+    ) -> Result<(), crate::auth::AuthError> {
+        let creds = decode_plain_auth(response)?;
+        validate_context
+            .session
+            .insert(Cow::Borrowed("auth_mechanism"), "PLAIN".to_string());
+        if let Some(authzid) = creds.authzid {
+            validate_context
+                .session
+                .insert(Cow::Borrowed("authzid"), authzid);
+        }
+        validate_context
+            .session
+            .insert(Cow::Borrowed("auth_user"), creds.authcid);
+        validate_context
+            .session
+            .insert(Cow::Borrowed("auth_password"), creds.password);
+        Ok(())
+    }
+
+    fn ready_state(validate_context: &context::Context) -> State {
+        if validate_context.extended {
+            State::Ehlo(state::Ehlo {
+                id: validate_context.id.clone(),
+            })
+        } else {
+            State::Helo(state::Helo {
+                id: validate_context.id.clone(),
+            })
         }
     }
 }

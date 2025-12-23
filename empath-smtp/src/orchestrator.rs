@@ -398,7 +398,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
     /// 3. State transitions happen separately in FSM layer
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     async fn emit(&mut self, validate_context: &mut context::Context) {
-        let valid = match self.session.context.state {
+        let valid = match &self.session.context.state {
             State::Connect(_) => {
                 self.transaction_handler
                     .validate_connect(validate_context)
@@ -407,6 +407,14 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             State::Helo(_) | State::Ehlo(_) => {
                 self.transaction_handler
                     .validate_ehlo(validate_context)
+                    .await
+            }
+            State::Auth(auth) => {
+                if auth.awaiting_response {
+                    return;
+                }
+                self.transaction_handler
+                    .validate_auth(validate_context)
                     .await
             }
             State::MailFrom(_) => {
@@ -435,10 +443,27 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
                 State::Connect(_) | State::Ehlo(_) | State::Helo(_) | State::RcptTo(_) => {
                     self.session.context.state = State::Reject(state::Reject);
                 }
+                State::Auth(_) => {
+                    self.session.context.state = Self::ready_state(validate_context);
+                }
                 _ => {
                     // For other states, let the response speak for itself
                 }
             }
+        } else if matches!(self.session.context.state, State::Auth(_)) {
+            self.session.context.state = Self::ready_state(validate_context);
+        }
+    }
+
+    fn ready_state(validate_context: &context::Context) -> State {
+        if validate_context.extended {
+            State::Ehlo(state::Ehlo {
+                id: validate_context.id.clone(),
+            })
+        } else {
+            State::Helo(state::Helo {
+                id: validate_context.id.clone(),
+            })
         }
     }
 }

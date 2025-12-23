@@ -63,6 +63,7 @@ impl Event {
             Self::Validate(validate::Event::RcptTo) => "validate_rcpt_to",
             Self::Validate(validate::Event::Data) => "validate_data",
             Self::Validate(validate::Event::StartTls) => "validate_starttls",
+            Self::Validate(validate::Event::Auth) => "validate_auth",
             Self::Event(Ev::ConnectionOpened) => "on_connection_opened",
             Self::Event(Ev::ConnectionClosed) => "on_connection_closed",
             Self::Event(Ev::DeliveryAttempt) => "on_delivery_attempt",
