@@ -200,6 +200,17 @@ impl State {
     /// The new state after transition
     pub fn transition_protocol(self, command: Command, session_state: &mut SessionState) -> Self {
         match (self, command) {
+            // Stateless commands that do not affect the FSM state
+            (
+                state,
+                Command::Noop(_)
+                | Command::Vrfy(_)
+                | Command::Expn(_)
+                | Command::Etrn(_)
+                | Command::Turn
+                | Command::Xclient(_),
+            ) => state,
+
             // Connect state transitions
             (Self::Connect(_), Command::Helo(HeloVariant::Ehlo(id))) => {
                 session_state.id.clone_from(&id);

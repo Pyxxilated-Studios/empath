@@ -4,7 +4,11 @@
 //! logic (validation, spooling, module dispatch) from protocol state management
 //! (FSM) and I/O orchestration.
 
-use std::{borrow::Cow, net::SocketAddr, sync::Arc};
+use std::{
+    borrow::Cow,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -166,6 +170,22 @@ impl DefaultSmtpTransactionHandler {
         }
     }
 
+    fn client_ip(&self, ctx: &Context) -> IpAddr {
+        ctx.session
+            .get("client_ip")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| self.peer.ip())
+    }
+
+    fn client_socket(&self, ctx: &Context) -> SocketAddr {
+        let port = ctx
+            .session
+            .get("client_port")
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or_else(|| self.peer.port());
+        SocketAddr::new(self.client_ip(ctx), port)
+    }
+
     /// Spool a message after validation passes.
     ///
     /// This is an internal helper that handles:
@@ -216,7 +236,7 @@ impl DefaultSmtpTransactionHandler {
             let sender = ctx.sender_email();
             let recipients = ctx.recipient_emails();
             let size = ctx.data.as_ref().map_or(0, |d| d.len());
-            let from_ip = self.peer.to_string();
+            let from_ip = self.client_socket(ctx).to_string();
 
             empath_common::audit::log_message_received(
                 &id.to_string(),
@@ -245,7 +265,7 @@ impl DefaultSmtpTransactionHandler {
     }
 
     fn build_received_header(&self, ctx: &Context, timestamp: DateTime<Utc>) -> String {
-        let client_ip = self.peer.ip();
+        let client_ip = self.client_ip(ctx);
         let ip_repr = format!("[{client_ip}]");
         let helo = ctx.id().trim();
         let from_value = if helo.is_empty() {
@@ -326,7 +346,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
             && let Some(sender) = ctx.sender_email().cloned()
         {
             // Extract IP address from peer socket address
-            let client_ip = self.peer.ip();
+            let client_ip = self.client_ip(ctx);
 
             // HELO/EHLO hostname is stored in ctx.id
             // Clone to avoid borrow checker issues when mutating ctx later

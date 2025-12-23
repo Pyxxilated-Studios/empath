@@ -4,7 +4,7 @@ use empath_common::{context, incoming, status::Status, traits::fsm::FiniteStateM
 
 use crate::{
     State,
-    command::Command,
+    command::{Command, XclientParameters},
     session::{Context, Session},
     session_state::SessionState,
     state,
@@ -70,6 +70,8 @@ impl Session {
 
         incoming!("{command}");
 
+        Self::apply_command_response(&command, validate_context);
+
         // Handle RSET transaction clearing before transition (business logic side effect)
         // RSET clears transaction context but preserves session context
         let is_rset = matches!(command, Command::Rset);
@@ -95,5 +97,67 @@ impl Session {
         session_state.sync_to_context(validate_context);
 
         tracing::debug!("Transitioned to {:#?}", self.context);
+    }
+
+    fn apply_command_response(command: &Command, validate_context: &mut context::Context) {
+        match command {
+            Command::Noop(_) => {
+                validate_context.response = Some((Status::Ok, Cow::Borrowed("Ok")));
+            }
+            Command::Vrfy(_) => {
+                validate_context.response =
+                    Some((Status::Unknown(252), Cow::Borrowed("Cannot VRFY user")));
+            }
+            Command::Expn(_) => {
+                validate_context.response =
+                    Some((Status::Unknown(252), Cow::Borrowed("Cannot expand list")));
+            }
+            Command::Etrn(_) | Command::Turn => {
+                validate_context.response = Some((
+                    Status::Unknown(502),
+                    Cow::Borrowed("Command not implemented"),
+                ));
+            }
+            Command::Xclient(params) => {
+                Self::apply_xclient(params, validate_context);
+                validate_context.response = Some((Status::Ok, Cow::Borrowed("Ok")));
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_xclient(params: &XclientParameters, validate_context: &mut context::Context) {
+        fn apply_value(ctx: &mut context::Context, key: &'static str, value: &str) {
+            if value.eq_ignore_ascii_case("UNKNOWN") {
+                ctx.session.remove(key);
+            } else {
+                ctx.session.insert(Cow::Borrowed(key), value.to_string());
+            }
+        }
+
+        if let Some(addr) = params.get("ADDR") {
+            apply_value(validate_context, "client_ip", addr);
+        }
+        if let Some(name) = params.get("NAME") {
+            apply_value(validate_context, "client_name", name);
+        }
+        if let Some(helo) = params.get("HELO") {
+            apply_value(validate_context, "client_helo", helo);
+        }
+        if let Some(proto) = params.get("PROTO") {
+            apply_value(validate_context, "client_proto", proto);
+        }
+        if let Some(login) = params.get("LOGIN") {
+            apply_value(validate_context, "client_login", login);
+        }
+        if let Some(dest_addr) = params.get("DESTADDR") {
+            apply_value(validate_context, "dest_addr", dest_addr);
+        }
+        if let Some(dest_port) = params.get("DESTPORT") {
+            apply_value(validate_context, "dest_port", dest_port);
+        }
+        if let Some(port) = params.get("PORT") {
+            apply_value(validate_context, "client_port", port);
+        }
     }
 }

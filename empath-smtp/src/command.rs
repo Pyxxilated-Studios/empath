@@ -23,6 +23,14 @@ pub struct MailParameters {
     params: AHashMap<Cow<'static, str>, Option<String>>,
 }
 
+/// XCLIENT parameters for trusted upstream proxies.
+///
+/// Stores key-value parameters from the XCLIENT command.
+#[derive(PartialEq, Eq, Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct XclientParameters {
+    params: AHashMap<String, String>,
+}
+
 /// Perfect hash map of known ESMTP parameters for O(1) lookup
 static KNOWN_PARAMS: phf::Map<&'static str, &'static str> = phf_map! {
     "SIZE" => "SIZE",
@@ -166,6 +174,60 @@ impl MailParameters {
     }
 }
 
+impl XclientParameters {
+    /// Creates an empty parameter set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            params: AHashMap::new(),
+        }
+    }
+
+    /// Parses XCLIENT parameters from a string.
+    ///
+    /// Parameters are `KEY=VALUE` tokens separated by whitespace.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - A parameter is missing `=`
+    /// - A parameter key is empty
+    /// - A parameter appears multiple times
+    pub fn from_params_str(params_str: &str) -> Result<Self, String> {
+        let mut params = Self::new();
+        for token in params_str.split_whitespace() {
+            let (key, value) = token
+                .split_once('=')
+                .ok_or_else(|| format!("Invalid XCLIENT token: {token}"))?;
+            if key.is_empty() {
+                return Err(String::from("XCLIENT parameter key cannot be empty"));
+            }
+            let key_normalized = key.to_ascii_uppercase();
+            if params.params.contains_key(&key_normalized) {
+                return Err(format!(
+                    "Duplicate XCLIENT parameter '{key_normalized}' not allowed"
+                ));
+            }
+            params.params.insert(key_normalized, value.to_string());
+        }
+
+        Ok(params)
+    }
+
+    /// Gets a parameter value by key (case-insensitive).
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.params
+            .get(&key.to_ascii_uppercase())
+            .map(String::as_str)
+    }
+
+    /// Returns an iterator over all parameters.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.params.iter()
+    }
+}
+
 impl From<MailParameters> for AHashMap<Cow<'static, str>, Option<String>> {
     fn from(params: MailParameters) -> Self {
         params.params
@@ -218,6 +280,12 @@ pub enum Command {
     Auth,
     Data,
     Quit,
+    Noop(Option<String>),
+    Vrfy(String),
+    Expn(String),
+    Etrn(String),
+    Turn,
+    Xclient(XclientParameters),
     StartTLS,
     Invalid(String),
 }
@@ -267,6 +335,165 @@ impl Command {
             _ => None,
         }
     }
+
+    fn parse_mail_from(trimmed: &str, command: &str) -> Option<Result<Self, Self>> {
+        if !(trimmed.len() >= 10 && trimmed[..10].eq_ignore_ascii_case("MAIL FROM:")) {
+            return None;
+        }
+
+        if trimmed.len() < 11 {
+            return Some(Err(Self::Invalid(command.to_owned())));
+        }
+
+        // Parse the address and optional ESMTP parameters
+        // Format: MAIL FROM:<addr> [param1=value1] [param2=value2] ...
+        let rest = trimmed[10..].trim();
+
+        // Split on whitespace to separate address from parameters
+        let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
+        let addr = parts[0];
+
+        // Parse ESMTP parameters if present (RFC 5321 Section 3.3)
+        let mail_params = if parts.len() > 1 {
+            match MailParameters::from_params_str(parts[1]) {
+                Ok(params) => params,
+                Err(err) => return Some(Err(Self::Invalid(err))),
+            }
+        } else {
+            MailParameters::new()
+        };
+
+        // Parse MAIL FROM address using RFC 5321-compliant parser
+        // Supports null sender (<>) and standard mailbox syntax
+        // Auto-wrap addresses without angle brackets for compatibility
+        let addr_with_brackets = if addr.starts_with('<') {
+            addr.to_string()
+        } else {
+            format!("<{addr}>")
+        };
+
+        Some(
+            address_parser::parse_reverse_path(&addr_with_brackets).map_or_else(
+                |err| Err(Self::Invalid(format!("Invalid MAIL FROM address: {err}"))),
+                |mailbox_opt| Ok(Self::MailFrom(mailbox_opt.map(Address::from), mail_params)),
+            ),
+        )
+    }
+
+    fn parse_rcpt_to(trimmed: &str, command: &str) -> Option<Result<Self, Self>> {
+        if !(trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("RCPT TO:")) {
+            return None;
+        }
+
+        if trimmed.len() < 9 {
+            return Some(Err(Self::Invalid(command.to_owned())));
+        }
+
+        // Parse RCPT TO address using RFC 5321-compliant parser
+        // Auto-wrap addresses without angle brackets for compatibility
+        let addr = trimmed[8..].trim();
+        let addr_with_brackets = if addr.starts_with('<') {
+            addr.to_string()
+        } else {
+            format!("<{addr}>")
+        };
+
+        Some(
+            address_parser::parse_forward_path(&addr_with_brackets).map_or_else(
+                |err| Err(Self::Invalid(format!("Invalid RCPT TO address: {err}"))),
+                |mailbox| {
+                    // Convert single Mailbox to AddressList
+                    Ok(Self::RcptTo(AddressList::from(vec![Address::from(
+                        mailbox,
+                    )])))
+                },
+            ),
+        )
+    }
+
+    fn parse_xclient(trimmed: &str) -> Option<Result<Self, Self>> {
+        if !(trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("XCLIENT")) {
+            return None;
+        }
+
+        let params = if trimmed.len() == 7 {
+            XclientParameters::new()
+        } else {
+            let rest = trimmed[7..].trim();
+            if rest.is_empty() {
+                XclientParameters::new()
+            } else {
+                match XclientParameters::from_params_str(rest) {
+                    Ok(params) => params,
+                    Err(err) => return Some(Err(Self::Invalid(err))),
+                }
+            }
+        };
+
+        Some(Ok(Self::Xclient(params)))
+    }
+
+    fn parse_simple_command(trimmed: &str, command: &str) -> Option<Result<Self, Self>> {
+        if trimmed.len() < 4 {
+            return None;
+        }
+
+        let prefix = &trimmed[..4];
+        let command = if prefix.eq_ignore_ascii_case("EHLO") || prefix.eq_ignore_ascii_case("HELO")
+        {
+            match trimmed.split_once(' ') {
+                None => Err(Self::Invalid(format!("Expected hostname in {trimmed}"))),
+                Some((cmd, host)) if cmd.eq_ignore_ascii_case("HELO") => {
+                    Ok(Self::Helo(HeloVariant::Helo(host.trim().to_string())))
+                }
+                Some((_, host)) => Ok(Self::Helo(HeloVariant::Ehlo(host.trim().to_string()))),
+            }
+        } else if trimmed.eq_ignore_ascii_case("DATA") {
+            Ok(Self::Data)
+        } else if trimmed.eq_ignore_ascii_case("QUIT") {
+            Ok(Self::Quit)
+        } else if prefix.eq_ignore_ascii_case("NOOP") {
+            if trimmed.len() == 4 {
+                Ok(Self::Noop(None))
+            } else {
+                let arg = trimmed[4..].trim();
+                if arg.is_empty() {
+                    Ok(Self::Noop(None))
+                } else {
+                    Ok(Self::Noop(Some(arg.to_string())))
+                }
+            }
+        } else if prefix.eq_ignore_ascii_case("VRFY") {
+            match trimmed.split_once(' ') {
+                Some((_, arg)) if !arg.trim().is_empty() => Ok(Self::Vrfy(arg.trim().to_string())),
+                _ => Err(Self::Invalid(format!("Expected argument in {trimmed}"))),
+            }
+        } else if prefix.eq_ignore_ascii_case("EXPN") {
+            match trimmed.split_once(' ') {
+                Some((_, arg)) if !arg.trim().is_empty() => Ok(Self::Expn(arg.trim().to_string())),
+                _ => Err(Self::Invalid(format!("Expected argument in {trimmed}"))),
+            }
+        } else if prefix.eq_ignore_ascii_case("ETRN") {
+            match trimmed.split_once(' ') {
+                Some((_, arg)) if !arg.trim().is_empty() => Ok(Self::Etrn(arg.trim().to_string())),
+                _ => Err(Self::Invalid(format!("Expected argument in {trimmed}"))),
+            }
+        } else if trimmed.eq_ignore_ascii_case("TURN") {
+            Ok(Self::Turn)
+        } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("STARTTLS") {
+            Ok(Self::StartTLS)
+        } else if trimmed.eq_ignore_ascii_case("HELP") {
+            Ok(Self::Help)
+        } else if trimmed.eq_ignore_ascii_case("AUTH") {
+            Ok(Self::Auth)
+        } else if trimmed.eq_ignore_ascii_case("RSET") {
+            Ok(Self::Rset)
+        } else {
+            Err(Self::Invalid(command.to_owned()))
+        };
+
+        Some(command)
+    }
 }
 
 impl Display for Command {
@@ -284,6 +511,29 @@ impl Display for Command {
             Self::RcptTo(rcpt) => fmt.write_fmt(format_args!("RCPT TO:{rcpt}")),
             Self::Data => fmt.write_str("DATA"),
             Self::Quit => fmt.write_str("QUIT"),
+            Self::Noop(arg) => {
+                if let Some(arg) = arg {
+                    fmt.write_fmt(format_args!("NOOP {arg}"))
+                } else {
+                    fmt.write_str("NOOP")
+                }
+            }
+            Self::Vrfy(arg) => fmt.write_fmt(format_args!("VRFY {arg}")),
+            Self::Expn(arg) => fmt.write_fmt(format_args!("EXPN {arg}")),
+            Self::Etrn(arg) => fmt.write_fmt(format_args!("ETRN {arg}")),
+            Self::Turn => fmt.write_str("TURN"),
+            Self::Xclient(params) => {
+                if params.params.is_empty() {
+                    fmt.write_str("XCLIENT")
+                } else {
+                    fmt.write_str("XCLIENT")?;
+                    for (k, v) in params.iter() {
+                        fmt.write_str(" ")?;
+                        fmt.write_fmt(format_args!("{k}={v}"))?;
+                    }
+                    Ok(())
+                }
+            }
             Self::StartTLS => fmt.write_str("STARTTLS"),
             Self::Invalid(s) => fmt.write_str(s),
             Self::Help => fmt.write_str("HELP"),
@@ -299,91 +549,20 @@ impl TryFrom<&str> for Command {
     fn try_from(command: &str) -> Result<Self, Self::Error> {
         let trimmed = command.trim();
 
-        // Zero-allocation case-insensitive prefix matching
-        if trimmed.len() >= 10 && trimmed[..10].eq_ignore_ascii_case("MAIL FROM:") {
-            if trimmed.len() < 11 {
-                return Err(Self::Invalid(command.to_owned()));
-            }
-
-            // Parse the address and optional ESMTP parameters
-            // Format: MAIL FROM:<addr> [param1=value1] [param2=value2] ...
-            let rest = trimmed[10..].trim();
-
-            // Split on whitespace to separate address from parameters
-            let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
-            let addr = parts[0];
-
-            // Parse ESMTP parameters if present (RFC 5321 Section 3.3)
-            let mail_params = if parts.len() > 1 {
-                MailParameters::from_params_str(parts[1]).map_err(Self::Invalid)?
-            } else {
-                MailParameters::new()
-            };
-
-            // Parse MAIL FROM address using RFC 5321-compliant parser
-            // Supports null sender (<>) and standard mailbox syntax
-            // Auto-wrap addresses without angle brackets for compatibility
-            let addr_with_brackets = if addr.starts_with('<') {
-                addr.to_string()
-            } else {
-                format!("<{addr}>")
-            };
-
-            address_parser::parse_reverse_path(&addr_with_brackets).map_or_else(
-                |err| Err(Self::Invalid(format!("Invalid MAIL FROM address: {err}"))),
-                |mailbox_opt| Ok(Self::MailFrom(mailbox_opt.map(Address::from), mail_params)),
-            )
-        } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("RCPT TO:") {
-            if trimmed.len() < 9 {
-                return Err(Self::Invalid(command.to_owned()));
-            }
-
-            // Parse RCPT TO address using RFC 5321-compliant parser
-            // Auto-wrap addresses without angle brackets for compatibility
-            let addr = trimmed[8..].trim();
-            let addr_with_brackets = if addr.starts_with('<') {
-                addr.to_string()
-            } else {
-                format!("<{addr}>")
-            };
-
-            address_parser::parse_forward_path(&addr_with_brackets).map_or_else(
-                |err| Err(Self::Invalid(format!("Invalid RCPT TO address: {err}"))),
-                |mailbox| {
-                    // Convert single Mailbox to AddressList
-                    Ok(Self::RcptTo(AddressList::from(vec![Address::from(
-                        mailbox,
-                    )])))
-                },
-            )
-        } else if trimmed.len() >= 4 {
-            let prefix = &trimmed[..4];
-            if prefix.eq_ignore_ascii_case("EHLO") || prefix.eq_ignore_ascii_case("HELO") {
-                match trimmed.split_once(' ') {
-                    None => Err(Self::Invalid(format!("Expected hostname in {trimmed}"))),
-                    Some((cmd, host)) if cmd.eq_ignore_ascii_case("HELO") => {
-                        Ok(Self::Helo(HeloVariant::Helo(host.trim().to_string())))
-                    }
-                    Some((_, host)) => Ok(Self::Helo(HeloVariant::Ehlo(host.trim().to_string()))),
-                }
-            } else if trimmed.eq_ignore_ascii_case("DATA") {
-                Ok(Self::Data)
-            } else if trimmed.eq_ignore_ascii_case("QUIT") {
-                Ok(Self::Quit)
-            } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("STARTTLS") {
-                Ok(Self::StartTLS)
-            } else if trimmed.eq_ignore_ascii_case("HELP") {
-                Ok(Self::Help)
-            } else if trimmed.eq_ignore_ascii_case("AUTH") {
-                Ok(Self::Auth)
-            } else if trimmed.eq_ignore_ascii_case("RSET") {
-                Ok(Self::Rset)
-            } else {
-                Err(Self::Invalid(command.to_owned()))
-            }
-        } else {
-            Err(Self::Invalid(command.to_owned()))
+        if let Some(result) = Self::parse_mail_from(trimmed, command) {
+            return result;
         }
+        if let Some(result) = Self::parse_rcpt_to(trimmed, command) {
+            return result;
+        }
+        if let Some(result) = Self::parse_xclient(trimmed) {
+            return result;
+        }
+        if let Some(result) = Self::parse_simple_command(trimmed, command) {
+            return result;
+        }
+
+        Err(Self::Invalid(command.to_owned()))
     }
 }
 
@@ -414,7 +593,7 @@ mod test {
         address_parser,
     };
 
-    use crate::command::{Command, HeloVariant, MailParameters};
+    use crate::command::{Command, HeloVariant, MailParameters, XclientParameters};
 
     // Idea copied from https://gitlab.com/erichdongubler-experiments/rust_case_permutations/blob/master/src/lib.rs#L97
     fn string_casing(string: &str) -> impl Iterator<Item = String> {
@@ -652,5 +831,37 @@ mod test {
         for comm in string_casing("help") {
             assert_eq!(Command::try_from(comm), Ok(Command::Help));
         }
+
+        assert_eq!(Command::try_from("NOOP"), Ok(Command::Noop(None)));
+        assert_eq!(
+            Command::try_from("NOOP keepalive"),
+            Ok(Command::Noop(Some("keepalive".to_string())))
+        );
+
+        assert_eq!(
+            Command::try_from("VRFY user@example.com"),
+            Ok(Command::Vrfy("user@example.com".to_string()))
+        );
+        assert_eq!(
+            Command::try_from("EXPN staff"),
+            Ok(Command::Expn("staff".to_string()))
+        );
+        assert_eq!(
+            Command::try_from("ETRN example.com"),
+            Ok(Command::Etrn("example.com".to_string()))
+        );
+        assert_eq!(Command::try_from("TURN"), Ok(Command::Turn));
+
+        let mut xclient = XclientParameters::new();
+        xclient
+            .params
+            .insert("ADDR".to_string(), "192.0.2.1".to_string());
+        xclient
+            .params
+            .insert("NAME".to_string(), "proxy.example.com".to_string());
+        assert_eq!(
+            Command::try_from("XCLIENT ADDR=192.0.2.1 NAME=proxy.example.com"),
+            Ok(Command::Xclient(xclient))
+        );
     }
 }
