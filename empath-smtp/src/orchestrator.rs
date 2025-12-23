@@ -129,12 +129,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         let mut validate_context = context::Context {
             banner: Arc::clone(&self.session.banner),
             max_message_size: self.session.max_message_size,
-            capabilities: self
-                .session
-                .extensions
-                .iter()
-                .flat_map(std::convert::TryInto::try_into)
-                .collect(),
+            capabilities: self.session.capabilities.clone(),
             // Fast path: if init_context is empty, use default. Otherwise copy entries.
             // init_context is session context (persists across RSET)
             session: if self.session.init_context.is_empty() {

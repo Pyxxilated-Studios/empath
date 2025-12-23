@@ -2,7 +2,7 @@ use std::{borrow::Cow, ffi::CStr, sync::Arc};
 
 use empath_common::{
     address::Address,
-    context::Context,
+    context::{Capability, Context},
     message_api::{
         BodyLimits, BodyOpts, Charset, HeaderLimits, HeaderName, HeaderValue, NewlineStyle,
     },
@@ -140,6 +140,86 @@ pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::st
         .session
         .get("cipher")
         .map_or_else(crate::string::String::default, crate::string::String::from)
+}
+
+// ============================================================================
+// Capability Functions
+// ============================================================================
+
+fn parse_capability(value: &CStr) -> Option<Capability> {
+    value.to_str().ok().and_then(Capability::parse)
+}
+
+/// Add a capability to the current context.
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_capability_add(
+    validate_context: &mut Context,
+    capability: *const libc::c_char,
+) -> bool {
+    if capability.is_null() {
+        return false;
+    }
+
+    let cap = unsafe { CStr::from_ptr(capability) };
+    if let Some(capability) = parse_capability(cap) {
+        if !validate_context.capabilities.contains(&capability) {
+            validate_context.capabilities.push(capability);
+        }
+        true
+    } else {
+        false
+    }
+}
+
+/// Remove a capability from the current context.
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_capability_remove(
+    validate_context: &mut Context,
+    capability: *const libc::c_char,
+) -> bool {
+    if capability.is_null() {
+        return false;
+    }
+
+    let cap = unsafe { CStr::from_ptr(capability) };
+    if let Some(capability) = parse_capability(cap) {
+        validate_context
+            .capabilities
+            .retain(|cap| cap != &capability);
+        true
+    } else {
+        false
+    }
+}
+
+/// Check if the current context has a capability.
+///
+/// # Safety
+///
+/// Provided with a null pointer, simply return false.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_capability_exists(
+    validate_context: &Context,
+    capability: *const libc::c_char,
+) -> bool {
+    if capability.is_null() {
+        return false;
+    }
+
+    let cap = unsafe { CStr::from_ptr(capability) };
+    parse_capability(cap)
+        .is_some_and(|capability| validate_context.capabilities.contains(&capability))
 }
 
 ///

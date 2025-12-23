@@ -7,7 +7,7 @@ use std::{
 };
 
 use ahash::AHashMap;
-use empath_common::{email::BannerHostname, tracing};
+use empath_common::{context::Capability, email::BannerHostname, tracing};
 use empath_tracing::traced;
 use parking_lot::RwLock;
 use serde::{Deserialize, Deserializer, de::Error as _};
@@ -221,6 +221,7 @@ impl TlsContextRegistry {
 
 pub struct SessionConfig {
     pub extensions: Vec<Extension>,
+    pub capabilities: Vec<Capability>,
     pub tls_context: Option<TlsContext>,
     pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
     pub banner: BannerHostname,
@@ -235,6 +236,7 @@ impl std::fmt::Debug for SessionConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionConfig")
             .field("extensions", &self.extensions)
+            .field("capabilities", &self.capabilities)
             .field("tls_context", &self.tls_context)
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("banner", &self.banner)
@@ -264,6 +266,7 @@ impl SessionConfig {
 /// Builder for `SessionConfig`
 pub struct SessionConfigBuilder {
     extensions: Vec<Extension>,
+    capabilities: Vec<Capability>,
     tls_context: Option<TlsContext>,
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     banner: BannerHostname,
@@ -278,6 +281,7 @@ impl std::fmt::Debug for SessionConfigBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionConfigBuilder")
             .field("extensions", &self.extensions)
+            .field("capabilities", &self.capabilities)
             .field("tls_context", &self.tls_context)
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("banner", &self.banner)
@@ -300,6 +304,7 @@ impl Default for SessionConfigBuilder {
     fn default() -> Self {
         Self {
             extensions: Vec::new(),
+            capabilities: Vec::new(),
             tls_context: None,
             spool: None,
             banner: BannerHostname::new("localhost").unwrap_or_else(|_| {
@@ -321,6 +326,13 @@ impl SessionConfigBuilder {
     #[must_use]
     pub fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
         self.extensions = extensions;
+        self
+    }
+
+    /// Set the SMTP capabilities supported by this session
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Vec<Capability>) -> Self {
+        self.capabilities = capabilities;
         self
     }
 
@@ -393,6 +405,7 @@ impl SessionConfigBuilder {
     pub fn build(self) -> SessionConfig {
         SessionConfig {
             extensions: self.extensions,
+            capabilities: self.capabilities,
             tls_context: self.tls_context,
             spool: self.spool,
             banner: self.banner,
@@ -420,6 +433,8 @@ pub struct Session {
 
     /// SMTP extensions supported by this session
     pub(crate) extensions: Vec<Extension>,
+    /// SMTP capabilities supported by this session
+    pub(crate) capabilities: Vec<Capability>,
 
     /// Server banner for greetings
     pub(crate) banner: Arc<str>,
@@ -482,6 +497,7 @@ impl Session {
         let session = Self {
             context: Context::default(),
             extensions: config.extensions,
+            capabilities: config.capabilities,
             banner: Arc::from(config.banner.as_str()),
             init_context: Arc::new(config.init_context),
             max_message_size,

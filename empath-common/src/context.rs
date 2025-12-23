@@ -17,9 +17,33 @@ use crate::{
     status::Status,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Capability {
     Auth,
+}
+
+impl Capability {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auth => "AUTH",
+        }
+    }
+
+    #[must_use]
+    pub const fn parse(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("AUTH") {
+            Some(Self::Auth)
+        } else {
+            None
+        }
+    }
+}
+
+impl Display for Capability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Status of a message in the delivery queue

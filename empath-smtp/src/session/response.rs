@@ -51,7 +51,7 @@ impl Session {
                 Some(vec![format!("{} {}", Status::ServiceReady, self.banner)]),
                 Event::ConnectionKeepAlive,
             ),
-            State::Helo(_) | State::Ehlo(_) => (
+            State::Helo(_) => (
                 Some(vec![format!(
                     "{} {} says hello to {}",
                     Status::Ok,
@@ -60,6 +60,7 @@ impl Session {
                 )]),
                 Event::ConnectionKeepAlive,
             ),
+            State::Ehlo(_) => self.ehlo_response(validate_context),
             State::StartTls(_) => self.starttls_response(),
             State::MailFrom(_) | State::RcptTo(_) | State::PostDot(_) => (
                 Some(vec![format!("{} Ok", Status::Ok)]),
@@ -110,6 +111,53 @@ impl Session {
                 Event::ConnectionClose,
             )
         }
+    }
+
+    fn ehlo_response(&self, validate_context: &context::Context) -> Response {
+        let client = String::from_utf8_lossy(&self.context.message);
+        let mut items: Vec<String> = self
+            .extensions
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        items.extend(
+            validate_context
+                .capabilities
+                .iter()
+                .map(std::string::ToString::to_string),
+        );
+
+        if items.is_empty() {
+            return (
+                Some(vec![format!(
+                    "{} {} says hello to {}",
+                    Status::Ok,
+                    self.banner,
+                    client
+                )]),
+                Event::ConnectionKeepAlive,
+            );
+        }
+
+        let items_len = items.len();
+        let mut lines = Vec::with_capacity(items_len + 1);
+        lines.push(format!(
+            "{}-{} says hello to {}",
+            Status::Ok,
+            self.banner,
+            client
+        ));
+
+        for (idx, item) in items.into_iter().enumerate() {
+            let is_last = idx + 1 == items_len;
+            if is_last {
+                lines.push(format!("{} {item}", Status::Ok));
+            } else {
+                lines.push(format!("{}-{item}", Status::Ok));
+            }
+        }
+
+        (Some(lines), Event::ConnectionKeepAlive)
     }
 
     /// Generate response for DATA command and transition to Reading state

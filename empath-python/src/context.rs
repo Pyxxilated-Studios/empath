@@ -6,7 +6,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use empath_common::{
-    context::Context,
+    context::{Capability, Context},
     error::MessageParseError,
     message_api::{
         BodyLimits, BodyOpts, Charset, HeaderLimits, HeaderName, HeaderValue, NewlineStyle,
@@ -127,6 +127,11 @@ impl PyContext {
             "utf-8" | "utf8" => Charset::Utf8,
             _ => Charset::Other(Cow::Owned(charset.to_string())),
         }
+    }
+
+    fn parse_capability(capability: &str) -> PyResult<Capability> {
+        Capability::parse(capability)
+            .ok_or_else(|| PyValueError::new_err(format!("Unknown capability '{capability}'")))
     }
 }
 
@@ -429,6 +434,34 @@ impl PyContext {
     /// Check if a session context key exists
     fn session_exists(&self, key: &str) -> bool {
         self.inner.read().session.contains_key(key)
+    }
+
+    // ===== Capabilities =====
+
+    /// Add a capability to the current context.
+    fn capability_add(&self, capability: &str) -> PyResult<()> {
+        let capability = Self::parse_capability(capability)?;
+        let mut ctx = self.inner.write();
+        if !ctx.capabilities.contains(&capability) {
+            ctx.capabilities.push(capability);
+        }
+        drop(ctx);
+        Ok(())
+    }
+
+    /// Remove a capability from the current context.
+    fn capability_remove(&self, capability: &str) -> PyResult<()> {
+        let capability = Self::parse_capability(capability)?;
+        let mut ctx = self.inner.write();
+        ctx.capabilities.retain(|cap| cap != &capability);
+        drop(ctx);
+        Ok(())
+    }
+
+    /// Check if a capability is currently enabled.
+    fn capability_exists(&self, capability: &str) -> PyResult<bool> {
+        let capability = Self::parse_capability(capability)?;
+        Ok(self.inner.read().capabilities.contains(&capability))
     }
 
     // ===== Transaction Context =====

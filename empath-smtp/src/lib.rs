@@ -17,7 +17,7 @@ pub mod transaction_handler;
 use std::{borrow::Cow, collections::HashMap, net::SocketAddr, sync::Arc};
 
 pub use command::MailParameters;
-use empath_common::{error::ProtocolError, traits::protocol::Protocol};
+use empath_common::{context::Capability, error::ProtocolError, traits::protocol::Protocol};
 use empath_tracing::traced;
 use serde::Deserialize;
 pub use session::{Session, TlsContextRegistry};
@@ -26,8 +26,6 @@ pub use state::State;
 use tokio::net::TcpStream;
 
 use crate::{extensions::Extension, orchestrator::SmtpSessionOrchestrator, session::SessionConfig};
-
-const MAX_MESSAGE_SIZE: usize = 100;
 
 /// SMTP server-side timeout configuration
 ///
@@ -110,6 +108,8 @@ pub struct Smtp;
 pub struct SmtpArgs {
     #[serde(default)]
     extensions: Vec<Extension>,
+    #[serde(default)]
+    capabilities: Vec<Capability>,
     #[serde(skip)]
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     #[serde(default)]
@@ -124,6 +124,7 @@ impl std::fmt::Debug for SmtpArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SmtpArgs")
             .field("extensions", &self.extensions)
+            .field("capabilities", &self.capabilities)
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("timeouts", &self.timeouts)
             .field(
@@ -146,6 +147,13 @@ impl SmtpArgs {
     #[must_use]
     pub fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
         self.extensions = extensions;
+        self
+    }
+
+    /// Set the SMTP capabilities supported by this server
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Vec<Capability>) -> Self {
+        self.capabilities = capabilities;
         self
     }
 
@@ -206,6 +214,7 @@ impl Protocol for Smtp {
             peer,
             SessionConfig::builder()
                 .with_extensions(args.extensions)
+                .with_capabilities(args.capabilities)
                 .with_spool(args.spool)
                 .with_timeouts(args.timeouts)
                 .with_spf_dns_resolver(args.spf_dns_resolver)
@@ -253,14 +262,6 @@ impl Protocol for Smtp {
                 )
                 .into());
             }
-        }
-
-        if !args
-            .extensions
-            .iter()
-            .any(|ext| matches!(ext, Extension::Size(_)))
-        {
-            args.extensions.push(Extension::Size(MAX_MESSAGE_SIZE));
         }
 
         Ok(())
