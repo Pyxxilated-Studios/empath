@@ -392,8 +392,17 @@ async fn test_delivery_with_nxdomain() {
         "Should not deliver message when domain does not exist"
     );
 
-    // TODO: Once DSN functionality is accessible via test harness,
-    // verify that a bounce message was generated
+    let dsn = harness
+        .wait_for_spooled_message(Duration::from_secs(5), |data| {
+            support::harness::bytes_contains(data, b"report-type=\"delivery-status\"")
+        })
+        .await
+        .expect("Expected DSN message to be spooled");
+    let dsn_body = String::from_utf8_lossy(&dsn);
+    assert!(
+        dsn_body.contains("Subject: Delivery Status Notification (Failure)"),
+        "DSN message should include failure subject"
+    );
 
     harness.shutdown().await;
 }

@@ -151,6 +151,40 @@ impl E2ETestHarness {
         }
     }
 
+    /// Wait for a message in the backing store that matches a body predicate
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the timeout expires before a matching message appears.
+    pub async fn wait_for_spooled_message<F>(
+        &self,
+        timeout_duration: Duration,
+        predicate: F,
+    ) -> anyhow::Result<Arc<[u8]>>
+    where
+        F: Fn(&[u8]) -> bool,
+    {
+        let start = tokio::time::Instant::now();
+
+        loop {
+            let ids = self.backing_store.list().await?;
+            for id in ids {
+                let context = self.backing_store.read(&id).await?;
+                if let Some(data) = context.data.as_ref()
+                    && predicate(data)
+                {
+                    return Ok(Arc::clone(data));
+                }
+            }
+
+            if start.elapsed() > timeout_duration {
+                anyhow::bail!("Timeout waiting for matching spooled message");
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Get all commands received by the mock server
     pub async fn mock_commands(&self) -> Vec<SmtpCommand> {
         let commands: Vec<SmtpCommand> = self.mock_server.commands().await;
@@ -186,6 +220,16 @@ impl E2ETestHarness {
         })
         .await;
     }
+}
+
+pub fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 /// Builder for configuring an E2E test harness
