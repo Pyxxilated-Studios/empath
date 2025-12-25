@@ -1,13 +1,129 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2025-12-11
-> **Total Completed**: 72 tasks
+> **Last Updated**: 2025-12-24
+> **Total Completed**: 86 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
 ---
 
 ## Recently Completed (Last 30 Days)
+
+### Week of 2025-12-24
+
+Archived from TODO.md items already marked complete.
+
+#### ✅ NEW-23 - Outbound bindings
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: P1
+
+Configurable outbound bindings (source IP/interface + TLS/HELO), mapping rules (module/domain/default), per-message persistence for retries/DSN, SMTP client bind support, control listing, metrics, docs, and tests.
+
+#### ✅ NEW-WASM-02 - empath-wasm-guest helper crate
+**Completed**: 2025-12-24
+**Effort**: ~3d
+**Priority**: P1
+
+`empath-wasm-guest` helper crate (proc macro + host bindings) with ergonomic Context API, reject/accept mapping, example module rewrite, and docs/migration.
+
+#### ✅ NEW-TLS-01 - TLS credential hot reload
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: P2
+
+Control command or config signal to reload certificates/keys without restarting the MTA.
+
+#### ✅ NEW-OBS-XX - TLS handshake telemetry
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: P2
+
+Structured logs/metrics for TLS accept duration, cipher/protocol selection, and handshake errors.
+
+#### ✅ NEW-OPT-01 - ControlClient persistent request lock optimization
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Allow `ControlClient::send_request_persistent` to drop the mutex before awaiting `send_and_receive` and avoid unnecessary `Request` clones.
+
+#### ✅ NEW-OPT-02 - Queue stats snapshot reuse
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Reuse static `DeliveryStatus` keys in `DeliveryProcessor::queue_stats_snapshot` to avoid repeated `format!`/`to_string()` overhead.
+
+#### ✅ NEW-OPT-03 - Cache SMTP client TLS configs
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Cache strict/accept-invalid TLS configs instead of rebuilding `RootCertStore`/`ClientConfig` on every STARTTLS.
+
+#### ✅ NEW-OPT-04 - Metadata-only spool scanning
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Make spool scanning metadata-only and add incremental/delta tracking to avoid full directory walks.
+
+#### ✅ NEW-OPT-05 - Remove extra DATA buffer clone
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Move the DATA buffer once (or share via `Arc<[u8]>`) before handing it to validation context.
+
+#### ✅ NEW-OPT-06 - WASM context bodies zero-copy
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Avoid cloning message data into WIT structs by exposing host handles/streaming reads.
+
+#### ✅ NEW-OPT-07 - Persist spool body sizes
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Store message length in metadata and prefer filesystem metadata over reading `.eml` files.
+
+#### ✅ NEW-OPT-08 - Stream delivery send path
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Stream spool files to the SMTP client without materializing full bodies in memory.
+
+#### ✅ NEW-OPT-09 - Incremental spool indexing
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Use notify/manifest-based delta tracking so spool scans are O(delta).
+
+#### ✅ NEW-OPT-10 - Spool metadata snapshot
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Persist a lightweight `ContextMetadata` (no `message_parts`, no session data) to avoid cloning full `Context` during spool write/update.
+
+#### ✅ NEW-OPT-11 - Delivery queue scan without cloning DeliveryInfo
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Collect pending IDs and reload per task (or provide a `with_entry` helper) to cut per-tick clones.
+
+#### ✅ NEW-OPT-12 - Borrowing accessors in Context
+**Completed**: 2025-12-24
+**Effort**: N/A (from TODO.md)
+**Priority**: New Ideas / Quick Wins
+
+Borrowing accessors for recipients/message body to reduce allocation churn in hot paths.
 
 ### Week of 2025-12-11
 
