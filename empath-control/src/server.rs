@@ -5,6 +5,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::{path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use hex::encode;
+use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
@@ -12,7 +14,10 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace, warn};
 
-use crate::{ControlAuthConfig, ControlError, Request, Response, Result};
+use crate::{
+    ControlAuthConfig, ControlError, ControlRateLimitConfig, Request, Response, Result,
+    rate_limit::ControlRateLimiter,
+};
 
 /// Handler trait for processing control requests
 ///
@@ -32,6 +37,7 @@ pub struct ControlServer {
     socket_path: String,
     handler: Arc<dyn CommandHandler>,
     auth_config: Option<ControlAuthConfig>,
+    rate_limiter: Option<Arc<ControlRateLimiter>>,
 }
 
 impl ControlServer {
@@ -60,6 +66,27 @@ impl ControlServer {
         handler: Arc<dyn CommandHandler>,
         auth_config: Option<ControlAuthConfig>,
     ) -> Result<Self> {
+        Self::with_auth_and_rate_limit(socket_path, handler, auth_config, None)
+    }
+
+    /// Create a new control server with optional authentication and rate limiting
+    ///
+    /// # Arguments
+    ///
+    /// * `socket_path` - Path to the Unix domain socket
+    /// * `handler` - Command handler implementation
+    /// * `auth_config` - Optional authentication configuration
+    /// * `rate_limit` - Optional rate limiting configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket path is invalid
+    pub fn with_auth_and_rate_limit(
+        socket_path: impl Into<String>,
+        handler: Arc<dyn CommandHandler>,
+        auth_config: Option<ControlAuthConfig>,
+        rate_limit: Option<ControlRateLimitConfig>,
+    ) -> Result<Self> {
         let auth_enabled = auth_config
             .as_ref()
             .is_some_and(ControlAuthConfig::requires_auth);
@@ -70,10 +97,24 @@ impl ControlServer {
             info!("Control socket authentication is DISABLED (relying on filesystem permissions)");
         }
 
+        let rate_limiter = rate_limit
+            .filter(|config| config.enabled)
+            .map(ControlRateLimiter::new)
+            .map(Arc::new);
+
+        if let Some(limiter) = &rate_limiter {
+            info!(
+                window_secs = limiter.window_secs(),
+                max_requests = limiter.max_requests(),
+                "Control socket rate limiting is ENABLED"
+            );
+        }
+
         Ok(Self {
             socket_path: socket_path.into(),
             handler,
             auth_config,
+            rate_limiter,
         })
     }
 
@@ -136,8 +177,16 @@ impl ControlServer {
                         Ok((stream, _addr)) => {
                             let handler = Arc::clone(&self.handler);
                             let auth_config = self.auth_config.clone();
+                            let rate_limiter = self.rate_limiter.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(stream, handler, auth_config).await {
+                                if let Err(e) = Self::handle_connection(
+                                    stream,
+                                    handler,
+                                    auth_config,
+                                    rate_limiter,
+                                )
+                                .await
+                                {
                                     error!("Error handling control connection: {e}");
                                 }
                             });
@@ -176,6 +225,7 @@ impl ControlServer {
         mut stream: UnixStream,
         handler: Arc<dyn CommandHandler>,
         auth_config: Option<ControlAuthConfig>,
+        rate_limiter: Option<Arc<ControlRateLimiter>>,
     ) -> Result<()> {
         // Set a read timeout to prevent hanging on malicious/broken clients
         let timeout = Duration::from_secs(30);
@@ -219,6 +269,28 @@ impl ControlServer {
                         .map_err(|_| ControlError::Timeout)??;
                     return Ok(());
                 }
+            }
+        }
+
+        if let Some(limiter) = &rate_limiter
+            && limiter.is_limited_command(&request.command)
+        {
+            let client_key = rate_limit_key(&request, &stream);
+            if !limiter.allow(client_key.clone()).await {
+                warn!(
+                    client = %client_key,
+                    command = ?request.command,
+                    "Control command rate limit exceeded"
+                );
+                let response = Response::error(format!(
+                    "Rate limit exceeded for control commands (max {} per {}s)",
+                    limiter.max_requests(),
+                    limiter.window_secs()
+                ));
+                tokio::time::timeout(timeout, Self::write_response(&mut stream, &response))
+                    .await
+                    .map_err(|_| ControlError::Timeout)??;
+                return Ok(());
             }
         }
 
@@ -285,4 +357,18 @@ impl ControlServer {
 
         Ok(())
     }
+}
+
+fn rate_limit_key(request: &Request, stream: &UnixStream) -> String {
+    if let Some(token) = request.token.as_deref() {
+        let mut hasher = Sha256::new();
+        hasher.update(token.as_bytes());
+        let hash = encode(hasher.finalize());
+        return format!("token:{hash}");
+    }
+
+    stream.peer_addr().map_or_else(
+        |_| "peer:unknown".to_string(),
+        |addr| format!("peer:{addr:?}"),
+    )
 }

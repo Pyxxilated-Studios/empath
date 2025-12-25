@@ -1,7 +1,9 @@
 use std::sync::{Arc, LazyLock};
 
 use empath_common::{Signal, controller::Controller, internal, logging, tracing};
-use empath_control::{ControlAuthConfig, ControlServer, DEFAULT_CONTROL_SOCKET};
+use empath_control::{
+    ControlAuthConfig, ControlRateLimitConfig, ControlServer, DEFAULT_CONTROL_SOCKET,
+};
 use empath_ffi::modules::{self, Module};
 use empath_health::{HealthChecker, HealthConfig, HealthServer};
 use empath_smtp::{Smtp, TlsContextRegistry};
@@ -31,6 +33,9 @@ pub struct Empath {
     /// Control socket authentication configuration (optional)
     #[serde(alias = "control_auth", default)]
     control_auth: Option<ControlAuthConfig>,
+    /// Control socket command rate limiting configuration (optional)
+    #[serde(alias = "control_rate_limit", default)]
+    control_rate_limit: Option<ControlRateLimitConfig>,
     /// Metrics configuration
     #[serde(alias = "metrics", default)]
     metrics: empath_metrics::MetricsConfig,
@@ -183,10 +188,11 @@ impl Empath {
             delivery_service,
             Some(Arc::clone(&tls_registry)),
         ));
-        let control_server = ControlServer::with_auth(
+        let control_server = ControlServer::with_auth_and_rate_limit(
             &self.control_socket_path,
             control_handler,
             self.control_auth.clone(),
+            self.control_rate_limit.clone(),
         )
         .map_err(|e| anyhow::anyhow!("Failed to create control server: {e}"))?;
 

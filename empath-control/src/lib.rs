@@ -11,6 +11,7 @@ pub mod auth;
 pub mod client;
 pub mod error;
 pub mod protocol;
+pub mod rate_limit;
 pub mod server;
 
 pub use auth::ControlAuthConfig;
@@ -20,6 +21,7 @@ pub use protocol::{
     DnsCommand, PROTOCOL_VERSION, QueueCommand, Request, RequestCommand, Response, ResponsePayload,
     SpoolCommand, SystemCommand,
 };
+pub use rate_limit::{ControlRateLimitConfig, RateLimitedCommand};
 pub use server::ControlServer;
 
 /// Default path for the control socket
