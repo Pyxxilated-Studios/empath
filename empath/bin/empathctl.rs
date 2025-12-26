@@ -142,6 +142,18 @@ enum SystemAction {
         #[arg(long, default_value = "20")]
         burst: u32,
     },
+    /// List advertised SMTP capabilities
+    Capabilities,
+    /// Enable an advertised SMTP capability
+    EnableCapability {
+        /// Capability name (e.g., AUTH)
+        name: String,
+    },
+    /// Disable an advertised SMTP capability
+    DisableCapability {
+        /// Capability name (e.g., AUTH)
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -407,6 +419,7 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
             | ResponseData::TlsContexts(_)
+            | ResponseData::SmtpCapabilities(_)
             | ResponseData::QueueList(_)
             | ResponseData::QueueMessageDetails(_)
             | ResponseData::QueueStats(_)
@@ -524,6 +537,16 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                     }
                 }
             }
+            ResponseData::SmtpCapabilities(capabilities) => {
+                println!("=== SMTP Capabilities ===\n");
+                if capabilities.is_empty() {
+                    println!("No SMTP capabilities enabled");
+                } else {
+                    for capability in capabilities {
+                        println!("- {capability}");
+                    }
+                }
+            }
             ResponseData::Message(msg) => {
                 println!("✓ {msg}");
             }
@@ -567,6 +590,15 @@ fn build_system_request(action: SystemAction) -> Request {
             domain,
             messages_per_second: mps,
             burst,
+        },
+        SystemAction::Capabilities => SystemCommand::ListCapabilities,
+        SystemAction::EnableCapability { name } => SystemCommand::SetCapabilityState {
+            capability: name,
+            enabled: true,
+        },
+        SystemAction::DisableCapability { name } => SystemCommand::SetCapabilityState {
+            capability: name,
+            enabled: false,
         },
     };
 
@@ -723,6 +755,7 @@ fn handle_queue_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
             | ResponseData::TlsContexts(_)
+            | ResponseData::SmtpCapabilities(_)
             | ResponseData::SpoolList(_)
             | ResponseData::SpoolStats(_) => {
                 println!("Unexpected response for queue command: {data:?}");
@@ -855,7 +888,8 @@ fn handle_spool_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::QueueStats(_)
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
-            | ResponseData::TlsContexts(_) => {
+            | ResponseData::TlsContexts(_)
+            | ResponseData::SmtpCapabilities(_) => {
                 println!("Unexpected response for spool command: {data:?}");
             }
         },

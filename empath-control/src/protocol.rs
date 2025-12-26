@@ -9,7 +9,7 @@ use chrono::{TimeZone, Utc, offset::LocalResult};
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Format timestamp (milliseconds since epoch) as human-readable
 fn format_timestamp(timestamp_ms: u64) -> String {
@@ -113,6 +113,15 @@ pub enum SystemCommand {
         messages_per_second: f64,
         /// Burst size
         burst: u32,
+    },
+    /// List advertised SMTP capabilities
+    ListCapabilities,
+    /// Enable or disable an advertised SMTP capability
+    SetCapabilityState {
+        /// Capability name (e.g., "AUTH")
+        capability: String,
+        /// Whether the capability should be enabled
+        enabled: bool,
     },
 }
 
@@ -225,6 +234,8 @@ pub enum ResponseData {
     OutboundBindings(Vec<OutboundBindingInfo>),
     /// TLS contexts and certificate metadata
     TlsContexts(Vec<TlsContextInfo>),
+    /// SMTP capabilities currently advertised
+    SmtpCapabilities(Vec<String>),
     /// Queue message list
     QueueList(QueueListPage),
     /// Queue message details

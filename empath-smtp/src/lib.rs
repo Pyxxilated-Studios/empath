@@ -15,7 +15,12 @@ pub mod state;
 pub mod transaction_handler;
 
 // Re-export commonly used types
-use std::{borrow::Cow, collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 
 pub use command::MailParameters;
 use empath_common::{context::Capability, error::ProtocolError, traits::protocol::Protocol};
@@ -112,6 +117,8 @@ pub struct SmtpArgs {
     #[serde(default)]
     capabilities: Vec<Capability>,
     #[serde(skip)]
+    capabilities_state: Option<Arc<RwLock<Vec<Capability>>>>,
+    #[serde(skip)]
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     #[serde(default)]
     pub timeouts: SmtpServerTimeouts,
@@ -126,6 +133,10 @@ impl std::fmt::Debug for SmtpArgs {
         f.debug_struct("SmtpArgs")
             .field("extensions", &self.extensions)
             .field("capabilities", &self.capabilities)
+            .field(
+                "capabilities_state",
+                &self.capabilities_state.as_ref().map(|_| "<shared>"),
+            )
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("timeouts", &self.timeouts)
             .field(
@@ -155,6 +166,19 @@ impl SmtpArgs {
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: Vec<Capability>) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// Get the currently configured SMTP capabilities
+    #[must_use]
+    pub fn capabilities(&self) -> &[Capability] {
+        &self.capabilities
+    }
+
+    /// Set shared SMTP capabilities state for runtime updates
+    #[must_use]
+    pub fn with_capabilities_state(mut self, state: Arc<RwLock<Vec<Capability>>>) -> Self {
+        self.capabilities_state = Some(state);
         self
     }
 
@@ -211,11 +235,16 @@ impl Protocol for Smtp {
         args: Self::Args,
     ) -> Self::Session {
         let timeouts = args.timeouts.clone();
+        let capabilities = args
+            .capabilities_state
+            .as_ref()
+            .and_then(|state| state.read().ok().map(|guard| guard.clone()))
+            .unwrap_or_else(|| args.capabilities.clone());
         let (session, transaction_handler, tls_context) = crate::session::Session::create(
             peer,
             SessionConfig::builder()
                 .with_extensions(args.extensions)
-                .with_capabilities(args.capabilities)
+                .with_capabilities(capabilities)
                 .with_spool(args.spool)
                 .with_timeouts(args.timeouts)
                 .with_spf_dns_resolver(args.spf_dns_resolver)

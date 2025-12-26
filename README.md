@@ -69,6 +69,11 @@ empathctl system ping
 # View system status
 empathctl system status
 
+# Manage advertised SMTP capabilities
+empathctl system capabilities
+empathctl system enable-capability AUTH
+empathctl system disable-capability AUTH
+
 # DNS cache management
 empathctl dns list-cache
 empathctl dns clear-cache

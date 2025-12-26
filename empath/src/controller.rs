@@ -1,10 +1,12 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, RwLock},
     time::{Duration, SystemTime},
 };
 
-use empath_common::{Signal, controller::Controller, internal, logging, tracing};
+use empath_common::{
+    Signal, context::Capability, controller::Controller, internal, logging, tracing,
+};
 use empath_control::{
     ControlAuthConfig, ControlRateLimitConfig, ControlServer, DEFAULT_CONTROL_SOCKET,
 };
@@ -173,13 +175,22 @@ impl Empath {
 
         // Configure SMTP with spool and SPF DNS resolver
         let tls_registry = Arc::new(TlsContextRegistry::new());
+        let smtp_capabilities: Arc<RwLock<Vec<Capability>>> = Arc::new(RwLock::new(Vec::new()));
         let spf_resolver_clone = spf_dns_resolver.clone();
         let registry_for_args = Arc::clone(&tls_registry);
+        let capabilities_for_args = Arc::clone(&smtp_capabilities);
         self.smtp_controller.map_args(move |args| {
+            let capabilities = args.capabilities().to_vec();
             let mut args = args.with_spool(backing_store.clone());
             if let Some(resolver) = spf_resolver_clone.clone() {
                 args = args.with_spf_dns_resolver(resolver);
             }
+            if let Ok(mut guard) = capabilities_for_args.write()
+                && guard.is_empty()
+            {
+                *guard = capabilities;
+            }
+            args = args.with_capabilities_state(Arc::clone(&capabilities_for_args));
             args.with_tls_context_registry(&registry_for_args)
         });
 
@@ -194,6 +205,7 @@ impl Empath {
         let control_handler = Arc::new(EmpathControlHandler::new(
             delivery_service,
             Some(Arc::clone(&tls_registry)),
+            Some(Arc::clone(&smtp_capabilities)),
         ));
         let control_server = ControlServer::with_auth_and_rate_limit(
             &self.control_socket_path,

@@ -7,6 +7,7 @@ Minimal, action-oriented guide for day-to-day operations.
 - Queue health: `empathctl queue stats --watch`
 - Spool health: `empathctl spool stats`
 - DNS cache: `empathctl dns list-cache`
+- SMTP capabilities: `empathctl system capabilities`
 
 ## Restart / Lifecycle
 - Systemd: `sudo systemctl restart empath` (or your service name); check `journalctl -u empath -f`.

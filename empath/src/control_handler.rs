@@ -7,12 +7,12 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant, SystemTime},
 };
 
 use async_trait::async_trait;
-use empath_common::context::Context;
+use empath_common::context::{Capability, Context};
 use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SpoolCommand,
     SystemCommand, protocol::ResponseData, server::CommandHandler,
@@ -31,6 +31,8 @@ pub struct EmpathControlHandler {
     delivery: Arc<dyn DeliveryQueryService>,
     /// Optional TLS registry for runtime reloads
     tls_registry: Option<Arc<TlsContextRegistry>>,
+    /// Optional SMTP capabilities state for runtime updates
+    smtp_capabilities: Option<Arc<RwLock<Vec<Capability>>>>,
     /// Server start time for uptime calculation
     start_time: Instant,
 }
@@ -396,10 +398,12 @@ impl EmpathControlHandler {
     pub fn new(
         delivery: Arc<dyn DeliveryQueryService>,
         tls_registry: Option<Arc<TlsContextRegistry>>,
+        smtp_capabilities: Option<Arc<RwLock<Vec<Capability>>>>,
     ) -> Self {
         Self {
             delivery,
             tls_registry,
+            smtp_capabilities,
             start_time: Instant::now(),
         }
     }
@@ -687,6 +691,54 @@ impl EmpathControlHandler {
                 let state = if *enabled { "enabled" } else { "disabled" };
                 Ok(Response::data(ResponseData::Message(format!(
                     "Binding {name} {state}"
+                ))))
+            }
+            SystemCommand::ListCapabilities => {
+                let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
+                    ControlError::ServerError(
+                        "SMTP capabilities are not configured for this instance".to_string(),
+                    )
+                })?;
+                let mut capabilities: Vec<String> = state
+                    .read()
+                    .map_err(|_| {
+                        ControlError::ServerError(
+                            "SMTP capabilities state is unavailable".to_string(),
+                        )
+                    })?
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect();
+                capabilities.sort();
+                Ok(Response::data(ResponseData::SmtpCapabilities(capabilities)))
+            }
+            SystemCommand::SetCapabilityState {
+                capability,
+                enabled,
+            } => {
+                let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
+                    ControlError::ServerError(
+                        "SMTP capabilities are not configured for this instance".to_string(),
+                    )
+                })?;
+                let parsed = Capability::parse(capability).ok_or_else(|| {
+                    ControlError::ServerError(format!("Unknown SMTP capability '{capability}'"))
+                })?;
+                let mut guard = state.write().map_err(|_| {
+                    ControlError::ServerError("SMTP capabilities state is unavailable".to_string())
+                })?;
+                if *enabled {
+                    if !guard.contains(&parsed) {
+                        guard.push(parsed.clone());
+                    }
+                } else {
+                    guard.retain(|cap| cap != &parsed);
+                }
+                drop(guard);
+                let action = if *enabled { "enabled" } else { "disabled" };
+                Ok(Response::data(ResponseData::Message(format!(
+                    "SMTP capability {} {action}",
+                    parsed.as_str()
                 ))))
             }
         };

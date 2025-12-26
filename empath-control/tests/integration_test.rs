@@ -128,6 +128,20 @@ impl CommandHandler for MockHandler {
                 } => Ok(Response::data(ResponseData::Message(format!(
                     "Rate limit set: domain={domain:?}, mps={messages_per_second}, burst={burst}"
                 )))),
+                SystemCommand::ListCapabilities => {
+                    Ok(Response::data(ResponseData::SmtpCapabilities(vec![
+                        "AUTH".to_string(),
+                    ])))
+                }
+                SystemCommand::SetCapabilityState {
+                    capability,
+                    enabled,
+                } => {
+                    let state = if enabled { "enabled" } else { "disabled" };
+                    Ok(Response::data(ResponseData::Message(format!(
+                        "Capability {capability} {state}"
+                    ))))
+                }
             },
             RequestCommand::Queue(cmd) => match cmd {
                 QueueCommand::Stats => Ok(Response::data(ResponseData::Message(
