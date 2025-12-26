@@ -17,4 +17,4 @@ mod loader;
 pub use bindings::*;
 pub use error::{Result, WasmError};
 pub use host::{SerializableContext, WasmStore};
-pub use loader::WasmModule;
+pub use loader::{DeterministicWasiConfig, WasmModule};

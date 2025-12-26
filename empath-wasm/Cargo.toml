@@ -25,6 +25,7 @@ thiserror.workspace = true
 tokio.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+cap-rand.workspace = true
 
 [dev-dependencies]
 ahash.workspace = true

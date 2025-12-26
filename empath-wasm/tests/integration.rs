@@ -22,7 +22,7 @@ use empath_common::{
     context::Context,
     envelope::Envelope,
 };
-use empath_wasm::{WasmError, WasmModule};
+use empath_wasm::{DeterministicWasiConfig, WasmError, WasmModule};
 use tokio::runtime::Runtime;
 
 #[allow(clippy::panic, reason = "Test helpers should fail loudly")]
@@ -131,7 +131,8 @@ fn load_test_module() -> WasmModule {
     let rt = runtime();
     let _guard = rt.enter();
     unwrap_result(
-        WasmModule::load(resolved_module_path()),
+        WasmModule::load(resolved_module_path())
+            .map(|module| module.with_deterministic_wasi(DeterministicWasiConfig::default())),
         "Failed to load test module",
     )
 }

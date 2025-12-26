@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use cap_rand::RngCore;
 use empath_common::{context::Context, internal};
 use wasmtime::{
     Config, Engine, Store,
@@ -33,6 +34,118 @@ const DEFAULT_MAX_MEMORY_BYTES: usize = 10 * 1024 * 1024;
 
 /// Epoch tick interval in milliseconds (10ms = 100Hz)
 const EPOCH_TICK_MS: u64 = 10;
+
+/// Deterministic WASI configuration for reproducible module tests.
+#[derive(Clone, Debug)]
+pub struct DeterministicWasiConfig {
+    pub wall_clock: Duration,
+    pub monotonic_clock: u64,
+    pub random_seed: u64,
+    pub insecure_seed: u128,
+}
+
+impl Default for DeterministicWasiConfig {
+    fn default() -> Self {
+        Self {
+            wall_clock: Duration::from_secs(0),
+            monotonic_clock: 0,
+            random_seed: 0x4D59_5DF4_D0F3_3173,
+            insecure_seed: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct FixedWallClock {
+    now: Duration,
+    resolution: Duration,
+}
+
+impl FixedWallClock {
+    const fn new(now: Duration) -> Self {
+        Self {
+            now,
+            resolution: Duration::from_nanos(1),
+        }
+    }
+}
+
+impl wasmtime_wasi::HostWallClock for FixedWallClock {
+    fn resolution(&self) -> Duration {
+        self.resolution
+    }
+
+    fn now(&self) -> Duration {
+        self.now
+    }
+}
+
+#[derive(Debug)]
+struct FixedMonotonicClock {
+    now: u64,
+    resolution: u64,
+}
+
+impl FixedMonotonicClock {
+    const fn new(now: u64) -> Self {
+        Self { now, resolution: 1 }
+    }
+}
+
+impl wasmtime_wasi::HostMonotonicClock for FixedMonotonicClock {
+    fn resolution(&self) -> u64 {
+        self.resolution
+    }
+
+    fn now(&self) -> u64 {
+        self.now
+    }
+}
+
+#[derive(Debug)]
+struct DeterministicRng {
+    state: u64,
+}
+
+impl DeterministicRng {
+    const MULTIPLIER: u64 = 6_364_136_223_846_793_005;
+    const INCREMENT: u64 = 1;
+
+    const fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    const fn next_state(&mut self) -> u64 {
+        self.state = self
+            .state
+            .wrapping_mul(Self::MULTIPLIER)
+            .wrapping_add(Self::INCREMENT);
+        self.state
+    }
+}
+
+impl RngCore for DeterministicRng {
+    fn next_u32(&mut self) -> u32 {
+        (self.next_state() >> 32) as u32
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.next_state()
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for chunk in dest.chunks_mut(8) {
+            let bytes = self.next_u64().to_le_bytes();
+            let len = chunk.len();
+            chunk.copy_from_slice(&bytes[..len]);
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), cap_rand::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
 
 /// Shared Wasmtime engine across all WASM modules (for efficiency and compiled code sharing)
 static SHARED_ENGINE: OnceLock<Arc<Engine>> = OnceLock::new();
@@ -239,6 +352,9 @@ pub struct WasmModule {
 
     /// Inherit host environment variables
     wasi_inherit_env: bool,
+
+    /// Deterministic WASI overrides for tests
+    deterministic_wasi: Option<DeterministicWasiConfig>,
 }
 
 impl WasmModule {
@@ -275,6 +391,7 @@ impl WasmModule {
             outbound_bindings: Arc::from(Vec::<String>::new().into_boxed_slice()),
             wasi_dirs: Vec::new(),
             wasi_inherit_env: false,
+            deterministic_wasi: None,
         })
     }
 
@@ -313,6 +430,13 @@ impl WasmModule {
     #[must_use]
     pub const fn with_wasi_env(mut self, inherit_env: bool) -> Self {
         self.wasi_inherit_env = inherit_env;
+        self
+    }
+
+    /// Enable deterministic clocks and RNG for reproducible WASM tests.
+    #[must_use]
+    pub const fn with_deterministic_wasi(mut self, config: DeterministicWasiConfig) -> Self {
+        self.deterministic_wasi = Some(config);
         self
     }
 
@@ -538,6 +662,16 @@ impl WasmModule {
         if self.wasi_inherit_env {
             internal!(level = TRACE, "WASI: Inheriting host environment variables");
             builder.inherit_env();
+        }
+
+        if let Some(config) = &self.deterministic_wasi {
+            builder.wall_clock(FixedWallClock::new(config.wall_clock));
+            builder.monotonic_clock(FixedMonotonicClock::new(config.monotonic_clock));
+            builder.secure_random(DeterministicRng::new(config.random_seed));
+            builder.insecure_random(DeterministicRng::new(
+                config.random_seed ^ 0x9E37_79B9_7F4A_7C15,
+            ));
+            builder.insecure_random_seed(config.insecure_seed);
         }
 
         // Configure preopened directories
