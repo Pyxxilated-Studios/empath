@@ -149,7 +149,13 @@ pub trait SmtpTransactionHandler: Send + Sync {
 /// use empath_spool::BackingStore;
 ///
 /// # fn example(spool: Arc<dyn BackingStore>, peer: std::net::SocketAddr) {
-/// let handler = DefaultSmtpTransactionHandler::new(Some(spool), peer, None, SpfConfig::default());
+/// let handler = DefaultSmtpTransactionHandler::new(
+///     Some(spool),
+///     peer,
+///     None,
+///     SpfConfig::default(),
+///     false,
+/// );
 /// // Use handler with session orchestrator
 /// # }
 /// ```
@@ -162,6 +168,8 @@ pub struct DefaultSmtpTransactionHandler {
     spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
     /// SPF configuration
     spf_config: crate::spf::SpfConfig,
+    /// Whether to reject messages without a passing DKIM verification
+    require_dkim: bool,
 }
 
 impl DefaultSmtpTransactionHandler {
@@ -173,18 +181,21 @@ impl DefaultSmtpTransactionHandler {
     /// * `peer` - Client peer address for audit logging
     /// * `spf_dns_resolver` - Optional SPF DNS resolver for sender validation
     /// * `spf_config` - SPF configuration
+    /// * `require_dkim` - Whether to reject messages without DKIM pass
     #[must_use]
     pub const fn new(
         spool: Option<Arc<dyn BackingStore>>,
         peer: SocketAddr,
         spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
         spf_config: crate::spf::SpfConfig,
+        require_dkim: bool,
     ) -> Self {
         Self {
             spool,
             peer,
             spf_dns_resolver,
             spf_config,
+            require_dkim,
         }
     }
 
@@ -478,6 +489,19 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         self.evaluate_dkim(ctx).await;
         self.evaluate_dmarc(ctx).await;
 
+        if self.require_dkim && !dkim_is_pass(ctx) {
+            let result = ctx
+                .transaction
+                .get("dkim_result")
+                .map_or("none", String::as_str);
+            if let Some(metrics) = empath_metrics::try_metrics() {
+                metrics.smtp.record_dkim_rejection(result);
+            }
+            tracing::warn!(dkim_result = %result, "DKIM verification failed");
+            ctx.response = Some((Status::Error, Cow::Borrowed("DKIM verification failed")));
+            return false;
+        }
+
         // Dispatch validation
         let valid = matches!(
             modules::dispatch(
@@ -532,6 +556,29 @@ impl DefaultSmtpTransactionHandler {
         }
         if let Some(error) = evaluation.error {
             ctx.transaction.insert(Cow::Borrowed("dkim_error"), error);
+        }
+
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            metrics.smtp.record_dkim_verification(evaluation.result);
+        }
+
+        match evaluation.result {
+            "fail" | "permerror" | "temperror" => {
+                let domain = ctx.transaction.get("dkim_domain").map(String::as_str);
+                let selector = ctx.transaction.get("dkim_selector").map(String::as_str);
+                let error = ctx.transaction.get("dkim_error").map(String::as_str);
+                tracing::warn!(
+                    dkim_result = %evaluation.result,
+                    dkim_domain = domain.unwrap_or("unknown"),
+                    dkim_selector = selector.unwrap_or("unknown"),
+                    dkim_error = error.unwrap_or(""),
+                    "DKIM verification failed"
+                );
+            }
+            "neutral" | "none" => {
+                tracing::debug!(dkim_result = %evaluation.result, "DKIM verification skipped");
+            }
+            _ => {}
         }
     }
 
@@ -648,6 +695,12 @@ fn normalize_dkim_result(ctx: &mut Context) -> Option<String> {
     Some(normalized)
 }
 
+fn dkim_is_pass(ctx: &Context) -> bool {
+    ctx.transaction
+        .get("dkim_result")
+        .is_some_and(|value| value.eq_ignore_ascii_case("pass"))
+}
+
 /// Helper function to determine if state requires validation.
 ///
 /// This is used by the session orchestrator to decide whether to call
@@ -692,6 +745,7 @@ mod tests {
             "127.0.0.1:1234".parse().unwrap(),
             None,
             crate::spf::SpfConfig::default(),
+            false,
         );
         assert!(handler.spool.is_none());
         assert_eq!(handler.peer.to_string(), "127.0.0.1:1234");
@@ -707,6 +761,7 @@ mod tests {
             "127.0.0.1:1234".parse().unwrap(),
             None,
             crate::spf::SpfConfig::default(),
+            false,
         );
         assert!(handler.spool.is_some());
     }
@@ -747,6 +802,7 @@ mod tests {
             "203.0.113.5:2525".parse().unwrap(),
             None,
             crate::spf::SpfConfig::default(),
+            false,
         );
 
         let message = b"Subject: hello\r\n\r\nhello world";
@@ -863,6 +919,7 @@ mod tests {
             "192.0.2.100:1234".parse().unwrap(),
             Some(resolver),
             SpfConfig::default(),
+            false,
         );
 
         // Create context with sender from example.com

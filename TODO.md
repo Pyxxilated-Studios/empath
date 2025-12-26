@@ -32,7 +32,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-TLS-04: Dual-stack TLS profiles. Support configuring multiple cert/key pairs per listener (e.g., “default” and “rotation” profiles) and provide control operations to switch active profiles or drain sockets without aborting in-flight connections.
 - [x] NEW-CTL-XX: Binding inspection. Extend the control socket to list outbound bindings and show which binding each queued message currently prefers, optionally allowing runtime enabling/disabling for diagnoses.
 - [ ] NEW-SEC-XX: Control socket roles. Add authenticated control sessions with roles (read-only, admin) so sensitive ops like TLS reloads, binding edits, or DR actions require dedicated ACLs.
-- [ ] NEW-SEC-DKIM-01: DKIM verification telemetry. Add enforced DKIM signature verification plus metrics/logs for failures, and consider signing support for outbound messages where missing.
+- [x] NEW-SEC-DKIM-01: DKIM verification telemetry. Add enforced DKIM signature verification plus metrics/logs for failures; outbound signing remains tracked in docs/BACKLOG.md.
 - [ ] NEW-SEC-DMARC-01: DMARC policy enforcement. Track SPF/DKIM/DMARC observability, surface enforcement decisions via metrics/logs, and provide control/debug tools for rejected/filtered messages.
 - [ ] NEW-SEC-ARC-01: ARC seal handling. Validate incoming ARC seals, detect replayed seals, and add regression tests to ensure archived ARC chains keep passing through the delivery pipeline.
 - [x] NEW-SMTP-XX: Extended command coverage. Add support for RFC commands such as `NOOP`, `VRFY`, `EXPN`, `ETRN`, `TURN` (and any other common extensions besides `BDAT`) so the MTA can pass compatibility checks with legacy clients.

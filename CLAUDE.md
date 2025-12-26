@@ -195,7 +195,13 @@ let new_state = FiniteStateMachine::transition(
 ```rust
 use empath_smtp::transaction_handler::{SmtpTransactionHandler, DefaultSmtpTransactionHandler};
 
-let handler = DefaultSmtpTransactionHandler::new(Some(spool), peer);
+let handler = DefaultSmtpTransactionHandler::new(
+    Some(spool),
+    peer,
+    None,
+    SpfConfig::default(),
+    false,
+);
 let valid = handler.validate_connect(&mut business_context).await;
 if valid {
     handler.handle_message(&mut business_context).await;

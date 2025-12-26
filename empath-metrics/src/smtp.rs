@@ -42,6 +42,11 @@ pub struct SmtpMetrics {
     /// TLS handshake failures
     tls_handshake_failures: Counter<u64>,
 
+    /// DKIM verification results
+    dkim_verifications_total: Counter<u64>,
+    /// DKIM enforcement rejections
+    dkim_rejections_total: Counter<u64>,
+
     /// Total TLS contexts registered
     tls_cert_contexts_total: Gauge<u64>,
     /// Minimum seconds until any TLS cert expires (0 if expired or none)
@@ -130,6 +135,16 @@ impl SmtpMetrics {
             .with_description("Count of TLS handshake failures for SMTP connections")
             .build();
 
+        let dkim_verifications_total = meter
+            .u64_counter("empath.smtp.dkim.verifications.total")
+            .with_description("Total DKIM verification results for SMTP messages")
+            .build();
+
+        let dkim_rejections_total = meter
+            .u64_counter("empath.smtp.dkim.rejections.total")
+            .with_description("Total DKIM enforcement rejections for SMTP messages")
+            .build();
+
         let tls_cert_contexts_total = meter
             .u64_gauge("empath.smtp.tls.cert.contexts.total")
             .with_description("Number of TLS contexts registered for SMTP listeners")
@@ -183,6 +198,8 @@ impl SmtpMetrics {
             message_size_bytes,
             tls_handshake_duration,
             tls_handshake_failures,
+            dkim_verifications_total,
+            dkim_rejections_total,
             tls_cert_contexts_total,
             tls_cert_expiry_min_seconds,
             tls_cert_expired_count,
@@ -242,6 +259,18 @@ impl SmtpMetrics {
     pub fn record_tls_handshake_failure(&self, reason: &str) {
         let attributes = [KeyValue::new("reason", reason.to_string())];
         self.tls_handshake_failures.add(1, &attributes);
+    }
+
+    /// Record DKIM verification result for a message.
+    pub fn record_dkim_verification(&self, result: &str) {
+        let attributes = [KeyValue::new("result", result.to_string())];
+        self.dkim_verifications_total.add(1, &attributes);
+    }
+
+    /// Record DKIM enforcement rejection for a message.
+    pub fn record_dkim_rejection(&self, result: &str) {
+        let attributes = [KeyValue::new("result", result.to_string())];
+        self.dkim_rejections_total.add(1, &attributes);
     }
 
     /// Record TLS certificate watchdog metrics.

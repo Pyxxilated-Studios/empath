@@ -116,6 +116,8 @@ pub struct SmtpArgs {
     extensions: Vec<Extension>,
     #[serde(default)]
     capabilities: Vec<Capability>,
+    #[serde(default)]
+    require_dkim: bool,
     #[serde(skip)]
     capabilities_state: Option<Arc<RwLock<Vec<Capability>>>>,
     #[serde(skip)]
@@ -133,6 +135,7 @@ impl std::fmt::Debug for SmtpArgs {
         f.debug_struct("SmtpArgs")
             .field("extensions", &self.extensions)
             .field("capabilities", &self.capabilities)
+            .field("require_dkim", &self.require_dkim)
             .field(
                 "capabilities_state",
                 &self.capabilities_state.as_ref().map(|_| "<shared>"),
@@ -166,6 +169,13 @@ impl SmtpArgs {
     #[must_use]
     pub fn with_capabilities(mut self, capabilities: Vec<Capability>) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// Require DKIM verification to pass before accepting message data
+    #[must_use]
+    pub const fn with_require_dkim(mut self, require_dkim: bool) -> Self {
+        self.require_dkim = require_dkim;
         self
     }
 
@@ -245,6 +255,7 @@ impl Protocol for Smtp {
             SessionConfig::builder()
                 .with_extensions(args.extensions)
                 .with_capabilities(capabilities)
+                .with_require_dkim(args.require_dkim)
                 .with_spool(args.spool)
                 .with_timeouts(args.timeouts)
                 .with_spf_dns_resolver(args.spf_dns_resolver)

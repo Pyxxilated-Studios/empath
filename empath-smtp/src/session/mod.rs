@@ -390,6 +390,7 @@ pub struct SessionConfig {
     pub extensions: Vec<Extension>,
     pub capabilities: Vec<Capability>,
     pub tls_context: Option<TlsContext>,
+    pub require_dkim: bool,
     pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
     pub banner: BannerHostname,
     pub init_context: AHashMap<Cow<'static, str>, String>,
@@ -405,6 +406,7 @@ impl std::fmt::Debug for SessionConfig {
             .field("extensions", &self.extensions)
             .field("capabilities", &self.capabilities)
             .field("tls_context", &self.tls_context)
+            .field("require_dkim", &self.require_dkim)
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("banner", &self.banner)
             .field("init_context", &self.init_context)
@@ -435,6 +437,7 @@ pub struct SessionConfigBuilder {
     extensions: Vec<Extension>,
     capabilities: Vec<Capability>,
     tls_context: Option<TlsContext>,
+    require_dkim: bool,
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     banner: BannerHostname,
     init_context: AHashMap<Cow<'static, str>, String>,
@@ -450,6 +453,7 @@ impl std::fmt::Debug for SessionConfigBuilder {
             .field("extensions", &self.extensions)
             .field("capabilities", &self.capabilities)
             .field("tls_context", &self.tls_context)
+            .field("require_dkim", &self.require_dkim)
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("banner", &self.banner)
             .field("init_context", &self.init_context)
@@ -473,6 +477,7 @@ impl Default for SessionConfigBuilder {
             extensions: Vec::new(),
             capabilities: Vec::new(),
             tls_context: None,
+            require_dkim: false,
             spool: None,
             banner: BannerHostname::new("localhost").unwrap_or_else(|_| {
                 // Fallback should always succeed; if validation changes, use empty hostname
@@ -507,6 +512,13 @@ impl SessionConfigBuilder {
     #[must_use]
     pub fn with_tls_context(mut self, tls_context: Option<TlsContext>) -> Self {
         self.tls_context = tls_context;
+        self
+    }
+
+    /// Require DKIM verification to pass before accepting message data
+    #[must_use]
+    pub const fn with_require_dkim(mut self, require_dkim: bool) -> Self {
+        self.require_dkim = require_dkim;
         self
     }
 
@@ -574,6 +586,7 @@ impl SessionConfigBuilder {
             extensions: self.extensions,
             capabilities: self.capabilities,
             tls_context: self.tls_context,
+            require_dkim: self.require_dkim,
             spool: self.spool,
             banner: self.banner,
             init_context: self.init_context,
@@ -658,6 +671,7 @@ impl Session {
                 peer,
                 config.spf_dns_resolver,
                 config.spf_config,
+                config.require_dkim,
             ))
         });
 
