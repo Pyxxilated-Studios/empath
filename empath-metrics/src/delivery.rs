@@ -18,7 +18,7 @@ use std::{
 use dashmap::DashMap;
 use opentelemetry::{
     KeyValue,
-    metrics::{Counter, Histogram, Meter, UpDownCounter},
+    metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter},
 };
 
 use crate::MetricsError;
@@ -62,6 +62,8 @@ pub struct DeliveryMetrics {
     binding_connect_duration_seconds: Histogram<f64>,
     /// Distribution of outbound binding EHLO durations
     binding_ehlo_duration_seconds: Histogram<f64>,
+    /// Current outbound binding health state (0=Closed, 1=HalfOpen, 2=Open)
+    binding_health_state: Gauge<u64>,
 
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     messages_delivered_count: Arc<AtomicU64>,
@@ -247,6 +249,10 @@ impl DeliveryMetrics {
             .f64_histogram("empath.delivery.bindings.ehlo.duration.seconds")
             .with_description("Distribution of outbound EHLO durations by binding")
             .build();
+        let binding_health_state = meter
+            .u64_gauge("empath.delivery.bindings.health.state")
+            .with_description("Outbound binding health state (0=Closed, 1=HalfOpen, 2=Open)")
+            .build();
 
         let circuit_breaker_trips_total = meter
             .u64_counter("empath.delivery.circuit_breaker.trips.total")
@@ -377,6 +383,7 @@ impl DeliveryMetrics {
             binding_selected_total,
             binding_connect_duration_seconds,
             binding_ehlo_duration_seconds,
+            binding_health_state,
             circuit_breaker_trips_total,
             circuit_breaker_recoveries_total,
             messages_delivered_count: messages_delivered_ref,
@@ -423,6 +430,12 @@ impl DeliveryMetrics {
         let label = self.binding_label(binding);
         self.binding_ehlo_duration_seconds
             .record(duration.as_secs_f64(), &[KeyValue::new("binding", label)]);
+    }
+
+    pub fn record_binding_health_state(&self, binding: &str, state: u64) {
+        let label = self.binding_label(Some(binding));
+        self.binding_health_state
+            .record(state, &[KeyValue::new("binding", label)]);
     }
 
     fn binding_label(&self, binding: Option<&str>) -> String {

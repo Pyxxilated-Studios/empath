@@ -19,6 +19,98 @@ use crate::{
     types::DeliveryInfo,
 };
 
+fn handle_circuit_breaker_gate(processor: &DeliveryProcessor, info: &DeliveryInfo) -> bool {
+    if let Some(circuit_breaker) = &processor.circuit_breaker_instance
+        && !circuit_breaker.should_allow_delivery(&info.recipient_domain)
+    {
+        warn!(
+            message_id = ?info.message_id,
+            domain = %info.recipient_domain,
+            "Circuit breaker is OPEN - rejecting delivery attempt to prevent retry storm"
+        );
+        // Update next retry time to check again after circuit timeout
+        let next_retry = SystemTime::now()
+            + std::time::Duration::from_secs(processor.circuit_breaker.timeout_secs);
+        processor.queue.update_status(
+            &info.message_id,
+            DeliveryStatus::Retry {
+                attempts: info.attempt_count(),
+                last_error: "Circuit breaker open".to_string(),
+            },
+        );
+        processor
+            .queue
+            .set_next_retry_at(&info.message_id, next_retry);
+        return false;
+    }
+
+    true
+}
+
+async fn handle_binding_health_gate(
+    processor: &DeliveryProcessor,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    info: &DeliveryInfo,
+) -> bool {
+    let Some(binding_name) = info.binding.as_deref() else {
+        return true;
+    };
+
+    let Some(binding_health) = &processor.binding_health else {
+        return true;
+    };
+
+    let health_state = binding_health.should_allow(
+        binding_name,
+        processor.binding_health_config_for(binding_name),
+    );
+    if !matches!(health_state, crate::BindingHealthState::Open) {
+        return true;
+    }
+
+    warn!(
+        message_id = ?info.message_id,
+        binding = binding_name,
+        "Outbound binding is unhealthy - delaying delivery"
+    );
+
+    let binding = processor.outbound_bindings.get(binding_name);
+    if binding.is_some_and(|binding| binding.allow_failover) {
+        processor.queue.set_binding(&info.message_id, None);
+    }
+
+    processor.queue.update_status(
+        &info.message_id,
+        DeliveryStatus::Retry {
+            attempts: info.attempt_count(),
+            last_error: "Outbound binding unhealthy".to_string(),
+        },
+    );
+
+    let next_retry_at = processor
+        .retry_policy
+        .calculate_next_retry(info.attempt_count());
+    processor
+        .queue
+        .set_next_retry_at(&info.message_id, next_retry_at);
+
+    if let Err(e) =
+        super::delivery::persist_delivery_state(processor, &info.message_id, spool).await
+    {
+        warn!(
+            message_id = ?info.message_id,
+            error = %e,
+            "Failed to persist delivery state after binding health gate"
+        );
+    }
+
+    if let Some(metrics) = &processor.metrics {
+        metrics.record_binding_health_state(binding_name, health_state.as_metric_value());
+    }
+
+    false
+}
+
 /// Process a single message for delivery (spawned as a task)
 async fn process_single_message(
     processor: Arc<DeliveryProcessor>,
@@ -31,28 +123,12 @@ async fn process_single_message(
     }
 
     // Check circuit breaker before attempting delivery
-    if let Some(circuit_breaker) = &processor.circuit_breaker_instance
-        && !circuit_breaker.should_allow_delivery(&info.recipient_domain)
-    {
-        warn!(
-            message_id = ?info.message_id,
-            domain = %info.recipient_domain,
-            "Circuit breaker is OPEN - rejecting delivery attempt to prevent retry storm"
-        );
-        // Update next retry time to check again after circuit timeout
-        let next_retry = std::time::SystemTime::now()
-            + std::time::Duration::from_secs(processor.circuit_breaker.timeout_secs);
-        processor.queue.update_status(
-            &info.message_id,
-            DeliveryStatus::Retry {
-                attempts: info.attempt_count(),
-                last_error: "Circuit breaker open".to_string(),
-            },
-        );
-        processor
-            .queue
-            .set_next_retry_at(&info.message_id, next_retry);
-        return; // Skip delivery
+    if !handle_circuit_breaker_gate(&processor, &info) {
+        return;
+    }
+
+    if !handle_binding_health_gate(&processor, &spool, &info).await {
+        return;
     }
 
     if let Err(e) = Box::pin(prepare_message(&processor, &info.message_id, &spool)).await {

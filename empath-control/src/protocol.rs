@@ -276,6 +276,15 @@ pub struct OutboundBindingInfo {
     pub helo_domain: Option<String>,
     /// Whether to attempt STARTTLS
     pub attempt_starttls: bool,
+    /// Binding health state (`closed/half_open/open`)
+    #[serde(default)]
+    pub health_state: Option<String>,
+    /// Consecutive failures seen for this binding
+    #[serde(default)]
+    pub consecutive_failures: Option<u32>,
+    /// Unix timestamp (seconds) when the binding is expected to reopen
+    #[serde(default)]
+    pub open_until: Option<u64>,
 }
 
 /// Paginated queue list

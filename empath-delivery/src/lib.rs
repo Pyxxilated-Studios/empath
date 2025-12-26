@@ -10,6 +10,7 @@
 //! - Circuit breakers to prevent retry storms to failing domains
 
 mod binding;
+mod binding_health;
 mod circuit_breaker;
 mod dns;
 mod domain_config;
@@ -27,6 +28,7 @@ mod types;
 // Re-export circuit breaker types
 // Re-export outbound binding types
 pub use binding::{BindingTlsConfig, OutboundBinding, OutboundBindingRegistry};
+pub use binding_health::{BindingHealthConfig, BindingHealthState, BindingHealthStatus};
 pub use circuit_breaker::{
     CircuitBreakerConfig, CircuitBreakerStats, CircuitState, DomainCircuitBreakerConfig,
 };

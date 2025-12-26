@@ -473,6 +473,15 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                             println!("  helo_domain: {helo_domain}");
                         }
                         println!("  attempt_starttls: {}", binding.attempt_starttls);
+                        if let Some(health_state) = binding.health_state {
+                            println!("  health_state: {health_state}");
+                        }
+                        if let Some(consecutive_failures) = binding.consecutive_failures {
+                            println!("  consecutive_failures: {consecutive_failures}");
+                        }
+                        if let Some(open_until) = binding.open_until {
+                            println!("  open_until: {open_until}");
+                        }
                     }
                 }
             }

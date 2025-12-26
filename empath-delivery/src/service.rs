@@ -133,6 +133,9 @@ pub trait DeliveryQueryService: Send + Sync {
     /// Get configured outbound bindings.
     fn outbound_bindings(&self) -> crate::OutboundBindingRegistry;
 
+    /// Get outbound binding health status (if tracking is enabled).
+    fn binding_health_status(&self, name: &str) -> Option<crate::BindingHealthStatus>;
+
     /// Request an immediate scan/process cycle (used by control interface)
     fn request_process_now(&self);
 

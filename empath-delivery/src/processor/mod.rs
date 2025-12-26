@@ -18,6 +18,7 @@ use tokio::{
 
 use crate::{
     binding::OutboundBindingRegistry,
+    binding_health::{BindingHealthConfig, BindingHealthStatus, BindingHealthTracker},
     circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
     dns::{DnsConfig, DnsResolver, HickoryDnsResolver},
     domain_config::DomainConfigRegistry,
@@ -205,6 +206,10 @@ pub struct DeliveryProcessor {
     #[serde(skip)]
     pub(crate) circuit_breaker_instance: Option<CircuitBreaker>,
 
+    /// Binding health tracker (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) binding_health: Option<BindingHealthTracker>,
+
     /// Domain policy resolver for configuration lookups (initialized in `init()`)
     #[serde(skip)]
     pub(crate) domain_resolver: Option<crate::policy::DomainPolicyResolver>,
@@ -247,6 +252,7 @@ impl Default for DeliveryProcessor {
             metrics: None,
             rate_limiter: None,
             circuit_breaker_instance: None,
+            binding_health: None,
             domain_resolver: None,
             process_now_notifier: Notify::new(),
             spool_scan_cursor: Mutex::new(SpoolScanCursor::default()),
@@ -255,6 +261,17 @@ impl Default for DeliveryProcessor {
 }
 
 impl DeliveryProcessor {
+    #[must_use]
+    pub fn binding_health_config_for(&self, name: &str) -> BindingHealthConfig {
+        self.outbound_bindings.health_config_for(name)
+    }
+
+    #[must_use]
+    pub fn binding_health_status_for(&self, name: &str) -> Option<BindingHealthStatus> {
+        self.binding_health
+            .as_ref()
+            .map(|health| health.status(name, self.binding_health_config_for(name)))
+    }
     /// Initialize the delivery processor
     ///
     /// # Errors
@@ -318,6 +335,9 @@ impl DeliveryProcessor {
             self.circuit_breaker.failure_window_secs,
             self.circuit_breaker.timeout_secs
         );
+
+        self.binding_health = Some(BindingHealthTracker::new());
+        internal!("Binding health tracker initialized");
 
         // Initialize domain policy resolver
         self.domain_resolver = Some(crate::policy::DomainPolicyResolver::new(
@@ -671,6 +691,10 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
 
     fn outbound_bindings(&self) -> crate::OutboundBindingRegistry {
         self.outbound_bindings.clone()
+    }
+
+    fn binding_health_status(&self, name: &str) -> Option<crate::BindingHealthStatus> {
+        self.binding_health_status_for(name)
     }
 
     fn request_process_now(&self) {

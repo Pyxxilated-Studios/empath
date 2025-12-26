@@ -6,6 +6,7 @@ use empath_common::{Domain, context::Context};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    binding_health::BindingHealthConfig,
     error::{DeliveryError, SystemError},
     policy::{DomainPolicyResolver, RetryPolicy},
     types::SmtpTimeouts,
@@ -46,6 +47,10 @@ pub struct OutboundBinding {
     /// retry policy is exhausted.
     #[serde(default)]
     pub allow_failover: bool,
+
+    /// Optional health configuration override for this binding.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub health: Option<BindingHealthConfig>,
 }
 
 /// TLS policy for a binding.
@@ -77,6 +82,9 @@ pub struct OutboundBindingRegistry {
     /// Named binding definitions.
     #[serde(default)]
     pub bindings: HashMap<String, OutboundBinding>,
+    /// Health configuration defaults for bindings.
+    #[serde(default)]
+    pub health: BindingHealthConfig,
 }
 
 impl OutboundBindingRegistry {
@@ -92,6 +100,14 @@ impl OutboundBindingRegistry {
         let mut names: Vec<String> = self.bindings.keys().cloned().collect();
         names.sort();
         names
+    }
+
+    #[must_use]
+    pub fn health_config_for(&self, name: &str) -> BindingHealthConfig {
+        self.bindings
+            .get(name)
+            .and_then(|binding| binding.health.clone())
+            .unwrap_or_else(|| self.health.clone())
     }
 
     /// Resolve the binding name for a message.

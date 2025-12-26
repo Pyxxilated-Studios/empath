@@ -112,6 +112,12 @@ Empath (
         // Modules can override by setting transaction["outbound_binding"].
         "outbound_bindings": (
             default: "primary",
+            // Default binding health configuration (optional)
+            // health: (
+            //     failure_threshold: 5,
+            //     open_timeout_secs: 300,
+            //     success_threshold: 1,
+            // ),
             bindings: {
                 "primary": (
                     source_ip: "192.0.2.10",
@@ -138,6 +144,12 @@ Empath (
                     // allow_failover: false,
                     // Override whether MTA-STS is fetched for this binding
                     // mta_sts_enabled: true,
+                    // Optional per-binding health overrides
+                    // health: (
+                    //     failure_threshold: 5,
+                    //     open_timeout_secs: 300,
+                    //     success_threshold: 1,
+                    // ),
                 ),
                 "backup": (
                     source_interface: "eth1",

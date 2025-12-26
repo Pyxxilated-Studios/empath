@@ -375,6 +375,18 @@ pub async fn prepare_message(
             // Stage 3: Record successful delivery in circuit breaker
             pipeline.record_success(&info.recipient_domain);
 
+            if let (Some(binding_name), Some(binding_health)) =
+                (info.binding.as_deref(), &processor.binding_health)
+            {
+                let state = binding_health.record_success(
+                    binding_name,
+                    processor.binding_health_config_for(binding_name),
+                );
+                if let Some(metrics) = &processor.metrics {
+                    metrics.record_binding_health_state(binding_name, state.as_metric_value());
+                }
+            }
+
             Ok(())
         }
         Err(e) => {
@@ -433,6 +445,19 @@ pub async fn handle_delivery_error(
             metrics.record_temporary_failure(&updated_info.recipient_domain);
         } else if is_permanent_failure {
             metrics.record_permanent_failure(&updated_info.recipient_domain);
+        }
+    }
+
+    if is_temporary_failure
+        && let (Some(binding_name), Some(binding_health)) =
+            (updated_info.binding.as_deref(), &processor.binding_health)
+    {
+        let state = binding_health.record_failure(
+            binding_name,
+            processor.binding_health_config_for(binding_name),
+        );
+        if let Some(metrics) = &processor.metrics {
+            metrics.record_binding_health_state(binding_name, state.as_metric_value());
         }
     }
 

@@ -17,7 +17,7 @@ use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SpoolCommand,
     SystemCommand, protocol::ResponseData, server::CommandHandler,
 };
-use empath_delivery::DeliveryQueryService;
+use empath_delivery::{BindingHealthState, DeliveryQueryService};
 use empath_smtp::TlsContextRegistry;
 use empath_spool::BackingStore;
 use ron::Options;
@@ -265,6 +265,48 @@ impl EmpathControlHandler {
         result
     }
 
+    fn list_bindings_response(&self) -> Response {
+        let registry = self.delivery.outbound_bindings();
+        let mut bindings: Vec<empath_control::protocol::OutboundBindingInfo> = registry
+            .bindings
+            .into_iter()
+            .map(|(name, binding)| {
+                let health = self.delivery.binding_health_status(&name);
+                let (health_state, consecutive_failures, open_until) =
+                    health.map_or((None, None, None), |status| {
+                        let state_label = match status.state {
+                            BindingHealthState::Closed => "closed",
+                            BindingHealthState::HalfOpen => "half_open",
+                            BindingHealthState::Open => "open",
+                        };
+                        let open_until = status
+                            .open_until
+                            .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+                            .map(|duration| duration.as_secs());
+                        (
+                            Some(state_label.to_string()),
+                            Some(status.consecutive_failures),
+                            open_until,
+                        )
+                    });
+
+                empath_control::protocol::OutboundBindingInfo {
+                    name,
+                    source_ip: binding.source_ip.map(|ip| ip.to_string()),
+                    source_interface: binding.source_interface,
+                    helo_domain: binding.helo_domain,
+                    attempt_starttls: binding.tls.attempt_starttls,
+                    health_state,
+                    consecutive_failures,
+                    open_until,
+                }
+            })
+            .collect();
+        bindings.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Response::data(ResponseData::OutboundBindings(bindings))
+    }
+
     /// Handle system management commands
     fn handle_system_command(&self, command: &SystemCommand) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
@@ -339,25 +381,7 @@ impl EmpathControlHandler {
                 )))
             }
 
-            SystemCommand::ListBindings => {
-                let registry = self.delivery.outbound_bindings();
-                let mut bindings: Vec<empath_control::protocol::OutboundBindingInfo> = registry
-                    .bindings
-                    .into_iter()
-                    .map(
-                        |(name, binding)| empath_control::protocol::OutboundBindingInfo {
-                            name,
-                            source_ip: binding.source_ip.map(|ip| ip.to_string()),
-                            source_interface: binding.source_interface,
-                            helo_domain: binding.helo_domain,
-                            attempt_starttls: binding.tls.attempt_starttls,
-                        },
-                    )
-                    .collect();
-                bindings.sort_by(|a, b| a.name.cmp(&b.name));
-
-                Ok(Response::data(ResponseData::OutboundBindings(bindings)))
-            }
+            SystemCommand::ListBindings => Ok(self.list_bindings_response()),
 
             SystemCommand::SetRateLimit {
                 domain,

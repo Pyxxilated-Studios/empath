@@ -12,7 +12,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 - [x] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard. (partial: core system metrics exist; docs/dashboard pending)
 - [x] NEW-23a: Per-binding retry/backoff. Allow bindings to carry timeout/retry profiles; ensure retries stick to the chosen binding unless explicitly allowed to fail over.
-- [ ] NEW-23b: Binding health/circuit breaker. Track per-binding connect success/latency; temporarily disable unhealthy bindings and surface status via metrics/control.
+- [x] NEW-23b: Binding health/circuit breaker. Track per-binding connect success/latency; temporarily disable unhealthy bindings and surface status via metrics/control.
 - [x] NEW-23c: Outbound binding observability. Per-binding counters and latency histograms (connect/EHLO); add Grafana panels.
 - [ ] NEW-23d: Control inspection for bindings. Control command to show binding selection for a queued message and toggle/disable a binding at runtime.
 - [ ] NEW-23e: Module binding ergonomics. Typed binding-name enum in FFI/WASM so modules can list/choose configured bindings; validate names with tests.
