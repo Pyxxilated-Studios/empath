@@ -19,7 +19,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
 - [x] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
 - [x] NEW-28a: Mutation limits & audit. Enforce header/body size/count limits on module mutations, emit audit events per module for header/body changes, and add metrics for mutation successes/failures (ties into NEW-27 observability). (partial: limits/audit types exist; metrics/events wiring pending)
-- [wip] NEW-28b: Module helper docs/tests. Regression tests for multi-value header order, encoded-word folding, newline normalization, and body append; WASM/FFI examples showing header mutations and multipart text/html helpers; doc snippet for module authors on safe mutations and signature/charset pitfalls. (partial: docs/tests exist, missing specific regression coverage)
+- [x] NEW-28b: Module helper docs/tests. Regression tests for multi-value header order, encoded-word folding, newline normalization, and body append; WASM/FFI examples showing header mutations and multipart text/html helpers; doc snippet for module authors on safe mutations and signature/charset pitfalls. (partial: docs/tests exist, missing specific regression coverage)
 - [ ] 0.12a Full config reload. Extend control reload to reapply all config facets in-process (SMTP/controller timeouts, DNS, delivery retry/circuit breaker, metrics/health/audit) or clearly mark restart-required fields; add tests and docs.
 
 ## P2 — Next Up / Blocked

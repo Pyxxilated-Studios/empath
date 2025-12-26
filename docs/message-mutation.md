@@ -43,3 +43,41 @@ Use these helpers when you need to:
 * Track mutation fingerprints across Python, C, or WASM modules for observability.
 
 Both the Python and shared library examples log their mutations and decorate the message so you can verify the new API surface end-to-end.
+
+## WASM module example
+
+```rust
+use empath_wasm_guest::bindings::empath::validator::message;
+
+fn validate_data(_ctx: empath_wasm_guest::bindings::empath::validator::Context) -> i32 {
+    let _ = message::headers_set("X-Processed-By".into(), "wasm-mutator".into());
+    let _ = message::body_set_alternative(
+        "Plain text body".into(),
+        "<p>HTML body</p>".into(),
+        "utf-8".into(),
+    );
+    0
+}
+```
+
+## FFI module example (C)
+
+```c
+int validate_data(Context *ctx) {
+  em_message_headers_set(ctx, "X-Processed-By", "ffi-mutator");
+  em_message_body_set_alternative(
+      ctx,
+      "Plain text body",
+      "<p>HTML body</p>",
+      "utf-8");
+  return 0;
+}
+```
+
+## Mutation guardrails
+
+- **DKIM/ARC**: mutating signed headers or body bytes invalidates existing signatures. Re-sign downstream if needed.
+- **Charset & encoding**: when setting text/HTML, keep `Content-Type` and `Content-Transfer-Encoding` aligned with your payload.
+- **Newlines**: body setters normalize to CRLF by default; avoid mixing LF/CRLF in appended chunks.
+- **Header folding**: encoded-word folds are collapsed into a single space during parsing; preserve exact encoded-word semantics when rewriting.
+- **Multipart**: `body_set_alternative` builds a `multipart/alternative` body with an auto boundary; if you need a specific boundary, build the multipart body manually and set `Content-Type` yourself.

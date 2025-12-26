@@ -923,3 +923,71 @@ impl std::fmt::Display for Charset {
         f.write_str(text)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multi_value_header_order_preserved() {
+        let raw = b"X-Test: one\r\nX-Test: two\r\n\r\nBody";
+        let mut parts = MessageParts::from_bytes(raw).expect("parse headers");
+        let name = HeaderName::new("X-Test").unwrap();
+
+        let values: Vec<String> = parts
+            .headers_view()
+            .get_all(&name)
+            .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+            .collect();
+        assert_eq!(values, vec!["one", "two"]);
+
+        let value = HeaderValue::new(b"three").unwrap();
+        {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+            headers.append(&name, &value).expect("append header");
+        }
+
+        let values: Vec<String> = parts
+            .headers_view()
+            .get_all(&name)
+            .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+            .collect();
+        assert_eq!(values, vec!["one", "two", "three"]);
+    }
+
+    #[test]
+    fn encoded_word_folding_preserves_spacing() {
+        let raw = b"Subject: =?utf-8?Q?foo?=\r\n =?utf-8?Q?bar?=\r\n\r\n";
+        let parts = MessageParts::from_bytes(raw).expect("parse headers");
+        let name = HeaderName::new("Subject").unwrap();
+        let view = parts.headers_view();
+        let value = view.get(&name).expect("subject value");
+        let decoded = String::from_utf8_lossy(value.as_bytes());
+        assert_eq!(decoded, "=?utf-8?Q?foo?= =?utf-8?Q?bar?=");
+    }
+
+    #[test]
+    fn body_set_normalizes_newlines() {
+        let raw = b"Subject: test\r\n\r\nLine1\nLine2\n";
+        let mut parts = MessageParts::from_bytes(raw).expect("parse body");
+        {
+            let mut body = parts.body_mut(BodyLimits::default(), None);
+            body.set_bytes(b"Line1\nLine2\n", BodyOpts::default())
+                .expect("set bytes");
+        }
+        assert_eq!(parts.body_view().as_bytes(), b"Line1\r\nLine2\r\n");
+    }
+
+    #[test]
+    fn body_append_normalizes_newlines() {
+        let raw = b"Subject: test\r\n\r\nLine1\r\n";
+        let mut parts = MessageParts::from_bytes(raw).expect("parse body");
+        {
+            let mut body = parts.body_mut(BodyLimits::default(), None);
+            body.append_bytes(b"Line2\nLine3\r\n", BodyOpts::default())
+                .expect("append bytes");
+        }
+        assert_eq!(parts.body_view().as_bytes(), b"Line1\r\nLine2\r\nLine3\r\n");
+    }
+}
