@@ -218,18 +218,21 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let config_path = temp_dir.path().join("empath.config.ron");
         let config = r#"
-(
-  delivery: (
-    domains: {
+Empath (
+  smtp: (
+    listeners: [],
+  ),
+  delivery: {
+    "domains": {
       "example.com": (
         mx_override: "localhost:2525",
       ),
     },
-    rate_limit: (
+    "rate_limit": (
       messages_per_second: 5.0,
       burst_size: 10,
     ),
-  ),
+  },
 )
 "#;
         std::fs::write(&config_path, config).expect("write config");

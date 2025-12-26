@@ -53,7 +53,15 @@ fn simple_command_strategy() -> impl Strategy<Value = String> {
         Just("DATA".to_string()),
         Just("HELP".to_string()),
         Just("STARTTLS".to_string()),
-        Just("AUTH".to_string()),
+    ]
+}
+
+/// Strategy to generate AUTH commands with a mechanism
+fn auth_command_strategy() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just("AUTH PLAIN".to_string()),
+        Just("AUTH LOGIN".to_string()),
+        Just("AUTH PLAIN dGVzdA==".to_string()),
     ]
 }
 
@@ -77,6 +85,7 @@ fn rcpt_to_strategy() -> impl Strategy<Value = String> {
 fn command_strategy() -> impl Strategy<Value = String> {
     prop_oneof![
         simple_command_strategy(),
+        auth_command_strategy(),
         helo_command_strategy(),
         mail_from_strategy(),
         rcpt_to_strategy(),

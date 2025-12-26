@@ -1135,6 +1135,7 @@ dependencies = [
  "libc",
  "mail-auth",
  "opentelemetry",
+ "opentelemetry_sdk",
  "parking_lot",
  "phf",
  "proptest",
@@ -1147,6 +1148,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-opentelemetry",
+ "tracing-subscriber",
  "ulid",
  "x509-parser",
 ]

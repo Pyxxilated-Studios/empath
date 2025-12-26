@@ -708,9 +708,15 @@ mod test {
     use empath_spool::{BackingStore, TestBackingStore};
     use opentelemetry::{
         Context as OtelContext,
-        trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState},
+        trace::{
+            SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState,
+            TracerProvider as _,
+        },
     };
-    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing::Instrument;
+    use tracing_opentelemetry::{OpenTelemetryLayer, OpenTelemetrySpanExt as _};
+    use tracing_subscriber::prelude::*;
 
     use crate::{
         State,
@@ -890,6 +896,11 @@ mod test {
         // Simulate PostDot state (handle_data_reception transitions here when it sees \r\n.\r\n)
         assert!(matches!(session.context.state, State::PostDot(_)));
 
+        let tracer = SdkTracerProvider::builder().build().tracer("empath-test");
+        let _ = tracing_subscriber::registry()
+            .with(OpenTelemetryLayer::new(tracer))
+            .try_init();
+
         let trace_id = TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").expect("trace id");
         let span_id = SpanId::from_hex("00f067aa0ba902b7").expect("span id");
         let span_context = SpanContext::new(
@@ -902,10 +913,14 @@ mod test {
         let otel_ctx = OtelContext::new().with_remote_span_context(span_context);
         let span = tracing::info_span!("smtp_receive");
         let _ = span.set_parent(otel_ctx);
+        let span_context = span.context().span().span_context().clone();
+        assert_eq!(span_context.trace_id(), trace_id);
 
         // Handle message spooling within trace context
-        let _guard = span.enter();
-        transaction_handler.handle_message(&mut context).await;
+        transaction_handler
+            .handle_message(&mut context)
+            .instrument(span)
+            .await;
 
         let response = session.response(&mut context).await;
         assert!(response.0.is_some());
@@ -926,11 +941,11 @@ mod test {
         }));
         assert_eq!(
             spooled_msg.transaction.get(TRACE_ID_CONTEXT_KEY),
-            Some(&"4bf92f3577b34da6a3ce929d0e0e4736".to_string())
+            Some(&span_context.trace_id().to_string())
         );
         assert_eq!(
             spooled_msg.transaction.get(SPAN_ID_CONTEXT_KEY),
-            Some(&"00f067aa0ba902b7".to_string())
+            Some(&span_context.span_id().to_string())
         );
     }
 

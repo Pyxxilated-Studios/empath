@@ -47,7 +47,9 @@ x509-parser.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+opentelemetry_sdk.workspace = true
 proptest.workspace = true
+tracing-subscriber.workspace = true
 
 [[bench]]
 name = "smtp_benchmarks"

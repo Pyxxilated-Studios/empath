@@ -165,7 +165,7 @@ pub fn bindings(input: TokenStream) -> TokenStream {
             pub fn set_outbound_binding(
                 binding: crate::empath::validator::host::OutboundBinding,
             ) -> bool {
-                crate::empath::validator::host::set_outbound_binding(binding)
+                crate::empath::validator::host::set_outbound_binding(&binding)
             }
         }
 
