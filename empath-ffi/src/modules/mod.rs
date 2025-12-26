@@ -4,7 +4,11 @@ use std::{
     sync::{Arc, OnceLock, RwLock},
 };
 
-use empath_common::{context::Context, internal, status::Status};
+use empath_common::{
+    context::{Context, ModuleContext},
+    internal,
+    status::Status,
+};
 use empath_tracing::traced;
 use serde::Deserialize;
 use thiserror::Error;
@@ -244,6 +248,20 @@ impl Display for Module {
 }
 
 impl Module {
+    fn module_context(&self) -> ModuleContext {
+        match self {
+            Self::SharedLibrary(lib) => ModuleContext::new("shared_library", lib.name.clone()),
+            Self::TestModule { .. } => ModuleContext::new("test", "test"),
+            Self::Core { .. } => ModuleContext::new("core", "core"),
+            #[cfg(feature = "metrics")]
+            Self::Metrics => ModuleContext::new("metrics", "metrics"),
+            #[cfg(feature = "python")]
+            Self::Python(py) => ModuleContext::new("python", py.path().display().to_string()),
+            #[cfg(feature = "wasm")]
+            Self::Wasm(wasm) => ModuleContext::new("wasm", wasm.path().display().to_string()),
+        }
+    }
+
     #[traced(instrument(level = tracing::Level::TRACE, ret, skip(self, validate_context)), timing(precision = "us"))]
     fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
         match self {
@@ -375,7 +393,10 @@ pub fn dispatch(event: Event, validate_context: &mut Context) -> DispatchResult 
 
     let mut event_error: Option<DispatchResult> = None;
     for module in modules.iter().inspect(|m| internal!(level = DEBUG, "{m}")) {
+        let previous = validate_context.module_context.take();
+        validate_context.module_context = Some(module.module_context());
         let code = module.emit(event, validate_context);
+        validate_context.module_context = previous;
         if code == 0 {
             continue;
         }

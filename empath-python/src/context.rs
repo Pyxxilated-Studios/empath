@@ -6,10 +6,12 @@
 use std::{borrow::Cow, sync::Arc};
 
 use empath_common::{
+    audit,
     context::{Capability, Context},
     error::MessageParseError,
     message_api::{
-        BodyLimits, BodyOpts, Charset, HeaderLimits, HeaderName, HeaderValue, NewlineStyle,
+        BodyError, BodyLimits, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
+        HeaderValue, MutationAudit, MutationKind, NewlineStyle,
     },
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -50,6 +52,7 @@ impl PyContext {
         &self,
         name: &str,
         value: &str,
+        action: &str,
         mut f: F,
     ) -> PyResult<Option<Result<R, empath_common::message_api::HeaderError>>>
     where
@@ -62,15 +65,50 @@ impl PyContext {
         let hname = HeaderName::new(name).map_err(Self::map_header_error)?;
         let hval = HeaderValue::new(value.as_bytes()).map_err(Self::map_header_error)?;
         let mut ctx = self.inner.write();
-        ctx.with_message_parts_mut(|parts| {
-            let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+        let module_context = module_context_snapshot(&ctx);
+        let mut audit_log = module_context
+            .as_ref()
+            .map(|module| MutationAudit::new(module.1.clone()));
+
+        let result = ctx.with_message_parts_mut(|parts| {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
             f(&mut headers, &hname, &hval)
-        })
-        .map_err(|err| Self::map_parse_error(&err))
+        });
+
+        let outcome = match result {
+            Ok(Some(Ok(value))) => {
+                if let (Some(module_context), Some(audit_log)) =
+                    (module_context.as_ref(), audit_log.as_ref())
+                {
+                    record_mutation_records(&ctx, module_context, audit_log);
+                }
+                Ok(Some(Ok(value)))
+            }
+            Ok(Some(Err(err))) => {
+                record_mutation_failure(
+                    module_context.as_ref(),
+                    "header",
+                    action,
+                    header_error_kind(err),
+                );
+                Ok(Some(Err(err)))
+            }
+            Ok(None) => {
+                record_mutation_failure(module_context.as_ref(), "header", action, "missing_data");
+                Ok(None)
+            }
+            Err(err) => {
+                record_mutation_failure(module_context.as_ref(), "header", action, "parse_error");
+                Err(Self::map_parse_error(&err))
+            }
+        };
+        drop(ctx);
+        outcome
     }
 
     fn with_body_mut<F, R>(
         &self,
+        action: &str,
         mut f: F,
     ) -> PyResult<Option<Result<R, empath_common::message_api::BodyError>>>
     where
@@ -79,11 +117,45 @@ impl PyContext {
         ) -> Result<R, empath_common::message_api::BodyError>,
     {
         let mut ctx = self.inner.write();
-        ctx.with_message_parts_mut(|parts| {
-            let mut body = parts.body_mut(BodyLimits::default(), None);
+        let module_context = module_context_snapshot(&ctx);
+        let mut audit_log = module_context
+            .as_ref()
+            .map(|module| MutationAudit::new(module.1.clone()));
+
+        let result = ctx.with_message_parts_mut(|parts| {
+            let mut body = parts.body_mut(BodyLimits::default(), audit_log.as_mut());
             f(&mut body)
-        })
-        .map_err(|err| Self::map_parse_error(&err))
+        });
+
+        let outcome = match result {
+            Ok(Some(Ok(value))) => {
+                if let (Some(module_context), Some(audit_log)) =
+                    (module_context.as_ref(), audit_log.as_ref())
+                {
+                    record_mutation_records(&ctx, module_context, audit_log);
+                }
+                Ok(Some(Ok(value)))
+            }
+            Ok(Some(Err(err))) => {
+                record_mutation_failure(
+                    module_context.as_ref(),
+                    "body",
+                    action,
+                    body_error_kind(err),
+                );
+                Ok(Some(Err(err)))
+            }
+            Ok(None) => {
+                record_mutation_failure(module_context.as_ref(), "body", action, "missing_data");
+                Ok(None)
+            }
+            Err(err) => {
+                record_mutation_failure(module_context.as_ref(), "body", action, "parse_error");
+                Err(Self::map_parse_error(&err))
+            }
+        };
+        drop(ctx);
+        outcome
     }
 
     fn map_parse_error(err: &MessageParseError) -> PyErr {
@@ -132,6 +204,81 @@ impl PyContext {
     fn parse_capability(capability: &str) -> PyResult<Capability> {
         Capability::parse(capability)
             .ok_or_else(|| PyValueError::new_err(format!("Unknown capability '{capability}'")))
+    }
+}
+
+fn module_context_snapshot(context: &Context) -> Option<(String, String)> {
+    context
+        .module_context
+        .as_ref()
+        .map(|module| (module.module_type.clone(), module.module_name.clone()))
+}
+
+fn record_mutation_records(
+    context: &Context,
+    module_context: &(String, String),
+    audit_log: &MutationAudit,
+) {
+    let (module_type, module_name) = module_context;
+    for record in audit_log.records() {
+        audit::log_module_mutation(context.id(), module_type, module_name, record);
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            let mutation_kind = match record.kind {
+                MutationKind::Header { .. } => "header",
+                MutationKind::Body => "body",
+            };
+            metrics.modules.record_mutation(
+                module_type,
+                module_name,
+                mutation_kind,
+                &record.action,
+                "success",
+                None,
+            );
+        }
+    }
+}
+
+fn record_mutation_failure(
+    module_context: Option<&(String, String)>,
+    mutation_kind: &str,
+    action: &str,
+    error_kind: &str,
+) {
+    let Some((module_type, module_name)) = module_context else {
+        return;
+    };
+    if let Some(metrics) = empath_metrics::try_metrics() {
+        metrics.modules.record_mutation(
+            module_type,
+            module_name,
+            mutation_kind,
+            action,
+            "failure",
+            Some(error_kind),
+        );
+    }
+}
+
+const fn header_error_kind(err: HeaderError) -> &'static str {
+    match err {
+        HeaderError::TooMany => "too_many",
+        HeaderError::NameTooLong => "name_too_long",
+        HeaderError::ValueTooLong => "value_too_long",
+        HeaderError::TotalSizeExceeded => "total_size_exceeded",
+        HeaderError::InvalidName => "invalid_name",
+        HeaderError::InvalidValue => "invalid_value",
+        HeaderError::SignatureProtected => "signature_protected",
+    }
+}
+
+const fn body_error_kind(err: BodyError) -> &'static str {
+    match err {
+        BodyError::TooLarge => "too_large",
+        BodyError::GrowthExceeded => "growth_exceeded",
+        BodyError::InvalidCharset => "invalid_charset",
+        BodyError::InvalidTransferEncoding => "invalid_transfer_encoding",
+        BodyError::MultipartError => "multipart_error",
     }
 }
 
@@ -216,7 +363,9 @@ impl PyContext {
     /// Set a header value (replaces existing).
     #[allow(clippy::redundant_closure_for_method_calls)]
     fn headers_set(&self, name: &str, value: &str) -> PyResult<bool> {
-        match self.with_headers_mut(name, value, |headers, hname, hval| headers.set(hname, hval)) {
+        match self.with_headers_mut(name, value, "set", |headers, hname, hval| {
+            headers.set(hname, hval)
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_header_error(err)),
             Ok(None) => Ok(false),
@@ -227,7 +376,7 @@ impl PyContext {
     /// Append a header value (does not replace existing).
     #[allow(clippy::redundant_closure_for_method_calls)]
     fn headers_append(&self, name: &str, value: &str) -> PyResult<bool> {
-        match self.with_headers_mut(name, value, |headers, hname, hval| {
+        match self.with_headers_mut(name, value, "append", |headers, hname, hval| {
             headers.append(hname, hval)
         }) {
             Ok(Some(Ok(()))) => Ok(true),
@@ -240,7 +389,7 @@ impl PyContext {
     /// Set a header only if missing. Returns True if newly set.
     #[allow(clippy::redundant_closure_for_method_calls)]
     fn headers_set_if_absent(&self, name: &str, value: &str) -> PyResult<bool> {
-        match self.with_headers_mut(name, value, |headers, hname, hval| {
+        match self.with_headers_mut(name, value, "set", |headers, hname, hval| {
             headers.set_if_absent(hname, hval)
         }) {
             Ok(Some(Ok(updated))) => Ok(updated),
@@ -322,7 +471,9 @@ impl PyContext {
 
     /// Replace the body with raw bytes.
     fn body_set_bytes(&self, data: &[u8]) -> PyResult<bool> {
-        match self.with_body_mut(|body| body.set_bytes(data, BodyOpts::default())) {
+        match self.with_body_mut("set-bytes", |body| {
+            body.set_bytes(data, BodyOpts::default())
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_body_error(err)),
             Ok(None) => Ok(false),
@@ -332,7 +483,9 @@ impl PyContext {
 
     /// Append raw bytes to the body.
     fn body_append_bytes(&self, data: &[u8]) -> PyResult<bool> {
-        match self.with_body_mut(|body| body.append_bytes(data, BodyOpts::default())) {
+        match self.with_body_mut("append-bytes", |body| {
+            body.append_bytes(data, BodyOpts::default())
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_body_error(err)),
             Ok(None) => Ok(false),
@@ -343,7 +496,9 @@ impl PyContext {
     /// Replace the body with text using the provided charset.
     fn body_set_text(&self, text: &str, charset: &str) -> PyResult<bool> {
         let charset = Self::parse_charset(charset);
-        match self.with_body_mut(|body| body.set_text(text, &charset, BodyOpts::default())) {
+        match self.with_body_mut("set-bytes", |body| {
+            body.set_text(text, &charset, BodyOpts::default())
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_body_error(err)),
             Ok(None) => Ok(false),
@@ -354,7 +509,9 @@ impl PyContext {
     /// Append text to the body using the provided charset.
     fn body_append_text(&self, text: &str, charset: &str) -> PyResult<bool> {
         let charset = Self::parse_charset(charset);
-        match self.with_body_mut(|body| body.append_text(text, &charset, BodyOpts::default())) {
+        match self.with_body_mut("append-bytes", |body| {
+            body.append_text(text, &charset, BodyOpts::default())
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_body_error(err)),
             Ok(None) => Ok(false),
@@ -365,7 +522,9 @@ impl PyContext {
     /// Replace the body with HTML using the provided charset.
     fn body_set_html(&self, html: &str, charset: &str) -> PyResult<bool> {
         let charset = Self::parse_charset(charset);
-        match self.with_body_mut(|body| body.set_html(html, &charset, BodyOpts::default())) {
+        match self.with_body_mut("set-bytes", |body| {
+            body.set_html(html, &charset, BodyOpts::default())
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_body_error(err)),
             Ok(None) => Ok(false),
@@ -376,7 +535,9 @@ impl PyContext {
     /// Append HTML to the body using the provided charset.
     fn body_append_html(&self, html: &str, charset: &str) -> PyResult<bool> {
         let charset = Self::parse_charset(charset);
-        match self.with_body_mut(|body| body.append_html(html, &charset, BodyOpts::default())) {
+        match self.with_body_mut("append-bytes", |body| {
+            body.append_html(html, &charset, BodyOpts::default())
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_body_error(err)),
             Ok(None) => Ok(false),
@@ -387,9 +548,9 @@ impl PyContext {
     /// Replace the body with multipart/alternative content.
     fn body_set_alternative(&self, text: &str, html: &str, charset: &str) -> PyResult<bool> {
         let charset = Self::parse_charset(charset);
-        match self
-            .with_body_mut(|body| body.set_alternative(text, html, &charset, BodyOpts::default()))
-        {
+        match self.with_body_mut("set-alternative", |body| {
+            body.set_alternative(text, html, &charset, BodyOpts::default())
+        }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_body_error(err)),
             Ok(None) => Ok(false),

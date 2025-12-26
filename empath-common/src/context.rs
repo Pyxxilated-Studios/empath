@@ -17,6 +17,22 @@ use crate::{
     status::Status,
 };
 
+#[derive(Debug, Clone)]
+pub struct ModuleContext {
+    pub module_type: String,
+    pub module_name: String,
+}
+
+impl ModuleContext {
+    #[must_use]
+    pub fn new(module_type: impl Into<String>, module_name: impl Into<String>) -> Self {
+        Self {
+            module_type: module_type.into(),
+            module_name: module_name.into(),
+        }
+    }
+}
+
 /// Transaction context key used to request a specific outbound binding.
 pub const OUTBOUND_BINDING_CONTEXT_KEY: &str = "outbound_binding";
 
@@ -248,6 +264,9 @@ pub struct Context {
     /// Tracks whether parsed message parts have been mutated and need persistence.
     #[serde(skip)]
     pub message_dirty: bool,
+    /// Active module identity for mutation audit/metrics.
+    #[serde(skip)]
+    pub module_context: Option<ModuleContext>,
 }
 
 impl Default for Context {
@@ -268,6 +287,7 @@ impl Default for Context {
             delivery: None,
             tracking_id: None,
             message_dirty: false,
+            module_context: None,
         }
     }
 }
@@ -312,6 +332,7 @@ impl Context {
             delivery: metadata.delivery,
             tracking_id: metadata.tracking_id,
             message_dirty: false,
+            module_context: None,
         }
     }
 

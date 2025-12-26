@@ -9,7 +9,6 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 ## P1 — Focus Now
 - [ ] NEW-18: Load & stress testing. Use k6/Locust; measure throughput (1k/10k/100k msg/day), CPU/mem/disk. Add docs + (optional) CI smoke.
 - [ ] 2.2 Connection pooling for SMTP client. Pool per-domain with idle cleanup, health check, metrics (hits/misses/size).
-- [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 - [x] NEW-22: Capacity planning metrics. Add process CPU/mem/fd, spool disk stats, network bytes/connections, GC if applicable, Grafana dashboard. (partial: core system metrics exist; docs/dashboard pending)
 - [x] NEW-23a: Per-binding retry/backoff. Allow bindings to carry timeout/retry profiles; ensure retries stick to the chosen binding unless explicitly allowed to fail over.
 - [x] NEW-23b: Binding health/circuit breaker. Track per-binding connect success/latency; temporarily disable unhealthy bindings and surface status via metrics/control.
@@ -19,7 +18,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-24: Per-domain bounce classification. Track temp vs perm failures by domain, expose metrics, and feed retry policy tuning.
 - [x] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.
 - [x] NEW-27: Spool I/O observability. Structured logs/metrics for read/write/update/delete latency with percentiles to catch slow disks.
-- [wip] NEW-28a: Mutation limits & audit. Enforce header/body size/count limits on module mutations, emit audit events per module for header/body changes, and add metrics for mutation successes/failures (ties into NEW-27 observability). (partial: limits/audit types exist; metrics/events wiring pending)
+- [x] NEW-28a: Mutation limits & audit. Enforce header/body size/count limits on module mutations, emit audit events per module for header/body changes, and add metrics for mutation successes/failures (ties into NEW-27 observability). (partial: limits/audit types exist; metrics/events wiring pending)
 - [wip] NEW-28b: Module helper docs/tests. Regression tests for multi-value header order, encoded-word folding, newline normalization, and body append; WASM/FFI examples showing header mutations and multipart text/html helpers; doc snippet for module authors on safe mutations and signature/charset pitfalls. (partial: docs/tests exist, missing specific regression coverage)
 - [ ] 0.12a Full config reload. Extend control reload to reapply all config facets in-process (SMTP/controller timeouts, DNS, delivery retry/circuit breaker, metrics/health/audit) or clearly mark restart-required fields; add tests and docs.
 
@@ -44,6 +43,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] 0.14 DNSSEC validation/logging — backlog after 1.0.
 - [ ] 5.2/5.3 Config hot reload & TLS policy enforcement — post-Phase 4.
 - [ ] NEW-WASM-15+16 performance cleanup after macro/context changes (profiling).
+- [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 
 ## Recently Completed (this branch)
 _See `docs/COMPLETED.md` for the full archive of resolved work._

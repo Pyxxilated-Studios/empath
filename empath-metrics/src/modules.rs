@@ -31,6 +31,9 @@ pub struct ModuleMetrics {
     /// Total number of module timeouts by path
     timeout_total: Counter<u64>,
 
+    /// Total number of module message mutations
+    mutations_total: Counter<u64>,
+
     // Per-module memory tracking (module_path -> memory_bytes)
     // Lock-free concurrent map prevents panic on lock poisoning
     memory_bytes: Arc<DashMap<String, Arc<AtomicU64>>>,
@@ -60,6 +63,11 @@ impl ModuleMetrics {
             .with_description("Total number of module timeouts by path")
             .build();
 
+        let mutations_total = meter
+            .u64_counter("empath.modules.mutations.total")
+            .with_description("Total number of module message mutations")
+            .build();
+
         // Create atomic map for per-module memory tracking
         let memory_ref = Arc::new(DashMap::<String, Arc<AtomicU64>>::new());
 
@@ -84,6 +92,7 @@ impl ModuleMetrics {
             errors_total,
             execution_duration_seconds,
             timeout_total,
+            mutations_total,
             memory_bytes: memory_ref,
         })
     }
@@ -138,6 +147,36 @@ impl ModuleMetrics {
     pub fn record_timeout(&self, module_path: &str) {
         let attributes = [KeyValue::new("module_path", module_path.to_string())];
         self.timeout_total.add(1, &attributes);
+    }
+
+    /// Record a message mutation performed by a module
+    ///
+    /// # Arguments
+    ///
+    /// * `module_type` - Module runtime type (e.g., "wasm", "python", "`shared_library`")
+    /// * `module_name` - Module name or path
+    /// * `mutation_kind` - "header" or "body"
+    /// * `action` - Mutation action (set/append/remove/etc.)
+    /// * `result` - "success" or "failure"
+    /// * `error_kind` - Optional error classification for failures
+    pub fn record_mutation(
+        &self,
+        module_type: &str,
+        module_name: &str,
+        mutation_kind: &str,
+        action: &str,
+        result: &str,
+        error_kind: Option<&str>,
+    ) {
+        let attributes = [
+            KeyValue::new("module_type", module_type.to_string()),
+            KeyValue::new("module_name", module_name.to_string()),
+            KeyValue::new("mutation_kind", mutation_kind.to_string()),
+            KeyValue::new("action", action.to_string()),
+            KeyValue::new("result", result.to_string()),
+            KeyValue::new("error_kind", error_kind.unwrap_or_default().to_string()),
+        ];
+        self.mutations_total.add(1, &attributes);
     }
 
     /// Update module memory usage

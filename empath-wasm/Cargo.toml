@@ -18,6 +18,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 empath-common.workspace = true
+empath-metrics.workspace = true
 anyhow.workspace = true
 postcard.workspace = true
 serde.workspace = true

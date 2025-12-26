@@ -1053,6 +1053,7 @@ version = "0.0.1"
 dependencies = [
  "ahash",
  "empath-common",
+ "empath-metrics",
  "parking_lot",
  "pyo3",
  "tempfile",
@@ -1127,6 +1128,7 @@ dependencies = [
  "cap-rand",
  "empath-common",
  "empath-ffi",
+ "empath-metrics",
  "empath-smtp",
  "empath-spool",
  "postcard",

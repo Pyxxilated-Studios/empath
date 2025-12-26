@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Domain,
     email::{EmailAddress, ServerId},
+    message_api::{MutationKind, MutationRecord},
 };
 
 /// Audit logging configuration
@@ -138,6 +139,50 @@ pub fn log_message_received(
         size = size,
         from_ip = %from_ip,
         "Audit: Message received and spooled"
+    );
+}
+
+/// Log module mutation event
+///
+/// Logged when a module mutates headers or body content.
+///
+/// # Fields
+/// - `message_id`: Unique message identifier
+/// - `module_type`: Module runtime type (e.g., wasm, python, `shared_library`)
+/// - `module_name`: Module name or path
+/// - `mutation_kind`: Header or body mutation
+/// - `action`: Mutation action (set/append/remove/etc.)
+/// - `header_name`: Header name (header mutations only)
+/// - `old_len`: Previous size (bytes)
+/// - `new_len`: New size (bytes)
+pub fn log_module_mutation(
+    message_id: &str,
+    module_type: &str,
+    module_name: &str,
+    record: &MutationRecord,
+) {
+    let config = config();
+    if !config.enabled {
+        return;
+    }
+
+    let (mutation_kind, header_name) = match &record.kind {
+        MutationKind::Header { name } => ("header", Some(name.as_str())),
+        MutationKind::Body => ("body", None),
+    };
+
+    tracing::event!(
+        tracing::Level::INFO,
+        event = "ModuleMutation",
+        message_id = %message_id,
+        module_type = %module_type,
+        module_name = %module_name,
+        mutation_kind = %mutation_kind,
+        action = %record.action,
+        header_name = ?header_name,
+        old_len = record.old_len,
+        new_len = record.new_len,
+        "Audit: Module mutation"
     );
 }
 

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, ffi::CStr, marker::PhantomData};
+use std::{borrow::Cow, ffi::CStr};
 
 use ulid::Ulid;
 
@@ -265,7 +265,7 @@ impl MessageParts {
     pub const fn headers_mut<'a>(
         &'a mut self,
         limits: HeaderLimits,
-        audit: Option<MutationAudit<'a>>,
+        audit: Option<&'a mut MutationAudit>,
     ) -> HeadersMut<'a> {
         HeadersMut::new(&mut self.headers, limits, audit, &mut self.dirty)
     }
@@ -278,7 +278,7 @@ impl MessageParts {
     pub const fn body_mut<'a>(
         &'a mut self,
         limits: BodyLimits,
-        audit: Option<MutationAudit<'a>>,
+        audit: Option<&'a mut MutationAudit>,
     ) -> BodyMut<'a> {
         BodyMut::new(&mut self.body, limits, audit, &mut self.dirty)
     }
@@ -338,7 +338,7 @@ impl<'a> HeadersView<'a> {
 pub struct HeadersMut<'a> {
     headers: &'a mut Vec<(HeaderName, HeaderValue)>,
     limits: HeaderLimits,
-    audit: Option<MutationAudit<'a>>,
+    audit: Option<&'a mut MutationAudit>,
     dirty: &'a mut bool,
 }
 
@@ -346,7 +346,7 @@ impl<'a> HeadersMut<'a> {
     pub const fn new(
         headers: &'a mut Vec<(HeaderName, HeaderValue)>,
         limits: HeaderLimits,
-        audit: Option<MutationAudit<'a>>,
+        audit: Option<&'a mut MutationAudit>,
         dirty: &'a mut bool,
     ) -> Self {
         Self {
@@ -392,7 +392,7 @@ impl<'a> HeadersMut<'a> {
         self.remove(name);
         self.headers.push((name.clone(), value.clone()));
         *self.dirty = true;
-        if let Some(audit) = &mut self.audit {
+        if let Some(audit) = self.audit.as_deref_mut() {
             audit.record_header("set", name, 0, value.as_bytes().len());
         }
         Ok(())
@@ -406,7 +406,7 @@ impl<'a> HeadersMut<'a> {
         let added = name.as_str().len() + value.as_bytes().len();
         self.headers.push((name.clone(), value.clone()));
         *self.dirty = true;
-        if let Some(audit) = &mut self.audit {
+        if let Some(audit) = self.audit.as_deref_mut() {
             let after = before + added;
             audit.record_header("append", name, before, after);
         }
@@ -453,7 +453,7 @@ impl<'a> HeadersMut<'a> {
         if removed > 0 {
             let after_size = self.total_size();
             *self.dirty = true;
-            if let Some(audit) = &mut self.audit {
+            if let Some(audit) = self.audit.as_deref_mut() {
                 audit.record_header("remove", name, before_size, after_size);
             }
         }
@@ -547,7 +547,7 @@ impl<'a> BodyView<'a> {
 pub struct BodyMut<'a> {
     buffer: &'a mut Vec<u8>,
     limits: BodyLimits,
-    audit: Option<MutationAudit<'a>>,
+    audit: Option<&'a mut MutationAudit>,
     dirty: &'a mut bool,
 }
 
@@ -555,7 +555,7 @@ impl<'a> BodyMut<'a> {
     pub const fn new(
         buffer: &'a mut Vec<u8>,
         limits: BodyLimits,
-        audit: Option<MutationAudit<'a>>,
+        audit: Option<&'a mut MutationAudit>,
         dirty: &'a mut bool,
     ) -> Self {
         Self {
@@ -595,7 +595,7 @@ impl<'a> BodyMut<'a> {
         *self.buffer = next;
         *self.dirty = true;
 
-        if let Some(audit) = &mut self.audit {
+        if let Some(audit) = self.audit.as_deref_mut() {
             audit.record_body(action, old_len, self.buffer.len());
         }
 
@@ -710,19 +710,17 @@ impl<'a> BodyMut<'a> {
 
 /// Audit helper to capture mutations for logging and metrics.
 #[derive(Debug, Default)]
-pub struct MutationAudit<'a> {
-    module: Option<Cow<'a, str>>,
-    records: Vec<MutationRecord<'a>>,
-    _marker: PhantomData<&'a ()>,
+pub struct MutationAudit {
+    module: Option<String>,
+    records: Vec<MutationRecord>,
 }
 
-impl<'a> MutationAudit<'a> {
+impl MutationAudit {
     #[must_use]
-    pub fn new(module: impl Into<Cow<'a, str>>) -> Self {
+    pub fn new(module: impl Into<String>) -> Self {
         Self {
             module: Some(module.into()),
             records: Vec::new(),
-            _marker: PhantomData,
         }
     }
 
@@ -755,15 +753,15 @@ impl<'a> MutationAudit<'a> {
     }
 
     #[must_use]
-    pub fn records(&self) -> &[MutationRecord<'a>] {
+    pub fn records(&self) -> &[MutationRecord] {
         &self.records
     }
 }
 
 /// Audit record for a single mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MutationRecord<'a> {
-    pub module: Option<Cow<'a, str>>,
+pub struct MutationRecord {
+    pub module: Option<String>,
     pub kind: MutationKind,
     pub action: String,
     pub old_len: usize,

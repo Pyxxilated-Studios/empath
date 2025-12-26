@@ -194,6 +194,7 @@ fn create_test_context() -> Context {
         tracking_id: None,
         message_parts: None,
         message_dirty: false,
+        module_context: None,
     }
 }
 

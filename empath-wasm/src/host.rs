@@ -14,11 +14,12 @@ use std::{
 };
 
 use empath_common::{
+    audit,
     context::{Context, OUTBOUND_BINDING_CONTEXT_KEY},
     internal,
     message_api::{
         BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
-        HeaderValue, HeadersMut, NewlineStyle,
+        HeaderValue, HeadersMut, MutationAudit, MutationKind, NewlineStyle,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -339,11 +340,15 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
     }
 
     fn headers_set(&mut self, name: String, value: String) -> i32 {
-        self.with_headers_mut(&name, &value, |mut headers, n, v| headers.set(&n, &v))
+        self.with_headers_mut(&name, &value, "set", |mut headers, n, v| {
+            headers.set(&n, &v)
+        })
     }
 
     fn headers_append(&mut self, name: String, value: String) -> i32 {
-        self.with_headers_mut(&name, &value, |mut headers, n, v| headers.append(&n, &v))
+        self.with_headers_mut(&name, &value, "append", |mut headers, n, v| {
+            headers.append(&n, &v)
+        })
     }
 
     fn headers_set_if_absent(
@@ -354,14 +359,45 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
         let Ok(mut ctx) = self.try_lock_context() else {
             return Err(-1);
         };
-        match ctx.with_message_parts_mut(|parts| {
-            let mut h = parts.headers_mut(HeaderLimits::default(), None);
-            let hname = HeaderName::new(name.clone()).map_err(|_| -1)?;
-            let hval = HeaderValue::new(value.as_bytes()).map_err(|_| -1)?;
-            h.set_if_absent(&hname, &hval).map_err(|_| -1)
-        }) {
-            Ok(Some(Ok(res))) => Ok(res),
-            _ => Err(-1),
+        let module_context = module_context_snapshot(&ctx);
+        let mut audit_log = module_context
+            .as_ref()
+            .map(|module| MutationAudit::new(module.1.clone()));
+
+        let result = ctx.with_message_parts_mut(|parts| {
+            let mut h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+            let hname = HeaderName::new(name.clone())?;
+            let hval = HeaderValue::new(value.as_bytes())?;
+            h.set_if_absent(&hname, &hval)
+        });
+
+        match result {
+            Ok(Some(Ok(updated))) => {
+                if updated
+                    && let (Some(module_context), Some(audit_log)) =
+                        (module_context.as_ref(), audit_log.as_ref())
+                {
+                    record_mutation_records(&ctx, module_context, audit_log);
+                }
+                Ok(updated)
+            }
+            Ok(Some(Err(err))) => {
+                record_mutation_failure(
+                    module_context.as_ref(),
+                    "header",
+                    "set",
+                    header_error_kind(err),
+                );
+                Err(-1)
+            }
+            Ok(None) => {
+                record_mutation_failure(module_context.as_ref(), "header", "set", "missing_data");
+                Err(-1)
+            }
+            Err(_) => {
+                record_mutation_failure(module_context.as_ref(), "header", "set", "parse_error");
+                Err(-1)
+            }
         }
     }
 
@@ -372,38 +408,113 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
         self.try_lock_context()
             .ok()
             .and_then(|mut ctx| {
-                ctx.with_message_parts_mut(|parts| {
-                    let mut h = parts.headers_mut(HeaderLimits::default(), None);
+                let module_context = module_context_snapshot(&ctx);
+                let mut audit_log = module_context
+                    .as_ref()
+                    .map(|module| MutationAudit::new(module.1.clone()));
+
+                let result = ctx.with_message_parts_mut(|parts| {
+                    let mut h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
                     u32::try_from(h.remove(&hname)).unwrap_or(u32::MAX)
-                })
-                .ok()
-                .flatten()
+                });
+
+                match result {
+                    Ok(Some(count)) => {
+                        if let (Some(module_context), Some(audit_log)) =
+                            (module_context.as_ref(), audit_log.as_ref())
+                        {
+                            record_mutation_records(&ctx, module_context, audit_log);
+                        }
+                        Some(count)
+                    }
+                    Ok(None) => {
+                        record_mutation_failure(
+                            module_context.as_ref(),
+                            "header",
+                            "remove",
+                            "missing_data",
+                        );
+                        None
+                    }
+                    Err(_) => {
+                        record_mutation_failure(
+                            module_context.as_ref(),
+                            "header",
+                            "remove",
+                            "parse_error",
+                        );
+                        None
+                    }
+                }
             })
             .unwrap_or(0)
     }
 
     fn headers_ensure_message_id(&mut self) -> i32 {
         self.try_lock_context().map_or(-1, |mut ctx| {
-            match ctx.with_message_parts_mut(|parts| {
-                let mut h = parts.headers_mut(HeaderLimits::default(), None);
-                h.ensure_message_id().map(|()| 0).map_err(|_| -1)
-            }) {
-                Ok(Some(Ok(res))) => res,
-                _ => -1,
+            let module_context = module_context_snapshot(&ctx);
+            let mut audit_log = module_context
+                .as_ref()
+                .map(|module| MutationAudit::new(module.1.clone()));
+
+            let result = ctx.with_message_parts_mut(|parts| {
+                let mut h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+                h.ensure_message_id()
+            });
+
+            match result {
+                Ok(Some(Ok(()))) => {
+                    if let (Some(module_context), Some(audit_log)) =
+                        (module_context.as_ref(), audit_log.as_ref())
+                    {
+                        record_mutation_records(&ctx, module_context, audit_log);
+                    }
+                    0
+                }
+                Ok(Some(Err(err))) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "header",
+                        "set",
+                        header_error_kind(err),
+                    );
+                    -1
+                }
+                Ok(None) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "header",
+                        "set",
+                        "missing_data",
+                    );
+                    -1
+                }
+                Err(_) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "header",
+                        "set",
+                        "parse_error",
+                    );
+                    -1
+                }
             }
         })
     }
 
     fn headers_set_content_type(&mut self, value: String) -> i32 {
-        self.with_headers_mut("Content-Type", &value, |mut headers, n, v| {
+        self.with_headers_mut("Content-Type", &value, "set", |mut headers, n, v| {
             headers.set(&n, &v)
         })
     }
 
     fn headers_set_transfer_encoding(&mut self, value: String) -> i32 {
-        self.with_headers_mut("Content-Transfer-Encoding", &value, |mut headers, n, v| {
-            headers.set(&n, &v)
-        })
+        self.with_headers_mut(
+            "Content-Transfer-Encoding",
+            &value,
+            "set",
+            |mut headers, n, v| headers.set(&n, &v),
+        )
     }
 
     fn body_len(
@@ -460,20 +571,20 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
     }
 
     fn body_set_bytes(&mut self, data: Vec<u8>) -> i32 {
-        self.with_body_mut(data.as_slice(), |mut body, buf| {
+        self.with_body_mut(data.as_slice(), "set-bytes", |mut body, buf| {
             body.set_bytes(buf, BodyOpts::default())
         })
     }
 
     fn body_append_bytes(&mut self, data: Vec<u8>) -> i32 {
-        self.with_body_mut(data.as_slice(), |mut body, buf| {
+        self.with_body_mut(data.as_slice(), "append-bytes", |mut body, buf| {
             body.append_bytes(buf, BodyOpts::default())
         })
     }
 
     fn body_set_text(&mut self, text: String, charset: String) -> i32 {
         let bytes = text.into_bytes();
-        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+        self.with_body_mut(bytes.as_slice(), "set-bytes", |mut body, buf| {
             let charset = charset_from_string(&charset);
             body.set_text(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
         })
@@ -481,7 +592,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
 
     fn body_append_text(&mut self, text: String, charset: String) -> i32 {
         let bytes = text.into_bytes();
-        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+        self.with_body_mut(bytes.as_slice(), "append-bytes", |mut body, buf| {
             let charset = charset_from_string(&charset);
             body.append_text(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
         })
@@ -489,7 +600,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
 
     fn body_set_html(&mut self, html: String, charset: String) -> i32 {
         let bytes = html.into_bytes();
-        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+        self.with_body_mut(bytes.as_slice(), "set-bytes", |mut body, buf| {
             let charset = charset_from_string(&charset);
             body.set_html(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
         })
@@ -497,7 +608,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
 
     fn body_append_html(&mut self, html: String, charset: String) -> i32 {
         let bytes = html.into_bytes();
-        self.with_body_mut(bytes.as_slice(), |mut body, buf| {
+        self.with_body_mut(bytes.as_slice(), "append-bytes", |mut body, buf| {
             let charset = charset_from_string(&charset);
             body.append_html(&String::from_utf8_lossy(buf), &charset, BodyOpts::default())
         })
@@ -505,51 +616,239 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
 
     fn body_set_alternative(&mut self, text: String, html: String, charset: String) -> i32 {
         self.try_lock_context().map_or(-1, |mut ctx| {
-            match ctx.with_message_parts_mut(|parts| {
-                let mut body = parts.body_mut(BodyLimits::default(), None);
+            let module_context = module_context_snapshot(&ctx);
+            let mut audit_log = module_context
+                .as_ref()
+                .map(|module| MutationAudit::new(module.1.clone()));
+
+            let result = ctx.with_message_parts_mut(|parts| {
+                let mut body = parts.body_mut(BodyLimits::default(), audit_log.as_mut());
                 let charset = charset_from_string(&charset);
                 body.set_alternative(&text, &html, &charset, BodyOpts::default())
-                    .map(|()| 0)
-                    .map_err(|_| -1)
-            }) {
-                Ok(Some(Ok(res))) => res,
-                _ => -1,
+            });
+
+            match result {
+                Ok(Some(Ok(()))) => {
+                    if let (Some(module_context), Some(audit_log)) =
+                        (module_context.as_ref(), audit_log.as_ref())
+                    {
+                        record_mutation_records(&ctx, module_context, audit_log);
+                    }
+                    0
+                }
+                Ok(Some(Err(err))) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "body",
+                        "set-alternative",
+                        body_error_kind(err),
+                    );
+                    -1
+                }
+                Ok(None) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "body",
+                        "set-alternative",
+                        "missing_data",
+                    );
+                    -1
+                }
+                Err(_) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "body",
+                        "set-alternative",
+                        "parse_error",
+                    );
+                    -1
+                }
             }
         })
     }
 }
 
 impl WasmStore {
-    fn with_headers_mut<F>(&self, name: &str, value: &str, mut f: F) -> i32
+    fn with_headers_mut<F>(&self, name: &str, value: &str, action: &str, mut f: F) -> i32
     where
         F: FnMut(HeadersMut<'_>, HeaderName, HeaderValue) -> std::result::Result<(), HeaderError>,
     {
         self.try_lock_context().map_or(-1, |mut ctx| {
-            match ctx.with_message_parts_mut(|parts| {
-                let h = parts.headers_mut(HeaderLimits::default(), None);
-                let hname = HeaderName::new(name).map_err(|_| -1)?;
-                let hval = HeaderValue::new(value.as_bytes()).map_err(|_| -1)?;
-                f(h, hname, hval).map(|()| 0).map_err(|_| -1)
-            }) {
-                Ok(Some(Ok(res))) => res,
-                _ => -1,
+            let module_context = module_context_snapshot(&ctx);
+            let mut audit_log = module_context
+                .as_ref()
+                .map(|module| MutationAudit::new(module.1.clone()));
+
+            let result = ctx.with_message_parts_mut(|parts| {
+                let h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+                let hname = HeaderName::new(name)?;
+                let hval = HeaderValue::new(value.as_bytes())?;
+                f(h, hname, hval)
+            });
+
+            match result {
+                Ok(Some(Ok(()))) => {
+                    if let (Some(module_context), Some(audit_log)) =
+                        (module_context.as_ref(), audit_log.as_ref())
+                    {
+                        record_mutation_records(&ctx, module_context, audit_log);
+                    }
+                    0
+                }
+                Ok(Some(Err(err))) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "header",
+                        action,
+                        header_error_kind(err),
+                    );
+                    -1
+                }
+                Ok(None) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "header",
+                        action,
+                        "missing_data",
+                    );
+                    -1
+                }
+                Err(_) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "header",
+                        action,
+                        "parse_error",
+                    );
+                    -1
+                }
             }
         })
     }
 
-    fn with_body_mut<F>(&self, data: &[u8], mut f: F) -> i32
+    fn with_body_mut<F>(&self, data: &[u8], action: &str, mut f: F) -> i32
     where
         F: FnMut(BodyMut<'_>, &[u8]) -> std::result::Result<(), BodyError>,
     {
         self.try_lock_context().map_or(-1, |mut ctx| {
-            match ctx.with_message_parts_mut(|parts| {
-                let body = parts.body_mut(BodyLimits::default(), None);
-                f(body, data).map(|()| 0).map_err(|_| -1)
-            }) {
-                Ok(Some(Ok(res))) => res,
-                _ => -1,
+            let module_context = module_context_snapshot(&ctx);
+            let mut audit_log = module_context
+                .as_ref()
+                .map(|module| MutationAudit::new(module.1.clone()));
+
+            let result = ctx.with_message_parts_mut(|parts| {
+                let body = parts.body_mut(BodyLimits::default(), audit_log.as_mut());
+                f(body, data)
+            });
+
+            match result {
+                Ok(Some(Ok(()))) => {
+                    if let (Some(module_context), Some(audit_log)) =
+                        (module_context.as_ref(), audit_log.as_ref())
+                    {
+                        record_mutation_records(&ctx, module_context, audit_log);
+                    }
+                    0
+                }
+                Ok(Some(Err(err))) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "body",
+                        action,
+                        body_error_kind(err),
+                    );
+                    -1
+                }
+                Ok(None) => {
+                    record_mutation_failure(
+                        module_context.as_ref(),
+                        "body",
+                        action,
+                        "missing_data",
+                    );
+                    -1
+                }
+                Err(_) => {
+                    record_mutation_failure(module_context.as_ref(), "body", action, "parse_error");
+                    -1
+                }
             }
         })
+    }
+}
+
+fn module_context_snapshot(context: &Context) -> Option<(String, String)> {
+    context
+        .module_context
+        .as_ref()
+        .map(|module| (module.module_type.clone(), module.module_name.clone()))
+}
+
+fn record_mutation_records(
+    context: &Context,
+    module_context: &(String, String),
+    audit_log: &MutationAudit,
+) {
+    let (module_type, module_name) = module_context;
+    for record in audit_log.records() {
+        audit::log_module_mutation(context.id(), module_type, module_name, record);
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            let mutation_kind = match record.kind {
+                MutationKind::Header { .. } => "header",
+                MutationKind::Body => "body",
+            };
+            metrics.modules.record_mutation(
+                module_type,
+                module_name,
+                mutation_kind,
+                &record.action,
+                "success",
+                None,
+            );
+        }
+    }
+}
+
+fn record_mutation_failure(
+    module_context: Option<&(String, String)>,
+    mutation_kind: &str,
+    action: &str,
+    error_kind: &str,
+) {
+    let Some((module_type, module_name)) = module_context else {
+        return;
+    };
+    if let Some(metrics) = empath_metrics::try_metrics() {
+        metrics.modules.record_mutation(
+            module_type,
+            module_name,
+            mutation_kind,
+            action,
+            "failure",
+            Some(error_kind),
+        );
+    }
+}
+
+const fn header_error_kind(err: HeaderError) -> &'static str {
+    match err {
+        HeaderError::TooMany => "too_many",
+        HeaderError::NameTooLong => "name_too_long",
+        HeaderError::ValueTooLong => "value_too_long",
+        HeaderError::TotalSizeExceeded => "total_size_exceeded",
+        HeaderError::InvalidName => "invalid_name",
+        HeaderError::InvalidValue => "invalid_value",
+        HeaderError::SignatureProtected => "signature_protected",
+    }
+}
+
+const fn body_error_kind(err: BodyError) -> &'static str {
+    match err {
+        BodyError::TooLarge => "too_large",
+        BodyError::GrowthExceeded => "growth_exceeded",
+        BodyError::InvalidCharset => "invalid_charset",
+        BodyError::InvalidTransferEncoding => "invalid_transfer_encoding",
+        BodyError::MultipartError => "multipart_error",
     }
 }
 
