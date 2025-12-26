@@ -14,7 +14,7 @@ use std::{
 };
 
 use empath_common::{
-    context::Context,
+    context::{Context, OUTBOUND_BINDING_CONTEXT_KEY},
     internal,
     message_api::{
         BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
@@ -88,6 +88,8 @@ pub struct WasmStore {
     pub wasi_ctx: WasiCtx,
     /// Resource table for component model
     pub resource_table: ResourceTable,
+    /// Configured outbound bindings for validation helpers
+    pub outbound_bindings: Arc<[String]>,
 }
 
 impl WasiView for WasmStore {
@@ -131,6 +133,7 @@ impl WasmStore {
         max_memory_bytes: usize,
         timeout: Duration,
         wasi_ctx: WasiCtx,
+        outbound_bindings: Arc<[String]>,
     ) -> Result<Self> {
         let context_bytes = {
             let serializable = {
@@ -157,6 +160,7 @@ impl WasmStore {
             timeout,
             wasi_ctx,
             resource_table: ResourceTable::new(),
+            outbound_bindings,
         })
     }
 }
@@ -234,6 +238,38 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
         self.try_lock_context()
             .ok()
             .is_some_and(|ctx| ctx.transaction.contains_key(key.as_str()))
+    }
+
+    fn outbound_bindings(&mut self) -> Vec<String> {
+        self.outbound_bindings.to_vec()
+    }
+
+    fn set_outbound_binding(
+        &mut self,
+        binding: crate::bindings::empath::validator::host::OutboundBinding,
+    ) -> bool {
+        let Ok(mut ctx) = self.try_lock_context() else {
+            return false;
+        };
+
+        match binding {
+            crate::bindings::empath::validator::host::OutboundBinding::Default => {
+                ctx.transaction.remove(OUTBOUND_BINDING_CONTEXT_KEY);
+                true
+            }
+            crate::bindings::empath::validator::host::OutboundBinding::Named(name) => {
+                if !self
+                    .outbound_bindings
+                    .iter()
+                    .any(|binding| binding == &name)
+                {
+                    return false;
+                }
+                ctx.transaction
+                    .insert(Cow::Borrowed(OUTBOUND_BINDING_CONTEXT_KEY), name);
+                true
+            }
+        }
     }
 }
 
@@ -568,8 +604,15 @@ mod tests {
 
     fn make_store(context: Arc<Mutex<Context>>) -> WasmStore {
         let wasi_ctx = WasiCtxBuilder::new().build();
-        WasmStore::new(context, 1024, Duration::from_secs(1), wasi_ctx)
-            .expect("store creation should succeed")
+        let outbound_bindings = Arc::from(Vec::<String>::new().into_boxed_slice());
+        WasmStore::new(
+            context,
+            1024,
+            Duration::from_secs(1),
+            wasi_ctx,
+            outbound_bindings,
+        )
+        .expect("store creation should succeed")
     }
 
     #[test]

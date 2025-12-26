@@ -132,6 +132,12 @@ interface events {
 
 /// Host functions that guest modules can call
 interface host {
+    /// Outbound binding selection for delivery.
+    variant outbound-binding {
+        default,
+        named(string),
+    }
+
     /// Log a message from the guest module
     /// Messages are logged at INFO level with [WASM] prefix
     log: func(message: string);
@@ -155,6 +161,12 @@ interface host {
 
     /// Check if transaction context key exists
     transaction-exists: func(key: string) -> bool;
+
+    /// List configured outbound bindings
+    outbound-bindings: func() -> list<string>;
+
+    /// Set outbound binding for this transaction (default clears override)
+    set-outbound-binding: func(binding: outbound-binding) -> bool;
 }
 
 /// Main validator world - what a validation module must implement

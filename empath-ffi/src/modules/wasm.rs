@@ -91,6 +91,7 @@ impl Wasm {
                 self.path.display()
             ))
         })?;
+        module = module.with_outbound_bindings(super::outbound_bindings());
 
         if let Some(timeout_secs) = self.timeout_secs {
             module = module.with_timeout(Duration::from_secs(timeout_secs));

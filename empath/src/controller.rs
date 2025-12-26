@@ -140,8 +140,6 @@ impl Empath {
             tracing::warn!(error = %e, "Failed to initialize metrics");
         }
 
-        modules::init(self.modules)?;
-
         // Initialize health checker
         let health_checker = Arc::new(HealthChecker::new(self.health.max_queue_size));
 
@@ -159,6 +157,9 @@ impl Empath {
         // Initialize delivery controller first to get the DNS resolver
         // Use default DNS resolver (None = HickoryDnsResolver)
         self.delivery.init(backing_store.clone(), None)?;
+
+        modules::set_outbound_bindings(self.delivery.outbound_bindings.names());
+        modules::init(self.modules)?;
 
         // Mark delivery and DNS as ready after successful initialization
         health_checker.set_delivery_ready(true);

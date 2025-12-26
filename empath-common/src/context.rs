@@ -17,6 +17,9 @@ use crate::{
     status::Status,
 };
 
+/// Transaction context key used to request a specific outbound binding.
+pub const OUTBOUND_BINDING_CONTEXT_KEY: &str = "outbound_binding";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Capability {
     Auth,

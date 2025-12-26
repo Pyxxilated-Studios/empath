@@ -2,7 +2,10 @@
 
 use std::{collections::HashMap, net::IpAddr};
 
-use empath_common::{Domain, context::Context};
+use empath_common::{
+    Domain,
+    context::{Context, OUTBOUND_BINDING_CONTEXT_KEY},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,9 +14,6 @@ use crate::{
     policy::{DomainPolicyResolver, RetryPolicy},
     types::SmtpTimeouts,
 };
-
-/// Transaction context key used by modules to request a specific outbound binding.
-pub const OUTBOUND_BINDING_CONTEXT_KEY: &str = "outbound_binding";
 
 /// Outbound binding definition.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

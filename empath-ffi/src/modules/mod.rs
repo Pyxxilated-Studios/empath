@@ -21,6 +21,37 @@ pub mod validate;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+static OUTBOUND_BINDINGS: OnceLock<RwLock<Vec<String>>> = OnceLock::new();
+
+fn outbound_bindings_store() -> &'static RwLock<Vec<String>> {
+    OUTBOUND_BINDINGS.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Replace the configured outbound bindings list for module helpers.
+pub fn set_outbound_bindings(bindings: Vec<String>) {
+    if let Ok(mut guard) = outbound_bindings_store().write() {
+        *guard = bindings;
+    }
+}
+
+/// Fetch configured outbound bindings for module helpers.
+#[must_use]
+pub fn outbound_bindings() -> Vec<String> {
+    outbound_bindings_store()
+        .read()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
+/// Validate that a binding name exists in configuration.
+#[must_use]
+pub fn outbound_binding_exists(name: &str) -> bool {
+    outbound_bindings_store()
+        .read()
+        .map(|guard| guard.iter().any(|binding| binding == name))
+        .unwrap_or(false)
+}
+
 type Init = unsafe extern "C" fn(StringVector) -> i32;
 type DeclareModule = unsafe extern "C" fn() -> Mod;
 

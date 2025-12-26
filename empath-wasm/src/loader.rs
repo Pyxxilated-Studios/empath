@@ -231,6 +231,9 @@ pub struct WasmModule {
     /// Maximum memory in bytes
     max_memory_bytes: usize,
 
+    /// Configured outbound bindings for validation helpers
+    outbound_bindings: Arc<[String]>,
+
     /// WASI preopened directories: (`host_path`, `guest_name`, readonly)
     wasi_dirs: Vec<(String, String, bool)>,
 
@@ -269,6 +272,7 @@ impl WasmModule {
             component,
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
+            outbound_bindings: Arc::from(Vec::<String>::new().into_boxed_slice()),
             wasi_dirs: Vec::new(),
             wasi_inherit_env: false,
         })
@@ -285,6 +289,13 @@ impl WasmModule {
     #[must_use]
     pub const fn with_max_memory(mut self, max_memory_bytes: usize) -> Self {
         self.max_memory_bytes = max_memory_bytes;
+        self
+    }
+
+    /// Set the configured outbound bindings for validation helpers.
+    #[must_use]
+    pub fn with_outbound_bindings(mut self, bindings: Vec<String>) -> Self {
+        self.outbound_bindings = Arc::from(bindings.into_boxed_slice());
         self
     }
 
@@ -317,8 +328,13 @@ impl WasmModule {
 
         // Create a dummy context for initialization
         let dummy_context = Arc::new(Mutex::new(Context::default()));
-        let wasm_store =
-            WasmStore::new(dummy_context, self.max_memory_bytes, self.timeout, wasi_ctx)?;
+        let wasm_store = WasmStore::new(
+            dummy_context,
+            self.max_memory_bytes,
+            self.timeout,
+            wasi_ctx,
+            Arc::clone(&self.outbound_bindings),
+        )?;
         let mut store = Store::new(&self.engine, wasm_store);
         store.limiter(|s| s);
 
@@ -397,6 +413,7 @@ impl WasmModule {
             self.max_memory_bytes,
             self.timeout,
             wasi_ctx,
+            Arc::clone(&self.outbound_bindings),
         )?;
         let mut store = Store::new(&self.engine, wasm_store);
         store.limiter(|s| s);

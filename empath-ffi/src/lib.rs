@@ -2,7 +2,7 @@ use std::{borrow::Cow, ffi::CStr, sync::Arc};
 
 use empath_common::{
     address::Address,
-    context::{Capability, Context},
+    context::{Capability, Context, OUTBOUND_BINDING_CONTEXT_KEY},
     message_api::{
         BodyLimits, BodyOpts, Charset, HeaderLimits, HeaderName, HeaderValue, NewlineStyle,
     },
@@ -14,6 +14,22 @@ pub mod string;
 
 pub type InitFunc = unsafe fn() -> isize;
 pub type ValidateData = unsafe fn(&Context) -> isize;
+
+/// Outbound binding selection for FFI modules.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmOutboundBindingKind {
+    Default = 0,
+    Named = 1,
+}
+
+/// Outbound binding selection payload for FFI modules.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct EmOutboundBindingSelection {
+    pub kind: EmOutboundBindingKind,
+    pub name: *const libc::c_char,
+}
 
 /// Retrieve the id associated with this context
 ///
@@ -460,6 +476,76 @@ pub unsafe extern "C" fn em_context_transaction_exists(
             CStr::from_ptr(key)
                 .to_str()
                 .is_ok_and(|key| validate_context.transaction.contains_key(key))
+        }
+    }
+}
+
+// ============================================================================
+// Outbound Binding Helpers
+// ============================================================================
+
+/// List configured outbound bindings.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub extern "C" fn em_outbound_bindings_list() -> crate::string::StringVector {
+    crate::modules::outbound_bindings().into()
+}
+
+/// Validate an outbound binding name against configuration.
+///
+/// # Safety
+///
+/// Provided with a null pointer, returns false.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_outbound_binding_is_valid(name: *const libc::c_char) -> bool {
+    if name.is_null() {
+        return false;
+    }
+
+    unsafe {
+        CStr::from_ptr(name)
+            .to_str()
+            .is_ok_and(crate::modules::outbound_binding_exists)
+    }
+}
+
+/// Set outbound binding override for this transaction.
+///
+/// # Safety
+///
+/// Provided with a null pointer for `name` while `kind` is `Named`, returns false.
+#[unsafe(no_mangle)]
+#[allow(clippy::module_name_repetitions)]
+pub unsafe extern "C" fn em_context_set_outbound_binding(
+    validate_context: &mut Context,
+    selection: EmOutboundBindingSelection,
+) -> bool {
+    match selection.kind {
+        EmOutboundBindingKind::Default => {
+            validate_context
+                .transaction
+                .remove(OUTBOUND_BINDING_CONTEXT_KEY);
+            true
+        }
+        EmOutboundBindingKind::Named => {
+            if selection.name.is_null() {
+                return false;
+            }
+
+            unsafe {
+                let Ok(name) = CStr::from_ptr(selection.name).to_str() else {
+                    return false;
+                };
+                if !crate::modules::outbound_binding_exists(name) {
+                    return false;
+                }
+                validate_context.transaction.insert(
+                    Cow::Borrowed(OUTBOUND_BINDING_CONTEXT_KEY),
+                    name.to_string(),
+                );
+                true
+            }
         }
     }
 }
@@ -1030,14 +1116,16 @@ mod test {
 
     use empath_common::{
         address::{Address, AddressList},
-        context::Context,
+        context::{Context, OUTBOUND_BINDING_CONTEXT_KEY},
         envelope::Envelope,
         status::Status,
     };
 
     use super::{
-        em_context_exists, em_context_get, em_context_get_data, em_context_get_id,
-        em_context_get_recipients, em_context_set, em_context_set_response, em_context_set_sender,
+        EmOutboundBindingKind, EmOutboundBindingSelection, em_context_exists, em_context_get,
+        em_context_get_data, em_context_get_id, em_context_get_recipients, em_context_set,
+        em_context_set_outbound_binding, em_context_set_response, em_context_set_sender,
+        em_outbound_binding_is_valid, em_outbound_bindings_list,
     };
 
     macro_rules! cstr {
@@ -1096,6 +1184,52 @@ mod test {
                 CString::new("RCPT TO:test@test.com").unwrap()
             );
         }
+    }
+
+    #[test]
+    fn test_outbound_binding_helpers() {
+        crate::modules::set_outbound_bindings(vec!["primary".to_string(), "backup".to_string()]);
+
+        let mut validate_context = Context::default();
+
+        let primary = CString::new("primary").unwrap();
+        let selection = EmOutboundBindingSelection {
+            kind: EmOutboundBindingKind::Named,
+            name: primary.as_ptr(),
+        };
+        assert!(unsafe { em_context_set_outbound_binding(&mut validate_context, selection) });
+        assert_eq!(
+            validate_context
+                .transaction
+                .get(OUTBOUND_BINDING_CONTEXT_KEY)
+                .map(String::as_str),
+            Some("primary")
+        );
+
+        let unknown = CString::new("unknown").unwrap();
+        let selection = EmOutboundBindingSelection {
+            kind: EmOutboundBindingKind::Named,
+            name: unknown.as_ptr(),
+        };
+        assert!(!unsafe { em_context_set_outbound_binding(&mut validate_context, selection) });
+
+        let default = EmOutboundBindingSelection {
+            kind: EmOutboundBindingKind::Default,
+            name: null(),
+        };
+        assert!(unsafe { em_context_set_outbound_binding(&mut validate_context, default) });
+        assert!(
+            validate_context
+                .transaction
+                .get(OUTBOUND_BINDING_CONTEXT_KEY)
+                .is_none()
+        );
+
+        assert!(unsafe { em_outbound_binding_is_valid(primary.as_ptr()) });
+        assert!(!unsafe { em_outbound_binding_is_valid(unknown.as_ptr()) });
+
+        let bindings = em_outbound_bindings_list();
+        assert_eq!(bindings.len, 2);
     }
 
     #[test]

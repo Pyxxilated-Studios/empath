@@ -128,6 +128,8 @@ pub fn bindings(input: TokenStream) -> TokenStream {
         }
 
         pub mod host {
+            pub use crate::empath::validator::host::OutboundBinding;
+
             pub fn log(message: impl AsRef<str>) {
                 crate::empath::validator::host::log(message.as_ref());
             }
@@ -154,6 +156,16 @@ pub fn bindings(input: TokenStream) -> TokenStream {
 
             pub fn transaction_exists(key: &str) -> bool {
                 crate::empath::validator::host::transaction_exists(key)
+            }
+
+            pub fn outbound_bindings() -> ::alloc::vec::Vec<::alloc::string::String> {
+                crate::empath::validator::host::outbound_bindings()
+            }
+
+            pub fn set_outbound_binding(
+                binding: crate::empath::validator::host::OutboundBinding,
+            ) -> bool {
+                crate::empath::validator::host::set_outbound_binding(binding)
             }
         }
 

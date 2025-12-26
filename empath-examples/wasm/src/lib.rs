@@ -57,8 +57,11 @@ impl ValidationGuest for Validator {
         // Example: request a specific outbound binding for delivery.
         // This value is persisted in the spool and used during outbound delivery.
         if sender.ends_with("@vip.example.com") {
-            host::transaction_set("outbound_binding", "primary");
-            host::log("WASM: Selected outbound binding 'primary' for VIP sender");
+            if host::set_outbound_binding(host::OutboundBinding::Named("primary".into())) {
+                host::log("WASM: Selected outbound binding 'primary' for VIP sender");
+            } else {
+                host::log("WASM: Failed to select outbound binding 'primary'");
+            }
         }
 
         accept()
