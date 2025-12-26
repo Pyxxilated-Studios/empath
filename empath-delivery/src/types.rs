@@ -72,6 +72,60 @@ impl Default for SmtpTimeouts {
     }
 }
 
+/// SMTP client pool configuration
+///
+/// Controls connection reuse for outbound SMTP deliveries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmtpPoolConfig {
+    /// Enable connection pooling for outbound SMTP clients.
+    #[serde(default = "default_smtp_pool_enabled")]
+    pub enabled: bool,
+    /// Maximum idle connections to keep per domain key.
+    #[serde(default = "default_smtp_pool_max_per_domain")]
+    pub max_per_domain: usize,
+    /// Idle time-to-live before pooled connections are closed.
+    #[serde(default = "default_smtp_pool_idle_ttl")]
+    pub idle_ttl_secs: u64,
+    /// Run a NOOP health check before reusing a pooled connection.
+    #[serde(default = "default_smtp_pool_health_check")]
+    pub health_check_on_acquire: bool,
+    /// How often to sweep idle connections from the pool.
+    #[serde(default = "default_smtp_pool_cleanup_interval")]
+    pub cleanup_interval_secs: u64,
+}
+
+impl Default for SmtpPoolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_smtp_pool_enabled(),
+            max_per_domain: default_smtp_pool_max_per_domain(),
+            idle_ttl_secs: default_smtp_pool_idle_ttl(),
+            health_check_on_acquire: default_smtp_pool_health_check(),
+            cleanup_interval_secs: default_smtp_pool_cleanup_interval(),
+        }
+    }
+}
+
+const fn default_smtp_pool_enabled() -> bool {
+    true
+}
+
+const fn default_smtp_pool_max_per_domain() -> usize {
+    4
+}
+
+const fn default_smtp_pool_idle_ttl() -> u64 {
+    60
+}
+
+const fn default_smtp_pool_health_check() -> bool {
+    true
+}
+
+const fn default_smtp_pool_cleanup_interval() -> u64 {
+    30
+}
+
 const fn default_connect_timeout() -> u64 {
     30
 }

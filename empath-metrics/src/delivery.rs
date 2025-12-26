@@ -65,6 +65,13 @@ pub struct DeliveryMetrics {
     /// Current outbound binding health state (0=Closed, 1=HalfOpen, 2=Open)
     binding_health_state: Gauge<u64>,
 
+    /// Total number of SMTP client pool hits
+    smtp_pool_hits_total: Counter<u64>,
+    /// Total number of SMTP client pool misses
+    smtp_pool_misses_total: Counter<u64>,
+    /// Current SMTP client pool size per domain
+    smtp_pool_sizes: Arc<DashMap<String, Arc<AtomicU64>>>,
+
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     messages_delivered_count: Arc<AtomicU64>,
     messages_failed_count: Arc<AtomicU64>,
@@ -254,6 +261,29 @@ impl DeliveryMetrics {
             .with_description("Outbound binding health state (0=Closed, 1=HalfOpen, 2=Open)")
             .build();
 
+        let smtp_pool_hits_total = meter
+            .u64_counter("empath.delivery.smtp_pool.hits.total")
+            .with_description("Total number of outbound SMTP pool hits by domain")
+            .build();
+        let smtp_pool_misses_total = meter
+            .u64_counter("empath.delivery.smtp_pool.misses.total")
+            .with_description("Total number of outbound SMTP pool misses by domain")
+            .build();
+
+        let smtp_pool_sizes_ref = Arc::new(DashMap::<String, Arc<AtomicU64>>::new());
+        let smtp_pool_sizes_clone = smtp_pool_sizes_ref.clone();
+        meter
+            .u64_observable_gauge("empath.delivery.smtp_pool.size")
+            .with_description("Current outbound SMTP pool size by domain")
+            .with_callback(move |observer| {
+                for entry in smtp_pool_sizes_clone.iter() {
+                    let domain = entry.key();
+                    let size = entry.value().load(Ordering::Relaxed);
+                    observer.observe(size, &[KeyValue::new("domain", domain.clone())]);
+                }
+            })
+            .build();
+
         let circuit_breaker_trips_total = meter
             .u64_counter("empath.delivery.circuit_breaker.trips.total")
             .with_description(
@@ -384,6 +414,9 @@ impl DeliveryMetrics {
             binding_connect_duration_seconds,
             binding_ehlo_duration_seconds,
             binding_health_state,
+            smtp_pool_hits_total,
+            smtp_pool_misses_total,
+            smtp_pool_sizes: smtp_pool_sizes_ref,
             circuit_breaker_trips_total,
             circuit_breaker_recoveries_total,
             messages_delivered_count: messages_delivered_ref,
@@ -436,6 +469,26 @@ impl DeliveryMetrics {
         let label = self.binding_label(Some(binding));
         self.binding_health_state
             .record(state, &[KeyValue::new("binding", label)]);
+    }
+
+    pub fn record_smtp_pool_hit(&self, domain: &str) {
+        let label = self.bucket_domain(domain);
+        self.smtp_pool_hits_total
+            .add(1, &[KeyValue::new("domain", label)]);
+    }
+
+    pub fn record_smtp_pool_miss(&self, domain: &str) {
+        let label = self.bucket_domain(domain);
+        self.smtp_pool_misses_total
+            .add(1, &[KeyValue::new("domain", label)]);
+    }
+
+    pub fn update_smtp_pool_size(&self, domain: &str, size: u64) {
+        let label = self.bucket_domain(domain);
+        self.smtp_pool_sizes
+            .entry(label)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .store(size, Ordering::Relaxed);
     }
 
     fn binding_label(&self, binding: Option<&str>) -> String {

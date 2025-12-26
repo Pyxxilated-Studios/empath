@@ -129,6 +129,7 @@ enum MessageBodySource<'a> {
 trait StarttlsClient {
     async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError>;
     async fn starttls(&mut self) -> Result<ClientResponse, ClientError>;
+    fn is_tls(&self) -> bool;
 }
 
 #[async_trait]
@@ -139,6 +140,10 @@ impl StarttlsClient for SmtpClient {
 
     async fn starttls(&mut self) -> Result<ClientResponse, ClientError> {
         self.starttls().await
+    }
+
+    fn is_tls(&self) -> bool {
+        self.is_tls()
     }
 }
 
@@ -312,6 +317,30 @@ impl<'a> SmtpTransaction<'a> {
     /// Returns an error if any part of the SMTP transaction fails
     #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(server = %self.server_address, message_id = %self.context.id)), timing(precision = "ms"))]
     pub async fn execute(self) -> Result<(), DeliveryError> {
+        let client = self.connect_and_greet().await?;
+        self.execute_with_client_internal(client, false)
+            .await
+            .map(|_| ())
+    }
+
+    /// Execute the SMTP transaction using a pre-connected client (from a pool).
+    ///
+    /// Returns the client if it is still reusable after the transaction completes.
+    ///
+    /// # Errors
+    /// Returns an error if any part of the SMTP transaction fails
+    pub async fn execute_with_client(
+        self,
+        client: SmtpClient,
+    ) -> Result<Option<SmtpClient>, DeliveryError> {
+        self.execute_with_client_internal(client, true).await
+    }
+
+    async fn execute_with_client_internal(
+        self,
+        mut client: SmtpClient,
+        pooled: bool,
+    ) -> Result<Option<SmtpClient>, DeliveryError> {
         // Log security warning if certificate validation is disabled
         if self.tls_validation.accepts_invalid() {
             tracing::warn!(
@@ -319,9 +348,6 @@ impl<'a> SmtpTransaction<'a> {
                 "SECURITY WARNING: TLS certificate validation is disabled for this connection"
             );
         }
-
-        // Connect to the SMTP server
-        let mut client = self.connect_and_greet().await?;
 
         // Perform TLS negotiation if required or available
         let tls_outcome = self.negotiate_tls(&mut client).await?;
@@ -371,18 +397,49 @@ impl<'a> SmtpTransaction<'a> {
         // Send DATA command and message content
         Box::pin(self.send_message_data(&mut client)).await?;
 
-        // Send QUIT to cleanly close the connection
-        // Note: We don't fail the delivery if QUIT fails since the message was already delivered
-        let quit_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
-        if let Err(e) = tokio::time::timeout(quit_timeout, client.quit()).await {
-            tracing::warn!(
-                server = %self.server_address,
-                timeout = ?quit_timeout,
-                "QUIT command timed out after successful delivery: {e}"
-            );
-        }
+        if pooled {
+            let rset_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
+            match tokio::time::timeout(rset_timeout, client.rset()).await {
+                Ok(Ok(response)) if response.is_success() => Ok(Some(client)),
+                Ok(Ok(response)) => {
+                    tracing::warn!(
+                        server = %self.server_address,
+                        response = %response.message(),
+                        "RSET failed after delivery; dropping pooled connection"
+                    );
+                    Ok(None)
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        server = %self.server_address,
+                        error = %err,
+                        "RSET failed after delivery; dropping pooled connection"
+                    );
+                    Ok(None)
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        server = %self.server_address,
+                        timeout = ?rset_timeout,
+                        "RSET timed out after delivery; dropping pooled connection: {err}"
+                    );
+                    Ok(None)
+                }
+            }
+        } else {
+            // Send QUIT to cleanly close the connection
+            // Note: We don't fail the delivery if QUIT fails since the message was already delivered
+            let quit_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
+            if let Err(e) = tokio::time::timeout(quit_timeout, client.quit()).await {
+                tracing::warn!(
+                    server = %self.server_address,
+                    timeout = ?quit_timeout,
+                    "QUIT command timed out after successful delivery: {e}"
+                );
+            }
 
-        Ok(())
+            Ok(None)
+        }
     }
 
     /// Negotiate TLS upgrade via STARTTLS if required or available
@@ -392,10 +449,37 @@ impl<'a> SmtpTransaction<'a> {
     ///
     /// # Errors
     /// Returns an error if TLS is required but fails
+    #[allow(
+        clippy::too_many_lines,
+        reason = "TLS negotiation handles RFC 3207 edge cases."
+    )]
     async fn negotiate_tls(
         &self,
         client: &mut (impl StarttlsClient + Send),
     ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        if client.is_tls() {
+            let helo_domain = self.helo_domain();
+            let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+            let ehlo_start = Instant::now();
+            let ehlo_response: ClientResponse =
+                tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                    .await
+                    .map_err(|_| {
+                        TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
+                    })??;
+            self.record_ehlo_duration(ehlo_start);
+
+            if !ehlo_response.is_success() {
+                return Err(TemporaryError::SmtpTemporary(format!(
+                    "Server rejected EHLO: {}",
+                    ehlo_response.message()
+                ))
+                .into());
+            }
+
+            return Ok(TlsNegotiationOutcome::Success);
+        }
+
         if !self.attempt_tls {
             tracing::debug!(
                 domain = %self.context.id,
@@ -684,6 +768,10 @@ mod tests {
             self.starttls_result
                 .take()
                 .unwrap_or_else(|| Ok(ClientResponse::new(220, vec!["Ready for TLS".to_string()])))
+        }
+
+        fn is_tls(&self) -> bool {
+            false
         }
     }
 

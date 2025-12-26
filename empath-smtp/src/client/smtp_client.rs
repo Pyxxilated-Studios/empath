@@ -509,6 +509,15 @@ impl SmtpClient {
         self.command("QUIT").await
     }
 
+    /// Sends NOOP command to check connection health.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command fails.
+    pub async fn noop(&mut self) -> Result<Response> {
+        self.command("NOOP").await
+    }
+
     /// Sends STARTTLS command and upgrades the connection to TLS.
     ///
     /// # Errors
@@ -550,6 +559,12 @@ impl SmtpClient {
     #[must_use]
     pub fn responses(&self) -> &[Response] {
         &self.responses
+    }
+
+    /// Returns true if the underlying connection is currently TLS.
+    #[must_use]
+    pub const fn is_tls(&self) -> bool {
+        matches!(self.connection, Some(ClientConnection::Tls(_)))
     }
 
     /// Returns the last response received, if any.

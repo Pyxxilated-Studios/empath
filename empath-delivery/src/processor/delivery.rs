@@ -17,6 +17,7 @@ use crate::{
     OutboundBinding,
     error::{DeliveryError, SystemError, TemporaryError},
     processor::DeliveryProcessor,
+    smtp_pool::{SmtpPoolKey, SmtpPoolRequest},
     types::DeliveryInfo,
 };
 
@@ -722,6 +723,10 @@ pub async fn persist_delivery_state(
 ///
 /// # Errors
 /// Returns an error if any part of the SMTP transaction fails
+#[allow(
+    clippy::too_many_lines,
+    reason = "Delivery orchestration needs full policy flow."
+)]
 async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryError> {
     let DeliverMessageArgs {
         processor,
@@ -797,11 +802,25 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
         .filter(|config: &ConnectConfig| {
             config.local_ip.is_some() || config.local_interface.is_some()
         });
+    let pool_connect_config = connect_config.clone();
 
     let helo_domain = binding.and_then(|binding| binding.helo_domain.clone());
     let smtp_timeouts = binding
         .and_then(|binding| binding.smtp_timeouts.as_ref())
         .unwrap_or(&processor.smtp_timeouts);
+
+    let pool_request = SmtpPoolRequest::new(
+        delivery_info.recipient_domain.as_str(),
+        server_address,
+        pool_connect_config.as_ref(),
+        attempt_tls,
+        require_tls,
+        accept_invalid_certs,
+    );
+    let pooled_client = processor
+        .smtp_pool_state
+        .acquire(pool_request, processor.metrics.as_ref())
+        .await;
 
     // Create and execute the SMTP transaction
     let transaction = crate::smtp_transaction::SmtpTransaction::new(
@@ -818,7 +837,29 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     .with_metrics(processor.metrics.as_ref(), delivery_info.binding.as_deref())
     .with_spool_body(spool, message_id);
 
-    Box::pin(transaction.execute()).await
+    if let Some(client) = pooled_client {
+        match Box::pin(transaction.execute_with_client(client)).await {
+            Ok(Some(client)) => {
+                let key = SmtpPoolKey::new(
+                    delivery_info.recipient_domain.as_str().to_string(),
+                    server_address.to_string(),
+                    pool_connect_config.as_ref(),
+                    attempt_tls,
+                    require_tls,
+                    accept_invalid_certs,
+                    client.is_tls(),
+                );
+                processor
+                    .smtp_pool_state
+                    .release(key, client, processor.metrics.as_ref());
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err(err) => Err(err),
+        }
+    } else {
+        Box::pin(transaction.execute()).await
+    }
 }
 
 impl From<&OutboundBinding> for ConnectConfig {

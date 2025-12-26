@@ -28,7 +28,7 @@ use crate::{
     policy::RetryPolicy,
     queue::DeliveryQueue,
     rate_limiter::{RateLimitConfig, RateLimiter},
-    types::SmtpTimeouts,
+    types::{SmtpPoolConfig, SmtpTimeouts},
 };
 
 const fn default_scan_interval() -> u64 {
@@ -127,6 +127,10 @@ pub struct DeliveryProcessor {
     #[serde(default)]
     pub smtp_timeouts: SmtpTimeouts,
 
+    /// SMTP client connection pool configuration
+    #[serde(default)]
+    pub smtp_pool: SmtpPoolConfig,
+
     /// DSN (Delivery Status Notification) configuration
     ///
     /// Controls generation of bounce messages for failed deliveries.
@@ -199,6 +203,10 @@ pub struct DeliveryProcessor {
     #[serde(skip)]
     pub(crate) metrics: Option<empath_metrics::DeliveryMetrics>,
 
+    /// SMTP client pool (initialized in `init()`)
+    #[serde(skip)]
+    pub(crate) smtp_pool_state: crate::smtp_pool::SmtpClientPool,
+
     /// Rate limiter for per-domain throttling (initialized in `init()`)
     #[serde(skip)]
     pub(crate) rate_limiter: Option<RateLimiter>,
@@ -242,6 +250,7 @@ impl Default for DeliveryProcessor {
             domains: DomainConfigRegistry::default(),
             outbound_bindings: OutboundBindingRegistry::default(),
             smtp_timeouts: SmtpTimeouts::default(),
+            smtp_pool: SmtpPoolConfig::default(),
             dsn: DsnConfig::default(),
             rate_limit: RateLimitConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
@@ -255,6 +264,7 @@ impl Default for DeliveryProcessor {
             ),
             cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
             metrics: None,
+            smtp_pool_state: crate::smtp_pool::SmtpClientPool::new(SmtpPoolConfig::default()),
             rate_limiter: None,
             circuit_breaker_instance: None,
             binding_health: None,
@@ -348,6 +358,14 @@ impl DeliveryProcessor {
                 empath_common::tracing::warn!(error = %e, "Failed to initialize delivery metrics");
             }
         }
+
+        self.smtp_pool_state = crate::smtp_pool::SmtpClientPool::new(self.smtp_pool.clone());
+        internal!(
+            "SMTP client pool initialized (enabled: {}, max_per_domain: {}, idle_ttl_secs: {})",
+            self.smtp_pool.enabled,
+            self.smtp_pool.max_per_domain,
+            self.smtp_pool.idle_ttl_secs
+        );
 
         // Initialize rate limiter
         self.rate_limiter = Some(RateLimiter::new(self.rate_limit.clone()));
@@ -443,6 +461,7 @@ impl DeliveryProcessor {
         let scan_interval = Duration::from_secs(self.scan_interval_secs);
         let process_interval = Duration::from_secs(self.process_interval_secs);
         let cleanup_interval = Duration::from_secs(self.cleanup_interval_secs);
+        let pool_cleanup_interval = Duration::from_secs(self.smtp_pool.cleanup_interval_secs);
 
         // Perform initial spool scan at startup to load existing messages
         // This ensures `empathctl queue list` works immediately
@@ -461,6 +480,7 @@ impl DeliveryProcessor {
         let mut scan_timer = tokio::time::interval(scan_interval);
         let mut process_timer = tokio::time::interval(process_interval);
         let mut cleanup_timer = tokio::time::interval(cleanup_interval);
+        let mut pool_cleanup_timer = tokio::time::interval(pool_cleanup_interval);
         let process_now = self.process_now_notifier.notified();
         pin!(process_now);
 
@@ -468,6 +488,7 @@ impl DeliveryProcessor {
         scan_timer.tick().await;
         process_timer.tick().await;
         cleanup_timer.tick().await;
+        pool_cleanup_timer.tick().await;
 
         // Track if we're currently processing a delivery
         let processing = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -532,6 +553,18 @@ impl DeliveryProcessor {
 
                     // Mark that we're done processing
                     processing.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                _ = pool_cleanup_timer.tick() => {
+                    if self.smtp_pool_state.enabled() {
+                        let removed =
+                            self.smtp_pool_state.cleanup_idle(self.metrics.as_ref());
+                        if removed > 0 {
+                            empath_common::tracing::debug!(
+                                removed = removed,
+                                "Cleaned up idle SMTP client pool connections"
+                            );
+                        }
+                    }
                 }
                 _ = cleanup_timer.tick() => {
                     match cleanup::process_cleanup_queue(&self, spool).await {

@@ -22,6 +22,7 @@ mod processor;
 pub mod queue;
 mod rate_limiter;
 mod service;
+mod smtp_pool;
 mod smtp_transaction;
 mod types;
 
@@ -55,4 +56,4 @@ pub use queue::DeliveryQueue;
 // Re-export rate limiting types
 pub use rate_limiter::{DomainRateLimit, RateLimitConfig, RateLimitStats};
 pub use service::DeliveryQueryService;
-pub use types::{DeliveryInfo, SmtpTimeouts};
+pub use types::{DeliveryInfo, SmtpPoolConfig, SmtpTimeouts};
