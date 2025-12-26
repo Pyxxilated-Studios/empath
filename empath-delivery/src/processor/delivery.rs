@@ -426,6 +426,15 @@ pub async fn handle_delivery_error(
     // Check if this is a temporary failure that warrants trying another MX server
     // (e.g., connection refused, timeout, temporary SMTP error)
     let is_temporary_failure = error.is_temporary();
+    let is_permanent_failure = error.is_permanent();
+
+    if let Some(metrics) = &processor.metrics {
+        if is_temporary_failure {
+            metrics.record_temporary_failure(&updated_info.recipient_domain);
+        } else if is_permanent_failure {
+            metrics.record_permanent_failure(&updated_info.recipient_domain);
+        }
+    }
 
     // Try next MX server if this was a temporary failure
     if is_temporary_failure

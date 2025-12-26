@@ -551,6 +551,11 @@ impl DeliveryMetrics {
         self.record_attempt("temporary_failure", domain);
     }
 
+    /// Record a permanent failure
+    pub fn record_permanent_failure(&self, domain: &str) {
+        self.record_attempt("permanent_failure", domain);
+    }
+
     /// Update queue size for a specific status
     pub fn update_queue_size(&self, status: &str, delta: i64) {
         let counter = match status {
