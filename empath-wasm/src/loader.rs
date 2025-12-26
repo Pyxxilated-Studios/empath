@@ -12,7 +12,6 @@ use std::{
     time::Duration,
 };
 
-use cap_rand::RngCore;
 use empath_common::{context::Context, internal};
 use wasmtime::{
     Config, Engine, Store,
@@ -124,7 +123,7 @@ impl DeterministicRng {
     }
 }
 
-impl RngCore for DeterministicRng {
+impl wasmtime_wasi::RngCore for DeterministicRng {
     fn next_u32(&mut self) -> u32 {
         (self.next_state() >> 32) as u32
     }
@@ -141,7 +140,7 @@ impl RngCore for DeterministicRng {
         }
     }
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), cap_rand::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand_core::Error> {
         self.fill_bytes(dest);
         Ok(())
     }

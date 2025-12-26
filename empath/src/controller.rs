@@ -43,6 +43,7 @@ pub struct Empath {
 }
 
 #[derive(Deserialize)]
+#[serde(rename = "Empath")]
 struct EmpathConfig {
     #[serde(alias = "smtp")]
     smtp_controller: Controller<Smtp>,
