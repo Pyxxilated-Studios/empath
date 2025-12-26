@@ -104,7 +104,7 @@ enum SystemAction {
     Ping,
     /// Get system status and statistics
     Status,
-    /// Reload configuration (triggers graceful shutdown/reload)
+    /// Reload configuration from disk (delivery domains/rate limits only)
     ReloadConfig,
     /// Reload TLS certificate/key pairs without restarting the daemon
     ReloadTls,

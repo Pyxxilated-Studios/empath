@@ -82,7 +82,7 @@ pub enum SystemCommand {
     Ping,
     /// Get system status and statistics
     Status,
-    /// Reload configuration (graceful shutdown/reload)
+    /// Reload configuration from disk (delivery domains/rate limits applied; other changes need restart)
     ReloadConfig,
     /// Reload server TLS certificates/keys from disk
     ReloadTls,

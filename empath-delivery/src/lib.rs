@@ -55,5 +55,5 @@ pub use processor::DeliveryProcessor;
 pub use queue::DeliveryQueue;
 // Re-export rate limiting types
 pub use rate_limiter::{DomainRateLimit, RateLimitConfig, RateLimitStats};
-pub use service::DeliveryQueryService;
-pub use types::{DeliveryInfo, SmtpPoolConfig, SmtpTimeouts};
+pub use service::{DeliveryQueryService, QueueSnapshot};
+pub use types::{ConnectionStats, DeliveryInfo, SmtpPoolConfig, SmtpTimeouts};

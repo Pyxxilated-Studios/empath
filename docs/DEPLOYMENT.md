@@ -1165,8 +1165,11 @@ sudo systemctl stop empath
 # Restart service
 sudo systemctl restart empath
 
-# Reload configuration (SIGHUP - not yet implemented)
-# sudo systemctl reload empath
+# Reload delivery domains/rate limits without restart
+empathctl system reload-config
+
+# Restart required for listener/timeouts, DNS, metrics/health/audit, and control socket settings
+# sudo systemctl restart empath
 
 # Check status
 sudo systemctl status empath

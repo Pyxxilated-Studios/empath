@@ -5,7 +5,7 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -33,6 +33,214 @@ pub struct EmpathControlHandler {
     tls_registry: Option<Arc<TlsContextRegistry>>,
     /// Server start time for uptime calculation
     start_time: Instant,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::{
+        sync::{Arc, Mutex},
+        time::SystemTime,
+    };
+
+    use empath_common::DeliveryStatus;
+    use empath_delivery::{
+        BindingHealthStatus, ConnectionStats, DeliveryInfo, DnsResolver, DomainConfigRegistry,
+        OutboundBindingRegistry, RateLimitConfig,
+    };
+    use empath_spool::{BackingStore, SpooledMessageId};
+
+    use super::reload_config_from_disk;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        old: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let old = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(old) = self.old.take() {
+                unsafe {
+                    std::env::set_var(self.key, old);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct MockDelivery {
+        domains_view: DomainConfigRegistry,
+        dns_resolver: Option<Arc<dyn DnsResolver>>,
+        spool: Option<Arc<dyn BackingStore>>,
+        replaced_domains: Mutex<Option<DomainConfigRegistry>>,
+        replaced_rate_limit: Mutex<Option<RateLimitConfig>>,
+    }
+
+    impl MockDelivery {
+        fn replaced_domains_len(&self) -> Option<usize> {
+            self.replaced_domains
+                .lock()
+                .expect("lock replaced_domains")
+                .as_ref()
+                .map(DomainConfigRegistry::len)
+        }
+
+        fn replaced_rate_limit_mps(&self) -> Option<f64> {
+            self.replaced_rate_limit
+                .lock()
+                .expect("lock replaced_rate_limit")
+                .as_ref()
+                .map(|cfg| cfg.messages_per_second)
+        }
+    }
+
+    impl empath_delivery::DeliveryQueryService for MockDelivery {
+        fn queue_len(&self) -> usize {
+            0
+        }
+
+        fn get_message(&self, _id: &SpooledMessageId) -> Option<DeliveryInfo> {
+            None
+        }
+
+        fn list_messages(&self, _status: Option<DeliveryStatus>) -> Vec<DeliveryInfo> {
+            Vec::new()
+        }
+
+        fn list_messages_iter(
+            &self,
+            _status: Option<DeliveryStatus>,
+        ) -> Box<dyn Iterator<Item = DeliveryInfo> + '_> {
+            Box::new(std::iter::empty())
+        }
+
+        fn list_message_ids(&self, _status_filter: Option<&str>) -> Vec<SpooledMessageId> {
+            Vec::new()
+        }
+
+        fn queue_stats_snapshot(&self) -> empath_delivery::QueueSnapshot {
+            empath_delivery::QueueSnapshot::default()
+        }
+
+        fn update_status(&self, _message_id: &SpooledMessageId, _status: DeliveryStatus) {}
+
+        fn set_next_retry_at(&self, _message_id: &SpooledMessageId, _next_retry_at: SystemTime) {}
+
+        fn reset_server_index(&self, _message_id: &SpooledMessageId) {}
+
+        fn remove(&self, _message_id: &SpooledMessageId) -> Option<DeliveryInfo> {
+            None
+        }
+
+        fn dns_resolver(&self) -> &Option<Arc<dyn DnsResolver>> {
+            &self.dns_resolver
+        }
+
+        fn spool(&self) -> &Option<Arc<dyn BackingStore>> {
+            &self.spool
+        }
+
+        fn domains(&self) -> &DomainConfigRegistry {
+            &self.domains_view
+        }
+
+        fn outbound_bindings(&self) -> OutboundBindingRegistry {
+            OutboundBindingRegistry::default()
+        }
+
+        fn binding_health_status(&self, _name: &str) -> Option<BindingHealthStatus> {
+            None
+        }
+
+        fn binding_enabled(&self, _name: &str) -> bool {
+            true
+        }
+
+        fn set_binding_enabled(&self, _name: &str, _enabled: bool) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn request_process_now(&self) {}
+
+        fn connection_stats(&self) -> ConnectionStats {
+            ConnectionStats {
+                queue_size: 0,
+                rate_limit_domains: 0,
+            }
+        }
+
+        fn update_rate_limit(
+            &self,
+            _domain: Option<String>,
+            _messages_per_second: f64,
+            _burst: u32,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn replace_rate_limit_config(&self, config: RateLimitConfig) {
+            let mut guard = self
+                .replaced_rate_limit
+                .lock()
+                .expect("lock replaced_rate_limit");
+            *guard = Some(config);
+        }
+
+        fn replace_domains(&self, registry: DomainConfigRegistry) {
+            let mut guard = self.replaced_domains.lock().expect("lock replaced_domains");
+            *guard = Some(registry);
+        }
+    }
+
+    #[test]
+    fn reload_config_reports_restart_required_fields() {
+        let _guard = ENV_LOCK.lock().expect("lock env");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let config_path = temp_dir.path().join("empath.config.ron");
+        let config = r#"
+(
+  delivery: (
+    domains: {
+      "example.com": (
+        mx_override: "localhost:2525",
+      ),
+    },
+    rate_limit: (
+      messages_per_second: 5.0,
+      burst_size: 10,
+    ),
+  ),
+)
+"#;
+        std::fs::write(&config_path, config).expect("write config");
+        let _env = EnvVarGuard::set("EMPATH_CONFIG", &config_path);
+
+        let delivery = Arc::new(MockDelivery::default());
+        let delivery_service: Arc<dyn empath_delivery::DeliveryQueryService> = delivery.clone();
+        let message = reload_config_from_disk(&delivery_service).expect("reload config");
+
+        assert!(message.contains("Applied:"));
+        assert!(message.contains("Restart required"));
+        assert_eq!(delivery.replaced_domains_len(), Some(1));
+        assert_eq!(delivery.replaced_rate_limit_mps(), Some(5.0));
+    }
 }
 
 const DEFAULT_PAGE_SIZE: usize = 100;
@@ -95,10 +303,25 @@ fn reload_config_from_disk(delivery: &Arc<dyn DeliveryQueryService>) -> Result<S
     delivery.replace_domains(domains);
     delivery.replace_rate_limit_config(rate_limit);
 
-    Ok(format!(
-        "Configuration reloaded from {}",
-        config_path.display()
-    ))
+    let report = ReloadReport::new(
+        vec!["delivery.domains", "delivery.rate_limit"],
+        vec![
+            "smtp.listeners/timeouts",
+            "controller socket/auth/rate limits",
+            "delivery.retry_policy",
+            "delivery.circuit_breaker",
+            "delivery.dns",
+            "delivery.smtp_timeouts",
+            "delivery.smtp_pool",
+            "delivery.dsn",
+            "delivery.outbound_bindings",
+            "metrics",
+            "health",
+            "audit",
+        ],
+    );
+
+    Ok(report.render(&config_path))
 }
 
 fn find_config_file() -> anyhow::Result<PathBuf> {
@@ -133,6 +356,38 @@ fn find_config_file() -> anyhow::Result<PathBuf> {
     anyhow::bail!(
         "No configuration file found. Tried:\n  - EMPATH_CONFIG environment variable\n{paths_tried}"
     )
+}
+
+struct ReloadReport {
+    applied: Vec<&'static str>,
+    restart_required: Vec<&'static str>,
+}
+
+impl ReloadReport {
+    #[allow(clippy::missing_const_for_fn)]
+    fn new(applied: Vec<&'static str>, restart_required: Vec<&'static str>) -> Self {
+        Self {
+            applied,
+            restart_required,
+        }
+    }
+
+    fn render(&self, path: &Path) -> String {
+        let applied = format_reload_list(&self.applied);
+        let restart_required = format_reload_list(&self.restart_required);
+        format!(
+            "Configuration reloaded from {}. Applied: {applied}. Restart required for: {restart_required}.",
+            path.display()
+        )
+    }
+}
+
+fn format_reload_list(items: &[&'static str]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
+    }
 }
 
 impl EmpathControlHandler {

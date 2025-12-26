@@ -77,7 +77,8 @@ This document provides remediation procedures for all Empath MTA alerts defined 
 3. **Temporary mitigations:**
    ```bash
    # If specific domain is causing widespread failures, add temporary override
-   # Edit empath.config.ron delivery.domains section, then reload config
+   # Edit empath.config.ron delivery.domains section, then run:
+   # empathctl system reload-config
    ```
 
 4. **Monitor recovery:**
@@ -158,7 +159,7 @@ This document provides remediation procedures for all Empath MTA alerts defined 
 
    b. **If ingress rate is too high:**
    ```bash
-   # Temporarily reduce SMTP connections (edit config, reload)
+   # Temporarily reduce SMTP connections (edit config, restart required)
    # Or use firewall rate limiting
    ```
 
