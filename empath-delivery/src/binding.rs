@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{DeliveryError, SystemError},
-    policy::DomainPolicyResolver,
+    policy::{DomainPolicyResolver, RetryPolicy},
+    types::SmtpTimeouts,
 };
 
 /// Transaction context key used by modules to request a specific outbound binding.
@@ -32,6 +33,19 @@ pub struct OutboundBinding {
     /// Whether to fetch MTA-STS policy when using this binding (override).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub mta_sts_enabled: Option<bool>,
+
+    /// Optional SMTP timeout overrides for this binding.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub smtp_timeouts: Option<SmtpTimeouts>,
+
+    /// Optional retry policy overrides for this binding.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub retry_policy: Option<RetryPolicy>,
+
+    /// Allow retry attempts to fall back to another binding when this binding's
+    /// retry policy is exhausted.
+    #[serde(default)]
+    pub allow_failover: bool,
 }
 
 /// TLS policy for a binding.

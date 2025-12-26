@@ -471,7 +471,31 @@ pub async fn handle_delivery_error(
 
     // All MX servers exhausted or permanent failure, use normal retry logic
     // Determine new status based on attempt count
-    let new_status = if updated_info.attempt_count() >= processor.retry_policy.max_attempts {
+    let binding_config = updated_info
+        .binding
+        .as_deref()
+        .and_then(|name| processor.outbound_bindings.get(name));
+    let binding_retry_policy = binding_config.and_then(|binding| binding.retry_policy.as_ref());
+    let binding_allows_failover = binding_config.is_some_and(|binding| binding.allow_failover);
+    let mut retry_policy = binding_retry_policy.unwrap_or(&processor.retry_policy);
+
+    if binding_retry_policy.is_some()
+        && updated_info.attempt_count() >= retry_policy.max_attempts
+        && binding_allows_failover
+        && processor
+            .retry_policy
+            .should_retry(updated_info.attempt_count())
+    {
+        processor.queue.set_binding(message_id, None);
+        retry_policy = &processor.retry_policy;
+        info!(
+            message_id = %message_id,
+            domain = %updated_info.recipient_domain,
+            "Binding retry policy exhausted; failing over to default binding"
+        );
+    }
+
+    let new_status = if updated_info.attempt_count() >= retry_policy.max_attempts {
         DeliveryStatus::Failed(error.to_string())
     } else {
         DeliveryStatus::Retry {
@@ -486,9 +510,7 @@ pub async fn handle_delivery_error(
 
     // Calculate and set next retry time using exponential backoff
     if matches!(new_status, DeliveryStatus::Retry { .. }) {
-        let next_retry_at = processor
-            .retry_policy
-            .calculate_next_retry(updated_info.attempt_count());
+        let next_retry_at = retry_policy.calculate_next_retry(updated_info.attempt_count());
 
         processor.queue.set_next_retry_at(message_id, next_retry_at);
 
@@ -744,6 +766,9 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
         });
 
     let helo_domain = binding.and_then(|binding| binding.helo_domain.clone());
+    let smtp_timeouts = binding
+        .and_then(|binding| binding.smtp_timeouts.as_ref())
+        .unwrap_or(&processor.smtp_timeouts);
 
     // Create and execute the SMTP transaction
     let transaction = crate::smtp_transaction::SmtpTransaction::new(
@@ -752,7 +777,7 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
         attempt_tls,
         require_tls,
         accept_invalid_certs,
-        &processor.smtp_timeouts,
+        smtp_timeouts,
     )
     .with_helo_domain(helo_domain)
     .with_connect_config(connect_config)

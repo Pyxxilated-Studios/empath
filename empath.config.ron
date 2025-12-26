@@ -118,6 +118,25 @@ Empath (
                     source_ip: "192.0.2.10",
                     helo_domain: "mx1.example.com",
                     tls: (attempt_starttls: true),
+                    // Optional per-binding SMTP timeouts
+                    // smtp_timeouts: (
+                    //     connect_secs: 20,
+                    //     ehlo_secs: 20,
+                    //     starttls_secs: 20,
+                    //     mail_from_secs: 20,
+                    //     rcpt_to_secs: 20,
+                    //     data_secs: 120,
+                    //     quit_secs: 10,
+                    // ),
+                    // Optional per-binding retry policy
+                    // retry_policy: (
+                    //     max_attempts: 10,
+                    //     base_retry_delay_secs: 60,
+                    //     max_retry_delay_secs: 3600,
+                    //     retry_jitter_factor: 0.2,
+                    // ),
+                    // Allow retry failover to another binding once this policy is exhausted
+                    // allow_failover: false,
                     // Override whether MTA-STS is fetched for this binding
                     // mta_sts_enabled: true,
                 ),
