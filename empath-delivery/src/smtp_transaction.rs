@@ -8,10 +8,14 @@
 //! - DATA command and message content transmission
 //! - QUIT command for connection cleanup
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use empath_common::{context::Context, tracing};
+use empath_metrics::DeliveryMetrics;
 use empath_smtp::client::{ClientError, ConnectConfig, Response as ClientResponse, SmtpClient};
 use empath_spool::{BackingStore, SpooledMessageId};
 use empath_tracing::traced;
@@ -107,6 +111,10 @@ pub struct SmtpTransaction<'a> {
     helo_domain: Option<String>,
     /// Optional local bind configuration
     connect_config: Option<ConnectConfig>,
+    /// Optional metrics collector for binding observability
+    metrics: Option<&'a DeliveryMetrics>,
+    /// Optional binding name for metrics labeling
+    binding_name: Option<&'a str>,
 }
 
 enum MessageBodySource<'a> {
@@ -176,6 +184,8 @@ impl<'a> SmtpTransaction<'a> {
             smtp_timeouts,
             helo_domain: None,
             connect_config: None,
+            metrics: None,
+            binding_name: None,
         }
     }
 
@@ -207,6 +217,17 @@ impl<'a> SmtpTransaction<'a> {
         self
     }
 
+    #[must_use]
+    pub const fn with_metrics(
+        mut self,
+        metrics: Option<&'a DeliveryMetrics>,
+        binding_name: Option<&'a str>,
+    ) -> Self {
+        self.metrics = metrics;
+        self.binding_name = binding_name;
+        self
+    }
+
     fn helo_domain(&self) -> &str {
         self.helo_domain.as_deref().unwrap_or(&self.context.id)
     }
@@ -219,11 +240,24 @@ impl<'a> SmtpTransaction<'a> {
         }
     }
 
+    fn record_connect_duration(&self, start: Instant) {
+        if let Some(metrics) = self.metrics {
+            metrics.record_binding_connect_duration(self.binding_name, start.elapsed());
+        }
+    }
+
+    fn record_ehlo_duration(&self, start: Instant) {
+        if let Some(metrics) = self.metrics {
+            metrics.record_binding_ehlo_duration(self.binding_name, start.elapsed());
+        }
+    }
+
     /// Connect to SMTP server and read greeting
     ///
     /// # Errors
     /// Returns an error if connection or greeting fails
     async fn connect_and_greet(&self) -> Result<SmtpClient, DeliveryError> {
+        let start = Instant::now();
         // Connect to the SMTP server
         // Automatic From<ClientError> conversion handles connection errors
         let mut client = match &self.connect_config {
@@ -256,6 +290,8 @@ impl<'a> SmtpTransaction<'a> {
             ))
             .into());
         }
+
+        self.record_connect_duration(start);
 
         Ok(client)
     }
@@ -304,11 +340,13 @@ impl<'a> SmtpTransaction<'a> {
             // Perform EHLO without attempting TLS
             let helo_domain = self.helo_domain();
             let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+            let ehlo_start = Instant::now();
             let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
                 .await
                 .map_err(|_| {
                     TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
                 })??;
+            self.record_ehlo_duration(ehlo_start);
 
             if !ehlo_response.is_success() {
                 return Err(TemporaryError::SmtpTemporary(format!(
@@ -370,12 +408,14 @@ impl<'a> SmtpTransaction<'a> {
 
         // Send initial EHLO
         let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+        let ehlo_start = Instant::now();
         let ehlo_response: ClientResponse =
             tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
                 .await
                 .map_err(|_| {
                     TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
                 })??;
+        self.record_ehlo_duration(ehlo_start);
 
         if !ehlo_response.is_success() {
             return Err(TemporaryError::SmtpTemporary(format!(
@@ -437,6 +477,7 @@ impl<'a> SmtpTransaction<'a> {
             }
 
             // Re-send EHLO after STARTTLS (RFC 3207)
+            let ehlo_start = Instant::now();
             let ehlo_response: ClientResponse =
                 tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
                     .await
@@ -445,6 +486,7 @@ impl<'a> SmtpTransaction<'a> {
                             "EHLO after STARTTLS timed out after {ehlo_timeout:?}"
                         ))
                     })??;
+            self.record_ehlo_duration(ehlo_start);
 
             if !ehlo_response.is_success() {
                 return Err(TemporaryError::SmtpTemporary(format!(

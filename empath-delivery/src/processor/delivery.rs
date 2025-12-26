@@ -748,6 +748,7 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     .with_helo_domain(helo_domain)
     .with_connect_config(connect_config)
     .with_tls_failure_is_temporary(tls_failure_is_temporary)
+    .with_metrics(processor.metrics.as_ref(), delivery_info.binding.as_deref())
     .with_spool_body(spool, message_id);
 
     Box::pin(transaction.execute()).await

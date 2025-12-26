@@ -12,6 +12,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use dashmap::DashMap;
@@ -57,6 +58,10 @@ pub struct DeliveryMetrics {
 
     /// Total number of outbound binding selections/usages
     binding_selected_total: Counter<u64>,
+    /// Distribution of outbound binding connect durations
+    binding_connect_duration_seconds: Histogram<f64>,
+    /// Distribution of outbound binding EHLO durations
+    binding_ehlo_duration_seconds: Histogram<f64>,
 
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     messages_delivered_count: Arc<AtomicU64>,
@@ -234,6 +239,14 @@ impl DeliveryMetrics {
             .u64_counter("empath.delivery.bindings.selected.total")
             .with_description("Total number of deliveries using each outbound binding")
             .build();
+        let binding_connect_duration_seconds = meter
+            .f64_histogram("empath.delivery.bindings.connect.duration.seconds")
+            .with_description("Distribution of outbound SMTP connect durations by binding")
+            .build();
+        let binding_ehlo_duration_seconds = meter
+            .f64_histogram("empath.delivery.bindings.ehlo.duration.seconds")
+            .with_description("Distribution of outbound EHLO durations by binding")
+            .build();
 
         let circuit_breaker_trips_total = meter
             .u64_counter("empath.delivery.circuit_breaker.trips.total")
@@ -362,6 +375,8 @@ impl DeliveryMetrics {
             rate_limited_total,
             rate_limit_delay_seconds,
             binding_selected_total,
+            binding_connect_duration_seconds,
+            binding_ehlo_duration_seconds,
             circuit_breaker_trips_total,
             circuit_breaker_recoveries_total,
             messages_delivered_count: messages_delivered_ref,
@@ -393,18 +408,33 @@ impl DeliveryMetrics {
 
     /// Record a binding selection or usage.
     pub fn record_binding_selected(&self, binding: Option<&str>) {
-        let label = match binding {
+        let label = self.binding_label(binding);
+        self.binding_selected_total
+            .add(1, &[KeyValue::new("binding", label)]);
+    }
+
+    pub fn record_binding_connect_duration(&self, binding: Option<&str>, duration: Duration) {
+        let label = self.binding_label(binding);
+        self.binding_connect_duration_seconds
+            .record(duration.as_secs_f64(), &[KeyValue::new("binding", label)]);
+    }
+
+    pub fn record_binding_ehlo_duration(&self, binding: Option<&str>, duration: Duration) {
+        let label = self.binding_label(binding);
+        self.binding_ehlo_duration_seconds
+            .record(duration.as_secs_f64(), &[KeyValue::new("binding", label)]);
+    }
+
+    fn binding_label(&self, binding: Option<&str>) -> String {
+        match binding {
             Some(name)
                 if self.binding_names.is_empty() || self.binding_names.contains_key(name) =>
             {
-                name
+                name.to_string()
             }
-            Some(_) => "other",
-            None => "none",
-        };
-
-        self.binding_selected_total
-            .add(1, &[KeyValue::new("binding", label.to_string())]);
+            Some(_) => "other".to_string(),
+            None => "none".to_string(),
+        }
     }
 
     /// Bucket a domain name to limit cardinality
