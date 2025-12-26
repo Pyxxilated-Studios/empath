@@ -2,6 +2,7 @@ pub mod backends;
 pub mod config;
 pub mod controller;
 pub mod error;
+mod observability;
 pub mod spool;
 pub mod r#trait;
 pub mod types;

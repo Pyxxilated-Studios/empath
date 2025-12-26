@@ -21,6 +21,7 @@ ahash.workspace = true
 async-trait.workspace = true
 dashmap.workspace = true
 empath-common.workspace = true
+empath-metrics.workspace = true
 empath-tracing.workspace = true
 notify.workspace = true
 postcard.workspace = true

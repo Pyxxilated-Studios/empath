@@ -1,10 +1,12 @@
-use std::{io::Cursor, sync::Arc};
+use std::{io::Cursor, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
 use empath_common::context::Context;
 
-use crate::{SpoolError, r#trait::BackingStore, types::SpooledMessageId};
+use crate::{
+    SpoolError, observability::record_spool_io, r#trait::BackingStore, types::SpooledMessageId,
+};
 
 /// In-memory backing store implementation
 ///
@@ -89,6 +91,7 @@ impl Default for MemoryBackingStore {
 #[async_trait]
 impl BackingStore for MemoryBackingStore {
     async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId> {
+        let start = Instant::now();
         // Generate unique ULID
         let id = SpooledMessageId::generate();
 
@@ -119,6 +122,15 @@ impl BackingStore for MemoryBackingStore {
 
         self.messages.insert(id.clone(), context_to_store);
 
+        let data_len = context.data.as_ref().map_or(0, |data| data.len());
+        record_spool_io(
+            "write",
+            u64::try_from(data_len).unwrap_or(0),
+            start.elapsed(),
+            "memory",
+            Some(&id),
+        );
+
         Ok(id)
     }
 
@@ -136,18 +148,35 @@ impl BackingStore for MemoryBackingStore {
     }
 
     async fn read(&self, id: &SpooledMessageId) -> crate::Result<Context> {
+        let start = Instant::now();
         self.messages
             .get(id)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| SpoolError::NotFound(id.clone()))
+            .inspect(|context| {
+                let data_len = context.data.as_ref().map_or(0, |data| data.len());
+                record_spool_io(
+                    "read",
+                    u64::try_from(data_len).unwrap_or(0),
+                    start.elapsed(),
+                    "memory",
+                    Some(id),
+                );
+            })
     }
 
     async fn read_metadata(&self, id: &SpooledMessageId) -> crate::Result<Context> {
-        let mut context = self.read(id).await?;
+        let start = Instant::now();
+        let mut context = self
+            .messages
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| SpoolError::NotFound(id.clone()))?;
         if context.data_len.is_none() {
             context.data_len = context.data.as_ref().map(|data| data.len());
         }
         context.data = None;
+        record_spool_io("read", 0, start.elapsed(), "memory", Some(id));
         Ok(context)
     }
 
@@ -157,6 +186,7 @@ impl BackingStore for MemoryBackingStore {
     }
 
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
+        let start = Instant::now();
         if self.messages.contains_key(id) {
             let mut updated = Context::from_metadata(context.to_metadata());
             updated.data.clone_from(&context.data);
@@ -164,6 +194,7 @@ impl BackingStore for MemoryBackingStore {
                 .data_len
                 .or_else(|| context.data.as_ref().map(|data| data.len()));
             self.messages.insert(id.clone(), updated);
+            record_spool_io("update", 0, start.elapsed(), "memory", Some(id));
             Ok(())
         } else {
             Err(SpoolError::NotFound(id.clone()))
@@ -180,9 +211,11 @@ impl BackingStore for MemoryBackingStore {
     }
 
     async fn delete(&self, id: &SpooledMessageId) -> crate::Result<()> {
+        let start = Instant::now();
         self.messages
             .remove(id)
             .ok_or_else(|| SpoolError::NotFound(id.clone()))?;
+        record_spool_io("delete", 0, start.elapsed(), "memory", Some(id));
         Ok(())
     }
 }

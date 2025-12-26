@@ -2,6 +2,7 @@ use std::{
     convert::TryFrom,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Instant,
 };
 
 use async_trait::async_trait;
@@ -19,6 +20,7 @@ use tokio::{
 
 use crate::{
     SpoolError, ValidationError,
+    observability::record_spool_io,
     r#trait::{BackingStore, MessageMetadata, SpoolScanCursor, SpoolScanMode},
     types::SpooledMessageId,
 };
@@ -269,6 +271,37 @@ impl FileBackingStore {
         }
         Ok(())
     }
+
+    async fn read_metadata_internal(
+        &self,
+        msg_id: &SpooledMessageId,
+    ) -> crate::Result<(Context, usize)> {
+        let tracking_str = msg_id.to_string();
+        let meta_filename = format!("{tracking_str}.bin");
+        let meta_path = self.path.join(&meta_filename);
+
+        let meta_content = fs::read(&meta_path).await?;
+        let mut context =
+            if let Ok(metadata) = postcard::from_bytes::<ContextMetadata>(&meta_content) {
+                Context::from_metadata(metadata)
+            } else {
+                let mut legacy = postcard::from_bytes::<Context>(&meta_content)
+                    .map_err(crate::error::SerializationError::from)?;
+                legacy.data = None;
+                legacy
+            };
+
+        context.data = None;
+        if context.data_len.is_none() {
+            let data_filename = format!("{tracking_str}.eml");
+            let data_path = self.path.join(&data_filename);
+            if let Ok(meta) = fs::metadata(&data_path).await {
+                context.data_len = usize::try_from(meta.len()).ok();
+            }
+        }
+
+        Ok((context, meta_content.len()))
+    }
 }
 
 #[async_trait]
@@ -291,6 +324,7 @@ impl BackingStore for FileBackingStore {
     /// are atomic and very fast (< 1ms typical).
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self, context)), timing(precision = "ms"))]
     async fn write(&self, context: &mut Context) -> crate::Result<SpooledMessageId> {
+        let start = Instant::now();
         // Generate unique tracking ID
         let tracking_id = SpooledMessageId::generate();
 
@@ -346,6 +380,10 @@ impl BackingStore for FileBackingStore {
             data_path.display()
         );
 
+        let data_len = context.data.as_ref().map_or(0, |data| data.len());
+        let bytes = u64::try_from(data_len + metadata.len()).unwrap_or(0);
+        record_spool_io("write", bytes, start.elapsed(), "file", Some(&tracking_id));
+
         Ok(tracking_id)
     }
 
@@ -396,31 +434,16 @@ impl BackingStore for FileBackingStore {
     /// to avoid loading the message body when not needed.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn read_metadata(&self, msg_id: &SpooledMessageId) -> crate::Result<Context> {
-        let tracking_str = msg_id.to_string();
-        let meta_filename = format!("{tracking_str}.bin");
-        let meta_path = self.path.join(&meta_filename);
+        let start = Instant::now();
+        let (context, meta_len) = self.read_metadata_internal(msg_id).await?;
 
-        // Read and deserialize metadata
-        let meta_content = fs::read(&meta_path).await?;
-        let mut context =
-            if let Ok(metadata) = postcard::from_bytes::<ContextMetadata>(&meta_content) {
-                Context::from_metadata(metadata)
-            } else {
-                let mut legacy = postcard::from_bytes::<Context>(&meta_content)
-                    .map_err(crate::error::SerializationError::from)?;
-                legacy.data = None;
-                legacy
-            };
-
-        // Ensure body is not retained from metadata (older files may contain it)
-        context.data = None;
-        if context.data_len.is_none() {
-            let data_filename = format!("{tracking_str}.eml");
-            let data_path = self.path.join(&data_filename);
-            if let Ok(meta) = fs::metadata(&data_path).await {
-                context.data_len = usize::try_from(meta.len()).ok();
-            }
-        }
+        record_spool_io(
+            "read",
+            u64::try_from(meta_len).unwrap_or(0),
+            start.elapsed(),
+            "file",
+            Some(msg_id),
+        );
 
         Ok(context)
     }
@@ -439,7 +462,8 @@ impl BackingStore for FileBackingStore {
     /// you actually need the full data or just the metadata.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn read(&self, msg_id: &SpooledMessageId) -> crate::Result<Context> {
-        let mut context = self.read_metadata(msg_id).await?;
+        let start = Instant::now();
+        let (mut context, meta_len) = self.read_metadata_internal(msg_id).await?;
 
         let tracking_str = msg_id.to_string();
         let data_filename = format!("{tracking_str}.eml");
@@ -456,6 +480,14 @@ impl BackingStore for FileBackingStore {
         };
 
         internal!(level = DEBUG, "Read message {msg_id} from spool");
+
+        record_spool_io(
+            "read",
+            u64::try_from(context.data_len.unwrap_or(0) + meta_len).unwrap_or(0),
+            start.elapsed(),
+            "file",
+            Some(msg_id),
+        );
 
         Ok(context)
     }
@@ -531,6 +563,7 @@ impl BackingStore for FileBackingStore {
     /// changes (attempt count, status, retry times) without rewriting the message data.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self, context), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn update(&self, msg_id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
+        let start = Instant::now();
         let tracking_str = msg_id.to_string();
         let meta_filename = format!("{tracking_str}.bin");
         let meta_path = self.path.join(&meta_filename);
@@ -552,6 +585,14 @@ impl BackingStore for FileBackingStore {
         fs::rename(&temp_meta_path, &meta_path).await?;
 
         internal!(level = DEBUG, "Updated message {msg_id} metadata in spool");
+
+        record_spool_io(
+            "update",
+            u64::try_from(metadata.len()).unwrap_or(0),
+            start.elapsed(),
+            "file",
+            Some(msg_id),
+        );
 
         Ok(())
     }
@@ -641,6 +682,7 @@ impl BackingStore for FileBackingStore {
     /// files will be ignored by `list()` and can be cleaned up on next startup.
     #[traced(instrument(level = tracing::Level::DEBUG, skip(self), fields(id = %msg_id)), timing(precision = "ms"))]
     async fn delete(&self, msg_id: &SpooledMessageId) -> crate::Result<()> {
+        let start = Instant::now();
         let tracking_str = msg_id.to_string();
         let meta_filename = format!("{tracking_str}.bin");
         let data_filename = format!("{tracking_str}.eml");
@@ -662,6 +704,8 @@ impl BackingStore for FileBackingStore {
         fs::remove_file(&deleted_meta_path).await?;
 
         internal!(level = DEBUG, "Deleted message {msg_id} from spool");
+
+        record_spool_io("delete", 0, start.elapsed(), "file", Some(msg_id));
 
         Ok(())
     }
