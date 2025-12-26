@@ -1,13 +1,46 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2025-12-24
-> **Total Completed**: 86 tasks
+> **Last Updated**: 2025-12-26
+> **Total Completed**: 109 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
 ---
 
 ## Recently Completed (Last 30 Days)
+
+### Week of 2025-12-26
+
+Archived from TODO.md items already marked complete.
+
+#### ✅ Batch archive from TODO.md
+**Completed**: 2025-12-26
+**Effort**: N/A (from TODO.md)
+**Priority**: P1/P2/New Ideas
+
+- 0.12a: Full config reload.
+- 2.2: Connection pooling for SMTP client.
+- NEW-18: Load & stress testing.
+- NEW-21: Trace context propagation verification.
+- NEW-22: Capacity planning metrics.
+- NEW-23a: Per-binding retry/backoff.
+- NEW-23b: Binding health/circuit breaker.
+- NEW-23c: Outbound binding observability.
+- NEW-23d: Control inspection for bindings.
+- NEW-23e: Module binding ergonomics.
+- NEW-24: Per-domain bounce classification.
+- NEW-26: Deterministic WASM harness.
+- NEW-27: Spool I/O observability.
+- NEW-28a: Mutation limits & audit.
+- NEW-28b: Module helper docs/tests.
+- NEW-CAP-XX: Capability toggles.
+- NEW-CTL-OBS-01: Control command rate limiting.
+- NEW-CTL-XX: Binding inspection.
+- NEW-SEC-DKIM-01: DKIM verification telemetry.
+- NEW-SMTP-XX: Extended command coverage.
+- NEW-TLS-02: TLS visibility dashboard.
+- NEW-TLS-03: TLS chain validation watchdog.
+- NEW-TEST-DSN-01: E2E harness DSN inspection.
 
 ### Week of 2025-12-24
 
