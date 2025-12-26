@@ -365,6 +365,7 @@ mod tests {
     use super::TlsContext;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn inspect_reads_certificate_metadata() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cert_path = manifest_dir.join("../certificate.crt");

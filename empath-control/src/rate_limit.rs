@@ -173,6 +173,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn rate_limiter_enforces_window() {
         let config = ControlRateLimitConfig {
             enabled: true,
@@ -188,6 +189,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn rate_limiter_resets_after_window() {
         let config = ControlRateLimitConfig {
             enabled: true,

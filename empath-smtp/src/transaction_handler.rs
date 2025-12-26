@@ -796,6 +796,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn received_header_is_inserted_before_body() {
         let handler = DefaultSmtpTransactionHandler::new(
             None,

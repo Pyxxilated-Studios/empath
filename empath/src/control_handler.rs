@@ -212,6 +212,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn reload_config_reports_restart_required_fields() {
         let _guard = ENV_LOCK.lock().expect("lock env");
         let temp_dir = tempfile::TempDir::new().expect("temp dir");

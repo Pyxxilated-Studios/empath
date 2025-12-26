@@ -3,6 +3,7 @@
 use empath_wasm_guest::EMPATH_WIT;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn wit_is_in_sync_with_host() {
     let host_wit = std::fs::read_to_string("../empath-wasm/wit/empath.wit")
         .expect("host WIT must exist for sync check");
