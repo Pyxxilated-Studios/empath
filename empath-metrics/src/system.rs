@@ -19,7 +19,7 @@ use opentelemetry::{
     KeyValue,
     metrics::{Gauge, Histogram, Meter},
 };
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::sync::Mutex;
 
 use crate::MetricsError;
@@ -55,6 +55,7 @@ pub struct SystemMetrics {
 
     // Internal state for periodic updates
     sys_info: Arc<Mutex<System>>,
+    networks: Arc<Mutex<Networks>>,
     process_start_time: SystemTime,
 }
 
@@ -181,6 +182,7 @@ impl SystemMetrics {
             .build();
 
         let sys_info = Arc::new(Mutex::new(System::new_all()));
+        let networks = Arc::new(Mutex::new(Networks::new_with_refreshed_list()));
         let process_start_time = SystemTime::now();
 
         Ok(Self {
@@ -203,6 +205,7 @@ impl SystemMetrics {
             spool_io_write_bytes,
             spool_io_duration,
             sys_info,
+            networks,
             process_start_time,
         })
     }
@@ -305,6 +308,27 @@ impl SystemMetrics {
         if let Ok(file_count) = count_files_in_directory(spool_path) {
             self.spool_file_count.record(file_count, &[]);
         }
+    }
+
+    /// Update network byte metrics
+    ///
+    /// Uses system-wide network interface totals to record cumulative bytes in/out.
+    pub async fn update_network_metrics(&self) {
+        let (received, sent) = {
+            let mut networks = self.networks.lock().await;
+            networks.refresh(true);
+
+            let mut received: u64 = 0;
+            let mut sent: u64 = 0;
+            for (_name, data) in networks.iter() {
+                received = received.saturating_add(data.total_received());
+                sent = sent.saturating_add(data.total_transmitted());
+            }
+            drop(networks);
+            (received, sent)
+        };
+
+        self.record_network_bytes(received, sent);
     }
 
     /// Record network connection count

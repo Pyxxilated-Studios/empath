@@ -1,4 +1,8 @@
-use std::sync::{Arc, LazyLock};
+use std::{
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use empath_common::{Signal, controller::Controller, internal, logging, tracing};
 use empath_control::{
@@ -9,7 +13,7 @@ use empath_health::{HealthChecker, HealthConfig, HealthServer};
 use empath_smtp::{Smtp, TlsContextRegistry};
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::{sync::broadcast, task::JoinSet};
+use tokio::{sync::broadcast, task::JoinSet, time};
 
 use crate::control_handler::EmpathControlHandler;
 
@@ -141,6 +145,8 @@ impl Empath {
         // Initialize health checker
         let health_checker = Arc::new(HealthChecker::new(self.health.max_queue_size));
 
+        let spool_path: Option<PathBuf> = self.spool.path().map(std::path::Path::to_path_buf);
+
         // Initialize the spool from configuration
         let spool = self.spool.into_spool()?;
 
@@ -219,6 +225,30 @@ impl Empath {
         };
 
         let mut join_set: JoinSet<(&'static str, anyhow::Result<()>)> = JoinSet::new();
+
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            let mut shutdown_rx = SHUTDOWN_BROADCAST.subscribe();
+            let spool_path = spool_path.clone();
+            join_set.spawn(async move {
+                let mut interval = time::interval(Duration::from_secs(15));
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            metrics.system.update_process_metrics().await;
+                            metrics.system.update_network_metrics().await;
+                            if let Some(path) = spool_path.as_deref() {
+                                metrics.system.update_spool_metrics(path);
+                            }
+                            let connections = metrics.smtp.active_connections()
+                                + metrics.delivery.active_connections_count();
+                            metrics.system.record_network_connections(connections);
+                        }
+                        _ = shutdown_rx.recv() => break,
+                    }
+                }
+                ("metrics", Ok(()))
+            });
+        }
 
         let smtp_controller = self.smtp_controller;
         join_set.spawn(async move {

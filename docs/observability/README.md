@@ -281,14 +281,21 @@ Warnings are inhibited when related critical alerts fire:
 | `empath.dns.cache.misses.total` | Counter | DNS cache misses | DnsCacheHitRateLow |
 | `empath.dns.lookup.duration.seconds{query_type}` | Histogram | DNS lookup duration | Performance monitoring |
 
-### System Metrics (via node_exporter)
+### System Metrics
 
 | Metric | Type | Description | Alert Usage |
 |--------|------|-------------|-------------|
-| `node_filesystem_avail_bytes{mountpoint}` | Gauge | Available filesystem bytes | SpoolDiskSpaceLow |
-| `node_filesystem_size_bytes{mountpoint}` | Gauge | Total filesystem bytes | SpoolDiskSpaceLow |
+| `empath.system.process.cpu.usage` | Gauge | Process CPU usage (0-100) | Capacity planning |
+| `empath.system.process.memory.bytes` | Gauge | Process memory RSS in bytes | Capacity planning |
+| `empath.system.process.fd.count` | Gauge | Open file descriptors | Capacity planning |
+| `empath.system.spool.disk.usage.percent` | Gauge | Spool disk usage percentage | SpoolDiskSpaceLow |
+| `empath.system.network.bytes.received` | Gauge | Total bytes received | Capacity planning |
+| `empath.system.network.bytes.sent` | Gauge | Total bytes sent | Capacity planning |
+| `empath.system.network.connections.total` | Gauge | Active network connections | Capacity planning |
 
-**Note**: `node_exporter` must be deployed for filesystem alerts.
+**Note**: `node_exporter` is still recommended for host-level filesystem alerts
+(`node_filesystem_avail_bytes`, `node_filesystem_size_bytes`) when you want
+coverage beyond the Empath spool path.
 
 ---
 
