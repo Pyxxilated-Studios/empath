@@ -243,6 +243,7 @@ All code must pass `cargo clippy --all-targets --all-features`.
 - **CLAUDE.md** - Comprehensive technical documentation for development
 - **docker/README.md** - Docker environment documentation
 - **TODO.md** - Project roadmap and future work
+- **docs/LOAD_TESTING.md** - Load and stress testing guide (Locust/k6)
 - **docs/message-mutation.md** - Examples for Python and C modules that mutate message headers/body
 - **docs/DEV_TOOLS.md** - Explanation of `just doctor`, `just check-changed`, and other helper scripts
 
