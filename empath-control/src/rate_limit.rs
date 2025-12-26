@@ -22,6 +22,7 @@ fn default_rate_limit_commands() -> Vec<RateLimitedCommand> {
     vec![
         RateLimitedCommand::ReloadConfig,
         RateLimitedCommand::ReloadTls,
+        RateLimitedCommand::ListTls,
         RateLimitedCommand::QueueRetry,
         RateLimitedCommand::QueueProcessNow,
         RateLimitedCommand::ListBindings,
@@ -64,6 +65,7 @@ impl ControlRateLimitConfig {
 pub enum RateLimitedCommand {
     ReloadConfig,
     ReloadTls,
+    ListTls,
     QueueRetry,
     QueueProcessNow,
     ListBindings,
@@ -80,6 +82,9 @@ impl RateLimitedCommand {
             ) | (
                 Self::ReloadTls,
                 RequestCommand::System(SystemCommand::ReloadTls)
+            ) | (
+                Self::ListTls,
+                RequestCommand::System(SystemCommand::ListTls)
             ) | (
                 Self::ListBindings,
                 RequestCommand::System(SystemCommand::ListBindings)

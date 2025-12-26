@@ -30,6 +30,7 @@ path = "bin/empathctl.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
+chrono.workspace = true
 empath-common.workspace = true
 empath-control.workspace = true
 empath-delivery.workspace = true

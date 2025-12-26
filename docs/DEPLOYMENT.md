@@ -1213,6 +1213,16 @@ kubectl -n empath describe pod <pod-name>
 
 ---
 
+### System Management
+
+```bash
+# Show system status
+empathctl system status
+
+# Inspect active TLS contexts and certificate details
+empathctl system tls
+```
+
 ### Queue Management
 
 #### Using empathctl CLI

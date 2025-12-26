@@ -11,6 +11,7 @@ use std::{
     path::PathBuf,
 };
 
+use chrono::{TimeZone, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use empath_common::context::{
     COMPLETED_STR, EXPIRED_STR, FAILED_STR, IN_PROGRESS_STR, PENDING_STR, RETRY_STR,
@@ -108,6 +109,8 @@ enum SystemAction {
     ReloadConfig,
     /// Reload TLS certificate/key pairs without restarting the daemon
     ReloadTls,
+    /// List active TLS contexts and certificate metadata
+    Tls,
     /// Set runtime log level (e.g., info, debug, trace)
     SetLogLevel {
         /// New log level
@@ -403,6 +406,7 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
             ResponseData::SystemStatus(_)
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
+            | ResponseData::TlsContexts(_)
             | ResponseData::QueueList(_)
             | ResponseData::QueueMessageDetails(_)
             | ResponseData::QueueStats(_)
@@ -420,6 +424,10 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
 }
 
 /// Handle system management commands
+#[allow(
+    clippy::too_many_lines,
+    reason = "CLI command dispatch keeps output formatting in one place."
+)]
 async fn handle_system_command(client: &ControlClient, action: SystemAction) -> anyhow::Result<()> {
     let request = build_system_request(action);
 
@@ -475,6 +483,47 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                     }
                 }
             }
+            ResponseData::TlsContexts(contexts) => {
+                println!("=== TLS Contexts ===\n");
+                if contexts.is_empty() {
+                    println!("No TLS contexts configured");
+                } else {
+                    for (idx, ctx) in contexts.iter().enumerate() {
+                        println!("Context {}:", idx + 1);
+                        println!("  certificate_path: {}", ctx.certificate_path);
+                        println!("  key_path: {}", ctx.key_path);
+                        if let Some(fingerprint) = &ctx.fingerprint_sha256 {
+                            println!("  fingerprint_sha256: {fingerprint}");
+                        }
+                        if let Some(subject) = &ctx.subject {
+                            println!("  subject: {subject}");
+                        }
+                        if let Some(issuer) = &ctx.issuer {
+                            println!("  issuer: {issuer}");
+                        }
+                        if let Some(not_before) = ctx.not_before {
+                            println!("  not_before: {}", format_timestamp_secs(not_before));
+                        } else {
+                            println!("  not_before: unknown");
+                        }
+                        if let Some(not_after) = ctx.not_after {
+                            println!("  not_after: {}", format_timestamp_secs(not_after));
+                        } else {
+                            println!("  not_after: unknown");
+                        }
+                        if !ctx.subject_alt_names.is_empty() {
+                            println!("  subject_alt_names:");
+                            for name in &ctx.subject_alt_names {
+                                println!("    - {name}");
+                            }
+                        }
+                        if let Some(error) = &ctx.parse_error {
+                            println!("  parse_error: {error}");
+                        }
+                        println!();
+                    }
+                }
+            }
             ResponseData::Message(msg) => {
                 println!("✓ {msg}");
             }
@@ -502,6 +551,7 @@ fn build_system_request(action: SystemAction) -> Request {
         SystemAction::Status => SystemCommand::Status,
         SystemAction::ReloadConfig => SystemCommand::ReloadConfig,
         SystemAction::ReloadTls => SystemCommand::ReloadTls,
+        SystemAction::Tls => SystemCommand::ListTls,
         SystemAction::SetLogLevel { level } => SystemCommand::SetLogLevel { level },
         SystemAction::ConnectionStats => SystemCommand::ConnectionStats,
         SystemAction::Bindings => SystemCommand::ListBindings,
@@ -672,6 +722,7 @@ fn handle_queue_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::SystemStatus(_)
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
+            | ResponseData::TlsContexts(_)
             | ResponseData::SpoolList(_)
             | ResponseData::SpoolStats(_) => {
                 println!("Unexpected response for queue command: {data:?}");
@@ -803,7 +854,8 @@ fn handle_spool_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::QueueList(_)
             | ResponseData::QueueStats(_)
             | ResponseData::ConnectionStats(_)
-            | ResponseData::OutboundBindings(_) => {
+            | ResponseData::OutboundBindings(_)
+            | ResponseData::TlsContexts(_) => {
                 println!("Unexpected response for spool command: {data:?}");
             }
         },
@@ -893,4 +945,12 @@ fn format_duration(secs: u64) -> String {
         let rem_hours = (secs % 86400) / 3600;
         format!("{days}d {rem_hours}h")
     }
+}
+
+fn format_timestamp_secs(timestamp: u64) -> String {
+    let datetime = Utc.timestamp_opt(i64::try_from(timestamp).unwrap_or(0), 0);
+    datetime.single().map_or_else(
+        || "unknown".to_string(),
+        |dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+    )
 }

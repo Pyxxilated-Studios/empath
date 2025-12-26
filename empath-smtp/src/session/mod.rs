@@ -9,8 +9,10 @@ use std::{
 use ahash::AHashMap;
 use empath_common::{context::Capability, email::BannerHostname, tracing};
 use empath_tracing::traced;
+use hex::encode as hex_encode;
 use parking_lot::RwLock;
 use serde::{Deserialize, Deserializer, de::Error as _};
+use sha2::{Digest, Sha256};
 use tokio_rustls::rustls::{
     ServerConfig,
     pki_types::{
@@ -18,6 +20,7 @@ use tokio_rustls::rustls::{
         pem::{Error as PemError, PemObject},
     },
 };
+use x509_parser::prelude::{X509Certificate, parse_x509_certificate};
 
 use crate::{
     State,
@@ -53,6 +56,29 @@ pub type Response = (Option<Vec<String>>, Event);
 
 pub struct TlsContext {
     inner: Arc<TlsContextInner>,
+}
+
+/// TLS certificate metadata for control plane inspection.
+#[derive(Debug, Clone)]
+pub struct TlsContextInfo {
+    /// Path to the configured certificate file.
+    pub certificate_path: PathBuf,
+    /// Path to the configured key file.
+    pub key_path: PathBuf,
+    /// SHA-256 fingerprint of the leaf certificate (hex).
+    pub fingerprint_sha256: Option<String>,
+    /// Subject DN string.
+    pub subject: Option<String>,
+    /// Issuer DN string.
+    pub issuer: Option<String>,
+    /// Not before timestamp (Unix seconds).
+    pub not_before: Option<u64>,
+    /// Not after timestamp (Unix seconds).
+    pub not_after: Option<u64>,
+    /// Subject alternative names (DNS/IP/URI/email).
+    pub subject_alt_names: Vec<String>,
+    /// Parse error if certificate inspection failed.
+    pub parse_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -173,6 +199,47 @@ impl TlsContext {
 
         Ok(())
     }
+
+    /// Inspect certificate metadata for this TLS context.
+    #[must_use]
+    pub fn inspect(&self) -> TlsContextInfo {
+        let certificate_path = self.inner.certificate.clone();
+        let key_path = self.inner.key.clone();
+
+        let mut info = TlsContextInfo {
+            certificate_path,
+            key_path,
+            fingerprint_sha256: None,
+            subject: None,
+            issuer: None,
+            not_before: None,
+            not_after: None,
+            subject_alt_names: Vec::new(),
+            parse_error: None,
+        };
+
+        let der = match CertificateDer::from_pem_file(&info.certificate_path) {
+            Ok(cert) => cert,
+            Err(err) => {
+                info.parse_error = Some(format!("Failed to read certificate: {err}"));
+                return info;
+            }
+        };
+
+        let fingerprint = Sha256::digest(der.as_ref());
+        info.fingerprint_sha256 = Some(hex_encode(fingerprint));
+
+        let (_, cert) = match parse_x509_certificate(der.as_ref()) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                info.parse_error = Some(format!("Failed to parse certificate: {err}"));
+                return info;
+            }
+        };
+
+        fill_certificate_details(&mut info, &cert);
+        info
+    }
 }
 
 /// Registry used to keep track of every configured TLS context.
@@ -222,6 +289,100 @@ impl TlsContextRegistry {
     #[must_use]
     pub fn count(&self) -> usize {
         self.contexts.read().len()
+    }
+
+    /// List all registered TLS contexts with certificate metadata.
+    #[must_use]
+    pub fn list_contexts(&self) -> Vec<TlsContextInfo> {
+        self.contexts
+            .read()
+            .iter()
+            .map(TlsContext::inspect)
+            .collect()
+    }
+}
+
+fn fill_certificate_details(info: &mut TlsContextInfo, cert: &X509Certificate<'_>) {
+    info.subject = Some(cert.subject().to_string());
+    info.issuer = Some(cert.issuer().to_string());
+    info.not_before = as_unix_timestamp(cert.validity().not_before);
+    info.not_after = as_unix_timestamp(cert.validity().not_after);
+    info.subject_alt_names = collect_subject_alt_names(cert);
+}
+
+fn as_unix_timestamp(time: x509_parser::prelude::ASN1Time) -> Option<u64> {
+    let timestamp = time.timestamp();
+    if timestamp <= 0 {
+        None
+    } else {
+        u64::try_from(timestamp).ok()
+    }
+}
+
+fn collect_subject_alt_names(cert: &X509Certificate<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+
+    let Ok(Some(san)) = cert.subject_alternative_name() else {
+        return names;
+    };
+
+    for name in &san.value.general_names {
+        let value = match name {
+            x509_parser::extensions::GeneralName::DNSName(dns) => dns.to_string(),
+            x509_parser::extensions::GeneralName::RFC822Name(email) => email.to_string(),
+            x509_parser::extensions::GeneralName::URI(uri) => uri.to_string(),
+            x509_parser::extensions::GeneralName::IPAddress(addr) => {
+                format_ip_address(addr).unwrap_or_else(|| hex_encode(addr))
+            }
+            other => format!("{other:?}"),
+        };
+        names.push(value);
+    }
+
+    names
+}
+
+fn format_ip_address(bytes: &[u8]) -> Option<String> {
+    match bytes.len() {
+        4 => {
+            let octets = <[u8; 4]>::try_from(bytes).ok()?;
+            Some(std::net::Ipv4Addr::from(octets).to_string())
+        }
+        16 => {
+            let octets = <[u8; 16]>::try_from(bytes).ok()?;
+            Some(std::net::Ipv6Addr::from(octets).to_string())
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::path::PathBuf;
+
+    use super::TlsContext;
+
+    #[test]
+    fn inspect_reads_certificate_metadata() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cert_path = manifest_dir.join("../certificate.crt");
+        let key_path = manifest_dir.join("../private.key");
+
+        let ctx = TlsContext::new(cert_path, key_path).expect("create TLS context");
+        let info = ctx.inspect();
+
+        assert!(info.parse_error.is_none(), "certificate should parse");
+        let fingerprint = info
+            .fingerprint_sha256
+            .as_ref()
+            .expect("fingerprint should exist");
+        assert_eq!(fingerprint.len(), 64, "fingerprint should be hex SHA-256");
+        assert!(
+            info.not_after.is_some(),
+            "certificate expiry should be present"
+        );
     }
 }
 

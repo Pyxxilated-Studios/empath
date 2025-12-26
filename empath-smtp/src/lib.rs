@@ -21,7 +21,7 @@ pub use command::MailParameters;
 use empath_common::{context::Capability, error::ProtocolError, traits::protocol::Protocol};
 use empath_tracing::traced;
 use serde::Deserialize;
-pub use session::{Session, TlsContextRegistry};
+pub use session::{Session, TlsContextInfo, TlsContextRegistry};
 // Re-export the type-safe state machine from the state module
 pub use state::State;
 use tokio::net::TcpStream;

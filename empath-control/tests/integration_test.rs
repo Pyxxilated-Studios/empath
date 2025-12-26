@@ -105,6 +105,7 @@ impl CommandHandler for MockHandler {
                 SystemCommand::ReloadTls => Ok(Response::data(ResponseData::Message(
                     "TLS credentials reloaded".to_string(),
                 ))),
+                SystemCommand::ListTls => Ok(Response::data(ResponseData::TlsContexts(Vec::new()))),
                 SystemCommand::ConnectionStats => Ok(Response::data(
                     ResponseData::ConnectionStats(ConnectionStats {
                         queue_size: 42,

@@ -565,6 +565,10 @@ impl EmpathControlHandler {
     }
 
     /// Handle system management commands
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Command dispatch remains centralized for audit logging."
+    )]
     fn handle_system_command(&self, command: &SystemCommand) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
         audit!(INFO, "Control command: System", command = ?command);
@@ -626,6 +630,30 @@ impl EmpathControlHandler {
                         "Failed to reload TLS credentials: {err}"
                     ))),
                 }
+            }
+
+            SystemCommand::ListTls => {
+                let registry = self.tls_registry.as_ref().ok_or_else(|| {
+                    ControlError::ServerError("TLS is not configured for this instance".to_string())
+                })?;
+
+                let contexts = registry
+                    .list_contexts()
+                    .into_iter()
+                    .map(|ctx| empath_control::protocol::TlsContextInfo {
+                        certificate_path: ctx.certificate_path.display().to_string(),
+                        key_path: ctx.key_path.display().to_string(),
+                        fingerprint_sha256: ctx.fingerprint_sha256,
+                        subject: ctx.subject,
+                        issuer: ctx.issuer,
+                        not_before: ctx.not_before,
+                        not_after: ctx.not_after,
+                        subject_alt_names: ctx.subject_alt_names,
+                        parse_error: ctx.parse_error,
+                    })
+                    .collect();
+
+                Ok(Response::data(ResponseData::TlsContexts(contexts)))
             }
 
             SystemCommand::ConnectionStats => {

@@ -9,7 +9,7 @@ use chrono::{TimeZone, Utc, offset::LocalResult};
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Format timestamp (milliseconds since epoch) as human-readable
 fn format_timestamp(timestamp_ms: u64) -> String {
@@ -86,6 +86,8 @@ pub enum SystemCommand {
     ReloadConfig,
     /// Reload server TLS certificates/keys from disk
     ReloadTls,
+    /// List active TLS contexts and certificate metadata
+    ListTls,
     /// Runtime connection/rate-limit stats
     ConnectionStats,
     /// List configured outbound bindings
@@ -221,6 +223,8 @@ pub enum ResponseData {
     ConnectionStats(ConnectionStats),
     /// Outbound binding configuration listing
     OutboundBindings(Vec<OutboundBindingInfo>),
+    /// TLS contexts and certificate metadata
+    TlsContexts(Vec<TlsContextInfo>),
     /// Queue message list
     QueueList(QueueListPage),
     /// Queue message details
@@ -295,6 +299,30 @@ pub struct OutboundBindingInfo {
     /// Unix timestamp (seconds) when the binding is expected to reopen
     #[serde(default)]
     pub open_until: Option<u64>,
+}
+
+/// TLS certificate metadata for control responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsContextInfo {
+    /// Path to certificate PEM file
+    pub certificate_path: String,
+    /// Path to key PEM file
+    pub key_path: String,
+    /// SHA-256 fingerprint of the leaf certificate (hex)
+    pub fingerprint_sha256: Option<String>,
+    /// Subject DN string
+    pub subject: Option<String>,
+    /// Issuer DN string
+    pub issuer: Option<String>,
+    /// Not before timestamp (Unix seconds)
+    pub not_before: Option<u64>,
+    /// Not after timestamp (Unix seconds)
+    pub not_after: Option<u64>,
+    /// Subject alternative names (DNS/IP/URI/email)
+    #[serde(default)]
+    pub subject_alt_names: Vec<String>,
+    /// Parse error for certificate metadata
+    pub parse_error: Option<String>,
 }
 
 /// Paginated queue list
