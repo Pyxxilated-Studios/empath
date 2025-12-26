@@ -351,6 +351,9 @@ pub struct QueueMessage {
     pub to: Vec<String>,
     /// Domain being delivered to
     pub domain: String,
+    /// Outbound binding selected for this message
+    #[serde(default)]
+    pub binding: Option<String>,
     /// Delivery status
     pub status: String,
     /// Number of delivery attempts
@@ -369,6 +372,9 @@ impl Display for QueueMessage {
         f.write_fmt(format_args!("From:      {}\n", self.from))?;
         f.write_fmt(format_args!("To:        {}\n", self.to.join(", ")))?;
         f.write_fmt(format_args!("Domain:    {}\n", self.domain))?;
+        if let Some(ref binding) = self.binding {
+            f.write_fmt(format_args!("Binding:   {binding}\n"))?;
+        }
         f.write_fmt(format_args!("Status:    {}\n", self.status))?;
         f.write_fmt(format_args!("Attempts:  {}\n", self.attempts))?;
         if let Some(next_retry) = self.next_retry {

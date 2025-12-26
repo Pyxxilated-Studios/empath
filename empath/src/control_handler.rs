@@ -822,6 +822,7 @@ impl EmpathControlHandler {
                     list.iter().map(std::string::ToString::to_string).collect()
                 }),
                 domain: info.recipient_domain.to_string(),
+                binding: info.binding.clone(),
                 status: info.status.to_string(),
                 attempts: u32::try_from(info.attempts.len()).unwrap_or_default(),
                 next_retry: info.next_retry_at.and_then(|t| {
