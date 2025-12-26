@@ -35,7 +35,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] NEW-SEC-DKIM-01: DKIM verification telemetry. Add enforced DKIM signature verification plus metrics/logs for failures, and consider signing support for outbound messages where missing.
 - [ ] NEW-SEC-DMARC-01: DMARC policy enforcement. Track SPF/DKIM/DMARC observability, surface enforcement decisions via metrics/logs, and provide control/debug tools for rejected/filtered messages.
 - [ ] NEW-SEC-ARC-01: ARC seal handling. Validate incoming ARC seals, detect replayed seals, and add regression tests to ensure archived ARC chains keep passing through the delivery pipeline.
-- [ ] NEW-SMTP-XX: Extended command coverage. Add support for RFC commands such as `NOOP`, `VRFY`, `EXPN`, `ETRN`, `TURN` (and any other common extensions besides `BDAT`) so the MTA can pass compatibility checks with legacy clients.
+- [x] NEW-SMTP-XX: Extended command coverage. Add support for RFC commands such as `NOOP`, `VRFY`, `EXPN`, `ETRN`, `TURN` (and any other common extensions besides `BDAT`) so the MTA can pass compatibility checks with legacy clients.
 - [ ] NEW-CAP-XX: Capability toggles. Allow modules or control handlers to add/remove advertised SMTP capabilities (e.g., hide `AUTH` until STARTTLS completes) at runtime so operators can enforce policies dynamically without restarting the listener.
 
 ## P3 — Deferred / Nice to Have

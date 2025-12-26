@@ -767,6 +767,66 @@ mod test {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn supports_extended_commands() {
+        let _ = modules::init(vec![]);
+
+        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
+        let mut context = Context {
+            banner: banner.as_str().into(),
+            max_message_size: 0,
+            ..Default::default()
+        };
+
+        let (mut session, _handler, _tls) = Session::create(
+            "[::]:25".parse().unwrap(),
+            SessionConfig::builder().with_banner(banner).build(),
+        );
+
+        let _ = session.response(&mut context).await;
+        context.response = None;
+
+        session.handle_command_reception(b"NOOP", &mut context);
+        let response = session.response(&mut context).await;
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} Ok", Status::Ok)
+        );
+        context.response = None;
+
+        session.handle_command_reception(b"VRFY user@example.com", &mut context);
+        let response = session.response(&mut context).await;
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} Cannot VRFY user", Status::Unknown(252))
+        );
+        context.response = None;
+
+        session.handle_command_reception(b"EXPN staff", &mut context);
+        let response = session.response(&mut context).await;
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} Cannot expand list", Status::Unknown(252))
+        );
+        context.response = None;
+
+        session.handle_command_reception(b"ETRN example.com", &mut context);
+        let response = session.response(&mut context).await;
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} Command not implemented", Status::Unknown(502))
+        );
+        context.response = None;
+
+        session.handle_command_reception(b"TURN", &mut context);
+        let response = session.response(&mut context).await;
+        assert_eq!(
+            response.0.unwrap().first().unwrap(),
+            &format!("{} Command not implemented", Status::Unknown(502))
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn spool_integration() {
         // Initialize modules to add core module
         let _ = modules::init(vec![]);
