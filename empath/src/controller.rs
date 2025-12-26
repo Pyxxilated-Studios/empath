@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use empath_common::{Signal, controller::Controller, internal, logging, tracing};
@@ -230,6 +230,7 @@ impl Empath {
         if let Some(metrics) = empath_metrics::try_metrics() {
             let mut shutdown_rx = SHUTDOWN_BROADCAST.subscribe();
             let spool_path = spool_path.clone();
+            let tls_registry = Arc::clone(&tls_registry);
             join_set.spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(15));
                 loop {
@@ -243,6 +244,7 @@ impl Empath {
                             let connections = metrics.smtp.active_connections()
                                 + metrics.delivery.active_connections_count();
                             metrics.system.record_network_connections(connections);
+                            record_tls_watchdog_metrics(metrics, &tls_registry);
                         }
                         _ = shutdown_rx.recv() => break,
                     }
@@ -382,4 +384,46 @@ impl Empath {
             self.delivery.rate_limit.clone(),
         )
     }
+}
+
+fn record_tls_watchdog_metrics(metrics: &empath_metrics::Metrics, registry: &TlsContextRegistry) {
+    let now_secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let contexts = registry.list_contexts();
+
+    let mut expired = 0;
+    let mut parse_errors = 0;
+    let mut min_seconds_until_expiry: Option<u64> = None;
+
+    for ctx in &contexts {
+        if ctx.parse_error.is_some() {
+            parse_errors += 1;
+            continue;
+        }
+
+        let Some(not_after) = ctx.not_after else {
+            parse_errors += 1;
+            continue;
+        };
+
+        if not_after <= now_secs {
+            expired += 1;
+            min_seconds_until_expiry = Some(0);
+            continue;
+        }
+
+        let seconds_until = not_after.saturating_sub(now_secs);
+        min_seconds_until_expiry = Some(
+            min_seconds_until_expiry.map_or(seconds_until, |current| current.min(seconds_until)),
+        );
+    }
+
+    metrics.smtp.record_tls_cert_status(
+        u64::try_from(contexts.len()).unwrap_or(u64::MAX),
+        min_seconds_until_expiry,
+        expired,
+        parse_errors,
+    );
 }

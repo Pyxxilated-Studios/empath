@@ -28,7 +28,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-21: Trace context propagation verification (blocked on span instrumentation readiness). E2E trace_id preservation SMTP→spool→delivery + JoinSet tasks, docs.
 - [ ] NEW-19 dependency follow-ups: ensure control socket auth (0.13) decision once DR documented.
 - [x] NEW-TLS-02: TLS visibility dashboard. Provide a way to inspect which cert/key pairs are currently loaded (thumbprint, expiry, SANs) via control socket or metrics to confirm what the active credentials are.
-- [ ] NEW-TLS-03: TLS chain validation watchdog. Periodically verify cert/key files (and bundles) on disk for expiry or misconfiguration, surface metrics/alerts before rotation, and flag mismatches via control/metrics so operators know when reloads will fail.
+- [x] NEW-TLS-03: TLS chain validation watchdog. Periodically verify cert/key files (and bundles) on disk for expiry or misconfiguration, surface metrics/alerts before rotation, and flag mismatches via control/metrics so operators know when reloads will fail.
 - [ ] NEW-TLS-04: Dual-stack TLS profiles. Support configuring multiple cert/key pairs per listener (e.g., “default” and “rotation” profiles) and provide control operations to switch active profiles or drain sockets without aborting in-flight connections.
 - [x] NEW-CTL-XX: Binding inspection. Extend the control socket to list outbound bindings and show which binding each queued message currently prefers, optionally allowing runtime enabling/disabling for diagnoses.
 - [ ] NEW-SEC-XX: Control socket roles. Add authenticated control sessions with roles (read-only, admin) so sensitive ops like TLS reloads, binding edits, or DR actions require dedicated ACLs.

@@ -272,6 +272,10 @@ Warnings are inhibited when related critical alerts fire:
 | `empath.smtp.connections.total` | Counter | Total SMTP connections accepted | SMTPListenerDown |
 | `empath.smtp.connections.active` | UpDownCounter | Currently active SMTP connections | SMTPListenerDown |
 | `empath.smtp.messages.received.total` | Counter | Messages received via SMTP | Queue growth analysis |
+| `empath.smtp.tls.cert.contexts.total` | Gauge | TLS contexts registered for SMTP listeners | TLS inventory |
+| `empath.smtp.tls.cert.expiry.min.seconds` | Gauge | Minimum seconds until any TLS cert expires | TLS expiry alerting |
+| `empath.smtp.tls.cert.expired.count` | Gauge | TLS certificates already expired | TLS expiry alerting |
+| `empath.smtp.tls.cert.parse_errors.count` | Gauge | TLS certificate parse/inspection errors | TLS reload failures |
 
 ### DNS Metrics
 

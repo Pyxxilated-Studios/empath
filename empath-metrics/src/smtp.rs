@@ -13,7 +13,7 @@ use std::sync::{
 
 use opentelemetry::{
     KeyValue,
-    metrics::{Counter, Histogram, Meter, UpDownCounter},
+    metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter},
 };
 
 use crate::MetricsError;
@@ -42,6 +42,15 @@ pub struct SmtpMetrics {
     /// TLS handshake failures
     tls_handshake_failures: Counter<u64>,
 
+    /// Total TLS contexts registered
+    tls_cert_contexts_total: Gauge<u64>,
+    /// Minimum seconds until any TLS cert expires (0 if expired or none)
+    tls_cert_expiry_min_seconds: Gauge<u64>,
+    /// Number of expired TLS certificates
+    tls_cert_expired_count: Gauge<u64>,
+    /// Number of TLS certificate parse errors
+    tls_cert_parse_errors: Gauge<u64>,
+
     // Fast atomic counters for hot path (read by observable counters via callbacks)
     connections_total_count: Arc<AtomicU64>,
     messages_received_count: Arc<AtomicU64>,
@@ -55,6 +64,7 @@ impl SmtpMetrics {
     /// # Errors
     ///
     /// Returns an error if metric instruments cannot be created.
+    #[allow(clippy::too_many_lines)]
     pub fn new() -> Result<Self, MetricsError> {
         let meter = meter();
 
@@ -120,6 +130,27 @@ impl SmtpMetrics {
             .with_description("Count of TLS handshake failures for SMTP connections")
             .build();
 
+        let tls_cert_contexts_total = meter
+            .u64_gauge("empath.smtp.tls.cert.contexts.total")
+            .with_description("Number of TLS contexts registered for SMTP listeners")
+            .build();
+
+        let tls_cert_expiry_min_seconds = meter
+            .u64_gauge("empath.smtp.tls.cert.expiry.min.seconds")
+            .with_description("Minimum seconds until any TLS cert expires (0 if expired or none)")
+            .with_unit("{seconds}")
+            .build();
+
+        let tls_cert_expired_count = meter
+            .u64_gauge("empath.smtp.tls.cert.expired.count")
+            .with_description("Number of TLS certificates already expired")
+            .build();
+
+        let tls_cert_parse_errors = meter
+            .u64_gauge("empath.smtp.tls.cert.parse_errors.count")
+            .with_description("Number of TLS certificate parse/inspection errors")
+            .build();
+
         // Observable gauge for SMTP error rate (failed / total connections)
         // Pre-calculated for easier alerting
         let total_for_error_rate = connections_total_ref.clone();
@@ -152,6 +183,10 @@ impl SmtpMetrics {
             message_size_bytes,
             tls_handshake_duration,
             tls_handshake_failures,
+            tls_cert_contexts_total,
+            tls_cert_expiry_min_seconds,
+            tls_cert_expired_count,
+            tls_cert_parse_errors,
             connections_total_count: connections_total_ref,
             messages_received_count: messages_received_ref,
             connections_failed_count: connections_failed_ref,
@@ -207,6 +242,21 @@ impl SmtpMetrics {
     pub fn record_tls_handshake_failure(&self, reason: &str) {
         let attributes = [KeyValue::new("reason", reason.to_string())];
         self.tls_handshake_failures.add(1, &attributes);
+    }
+
+    /// Record TLS certificate watchdog metrics.
+    pub fn record_tls_cert_status(
+        &self,
+        contexts_total: u64,
+        min_seconds_until_expiry: Option<u64>,
+        expired_count: u64,
+        parse_error_count: u64,
+    ) {
+        self.tls_cert_contexts_total.record(contexts_total, &[]);
+        self.tls_cert_expiry_min_seconds
+            .record(min_seconds_until_expiry.unwrap_or(0), &[]);
+        self.tls_cert_expired_count.record(expired_count, &[]);
+        self.tls_cert_parse_errors.record(parse_error_count, &[]);
     }
 
     /// Get the current number of active connections
