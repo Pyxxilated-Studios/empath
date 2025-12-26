@@ -1223,6 +1223,22 @@ empathctl system status
 empathctl system tls
 ```
 
+#### Control Command Rate Limiting
+
+Use `control_rate_limit` in the main config to throttle control socket commands
+per client (token or peer address). This protects against automation floods.
+
+Example:
+
+```ron
+control_rate_limit: (
+    enabled: true,
+    window_secs: 10,
+    max_requests: 5,
+    commands: [reload_config, reload_tls, queue_retry, queue_process_now, list_bindings],
+),
+```
+
 ### Queue Management
 
 #### Using empathctl CLI
