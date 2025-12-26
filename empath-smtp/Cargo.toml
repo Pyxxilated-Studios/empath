@@ -30,6 +30,7 @@ hex.workspace = true
 ipnetwork.workspace = true
 libc.workspace = true
 mail-auth.workspace = true
+opentelemetry.workspace = true
 parking_lot.workspace = true
 phf.workspace = true
 rustls-native-certs.workspace = true
@@ -40,6 +41,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tracing.workspace = true
+tracing-opentelemetry.workspace = true
 ulid.workspace = true
 x509-parser.workspace = true
 

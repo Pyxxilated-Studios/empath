@@ -33,12 +33,14 @@ hyper.workspace = true
 hyper-rustls.workspace = true
 hyper-util.workspace = true
 num_cpus.workspace = true
+opentelemetry.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-opentelemetry.workspace = true
 ulid.workspace = true
 
 [dev-dependencies]

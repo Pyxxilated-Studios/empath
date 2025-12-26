@@ -12,9 +12,14 @@ use std::{
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use empath_common::{context::Context, status::Status};
+use empath_common::{
+    context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY},
+    status::Status,
+};
 use empath_ffi::modules;
 use empath_spool::BackingStore;
+use opentelemetry::trace::TraceContextExt as _;
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use ulid::Ulid;
 
 use crate::{State, dkim, dmarc};
@@ -212,6 +217,7 @@ impl DefaultSmtpTransactionHandler {
     ///
     /// * `ctx` - Business context containing the message data
     async fn spool_message(&self, ctx: &mut Context) {
+        self.record_trace_context(ctx);
         self.insert_received_header(ctx);
         let tracking_id = if let Some(spool) = &self.spool
             && ctx.data.is_some()
@@ -262,6 +268,32 @@ impl DefaultSmtpTransactionHandler {
 
         // Dispatch message received event (fail open).
         let _ = modules::dispatch(modules::Event::Event(modules::Ev::SmtpMessageReceived), ctx);
+    }
+
+    #[allow(
+        clippy::unused_self,
+        reason = "Kept as method for cohesion with handler logic."
+    )]
+    fn record_trace_context(&self, ctx: &mut Context) {
+        if ctx.transaction.contains_key(TRACE_ID_CONTEXT_KEY) {
+            return;
+        }
+
+        let span = tracing::Span::current();
+        let otel_ctx = span.context();
+        let span_ref = otel_ctx.span();
+        let span_context = span_ref.span_context();
+
+        if span_context.is_valid() {
+            ctx.transaction.insert(
+                TRACE_ID_CONTEXT_KEY.into(),
+                span_context.trace_id().to_string(),
+            );
+            ctx.transaction.insert(
+                SPAN_ID_CONTEXT_KEY.into(),
+                span_context.span_id().to_string(),
+            );
+        }
     }
 
     fn insert_received_header(&self, ctx: &mut Context) {

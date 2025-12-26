@@ -1039,6 +1039,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "num_cpus",
+ "opentelemetry",
  "parking_lot",
  "rand 0.9.2",
  "ron",
@@ -1046,6 +1047,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
  "ulid",
 ]
 
@@ -1132,6 +1134,7 @@ dependencies = [
  "ipnetwork",
  "libc",
  "mail-auth",
+ "opentelemetry",
  "parking_lot",
  "phf",
  "proptest",
@@ -1143,6 +1146,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "tracing-opentelemetry",
  "ulid",
  "x509-parser",
 ]

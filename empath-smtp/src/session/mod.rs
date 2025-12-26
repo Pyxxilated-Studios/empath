@@ -686,11 +686,16 @@ mod test {
 
     use empath_common::{
         address::{Address, AddressList},
-        context::Context,
+        context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY},
         status::Status,
     };
     use empath_ffi::modules::{self, MODULE_STORE, Module, validate::Event};
     use empath_spool::{BackingStore, TestBackingStore};
+    use opentelemetry::{
+        Context as OtelContext,
+        trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState},
+    };
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
     use crate::{
         State,
@@ -810,7 +815,21 @@ mod test {
         // Simulate PostDot state (handle_data_reception transitions here when it sees \r\n.\r\n)
         assert!(matches!(session.context.state, State::PostDot(_)));
 
-        // Handle message spooling
+        let trace_id = TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").expect("trace id");
+        let span_id = SpanId::from_hex("00f067aa0ba902b7").expect("span id");
+        let span_context = SpanContext::new(
+            trace_id,
+            span_id,
+            TraceFlags::default(),
+            true,
+            TraceState::default(),
+        );
+        let otel_ctx = OtelContext::new().with_remote_span_context(span_context);
+        let span = tracing::info_span!("smtp_receive");
+        let _ = span.set_parent(otel_ctx);
+
+        // Handle message spooling within trace context
+        let _guard = span.enter();
         transaction_handler.handle_message(&mut context).await;
 
         let response = session.response(&mut context).await;
@@ -830,6 +849,14 @@ mod test {
         assert!(spooled_msg.body_view().is_ok_and(|body| {
             body.is_some_and(|body| body.as_str_lossy() == "Hello World\r\n.\r\n")
         }));
+        assert_eq!(
+            spooled_msg.transaction.get(TRACE_ID_CONTEXT_KEY),
+            Some(&"4bf92f3577b34da6a3ce929d0e0e4736".to_string())
+        );
+        assert_eq!(
+            spooled_msg.transaction.get(SPAN_ID_CONTEXT_KEY),
+            Some(&"00f067aa0ba902b7".to_string())
+        );
     }
 
     #[tokio::test]

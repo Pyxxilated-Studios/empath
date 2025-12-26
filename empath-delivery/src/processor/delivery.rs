@@ -4,7 +4,7 @@ use std::{borrow::Cow, sync::Arc};
 
 use empath_common::{
     DeliveryStatus,
-    context::{Context, DeliveryContext},
+    context::{Context, DeliveryContext, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY},
     email::ServerId,
     internal,
     tracing::{error, info, warn},
@@ -12,6 +12,11 @@ use empath_common::{
 use empath_ffi::modules::{self, Ev, Event};
 use empath_smtp::client::ConnectConfig;
 use empath_spool::SpooledMessageId;
+use opentelemetry::{
+    Context as OtelContext,
+    trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState},
+};
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 use crate::{
     OutboundBinding,
@@ -35,6 +40,43 @@ struct DeliverMessageArgs<'a> {
     context: &'a Context,
     delivery_info: &'a DeliveryInfo,
     mta_sts_policy: Option<&'a crate::mta_sts::MtaStsPolicy>,
+}
+
+fn delivery_span(context: &Context) -> tracing::Span {
+    let span = tracing::info_span!(
+        "deliver_message",
+        trace_id = tracing::field::Empty,
+        span_id = tracing::field::Empty
+    );
+
+    let Some(trace_id) = context.transaction.get(TRACE_ID_CONTEXT_KEY) else {
+        return span;
+    };
+    let Some(span_id) = context.transaction.get(SPAN_ID_CONTEXT_KEY) else {
+        return span;
+    };
+
+    let Ok(trace_id_val) = TraceId::from_hex(trace_id) else {
+        return span;
+    };
+    let Ok(span_id_val) = SpanId::from_hex(span_id) else {
+        return span;
+    };
+
+    span.record("trace_id", trace_id.as_str());
+    span.record("span_id", span_id.as_str());
+
+    let span_context = SpanContext::new(
+        trace_id_val,
+        span_id_val,
+        TraceFlags::default(),
+        true,
+        TraceState::default(),
+    );
+    let otel_ctx = OtelContext::new().with_remote_span_context(span_context);
+    let _ = span.set_parent(otel_ctx);
+
+    span
 }
 
 fn resolve_mta_sts_fetch_enabled(
@@ -737,6 +779,8 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
         delivery_info,
         mta_sts_policy,
     } = args;
+    let span = delivery_span(context);
+    let _span_guard = span.enter();
     // Get the domain policy resolver (already checked earlier in prepare_delivery)
     let Some(domain_resolver) = &processor.domain_resolver else {
         return Err(SystemError::NotInitialized(

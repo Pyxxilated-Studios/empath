@@ -716,6 +716,10 @@ graph LR
 - `empath_delivery_attempts_total` - Delivery attempts by domain/status
 - `dns_cache_hits` / `dns_cache_misses` - DNS cache effectiveness
 
+**Trace Propagation:**
+- SMTP spans capture `trace_id`/`span_id` into transaction metadata at spool time.
+- Delivery spans reattach to that context so SMTP → spool → delivery share a trace.
+
 ---
 
 ## Further Reading

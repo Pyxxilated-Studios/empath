@@ -35,6 +35,10 @@ impl ModuleContext {
 
 /// Transaction context key used to request a specific outbound binding.
 pub const OUTBOUND_BINDING_CONTEXT_KEY: &str = "outbound_binding";
+/// Transaction context key used to persist OpenTelemetry trace IDs.
+pub const TRACE_ID_CONTEXT_KEY: &str = "trace_id";
+/// Transaction context key used to persist OpenTelemetry span IDs.
+pub const SPAN_ID_CONTEXT_KEY: &str = "span_id";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Capability {

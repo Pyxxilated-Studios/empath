@@ -25,7 +25,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 ## P2 — Next Up / Blocked
 - [ ] NEW-WASM-16: Split WIT context (read-only vs mutable or event-specific views) with compatibility plan.
 - [ ] NEW-WASM-04: Component Model with WIT interfaces. Optional but aligns with NEW-WASM-16.
-- [ ] NEW-21: Trace context propagation verification (blocked on span instrumentation readiness). E2E trace_id preservation SMTP→spool→delivery + JoinSet tasks, docs.
+- [x] NEW-21: Trace context propagation verification (blocked on span instrumentation readiness). E2E trace_id preservation SMTP→spool→delivery + JoinSet tasks, docs.
 - [ ] NEW-19 dependency follow-ups: ensure control socket auth (0.13) decision once DR documented.
 - [x] NEW-TLS-02: TLS visibility dashboard. Provide a way to inspect which cert/key pairs are currently loaded (thumbprint, expiry, SANs) via control socket or metrics to confirm what the active credentials are.
 - [ ] NEW-TLS-03: TLS chain validation watchdog. Periodically verify cert/key files (and bundles) on disk for expiry or misconfiguration, surface metrics/alerts before rotation, and flag mismatches via control/metrics so operators know when reloads will fail.
