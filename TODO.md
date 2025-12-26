@@ -14,7 +14,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] NEW-23a: Per-binding retry/backoff. Allow bindings to carry timeout/retry profiles; ensure retries stick to the chosen binding unless explicitly allowed to fail over.
 - [x] NEW-23b: Binding health/circuit breaker. Track per-binding connect success/latency; temporarily disable unhealthy bindings and surface status via metrics/control.
 - [x] NEW-23c: Outbound binding observability. Per-binding counters and latency histograms (connect/EHLO); add Grafana panels.
-- [ ] NEW-23d: Control inspection for bindings. Control command to show binding selection for a queued message and toggle/disable a binding at runtime.
+- [x] NEW-23d: Control inspection for bindings. Control command to show binding selection for a queued message and toggle/disable a binding at runtime.
 - [ ] NEW-23e: Module binding ergonomics. Typed binding-name enum in FFI/WASM so modules can list/choose configured bindings; validate names with tests.
 - [x] NEW-24: Per-domain bounce classification. Track temp vs perm failures by domain, expose metrics, and feed retry policy tuning.
 - [ ] NEW-26: Deterministic WASM harness. Provide fixed RNG/time environment to make module tests reproducible in CI.

@@ -7,6 +7,7 @@ pub mod scan;
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use dashmap::DashSet;
 use empath_common::{Signal, internal};
 use empath_spool::SpoolScanCursor;
 use empath_tracing::traced;
@@ -210,6 +211,10 @@ pub struct DeliveryProcessor {
     #[serde(skip)]
     pub(crate) binding_health: Option<BindingHealthTracker>,
 
+    /// Runtime disabled outbound bindings
+    #[serde(skip)]
+    pub(crate) disabled_bindings: DashSet<String>,
+
     /// Domain policy resolver for configuration lookups (initialized in `init()`)
     #[serde(skip)]
     pub(crate) domain_resolver: Option<crate::policy::DomainPolicyResolver>,
@@ -253,6 +258,7 @@ impl Default for DeliveryProcessor {
             rate_limiter: None,
             circuit_breaker_instance: None,
             binding_health: None,
+            disabled_bindings: DashSet::new(),
             domain_resolver: None,
             process_now_notifier: Notify::new(),
             spool_scan_cursor: Mutex::new(SpoolScanCursor::default()),
@@ -261,6 +267,30 @@ impl Default for DeliveryProcessor {
 }
 
 impl DeliveryProcessor {
+    #[must_use]
+    pub fn binding_enabled(&self, name: &str) -> bool {
+        !self.disabled_bindings.contains(name)
+    }
+
+    /// Enable or disable an outbound binding at runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the binding does not exist.
+    pub fn set_binding_enabled(&self, name: &str, enabled: bool) -> Result<(), String> {
+        if self.outbound_bindings.get(name).is_none() {
+            return Err(format!("Unknown outbound binding '{name}'"));
+        }
+
+        if enabled {
+            self.disabled_bindings.remove(name);
+        } else {
+            self.disabled_bindings.insert(name.to_string());
+        }
+
+        Ok(())
+    }
+
     #[must_use]
     pub fn binding_health_config_for(&self, name: &str) -> BindingHealthConfig {
         self.outbound_bindings.health_config_for(name)
@@ -695,6 +725,14 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
 
     fn binding_health_status(&self, name: &str) -> Option<crate::BindingHealthStatus> {
         self.binding_health_status_for(name)
+    }
+
+    fn binding_enabled(&self, name: &str) -> bool {
+        Self::binding_enabled(self, name)
+    }
+
+    fn set_binding_enabled(&self, name: &str, enabled: bool) -> Result<(), String> {
+        Self::set_binding_enabled(self, name, enabled)
     }
 
     fn request_process_now(&self) {

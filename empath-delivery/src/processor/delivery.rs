@@ -169,16 +169,24 @@ pub async fn prepare_message(
             &info.recipient_domain,
             domain_resolver,
         )?;
-        if binding_name.is_some() {
-            processor
-                .queue
-                .set_binding(message_id, binding_name.clone());
-            info.binding = binding_name;
-            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+        if let Some(binding_name) = binding_name {
+            if processor.binding_enabled(&binding_name) {
+                processor
+                    .queue
+                    .set_binding(message_id, Some(binding_name.clone()));
+                info.binding = Some(binding_name);
+                if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+                    warn!(
+                        message_id = %message_id,
+                        error = %e,
+                        "Failed to persist delivery state after binding selection"
+                    );
+                }
+            } else {
                 warn!(
                     message_id = %message_id,
-                    error = %e,
-                    "Failed to persist delivery state after binding selection"
+                    binding = %binding_name,
+                    "Skipping disabled outbound binding"
                 );
             }
         }

@@ -25,6 +25,7 @@ fn default_rate_limit_commands() -> Vec<RateLimitedCommand> {
         RateLimitedCommand::QueueRetry,
         RateLimitedCommand::QueueProcessNow,
         RateLimitedCommand::ListBindings,
+        RateLimitedCommand::SetBindingState,
     ]
 }
 
@@ -66,6 +67,7 @@ pub enum RateLimitedCommand {
     QueueRetry,
     QueueProcessNow,
     ListBindings,
+    SetBindingState,
 }
 
 impl RateLimitedCommand {
@@ -81,6 +83,9 @@ impl RateLimitedCommand {
             ) | (
                 Self::ListBindings,
                 RequestCommand::System(SystemCommand::ListBindings)
+            ) | (
+                Self::SetBindingState,
+                RequestCommand::System(SystemCommand::SetBindingState { .. })
             ) | (
                 Self::QueueRetry,
                 RequestCommand::Queue(QueueCommand::Retry { .. })

@@ -47,6 +47,58 @@ fn handle_circuit_breaker_gate(processor: &DeliveryProcessor, info: &DeliveryInf
     true
 }
 
+async fn handle_binding_disabled_gate(
+    processor: &DeliveryProcessor,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    info: &DeliveryInfo,
+) -> bool {
+    let Some(binding_name) = info.binding.as_deref() else {
+        return true;
+    };
+
+    if processor.binding_enabled(binding_name) {
+        return true;
+    }
+
+    warn!(
+        message_id = ?info.message_id,
+        binding = binding_name,
+        "Outbound binding is disabled - delaying delivery"
+    );
+
+    let binding = processor.outbound_bindings.get(binding_name);
+    if binding.is_some_and(|binding| binding.allow_failover) {
+        processor.queue.set_binding(&info.message_id, None);
+    }
+
+    processor.queue.update_status(
+        &info.message_id,
+        DeliveryStatus::Retry {
+            attempts: info.attempt_count(),
+            last_error: "Outbound binding disabled".to_string(),
+        },
+    );
+
+    let next_retry_at = processor
+        .retry_policy
+        .calculate_next_retry(info.attempt_count());
+    processor
+        .queue
+        .set_next_retry_at(&info.message_id, next_retry_at);
+
+    if let Err(e) =
+        super::delivery::persist_delivery_state(processor, &info.message_id, spool).await
+    {
+        warn!(
+            message_id = ?info.message_id,
+            error = %e,
+            "Failed to persist delivery state after binding disable gate"
+        );
+    }
+
+    false
+}
+
 async fn handle_binding_health_gate(
     processor: &DeliveryProcessor,
     spool: &Arc<dyn empath_spool::BackingStore>,
@@ -124,6 +176,10 @@ async fn process_single_message(
 
     // Check circuit breaker before attempting delivery
     if !handle_circuit_breaker_gate(&processor, &info) {
+        return;
+    }
+
+    if !handle_binding_disabled_gate(&processor, &spool, &info).await {
         return;
     }
 

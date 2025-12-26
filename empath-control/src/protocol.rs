@@ -90,6 +90,13 @@ pub enum SystemCommand {
     ConnectionStats,
     /// List configured outbound bindings
     ListBindings,
+    /// Enable or disable an outbound binding at runtime
+    SetBindingState {
+        /// Binding name
+        name: String,
+        /// Whether the binding is enabled
+        enabled: bool,
+    },
     /// Adjust runtime log level (e.g., "info", "debug", "trace")
     SetLogLevel {
         /// New log level
@@ -276,6 +283,9 @@ pub struct OutboundBindingInfo {
     pub helo_domain: Option<String>,
     /// Whether to attempt STARTTLS
     pub attempt_starttls: bool,
+    /// Whether the binding is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Binding health state (`closed/half_open/open`)
     #[serde(default)]
     pub health_state: Option<String>,
@@ -360,6 +370,9 @@ pub struct QueueMessageDetails {
     pub domain: String,
     /// Delivery status
     pub status: String,
+    /// Outbound binding selected for this message
+    #[serde(default)]
+    pub binding: Option<String>,
     /// Number of delivery attempts
     pub attempts: u32,
     /// Next retry time (Unix timestamp in seconds)
@@ -384,6 +397,9 @@ impl Display for QueueMessageDetails {
         f.write_fmt(format_args!("From:      {}\n", self.from))?;
         f.write_fmt(format_args!("To:        {}\n", self.to.join(", ")))?;
         f.write_fmt(format_args!("Domain:    {}\n", self.domain))?;
+        if let Some(ref binding) = self.binding {
+            f.write_fmt(format_args!("Binding:   {binding}\n"))?;
+        }
         f.write_fmt(format_args!("Status:    {}\n", self.status))?;
         f.write_fmt(format_args!("Attempts:  {}\n", self.attempts))?;
         if let Some(next_retry) = self.next_retry {

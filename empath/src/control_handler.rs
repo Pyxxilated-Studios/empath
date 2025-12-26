@@ -271,6 +271,7 @@ impl EmpathControlHandler {
             .bindings
             .into_iter()
             .map(|(name, binding)| {
+                let enabled = self.delivery.binding_enabled(&name);
                 let health = self.delivery.binding_health_status(&name);
                 let (health_state, consecutive_failures, open_until) =
                     health.map_or((None, None, None), |status| {
@@ -296,6 +297,7 @@ impl EmpathControlHandler {
                     source_interface: binding.source_interface,
                     helo_domain: binding.helo_domain,
                     attempt_starttls: binding.tls.attempt_starttls,
+                    enabled,
                     health_state,
                     consecutive_failures,
                     open_until,
@@ -393,6 +395,15 @@ impl EmpathControlHandler {
                     .map_err(ControlError::ServerError)?;
                 Ok(Response::data(ResponseData::Message(format!(
                     "Rate limit updated (domain={domain:?}, mps={messages_per_second}, burst={burst})"
+                ))))
+            }
+            SystemCommand::SetBindingState { name, enabled } => {
+                self.delivery
+                    .set_binding_enabled(name, *enabled)
+                    .map_err(ControlError::ServerError)?;
+                let state = if *enabled { "enabled" } else { "disabled" };
+                Ok(Response::data(ResponseData::Message(format!(
+                    "Binding {name} {state}"
                 ))))
             }
         };
@@ -1115,6 +1126,7 @@ impl EmpathControlHandler {
                 to,
                 domain: queue_info.recipient_domain.to_string(),
                 status: format!("{:?}", queue_info.status),
+                binding: queue_info.binding.clone(),
                 attempts: u32::try_from(queue_info.attempts.len()).unwrap_or_default(),
                 next_retry: queue_info.next_retry_at.and_then(|t| {
                     t.duration_since(std::time::UNIX_EPOCH)
@@ -1136,6 +1148,7 @@ impl EmpathControlHandler {
                 to,
                 domain: delivery_ctx.domain.to_string(),
                 status: format!("{:?}", delivery_ctx.status),
+                binding: delivery_ctx.binding.clone(),
                 attempts: u32::try_from(delivery_ctx.attempt_history.len()).unwrap_or_default(),
                 next_retry: delivery_ctx.next_retry_at.and_then(|t| {
                     t.duration_since(std::time::UNIX_EPOCH)
@@ -1159,6 +1172,7 @@ impl EmpathControlHandler {
             to,
             domain: "unknown".to_string(),
             status: "Unknown".to_string(),
+            binding: None,
             attempts: 0,
             next_retry: None,
             last_error: None,

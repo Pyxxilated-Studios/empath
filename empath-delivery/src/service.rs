@@ -136,6 +136,16 @@ pub trait DeliveryQueryService: Send + Sync {
     /// Get outbound binding health status (if tracking is enabled).
     fn binding_health_status(&self, name: &str) -> Option<crate::BindingHealthStatus>;
 
+    /// Check if an outbound binding is enabled.
+    fn binding_enabled(&self, name: &str) -> bool;
+
+    /// Enable or disable an outbound binding at runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the binding does not exist.
+    fn set_binding_enabled(&self, name: &str, enabled: bool) -> Result<(), String>;
+
     /// Request an immediate scan/process cycle (used by control interface)
     fn request_process_now(&self);
 

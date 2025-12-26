@@ -114,6 +114,12 @@ impl CommandHandler for MockHandler {
                 SystemCommand::ListBindings => {
                     Ok(Response::data(ResponseData::OutboundBindings(Vec::new())))
                 }
+                SystemCommand::SetBindingState { name, enabled } => {
+                    let state = if enabled { "enabled" } else { "disabled" };
+                    Ok(Response::data(ResponseData::Message(format!(
+                        "Binding {name} {state}"
+                    ))))
+                }
                 SystemCommand::SetRateLimit {
                     domain,
                     messages_per_second,

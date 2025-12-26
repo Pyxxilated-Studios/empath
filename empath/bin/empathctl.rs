@@ -117,6 +117,16 @@ enum SystemAction {
     ConnectionStats,
     /// List configured outbound bindings
     Bindings,
+    /// Enable an outbound binding
+    EnableBinding {
+        /// Binding name
+        name: String,
+    },
+    /// Disable an outbound binding
+    DisableBinding {
+        /// Binding name
+        name: String,
+    },
     /// Update rate limits (global or per-domain)
     SetRateLimit {
         /// Target domain (omit for global defaults)
@@ -411,28 +421,7 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
 
 /// Handle system management commands
 async fn handle_system_command(client: &ControlClient, action: SystemAction) -> anyhow::Result<()> {
-    let request = match action {
-        SystemAction::Ping => Request::new(RequestCommand::System(SystemCommand::Ping)),
-        SystemAction::Status => Request::new(RequestCommand::System(SystemCommand::Status)),
-        SystemAction::ReloadConfig => {
-            Request::new(RequestCommand::System(SystemCommand::ReloadConfig))
-        }
-        SystemAction::ReloadTls => Request::new(RequestCommand::System(SystemCommand::ReloadTls)),
-        SystemAction::SetLogLevel { level } => {
-            Request::new(RequestCommand::System(SystemCommand::SetLogLevel { level }))
-        }
-        SystemAction::ConnectionStats => {
-            Request::new(RequestCommand::System(SystemCommand::ConnectionStats))
-        }
-        SystemAction::Bindings => Request::new(RequestCommand::System(SystemCommand::ListBindings)),
-        SystemAction::SetRateLimit { domain, mps, burst } => {
-            Request::new(RequestCommand::System(SystemCommand::SetRateLimit {
-                domain,
-                messages_per_second: mps,
-                burst,
-            }))
-        }
-    };
+    let request = build_system_request(action);
 
     let response = client.send_request(request).await?;
 
@@ -473,6 +462,7 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
                             println!("  helo_domain: {helo_domain}");
                         }
                         println!("  attempt_starttls: {}", binding.attempt_starttls);
+                        println!("  enabled: {}", binding.enabled);
                         if let Some(health_state) = binding.health_state {
                             println!("  health_state: {health_state}");
                         }
@@ -504,6 +494,33 @@ async fn handle_system_command(client: &ControlClient, action: SystemAction) -> 
     }
 
     Ok(())
+}
+
+fn build_system_request(action: SystemAction) -> Request {
+    let command = match action {
+        SystemAction::Ping => SystemCommand::Ping,
+        SystemAction::Status => SystemCommand::Status,
+        SystemAction::ReloadConfig => SystemCommand::ReloadConfig,
+        SystemAction::ReloadTls => SystemCommand::ReloadTls,
+        SystemAction::SetLogLevel { level } => SystemCommand::SetLogLevel { level },
+        SystemAction::ConnectionStats => SystemCommand::ConnectionStats,
+        SystemAction::Bindings => SystemCommand::ListBindings,
+        SystemAction::EnableBinding { name } => SystemCommand::SetBindingState {
+            name,
+            enabled: true,
+        },
+        SystemAction::DisableBinding { name } => SystemCommand::SetBindingState {
+            name,
+            enabled: false,
+        },
+        SystemAction::SetRateLimit { domain, mps, burst } => SystemCommand::SetRateLimit {
+            domain,
+            messages_per_second: mps,
+            burst,
+        },
+    };
+
+    Request::new(RequestCommand::System(command))
 }
 
 /// Handle queue stats watch mode
