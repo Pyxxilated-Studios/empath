@@ -36,7 +36,7 @@ use crate::{
 /// - Clean separation of concerns
 pub struct SmtpSessionOrchestrator<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> {
     /// Network connection for I/O operations
-    connection: Connection<Stream>,
+    connection: Option<Connection<Stream>>,
 
     /// Protocol state (FSM, message buffer, sent flag)
     session: Session,
@@ -77,12 +77,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         tls_context: Option<TlsContext>,
     ) -> Self {
         Self {
-            connection: Connection::Plain {
+            connection: Some(Connection::Plain {
                 stream,
                 read_buf: Vec::new(),
                 read_pos: 0,
                 read_len: 0,
-            },
+            }),
             session,
             transaction_handler,
             timeouts,
@@ -164,25 +164,13 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
     ///
     /// # Errors
     /// Returns `SessionError` if protocol error, timeout, or I/O failure occurs.
-    #[allow(clippy::too_many_lines)]
     async fn run_inner(
         &mut self,
         validate_context: &mut context::Context,
         mut signal: tokio::sync::broadcast::Receiver<Signal>,
     ) -> Result<(), SessionError> {
         loop {
-            // Check if connection has exceeded maximum lifetime
-            let connection_duration = self.start_time.elapsed();
-            let max_duration = std::time::Duration::from_secs(self.timeouts.connection_secs);
-            if connection_duration >= max_duration {
-                tracing::warn!(
-                    peer = ?self.peer,
-                    duration_secs = ?connection_duration.as_secs(),
-                    max_secs = self.timeouts.connection_secs,
-                    "Connection exceeded maximum lifetime, closing"
-                );
-                return Err(SessionError::Timeout(self.timeouts.connection_secs));
-            }
+            self.check_connection_lifetime()?;
 
             // Perform validation and business logic
             self.emit(validate_context).await;
@@ -194,29 +182,57 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             self.session.context.sent = true;
 
             // Send response to client
-            for response in response.unwrap_or_default() {
-                outgoing!("{response}");
-
-                self.connection.send(&response).await.map_err(|err| {
-                    internal!(level = ERROR, "{err}");
-                    SessionError::Protocol(format!("Failed to send response: {err}"))
-                })?;
-            }
-
-            // Check if connection should close
-            if Event::ConnectionClose == ev {
-                return Ok(());
-            } else if self.tls_context.is_some()
-                && matches!(self.session.context.state, State::StartTls(_))
-            {
-                // Handle TLS upgrade
-                self.handle_tls_upgrade(validate_context).await?;
-            } else {
-                // Handle regular command
-                self.handle_command_loop(validate_context, &mut signal)
-                    .await?;
-            }
+            self.send_responses(response.unwrap_or_default()).await?;
+            self.handle_event(validate_context, ev, &mut signal).await?;
         }
+    }
+
+    fn check_connection_lifetime(&self) -> Result<(), SessionError> {
+        let connection_duration = self.start_time.elapsed();
+        let max_duration = std::time::Duration::from_secs(self.timeouts.connection_secs);
+        if connection_duration >= max_duration {
+            tracing::warn!(
+                peer = ?self.peer,
+                duration_secs = ?connection_duration.as_secs(),
+                max_secs = self.timeouts.connection_secs,
+                "Connection exceeded maximum lifetime, closing"
+            );
+            return Err(SessionError::Timeout(self.timeouts.connection_secs));
+        }
+        Ok(())
+    }
+
+    async fn send_responses(&mut self, responses: Vec<String>) -> Result<(), SessionError> {
+        for response in responses {
+            outgoing!("{response}");
+
+            let connection = self.connection_mut()?;
+            connection.send(&response).await.map_err(|err| {
+                internal!(level = ERROR, "{err}");
+                SessionError::Protocol(format!("Failed to send response: {err}"))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_event(
+        &mut self,
+        validate_context: &mut context::Context,
+        ev: Event,
+        signal: &mut tokio::sync::broadcast::Receiver<Signal>,
+    ) -> Result<(), SessionError> {
+        if Event::ConnectionClose == ev {
+            return Ok(());
+        }
+
+        if self.tls_context.is_some() && matches!(self.session.context.state, State::StartTls(_)) {
+            self.handle_tls_upgrade(validate_context).await?;
+        } else {
+            self.handle_command_loop(validate_context, signal).await?;
+        }
+
+        Ok(())
     }
 
     /// Handle TLS upgrade when in `StartTls` state
@@ -232,41 +248,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             .as_ref()
             .ok_or_else(|| SessionError::Protocol("TLS context not available".to_string()))?;
 
-        // SAFETY: Temporarily take ownership of connection for upgrade.
-        // Connection is immediately replaced after upgrade completes.
-        // This is safe because upgrade() consumes the connection and returns a new one.
-        #[allow(unsafe_code)]
-        let temp_connection = match self.connection {
-            Connection::Plain {
-                ref stream,
-                ref read_buf,
-                read_pos,
-                read_len,
-            } => Connection::Plain {
-                stream: unsafe { std::ptr::read(stream) },
-                read_buf: read_buf.clone(),
-                read_pos,
-                read_len,
-            },
-            Connection::Tls {
-                ref stream,
-                ref read_buf,
-                read_pos,
-                read_len,
-            } => Connection::Tls {
-                stream: unsafe { std::ptr::read(stream) },
-                read_buf: read_buf.clone(),
-                read_pos,
-                read_len,
-            },
-        };
-
-        let (conn, info) = temp_connection
+        let connection = self.connection.take().ok_or_else(|| {
+            SessionError::Protocol("TLS upgrade without an active connection".to_string())
+        })?;
+        let (conn, info) = connection
             .upgrade(tls_context)
             .await
             .map_err(|e| SessionError::Protocol(e.to_string()))?;
 
-        self.connection = conn;
+        self.connection = Some(conn);
 
         // TLS state is session context (persists across RSET)
         validate_context
@@ -360,7 +350,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
     ) -> Result<bool, SessionError> {
         let mut received_data = [0; 4096];
 
-        match self.connection.receive(&mut received_data).await {
+        let connection = self.connection_mut()?;
+        match connection.receive(&mut received_data).await {
             // Consider any errors received here to be fatal
             Err(err) => {
                 internal!("Error: {err}");
@@ -385,6 +376,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
                 Ok(false)
             }
         }
+    }
+
+    fn connection_mut(&mut self) -> Result<&mut Connection<Stream>, SessionError> {
+        self.connection
+            .as_mut()
+            .ok_or_else(|| SessionError::Protocol("Connection unavailable".to_string()))
     }
 
     /// Handle validation and work for each state using SMTP transaction handler

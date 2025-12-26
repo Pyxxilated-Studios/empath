@@ -11,18 +11,34 @@ use crate::{
     traits::protocol::{Protocol, SessionHandler},
 };
 
-#[allow(
-    clippy::unsafe_derive_deserialize,
-    reason = "The unsafe aspects have nothing to do with the struct"
-)]
-#[derive(Deserialize)]
 pub struct Listener<Proto: Protocol> {
-    #[serde(skip)]
     handler: Proto,
+    socket: SocketAddr,
+    args: Proto::Args,
+    context: Proto::Context,
+}
+
+#[derive(Deserialize)]
+struct ListenerConfig<Proto: Protocol> {
     socket: SocketAddr,
     #[serde(skip_serializing, default, flatten)]
     args: Proto::Args,
     context: Proto::Context,
+}
+
+impl<'de, Proto: Protocol> Deserialize<'de> for Listener<Proto> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let config = ListenerConfig::<Proto>::deserialize(deserializer)?;
+        Ok(Self {
+            handler: Proto::default(),
+            socket: config.socket,
+            args: config.args,
+            context: config.context,
+        })
+    }
 }
 
 unsafe impl<P: Protocol> Send for Listener<P> {}

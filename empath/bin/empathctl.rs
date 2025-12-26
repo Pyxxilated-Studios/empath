@@ -437,135 +437,165 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
 }
 
 /// Handle system management commands
-#[allow(
-    clippy::too_many_lines,
-    reason = "CLI command dispatch keeps output formatting in one place."
-)]
 async fn handle_system_command(client: &ControlClient, action: SystemAction) -> anyhow::Result<()> {
     let request = build_system_request(action);
 
     let response = client.send_request(request).await?;
 
-    match response.payload {
+    handle_system_payload(response.payload)
+}
+
+fn handle_system_payload(payload: ResponsePayload) -> anyhow::Result<()> {
+    match payload {
         ResponsePayload::Ok => {
             println!("✓ Pong! MTA is responding");
         }
-        ResponsePayload::Data(data) => match *data {
-            ResponseData::SystemStatus(status) => {
-                println!("=== Empath MTA Status ===\n");
-                println!("Version:            {}", status.version);
-                println!(
-                    "Uptime:             {}",
-                    format_duration(status.uptime_secs)
-                );
-                println!("Queue size:         {} message(s)", status.queue_size);
-                println!("DNS cache entries:  {}", status.dns_cache_entries);
-            }
-            ResponseData::ConnectionStats(stats) => {
-                println!("=== Connection Stats ===\n");
-                println!("Queue size:             {}", stats.queue_size);
-                println!("Rate limit buckets:     {}", stats.rate_limit_domains);
-            }
-            ResponseData::OutboundBindings(bindings) => {
-                println!("=== Outbound Bindings ===\n");
-                if bindings.is_empty() {
-                    println!("No outbound bindings configured");
-                } else {
-                    for binding in bindings {
-                        println!("- {}", binding.name);
-                        if let Some(source_ip) = binding.source_ip {
-                            println!("  source_ip: {source_ip}");
-                        }
-                        if let Some(source_interface) = binding.source_interface {
-                            println!("  source_interface: {source_interface}");
-                        }
-                        if let Some(helo_domain) = binding.helo_domain {
-                            println!("  helo_domain: {helo_domain}");
-                        }
-                        println!("  attempt_starttls: {}", binding.attempt_starttls);
-                        println!("  enabled: {}", binding.enabled);
-                        if let Some(health_state) = binding.health_state {
-                            println!("  health_state: {health_state}");
-                        }
-                        if let Some(consecutive_failures) = binding.consecutive_failures {
-                            println!("  consecutive_failures: {consecutive_failures}");
-                        }
-                        if let Some(open_until) = binding.open_until {
-                            println!("  open_until: {open_until}");
-                        }
-                    }
-                }
-            }
-            ResponseData::TlsContexts(contexts) => {
-                println!("=== TLS Contexts ===\n");
-                if contexts.is_empty() {
-                    println!("No TLS contexts configured");
-                } else {
-                    for (idx, ctx) in contexts.iter().enumerate() {
-                        println!("Context {}:", idx + 1);
-                        println!("  certificate_path: {}", ctx.certificate_path);
-                        println!("  key_path: {}", ctx.key_path);
-                        if let Some(fingerprint) = &ctx.fingerprint_sha256 {
-                            println!("  fingerprint_sha256: {fingerprint}");
-                        }
-                        if let Some(subject) = &ctx.subject {
-                            println!("  subject: {subject}");
-                        }
-                        if let Some(issuer) = &ctx.issuer {
-                            println!("  issuer: {issuer}");
-                        }
-                        if let Some(not_before) = ctx.not_before {
-                            println!("  not_before: {}", format_timestamp_secs(not_before));
-                        } else {
-                            println!("  not_before: unknown");
-                        }
-                        if let Some(not_after) = ctx.not_after {
-                            println!("  not_after: {}", format_timestamp_secs(not_after));
-                        } else {
-                            println!("  not_after: unknown");
-                        }
-                        if !ctx.subject_alt_names.is_empty() {
-                            println!("  subject_alt_names:");
-                            for name in &ctx.subject_alt_names {
-                                println!("    - {name}");
-                            }
-                        }
-                        if let Some(error) = &ctx.parse_error {
-                            println!("  parse_error: {error}");
-                        }
-                        println!();
-                    }
-                }
-            }
-            ResponseData::SmtpCapabilities(capabilities) => {
-                println!("=== SMTP Capabilities ===\n");
-                if capabilities.is_empty() {
-                    println!("No SMTP capabilities enabled");
-                } else {
-                    for capability in capabilities {
-                        println!("- {capability}");
-                    }
-                }
-            }
-            ResponseData::Message(msg) => {
-                println!("✓ {msg}");
-            }
-            ResponseData::DnsCache(_)
-            | ResponseData::MxOverrides(_)
-            | ResponseData::QueueList(_)
-            | ResponseData::QueueMessageDetails(_)
-            | ResponseData::QueueStats(_)
-            | ResponseData::SpoolList(_)
-            | ResponseData::SpoolStats(_) => {
-                println!("Unexpected response for system command: {data:?}");
-            }
-        },
+        ResponsePayload::Data(data) => {
+            handle_system_data(*data);
+        }
         ResponsePayload::Error(err) => {
             anyhow::bail!("Server error: {err}");
         }
     }
 
     Ok(())
+}
+
+fn handle_system_data(data: ResponseData) {
+    match data {
+        ResponseData::SystemStatus(status) => {
+            print_system_status(&status);
+        }
+        ResponseData::ConnectionStats(stats) => {
+            print_connection_stats(&stats);
+        }
+        ResponseData::OutboundBindings(bindings) => {
+            print_outbound_bindings(&bindings);
+        }
+        ResponseData::TlsContexts(contexts) => {
+            print_tls_contexts(&contexts);
+        }
+        ResponseData::SmtpCapabilities(capabilities) => {
+            print_smtp_capabilities(&capabilities);
+        }
+        ResponseData::Message(msg) => {
+            print_message(&msg);
+        }
+        ResponseData::DnsCache(_)
+        | ResponseData::MxOverrides(_)
+        | ResponseData::QueueList(_)
+        | ResponseData::QueueMessageDetails(_)
+        | ResponseData::QueueStats(_)
+        | ResponseData::SpoolList(_)
+        | ResponseData::SpoolStats(_) => {
+            println!("Unexpected response for system command: {data:?}");
+        }
+    }
+}
+
+fn print_system_status(status: &empath_control::protocol::SystemStatus) {
+    println!("=== Empath MTA Status ===\n");
+    println!("Version:            {}", status.version);
+    println!(
+        "Uptime:             {}",
+        format_duration(status.uptime_secs)
+    );
+    println!("Queue size:         {} message(s)", status.queue_size);
+    println!("DNS cache entries:  {}", status.dns_cache_entries);
+}
+
+fn print_connection_stats(stats: &empath_control::protocol::ConnectionStats) {
+    println!("=== Connection Stats ===\n");
+    println!("Queue size:             {}", stats.queue_size);
+    println!("Rate limit buckets:     {}", stats.rate_limit_domains);
+}
+
+fn print_outbound_bindings(bindings: &[empath_control::protocol::OutboundBindingInfo]) {
+    println!("=== Outbound Bindings ===\n");
+    if bindings.is_empty() {
+        println!("No outbound bindings configured");
+    } else {
+        for binding in bindings {
+            println!("- {}", binding.name);
+            if let Some(source_ip) = binding.source_ip.as_ref() {
+                println!("  source_ip: {source_ip}");
+            }
+            if let Some(source_interface) = binding.source_interface.as_ref() {
+                println!("  source_interface: {source_interface}");
+            }
+            if let Some(helo_domain) = binding.helo_domain.as_ref() {
+                println!("  helo_domain: {helo_domain}");
+            }
+            println!("  attempt_starttls: {}", binding.attempt_starttls);
+            println!("  enabled: {}", binding.enabled);
+            if let Some(health_state) = binding.health_state.as_ref() {
+                println!("  health_state: {health_state}");
+            }
+            if let Some(consecutive_failures) = binding.consecutive_failures {
+                println!("  consecutive_failures: {consecutive_failures}");
+            }
+            if let Some(open_until) = binding.open_until {
+                println!("  open_until: {open_until}");
+            }
+        }
+    }
+}
+
+fn print_tls_contexts(contexts: &[empath_control::protocol::TlsContextInfo]) {
+    println!("=== TLS Contexts ===\n");
+    if contexts.is_empty() {
+        println!("No TLS contexts configured");
+    } else {
+        for (idx, ctx) in contexts.iter().enumerate() {
+            println!("Context {}:", idx + 1);
+            println!("  certificate_path: {}", ctx.certificate_path);
+            println!("  key_path: {}", ctx.key_path);
+            if let Some(fingerprint) = &ctx.fingerprint_sha256 {
+                println!("  fingerprint_sha256: {fingerprint}");
+            }
+            if let Some(subject) = &ctx.subject {
+                println!("  subject: {subject}");
+            }
+            if let Some(issuer) = &ctx.issuer {
+                println!("  issuer: {issuer}");
+            }
+            if let Some(not_before) = ctx.not_before {
+                println!("  not_before: {}", format_timestamp_secs(not_before));
+            } else {
+                println!("  not_before: unknown");
+            }
+            if let Some(not_after) = ctx.not_after {
+                println!("  not_after: {}", format_timestamp_secs(not_after));
+            } else {
+                println!("  not_after: unknown");
+            }
+            if !ctx.subject_alt_names.is_empty() {
+                println!("  subject_alt_names:");
+                for name in &ctx.subject_alt_names {
+                    println!("    - {name}");
+                }
+            }
+            if let Some(error) = &ctx.parse_error {
+                println!("  parse_error: {error}");
+            }
+            println!();
+        }
+    }
+}
+
+fn print_smtp_capabilities(capabilities: &[String]) {
+    println!("=== SMTP Capabilities ===\n");
+    if capabilities.is_empty() {
+        println!("No SMTP capabilities enabled");
+    } else {
+        for capability in capabilities {
+            println!("- {capability}");
+        }
+    }
+}
+
+fn print_message(message: &str) {
+    println!("✓ {message}");
 }
 
 fn build_system_request(action: SystemAction) -> Request {

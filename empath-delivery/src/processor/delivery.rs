@@ -22,7 +22,7 @@ use crate::{
     OutboundBinding,
     error::{DeliveryError, SystemError, TemporaryError},
     processor::DeliveryProcessor,
-    smtp_pool::{SmtpPoolKey, SmtpPoolRequest},
+    smtp_pool::{CertValidation, SmtpPoolKey, SmtpPoolRequest, TlsMode},
     types::DeliveryInfo,
 };
 
@@ -40,6 +40,22 @@ struct DeliverMessageArgs<'a> {
     context: &'a Context,
     delivery_info: &'a DeliveryInfo,
     mta_sts_policy: Option<&'a crate::mta_sts::MtaStsPolicy>,
+}
+
+struct DeliveryTlsSettings {
+    require_tls: bool,
+    accept_invalid_certs: bool,
+    tls_failure_is_temporary: bool,
+}
+
+struct BindingSelection {
+    attempt_tls: bool,
+    tls_mode: TlsMode,
+    cert_validation: CertValidation,
+    connect_config: Option<ConnectConfig>,
+    pool_connect_config: Option<ConnectConfig>,
+    helo_domain: Option<String>,
+    smtp_timeouts: crate::types::SmtpTimeouts,
 }
 
 fn delivery_span(context: &Context) -> tracing::Span {
@@ -165,191 +181,76 @@ async fn record_mta_sts(
 ///
 /// # Errors
 /// Returns an error if the message cannot be read, DNS lookup fails, or SMTP connection fails
-#[allow(
-    clippy::too_many_lines,
-    reason = "Persistence logic adds necessary lines"
-)]
 pub async fn prepare_message(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
     spool: &Arc<dyn empath_spool::BackingStore>,
 ) -> Result<(), DeliveryError> {
-    processor
-        .queue
-        .update_status(message_id, DeliveryStatus::InProgress);
+    mark_in_progress(processor, message_id, spool).await;
+    let (mut context, mut info) = load_context_and_info(processor, message_id, spool).await?;
+    let (dns_resolver, domain_resolver) = resolve_resolvers(processor)?;
 
-    // Persist the InProgress status to spool
-    if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
-        warn!(
-            message_id = %message_id,
-            error = %e,
-            "Failed to persist delivery state after status update to InProgress"
-        );
-        // Continue anyway - this is not critical for delivery
-    }
-
-    let mut context = spool
-        .read_metadata(message_id)
-        .await
-        .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
-    let mut info = processor.queue.get(message_id).ok_or_else(|| {
-        SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
-    })?;
-
-    // Create delivery pipeline to orchestrate DNS → Rate Limit → SMTP stages
-    let dns_resolver = processor.dns_resolver.as_ref().ok_or_else(|| {
-        SystemError::NotInitialized("DNS resolver not initialized. Call init() first.".to_string())
-    })?;
-    let domain_resolver = processor.domain_resolver.as_ref().ok_or_else(|| {
-        SystemError::NotInitialized(
-            "Domain policy resolver not initialized. Call init() first.".to_string(),
-        )
-    })?;
-
-    if info.binding.is_none() {
-        let binding_name = processor.outbound_bindings.resolve_binding_name(
-            &context,
-            &info.recipient_domain,
-            domain_resolver,
-        )?;
-        if let Some(binding_name) = binding_name {
-            if processor.binding_enabled(&binding_name) {
-                processor
-                    .queue
-                    .set_binding(message_id, Some(binding_name.clone()));
-                info.binding = Some(binding_name);
-                if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
-                    warn!(
-                        message_id = %message_id,
-                        error = %e,
-                        "Failed to persist delivery state after binding selection"
-                    );
-                }
-            } else {
-                warn!(
-                    message_id = %message_id,
-                    binding = %binding_name,
-                    "Skipping disabled outbound binding"
-                );
-            }
-        }
-    }
+    maybe_select_binding(
+        processor,
+        message_id,
+        spool,
+        &context,
+        &mut info,
+        domain_resolver,
+    )
+    .await?;
 
     let binding_ref = info
         .binding
         .as_deref()
         .and_then(|name| processor.outbound_bindings.get(name));
-    let mta_sts_fetch_enabled =
-        resolve_mta_sts_fetch_enabled(processor, &info.recipient_domain, binding_ref);
-    let mta_sts_policy = record_mta_sts(
+    let mta_sts_policy = record_mta_sts_policy(
+        processor,
         &mut context,
-        &**dns_resolver,
-        &processor.mta_sts_cache,
+        dns_resolver.as_ref(),
         &info.recipient_domain,
-        mta_sts_fetch_enabled,
+        binding_ref,
     )
     .await;
 
-    // Dispatch DeliveryAttempt event to modules
-    {
-        context.delivery = Some(DeliveryContext {
-            message_id: message_id.clone(),
-            domain: info.recipient_domain.clone(),
-            server: None, // Server not yet determined at this point
-            error: None,
-            attempts: Some(info.attempt_count()),
-            binding: info.binding.clone(),
-            status: info.status.clone(),
-            attempt_history: info.attempts.clone(),
-            queued_at: info.queued_at,
-            next_retry_at: info.next_retry_at,
-            current_server_index: info.current_server_index,
-        });
-
-        let _ = modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
-    }
+    dispatch_delivery_event(&mut context, message_id, &info, None, Ev::DeliveryAttempt);
 
     let pipeline = crate::policy::DeliveryPipeline::new(
-        &**dns_resolver,
+        dns_resolver.as_ref(),
         domain_resolver,
         processor.rate_limiter.as_ref(),
         processor.circuit_breaker_instance.as_ref(),
     );
+    let (mx_address, mx_server_id) =
+        resolve_primary_server(processor, message_id, &info, &pipeline).await?;
 
-    // Stage 1: Resolve mail servers (MX override or DNS lookup)
-    let dns_resolution = pipeline
-        .resolve_mail_servers(&info.recipient_domain)
-        .await?;
-
-    // Store the resolved mail servers
-    processor
-        .queue
-        .set_mail_servers(message_id, dns_resolution.mail_servers.clone());
-
-    // Use the primary (highest priority) mail server
-    let mx_address = dns_resolution.primary_server.address();
-    let mx_server_id = server_id_from(&mx_address)?;
-
-    internal!(
-        "Sending message to {:?} with MX host {} (priority {})",
+    dispatch_delivery_event(
+        &mut context,
         message_id,
-        mx_address,
-        dns_resolution.primary_server.priority
+        &info,
+        Some(mx_server_id.clone()),
+        Ev::DeliveryAttempt,
     );
 
-    // Dispatch DeliveryAttempt event before attempting delivery
-    context.delivery = Some(DeliveryContext {
-        message_id: message_id.clone(),
-        domain: info.recipient_domain.clone(),
-        server: Some(mx_server_id.clone()),
-        error: None,
-        attempts: Some(info.attempt_count()),
-        binding: info.binding.clone(),
-        status: info.status.clone(),
-        attempt_history: info.attempts.clone(),
-        queued_at: info.queued_at,
-        next_retry_at: info.next_retry_at,
-        current_server_index: info.current_server_index,
-    });
-    let _ = modules::dispatch(Event::Event(Ev::DeliveryAttempt), &mut context);
-
-    // Stage 2: Check rate limit before attempting delivery
-    match pipeline.check_rate_limit(message_id, &info.recipient_domain) {
-        crate::policy::RateLimitResult::RateLimited { wait_time } => {
-            // Rate limited - schedule retry
-            let next_retry_at =
-                crate::policy::DeliveryPipeline::calculate_rate_limit_retry(wait_time);
-
-            processor.queue.set_next_retry_at(message_id, next_retry_at);
-            processor
-                .queue
-                .update_status(message_id, DeliveryStatus::Pending);
-
-            // Persist the delayed status to spool
-            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
-                warn!(
-                    message_id = %message_id,
-                    error = %e,
-                    "Failed to persist delivery state after rate limit delay"
-                );
-            }
-
-            return Ok(()); // Not an error, just delayed
-        }
-        crate::policy::RateLimitResult::Allowed => {
-            // Proceed with delivery
-        }
+    if handle_rate_limit(
+        processor,
+        message_id,
+        &info.recipient_domain,
+        spool,
+        &pipeline,
+    )
+    .await?
+    {
+        return Ok(());
     }
 
-    // Audit log: Delivery attempt
     empath_common::audit::log_delivery_attempt(
         &message_id.to_string(),
         &info.recipient_domain,
         &mx_server_id,
-        usize::try_from(info.attempt_count()).unwrap_or(0) + 1, // Next attempt number (1-based)
+        usize::try_from(info.attempt_count()).unwrap_or(0) + 1,
     );
 
-    // Deliver the message via SMTP (including DATA command)
     let result = Box::pin(deliver_message(DeliverMessageArgs {
         processor,
         spool,
@@ -363,82 +264,16 @@ pub async fn prepare_message(
 
     match result {
         Ok(()) => {
-            processor
-                .queue
-                .update_status(message_id, DeliveryStatus::Completed);
-
-            // Persist the Completed status to spool before deletion
-            // Note: This will be immediately deleted, but it's important for consistency
-            // in case the deletion fails
-            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
-                warn!(
-                    message_id = %message_id,
-                    error = %e,
-                    "Failed to persist delivery state after successful delivery"
-                );
-            }
-
-            // Delete the message from the spool after successful delivery
-            if let Err(e) = spool.delete(message_id).await {
-                error!(
-                    message_id = %message_id,
-                    error = %e,
-                    "Failed to delete message from spool after successful delivery - adding to cleanup queue for retry"
-                );
-                // Add to cleanup queue for retry with exponential backoff
-                processor
-                    .cleanup_queue
-                    .add_failed_deletion(message_id.clone());
-                // Don't fail the delivery just because we couldn't delete the spool file
-                // The message was delivered successfully
-            }
-
-            // Remove from in-memory queue to keep queue synchronized with spool
-            // This ensures `queue list` and `queue stats` reflect the actual state
-            processor.queue.remove(message_id);
-
-            // Dispatch DeliverySuccess event to modules
-            context.delivery = Some(DeliveryContext {
-                message_id: message_id.clone(),
-                domain: info.recipient_domain.clone(),
-                server: Some(mx_server_id.clone()),
-                error: None,
-                attempts: Some(info.attempt_count()),
-                binding: info.binding.clone(),
-                status: info.status.clone(),
-                attempt_history: info.attempts.clone(),
-                queued_at: info.queued_at,
-                next_retry_at: info.next_retry_at,
-                current_server_index: info.current_server_index,
-            });
-            let _ = modules::dispatch(Event::Event(Ev::DeliverySuccess), &mut context);
-
-            // Audit log: Delivery successful
-            let duration_ms = info.queued_at.elapsed().map_or(0, |d| d.as_millis());
-            empath_common::audit::log_delivery_success(
-                &message_id.to_string(),
-                &info.recipient_domain,
+            handle_delivery_success(
+                processor,
+                message_id,
+                spool,
+                &mut context,
+                &info,
                 &mx_server_id,
-                usize::try_from(info.attempt_count()).unwrap_or(0) + 1,
-                duration_ms,
-            );
-
-            // Stage 3: Record successful delivery in circuit breaker
-            pipeline.record_success(&info.recipient_domain);
-
-            if let (Some(binding_name), Some(binding_health)) =
-                (info.binding.as_deref(), &processor.binding_health)
-            {
-                let state = binding_health.record_success(
-                    binding_name,
-                    processor.binding_health_config_for(binding_name),
-                );
-                if let Some(metrics) = &processor.metrics {
-                    metrics.record_binding_health_state(binding_name, state.as_metric_value());
-                }
-            }
-
-            Ok(())
+                &pipeline,
+            )
+            .await
         }
         Err(e) => {
             let error =
@@ -456,10 +291,6 @@ pub async fn prepare_message(
 ///
 /// # Errors
 /// Returns the original error after recording it
-#[allow(
-    clippy::too_many_lines,
-    reason = "Persistence logic adds necessary lines"
-)]
 pub async fn handle_delivery_error(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
@@ -467,41 +298,432 @@ pub async fn handle_delivery_error(
     error: DeliveryError,
     server: ServerId,
 ) -> DeliveryError {
-    // Record the attempt
-    let attempt = empath_common::DeliveryAttempt {
-        timestamp: std::time::SystemTime::now(),
-        error: Some(error.to_string()),
-        server: server.clone(),
-    };
+    record_attempt(processor, message_id, &error, &server);
 
-    processor.queue.record_attempt(message_id, attempt);
-
-    // Get updated info to check attempt count
-    // Use proper error handling instead of unwrap
     let Some(updated_info) = processor.queue.get(message_id) else {
         warn!(
             "Message {:?} disappeared from queue during error handling",
             message_id
         );
-        return error; // Preserve original error
+        return error;
     };
 
-    // Check if this is a temporary failure that warrants trying another MX server
-    // (e.g., connection refused, timeout, temporary SMTP error)
     let is_temporary_failure = error.is_temporary();
     let is_permanent_failure = error.is_permanent();
+    record_failure_metrics(
+        processor,
+        &updated_info,
+        is_temporary_failure,
+        is_permanent_failure,
+    );
+
+    if try_mx_fallback(processor, message_id, is_temporary_failure).await {
+        return error;
+    }
+
+    let (new_status, retry_policy) =
+        update_retry_state(processor, message_id, &updated_info, &error);
+    apply_retry_delay(
+        processor,
+        message_id,
+        &updated_info,
+        &new_status,
+        &retry_policy,
+    );
+    persist_after_error(processor, message_id).await;
+    dispatch_failure_event(context, message_id, &updated_info, &error, server);
+    record_delivery_failure_audit(message_id, &updated_info, &error, &new_status);
+    record_circuit_breaker_failure(processor, &updated_info, is_temporary_failure);
+    maybe_generate_dsn(processor, context, &updated_info, &error).await;
+
+    error
+}
+
+async fn mark_in_progress(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+) {
+    processor
+        .queue
+        .update_status(message_id, DeliveryStatus::InProgress);
+
+    if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+        warn!(
+            message_id = %message_id,
+            error = %e,
+            "Failed to persist delivery state after status update to InProgress"
+        );
+    }
+}
+
+async fn load_context_and_info(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+) -> Result<(Context, DeliveryInfo), DeliveryError> {
+    let context = spool
+        .read_metadata(message_id)
+        .await
+        .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+    let info = processor.queue.get(message_id).ok_or_else(|| {
+        SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
+    })?;
+    Ok((context, info))
+}
+
+fn resolve_resolvers(
+    processor: &DeliveryProcessor,
+) -> Result<
+    (
+        Arc<dyn crate::DnsResolver>,
+        &crate::policy::DomainPolicyResolver,
+    ),
+    DeliveryError,
+> {
+    let dns_resolver = processor.dns_resolver.clone().ok_or_else(|| {
+        SystemError::NotInitialized("DNS resolver not initialized. Call init() first.".to_string())
+    })?;
+    let domain_resolver = processor.domain_resolver.as_ref().ok_or_else(|| {
+        SystemError::NotInitialized(
+            "Domain policy resolver not initialized. Call init() first.".to_string(),
+        )
+    })?;
+    Ok((dns_resolver, domain_resolver))
+}
+
+async fn maybe_select_binding(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    context: &Context,
+    info: &mut DeliveryInfo,
+    domain_resolver: &crate::policy::DomainPolicyResolver,
+) -> Result<(), DeliveryError> {
+    if info.binding.is_some() {
+        return Ok(());
+    }
+
+    let binding_name = processor.outbound_bindings.resolve_binding_name(
+        context,
+        &info.recipient_domain,
+        domain_resolver,
+    )?;
+    if let Some(binding_name) = binding_name {
+        if processor.binding_enabled(&binding_name) {
+            processor
+                .queue
+                .set_binding(message_id, Some(binding_name.clone()));
+            info.binding = Some(binding_name);
+            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+                warn!(
+                    message_id = %message_id,
+                    error = %e,
+                    "Failed to persist delivery state after binding selection"
+                );
+            }
+        } else {
+            warn!(
+                message_id = %message_id,
+                binding = %binding_name,
+                "Skipping disabled outbound binding"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn record_mta_sts_policy(
+    processor: &DeliveryProcessor,
+    context: &mut Context,
+    resolver: &dyn crate::DnsResolver,
+    domain: &str,
+    binding: Option<&OutboundBinding>,
+) -> Option<crate::mta_sts::MtaStsPolicy> {
+    let enabled = resolve_mta_sts_fetch_enabled(processor, domain, binding);
+    record_mta_sts(context, resolver, &processor.mta_sts_cache, domain, enabled).await
+}
+
+fn dispatch_delivery_event(
+    context: &mut Context,
+    message_id: &SpooledMessageId,
+    info: &DeliveryInfo,
+    server: Option<ServerId>,
+    event: Ev,
+) {
+    context.delivery = Some(DeliveryContext {
+        message_id: message_id.clone(),
+        domain: info.recipient_domain.clone(),
+        server,
+        error: None,
+        attempts: Some(info.attempt_count()),
+        binding: info.binding.clone(),
+        status: info.status.clone(),
+        attempt_history: info.attempts.clone(),
+        queued_at: info.queued_at,
+        next_retry_at: info.next_retry_at,
+        current_server_index: info.current_server_index,
+    });
+    let _ = modules::dispatch(Event::Event(event), context);
+}
+
+async fn resolve_primary_server(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    info: &DeliveryInfo,
+    pipeline: &crate::policy::DeliveryPipeline<'_>,
+) -> Result<(String, ServerId), DeliveryError> {
+    let dns_resolution = pipeline
+        .resolve_mail_servers(&info.recipient_domain)
+        .await?;
+    processor
+        .queue
+        .set_mail_servers(message_id, dns_resolution.mail_servers.clone());
+
+    let mx_address = dns_resolution.primary_server.address();
+    let mx_server_id = server_id_from(&mx_address)?;
+
+    internal!(
+        "Sending message to {:?} with MX host {} (priority {})",
+        message_id,
+        mx_address,
+        dns_resolution.primary_server.priority
+    );
+
+    Ok((mx_address, mx_server_id))
+}
+
+async fn handle_rate_limit(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    domain: &str,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    pipeline: &crate::policy::DeliveryPipeline<'_>,
+) -> Result<bool, DeliveryError> {
+    match pipeline.check_rate_limit(message_id, domain) {
+        crate::policy::RateLimitResult::RateLimited { wait_time } => {
+            let next_retry_at =
+                crate::policy::DeliveryPipeline::calculate_rate_limit_retry(wait_time);
+            processor.queue.set_next_retry_at(message_id, next_retry_at);
+            processor
+                .queue
+                .update_status(message_id, DeliveryStatus::Pending);
+            if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+                warn!(
+                    message_id = %message_id,
+                    error = %e,
+                    "Failed to persist delivery state after rate limit delay"
+                );
+            }
+            Ok(true)
+        }
+        crate::policy::RateLimitResult::Allowed => Ok(false),
+    }
+}
+
+async fn handle_delivery_success(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    context: &mut Context,
+    info: &DeliveryInfo,
+    mx_server_id: &ServerId,
+    pipeline: &crate::policy::DeliveryPipeline<'_>,
+) -> Result<(), DeliveryError> {
+    processor
+        .queue
+        .update_status(message_id, DeliveryStatus::Completed);
+
+    if let Err(e) = persist_delivery_state(processor, message_id, spool).await {
+        warn!(
+            message_id = %message_id,
+            error = %e,
+            "Failed to persist delivery state after successful delivery"
+        );
+    }
+
+    if let Err(e) = spool.delete(message_id).await {
+        error!(
+            message_id = %message_id,
+            error = %e,
+            "Failed to delete message from spool after successful delivery - adding to cleanup queue for retry"
+        );
+        processor
+            .cleanup_queue
+            .add_failed_deletion(message_id.clone());
+    }
+
+    processor.queue.remove(message_id);
+    dispatch_delivery_event(
+        context,
+        message_id,
+        info,
+        Some(mx_server_id.clone()),
+        Ev::DeliverySuccess,
+    );
+
+    let duration_ms = info.queued_at.elapsed().map_or(0, |d| d.as_millis());
+    empath_common::audit::log_delivery_success(
+        &message_id.to_string(),
+        &info.recipient_domain,
+        mx_server_id,
+        usize::try_from(info.attempt_count()).unwrap_or(0) + 1,
+        duration_ms,
+    );
+
+    pipeline.record_success(&info.recipient_domain);
+
+    if let (Some(binding_name), Some(binding_health)) =
+        (info.binding.as_deref(), &processor.binding_health)
+    {
+        let state = binding_health.record_success(
+            binding_name,
+            processor.binding_health_config_for(binding_name),
+        );
+        if let Some(metrics) = &processor.metrics {
+            metrics.record_binding_health_state(binding_name, state.as_metric_value());
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_tls_settings(
+    domain_resolver: &crate::policy::DomainPolicyResolver,
+    delivery_info: &DeliveryInfo,
+    context: &Context,
+    server_address: &str,
+    mta_sts_policy: Option<&crate::mta_sts::MtaStsPolicy>,
+) -> Result<DeliveryTlsSettings, DeliveryError> {
+    let mut require_tls = domain_resolver.requires_tls(&delivery_info.recipient_domain);
+    let mut accept_invalid_certs =
+        domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain);
+    let mut tls_failure_is_temporary = false;
+
+    if let Some(policy) = mta_sts_policy {
+        if policy.mode == crate::mta_sts::MtaStsMode::Enforce {
+            require_tls = true;
+            accept_invalid_certs = false;
+            tls_failure_is_temporary = true;
+            let mx_host = extract_host(server_address);
+            if !crate::mta_sts::mx_matches(policy, &mx_host) {
+                return Err(TemporaryError::PolicyViolation(format!(
+                    "MTA-STS policy does not permit MX host '{mx_host}'"
+                ))
+                .into());
+            }
+        }
+    } else if context
+        .transaction
+        .get("mta_sts_result")
+        .is_some_and(|value| value.eq_ignore_ascii_case("temperror"))
+        && context.transaction.contains_key("mta_sts_id")
+    {
+        return Err(
+            TemporaryError::PolicyViolation("MTA-STS policy fetch failed".to_string()).into(),
+        );
+    }
+
+    Ok(DeliveryTlsSettings {
+        require_tls,
+        accept_invalid_certs,
+        tls_failure_is_temporary,
+    })
+}
+
+fn resolve_binding_selection(
+    processor: &DeliveryProcessor,
+    delivery_info: &DeliveryInfo,
+    tls_settings: &DeliveryTlsSettings,
+) -> Result<BindingSelection, DeliveryError> {
+    let binding = if let Some(name) = delivery_info.binding.as_deref() {
+        Some(
+            processor
+                .outbound_bindings
+                .get(name)
+                .ok_or_else(|| {
+                    SystemError::Configuration(format!("Unknown outbound binding '{name}'"))
+                })?
+                .clone(),
+        )
+    } else {
+        None
+    };
+
+    let attempt_tls = binding
+        .as_ref()
+        .is_none_or(|binding| binding.tls.attempt_starttls);
+    if tls_settings.require_tls && !attempt_tls {
+        return Err(SystemError::Configuration(
+            "Binding disables STARTTLS but recipient domain requires TLS".to_string(),
+        )
+        .into());
+    }
 
     if let Some(metrics) = &processor.metrics {
+        metrics.record_binding_selected(delivery_info.binding.as_deref());
+    }
+
+    let connect_config =
+        binding
+            .as_ref()
+            .map(ConnectConfig::from)
+            .filter(|config: &ConnectConfig| {
+                config.local_ip.is_some() || config.local_interface.is_some()
+            });
+    let pool_connect_config = connect_config.clone();
+
+    let helo_domain = binding
+        .as_ref()
+        .and_then(|binding| binding.helo_domain.clone());
+    let smtp_timeouts = binding
+        .as_ref()
+        .and_then(|binding| binding.smtp_timeouts.clone())
+        .unwrap_or_else(|| processor.smtp_timeouts.clone());
+
+    Ok(BindingSelection {
+        attempt_tls,
+        tls_mode: TlsMode::new(attempt_tls, tls_settings.require_tls),
+        cert_validation: CertValidation::new(tls_settings.accept_invalid_certs),
+        connect_config,
+        pool_connect_config,
+        helo_domain,
+        smtp_timeouts,
+    })
+}
+
+fn record_attempt(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    error: &DeliveryError,
+    server: &ServerId,
+) {
+    let attempt = empath_common::DeliveryAttempt {
+        timestamp: std::time::SystemTime::now(),
+        error: Some(error.to_string()),
+        server: server.clone(),
+    };
+    processor.queue.record_attempt(message_id, attempt);
+}
+
+fn record_failure_metrics(
+    processor: &DeliveryProcessor,
+    info: &DeliveryInfo,
+    is_temporary_failure: bool,
+    is_permanent_failure: bool,
+) {
+    if let Some(metrics) = &processor.metrics {
         if is_temporary_failure {
-            metrics.record_temporary_failure(&updated_info.recipient_domain);
+            metrics.record_temporary_failure(&info.recipient_domain);
         } else if is_permanent_failure {
-            metrics.record_permanent_failure(&updated_info.recipient_domain);
+            metrics.record_permanent_failure(&info.recipient_domain);
         }
     }
 
     if is_temporary_failure
         && let (Some(binding_name), Some(binding_health)) =
-            (updated_info.binding.as_deref(), &processor.binding_health)
+            (info.binding.as_deref(), &processor.binding_health)
     {
         let state = binding_health.record_failure(
             binding_name,
@@ -511,27 +733,33 @@ pub async fn handle_delivery_error(
             metrics.record_binding_health_state(binding_name, state.as_metric_value());
         }
     }
+}
 
-    // Try next MX server if this was a temporary failure
-    if is_temporary_failure
-        && processor.queue.try_next_server(message_id)
-        && let Some(info) = processor.queue.get(message_id)
-        && let Some(next_server) = info.current_mail_server()
+async fn try_mx_fallback(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    is_temporary_failure: bool,
+) -> bool {
+    if !is_temporary_failure {
+        return false;
+    }
+
+    if processor.queue.try_next_server(message_id)
+        && let Some(updated) = processor.queue.get(message_id)
+        && let Some(next_server) = updated.current_mail_server()
     {
         info!(
             message_id = %message_id,
-            domain = %info.recipient_domain,
+            domain = %updated.recipient_domain,
             server = %next_server.host,
             priority = next_server.priority,
-            delivery_attempt = info.attempt_count(),
+            delivery_attempt = updated.attempt_count(),
             "Trying next MX server"
         );
-        // Set status back to Pending to retry immediately with next server
         processor
             .queue
             .update_status(message_id, DeliveryStatus::Pending);
 
-        // Persist the Pending status for next MX server attempt
         if let Some(spool) = &processor.spool
             && let Err(e) = persist_delivery_state(processor, message_id, spool).await
         {
@@ -541,41 +769,45 @@ pub async fn handle_delivery_error(
                 "Failed to persist delivery state after MX server fallback"
             );
         }
-
-        return error;
+        return true;
     }
 
-    // All MX servers exhausted or permanent failure, use normal retry logic
-    // Determine new status based on attempt count
-    let binding_config = updated_info
+    false
+}
+
+fn update_retry_state(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    info: &DeliveryInfo,
+    error: &DeliveryError,
+) -> (DeliveryStatus, crate::policy::RetryPolicy) {
+    let binding_config = info
         .binding
         .as_deref()
         .and_then(|name| processor.outbound_bindings.get(name));
-    let binding_retry_policy = binding_config.and_then(|binding| binding.retry_policy.as_ref());
+    let binding_retry_policy = binding_config.and_then(|binding| binding.retry_policy.clone());
     let binding_allows_failover = binding_config.is_some_and(|binding| binding.allow_failover);
-    let mut retry_policy = binding_retry_policy.unwrap_or(&processor.retry_policy);
+    let mut retry_policy = binding_retry_policy.unwrap_or_else(|| processor.retry_policy.clone());
 
-    if binding_retry_policy.is_some()
-        && updated_info.attempt_count() >= retry_policy.max_attempts
+    if binding_config.is_some()
+        && info.attempt_count() >= retry_policy.max_attempts
         && binding_allows_failover
-        && processor
-            .retry_policy
-            .should_retry(updated_info.attempt_count())
+        && processor.retry_policy.should_retry(info.attempt_count())
     {
         processor.queue.set_binding(message_id, None);
-        retry_policy = &processor.retry_policy;
+        retry_policy = processor.retry_policy.clone();
         info!(
             message_id = %message_id,
-            domain = %updated_info.recipient_domain,
+            domain = %info.recipient_domain,
             "Binding retry policy exhausted; failing over to default binding"
         );
     }
 
-    let new_status = if updated_info.attempt_count() >= retry_policy.max_attempts {
+    let new_status = if info.attempt_count() >= retry_policy.max_attempts {
         DeliveryStatus::Failed(error.to_string())
     } else {
         DeliveryStatus::Retry {
-            attempts: updated_info.attempt_count(),
+            attempts: info.attempt_count(),
             last_error: error.to_string(),
         }
     };
@@ -584,29 +816,35 @@ pub async fn handle_delivery_error(
         .queue
         .update_status(message_id, new_status.clone());
 
-    // Calculate and set next retry time using exponential backoff
+    (new_status, retry_policy)
+}
+
+fn apply_retry_delay(
+    processor: &DeliveryProcessor,
+    message_id: &SpooledMessageId,
+    info: &DeliveryInfo,
+    new_status: &DeliveryStatus,
+    retry_policy: &crate::policy::RetryPolicy,
+) {
     if matches!(new_status, DeliveryStatus::Retry { .. }) {
-        let next_retry_at = retry_policy.calculate_next_retry(updated_info.attempt_count());
-
+        let next_retry_at = retry_policy.calculate_next_retry(info.attempt_count());
         processor.queue.set_next_retry_at(message_id, next_retry_at);
-
-        // Calculate delay for logging
         let delay_secs = next_retry_at
             .duration_since(std::time::SystemTime::now())
             .unwrap_or_default()
             .as_secs();
-
         info!(
             message_id = %message_id,
-            domain = %updated_info.recipient_domain,
-            delivery_attempt = updated_info.attempt_count(),
+            domain = %info.recipient_domain,
+            delivery_attempt = info.attempt_count(),
             retry_delay_secs = delay_secs,
             next_retry_at = ?next_retry_at,
             "Scheduled retry with exponential backoff"
         );
     }
+}
 
-    // Persist the updated status (Retry or Failed) to spool
+async fn persist_after_error(processor: &DeliveryProcessor, message_id: &SpooledMessageId) {
     if let Some(spool) = &processor.spool
         && let Err(e) = persist_delivery_state(processor, message_id, spool).await
     {
@@ -616,33 +854,51 @@ pub async fn handle_delivery_error(
             "Failed to persist delivery state after handling delivery error"
         );
     }
+}
 
+fn dispatch_failure_event(
+    context: &mut Context,
+    message_id: &SpooledMessageId,
+    info: &DeliveryInfo,
+    error: &DeliveryError,
+    server: ServerId,
+) {
     context.delivery = Some(DeliveryContext {
         message_id: message_id.clone(),
-        domain: updated_info.recipient_domain.clone(),
+        domain: info.recipient_domain.clone(),
         server: Some(server),
         error: Some(error.to_string()),
-        attempts: Some(updated_info.attempt_count()),
-        binding: updated_info.binding.clone(),
-        status: updated_info.status.clone(),
-        attempt_history: updated_info.attempts.clone(),
-        queued_at: updated_info.queued_at,
-        next_retry_at: updated_info.next_retry_at,
-        current_server_index: updated_info.current_server_index,
+        attempts: Some(info.attempt_count()),
+        binding: info.binding.clone(),
+        status: info.status.clone(),
+        attempt_history: info.attempts.clone(),
+        queued_at: info.queued_at,
+        next_retry_at: info.next_retry_at,
+        current_server_index: info.current_server_index,
     });
-
     let _ = modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
+}
 
-    // Audit log: Delivery failed
+fn record_delivery_failure_audit(
+    message_id: &SpooledMessageId,
+    info: &DeliveryInfo,
+    error: &DeliveryError,
+    new_status: &DeliveryStatus,
+) {
     empath_common::audit::log_delivery_failure(
         &message_id.to_string(),
-        &updated_info.recipient_domain,
+        &info.recipient_domain,
         &error.to_string(),
-        usize::try_from(updated_info.attempt_count()).unwrap_or(0),
+        usize::try_from(info.attempt_count()).unwrap_or(0),
         &format!("{new_status:?}"),
     );
+}
 
-    // Create delivery pipeline for circuit breaker tracking
+fn record_circuit_breaker_failure(
+    processor: &DeliveryProcessor,
+    info: &DeliveryInfo,
+    is_temporary_failure: bool,
+) {
     if let Some(dns_resolver) = &processor.dns_resolver
         && let Some(domain_resolver) = &processor.domain_resolver
     {
@@ -652,54 +908,56 @@ pub async fn handle_delivery_error(
             processor.rate_limiter.as_ref(),
             processor.circuit_breaker_instance.as_ref(),
         );
+        pipeline.record_failure(&info.recipient_domain, is_temporary_failure);
+    }
+}
 
-        // Record circuit breaker failure (only for temporary failures)
-        // Permanent failures are recipient/config issues, not server health problems
-        pipeline.record_failure(&updated_info.recipient_domain, is_temporary_failure);
+async fn maybe_generate_dsn(
+    processor: &DeliveryProcessor,
+    context: &Context,
+    info: &DeliveryInfo,
+    error: &DeliveryError,
+) {
+    if !processor.dsn.enabled || !crate::dsn::should_generate_dsn(context, info, error) {
+        return;
     }
 
-    // Generate DSN if appropriate
-    if processor.dsn.enabled && crate::dsn::should_generate_dsn(context, &updated_info, &error) {
-        match crate::dsn::generate_dsn(context, &updated_info, &error, &processor.dsn) {
-            Ok(dsn_context) => {
-                // Spool the DSN for delivery
-                if let Some(spool) = &processor.spool {
-                    let mut dsn_context_mut = dsn_context;
-                    match spool.write(&mut dsn_context_mut).await {
-                        Ok(dsn_id) => {
-                            info!(
-                                message_id = %message_id,
-                                dsn_id = %dsn_id,
-                                original_sender = %context.sender(),
-                                "DSN generated and spooled successfully"
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                message_id = %message_id,
-                                error = %e,
-                                "Failed to spool DSN message"
-                            );
-                        }
+    match crate::dsn::generate_dsn(context, info, error, &processor.dsn) {
+        Ok(dsn_context) => {
+            if let Some(spool) = &processor.spool {
+                let mut dsn_context_mut = dsn_context;
+                match spool.write(&mut dsn_context_mut).await {
+                    Ok(dsn_id) => {
+                        info!(
+                            message_id = %info.message_id,
+                            dsn_id = %dsn_id,
+                            original_sender = %context.sender(),
+                            "DSN generated and spooled successfully"
+                        );
                     }
-                } else {
-                    warn!(
-                        message_id = %message_id,
-                        "Cannot spool DSN: spool not initialized"
-                    );
+                    Err(e) => {
+                        warn!(
+                            message_id = %info.message_id,
+                            error = %e,
+                            "Failed to spool DSN message"
+                        );
+                    }
                 }
-            }
-            Err(e) => {
+            } else {
                 warn!(
-                    message_id = %message_id,
-                    error = %e,
-                    "Failed to generate DSN"
+                    message_id = %info.message_id,
+                    "Cannot spool DSN: spool not initialized"
                 );
             }
         }
+        Err(e) => {
+            warn!(
+                message_id = %info.message_id,
+                error = %e,
+                "Failed to generate DSN"
+            );
+        }
     }
-
-    error
 }
 
 /// Persist the current delivery queue state to the spool's Context.delivery field
@@ -765,10 +1023,6 @@ pub async fn persist_delivery_state(
 ///
 /// # Errors
 /// Returns an error if any part of the SMTP transaction fails
-#[allow(
-    clippy::too_many_lines,
-    reason = "Delivery orchestration needs full policy flow."
-)]
 async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryError> {
     let DeliverMessageArgs {
         processor,
@@ -788,78 +1042,21 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
         )
         .into());
     };
-
-    // Check if TLS is required for this domain
-    let mut require_tls = domain_resolver.requires_tls(&delivery_info.recipient_domain);
-
-    // Determine if we should accept invalid certificates
-    // Priority: per-domain override > global configuration
-    let mut accept_invalid_certs =
-        domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain);
-    let mut tls_failure_is_temporary = false;
-
-    if let Some(policy) = mta_sts_policy {
-        if policy.mode == crate::mta_sts::MtaStsMode::Enforce {
-            require_tls = true;
-            accept_invalid_certs = false;
-            tls_failure_is_temporary = true;
-            let mx_host = extract_host(server_address);
-            if !crate::mta_sts::mx_matches(policy, &mx_host) {
-                return Err(TemporaryError::PolicyViolation(format!(
-                    "MTA-STS policy does not permit MX host '{mx_host}'"
-                ))
-                .into());
-            }
-        }
-    } else if context
-        .transaction
-        .get("mta_sts_result")
-        .is_some_and(|value| value.eq_ignore_ascii_case("temperror"))
-        && context.transaction.contains_key("mta_sts_id")
-    {
-        return Err(
-            TemporaryError::PolicyViolation("MTA-STS policy fetch failed".to_string()).into(),
-        );
-    }
-
-    let binding = if let Some(name) = delivery_info.binding.as_deref() {
-        Some(processor.outbound_bindings.get(name).ok_or_else(|| {
-            SystemError::Configuration(format!("Unknown outbound binding '{name}'"))
-        })?)
-    } else {
-        None
-    };
-    let attempt_tls = binding.is_none_or(|binding| binding.tls.attempt_starttls);
-    if require_tls && !attempt_tls {
-        return Err(SystemError::Configuration(
-            "Binding disables STARTTLS but recipient domain requires TLS".to_string(),
-        )
-        .into());
-    }
-
-    if let Some(metrics) = &processor.metrics {
-        metrics.record_binding_selected(delivery_info.binding.as_deref());
-    }
-
-    let connect_config = binding
-        .map(ConnectConfig::from)
-        .filter(|config: &ConnectConfig| {
-            config.local_ip.is_some() || config.local_interface.is_some()
-        });
-    let pool_connect_config = connect_config.clone();
-
-    let helo_domain = binding.and_then(|binding| binding.helo_domain.clone());
-    let smtp_timeouts = binding
-        .and_then(|binding| binding.smtp_timeouts.as_ref())
-        .unwrap_or(&processor.smtp_timeouts);
+    let tls_settings = resolve_tls_settings(
+        domain_resolver,
+        delivery_info,
+        context,
+        server_address,
+        mta_sts_policy,
+    )?;
+    let binding = resolve_binding_selection(processor, delivery_info, &tls_settings)?;
 
     let pool_request = SmtpPoolRequest::new(
         delivery_info.recipient_domain.as_str(),
         server_address,
-        pool_connect_config.as_ref(),
-        attempt_tls,
-        require_tls,
-        accept_invalid_certs,
+        binding.pool_connect_config.as_ref(),
+        binding.tls_mode,
+        binding.cert_validation,
     );
     let pooled_client = processor
         .smtp_pool_state
@@ -870,14 +1067,14 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     let transaction = crate::smtp_transaction::SmtpTransaction::new(
         context,
         server_address.to_string(),
-        attempt_tls,
-        require_tls,
-        accept_invalid_certs,
-        smtp_timeouts,
+        binding.attempt_tls,
+        tls_settings.require_tls,
+        tls_settings.accept_invalid_certs,
+        &binding.smtp_timeouts,
     )
-    .with_helo_domain(helo_domain)
-    .with_connect_config(connect_config)
-    .with_tls_failure_is_temporary(tls_failure_is_temporary)
+    .with_helo_domain(binding.helo_domain.clone())
+    .with_connect_config(binding.connect_config.clone())
+    .with_tls_failure_is_temporary(tls_settings.tls_failure_is_temporary)
     .with_metrics(processor.metrics.as_ref(), delivery_info.binding.as_deref())
     .with_spool_body(spool, message_id);
 
@@ -887,10 +1084,9 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
                 let key = SmtpPoolKey::new(
                     delivery_info.recipient_domain.as_str().to_string(),
                     server_address.to_string(),
-                    pool_connect_config.as_ref(),
-                    attempt_tls,
-                    require_tls,
-                    accept_invalid_certs,
+                    binding.pool_connect_config.as_ref(),
+                    binding.tls_mode,
+                    binding.cert_validation,
                     client.is_tls(),
                 );
                 processor

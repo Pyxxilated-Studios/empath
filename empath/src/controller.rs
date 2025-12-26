@@ -13,18 +13,37 @@ use empath_control::{
 use empath_ffi::modules::{self, Module};
 use empath_health::{HealthChecker, HealthConfig, HealthServer};
 use empath_smtp::{Smtp, TlsContextRegistry};
+use empath_spool::config::SpoolType;
 use empath_tracing::traced;
 use serde::Deserialize;
 use tokio::{sync::broadcast, task::JoinSet, time};
 
 use crate::control_handler::EmpathControlHandler;
 
-#[allow(
-    clippy::unsafe_derive_deserialize,
-    reason = "The unsafe aspects have nothing to do with the struct"
-)]
-#[derive(Default, Deserialize)]
+#[derive(Default)]
 pub struct Empath {
+    smtp_controller: Controller<Smtp>,
+    modules: Vec<Module>,
+    spool: empath_spool::SpoolConfig,
+    delivery: empath_delivery::DeliveryProcessor,
+    /// Path to the control socket (optional, defaults to /tmp/empath.sock)
+    control_socket_path: String,
+    /// Control socket authentication configuration (optional)
+    control_auth: Option<ControlAuthConfig>,
+    /// Control socket command rate limiting configuration (optional)
+    control_rate_limit: Option<ControlRateLimitConfig>,
+    /// Metrics configuration
+    metrics: empath_metrics::MetricsConfig,
+    /// Health check configuration
+    health: HealthConfig,
+    /// Audit logging configuration
+    audit: empath_common::audit::AuditConfig,
+    /// Shutdown drain timeout in seconds.
+    shutdown_timeout_secs: u64,
+}
+
+#[derive(Deserialize)]
+struct EmpathConfig {
     #[serde(alias = "smtp")]
     smtp_controller: Controller<Smtp>,
     #[serde(alias = "module", default)]
@@ -33,30 +52,51 @@ pub struct Empath {
     spool: empath_spool::SpoolConfig,
     #[serde(alias = "delivery", default)]
     delivery: empath_delivery::DeliveryProcessor,
-    /// Path to the control socket (optional, defaults to /tmp/empath.sock)
     #[serde(alias = "control_socket", default = "default_control_socket")]
     control_socket_path: String,
-    /// Control socket authentication configuration (optional)
     #[serde(alias = "control_auth", default)]
     control_auth: Option<ControlAuthConfig>,
-    /// Control socket command rate limiting configuration (optional)
     #[serde(alias = "control_rate_limit", default)]
     control_rate_limit: Option<ControlRateLimitConfig>,
-    /// Metrics configuration
     #[serde(alias = "metrics", default)]
     metrics: empath_metrics::MetricsConfig,
-    /// Health check configuration
     #[serde(alias = "health", default)]
     health: HealthConfig,
-    /// Audit logging configuration
     #[serde(alias = "audit", default)]
     audit: empath_common::audit::AuditConfig,
-    /// Shutdown drain timeout in seconds.
     #[serde(
         alias = "shutdown_timeout_secs",
         default = "default_shutdown_timeout_secs"
     )]
     shutdown_timeout_secs: u64,
+}
+
+impl<'de> Deserialize<'de> for Empath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let config = EmpathConfig::deserialize(deserializer)?;
+        Ok(Self::from(config))
+    }
+}
+
+impl From<EmpathConfig> for Empath {
+    fn from(config: EmpathConfig) -> Self {
+        Self {
+            smtp_controller: config.smtp_controller,
+            modules: config.modules,
+            spool: config.spool,
+            delivery: config.delivery,
+            control_socket_path: config.control_socket_path,
+            control_auth: config.control_auth,
+            control_rate_limit: config.control_rate_limit,
+            metrics: config.metrics,
+            health: config.health,
+            audit: config.audit,
+            shutdown_timeout_secs: config.shutdown_timeout_secs,
+        }
+    }
 }
 
 fn default_control_socket() -> String {
@@ -116,8 +156,8 @@ impl Empath {
         empath_common::audit::init(self.audit.clone());
         tracing::info!(
             enabled = self.audit.enabled,
-            redact_sender = self.audit.redact_sender,
-            redact_recipients = self.audit.redact_recipients,
+            redact_sender = self.audit.redaction.redact_sender,
+            redact_recipients = self.audit.redaction.redact_recipients,
             "Audit logging initialized"
         );
     }
@@ -128,58 +168,151 @@ impl Empath {
     ///
     /// This function will return an error if any of the configured modules fail
     /// to initialise.
-    #[allow(clippy::too_many_lines)]
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, err), timing(precision = "s"))]
     pub async fn run(mut self) -> anyhow::Result<()> {
+        self.init_logging_and_metrics()?;
+
+        internal!("Controller running");
+
+        // Initialize health checker
+        let health_checker = Arc::new(HealthChecker::new(self.health.max_queue_size));
+
+        let spool_config = std::mem::take(&mut self.spool);
+        let (spool_path, spool) = Self::init_spool(spool_config)?;
+        health_checker.set_spool_ready(true);
+
+        // Extract the backing store for SMTP and delivery
+        let backing_store = spool.backing_store();
+
+        self.init_delivery(backing_store.clone())?;
+        let modules = std::mem::take(&mut self.modules);
+        modules::init(modules)?;
+        health_checker.set_delivery_ready(true);
+        health_checker.set_dns_ready(true);
+
+        let spf_dns_resolver = Self::spf_dns_resolver(&self.delivery);
+        let tls_registry = Arc::new(TlsContextRegistry::new());
+        let smtp_capabilities: Arc<RwLock<Vec<Capability>>> = Arc::new(RwLock::new(Vec::new()));
+        Self::init_smtp_controller(
+            &mut self.smtp_controller,
+            backing_store,
+            spf_dns_resolver.as_ref(),
+            &tls_registry,
+            &smtp_capabilities,
+        )?;
+
+        // Mark SMTP as ready after successful initialization
+        health_checker.set_smtp_ready(true);
+
+        // Create control server
+        let delivery = std::mem::take(&mut self.delivery);
+        let delivery_arc = Arc::new(delivery);
+        let delivery_service = delivery_arc.clone();
+        let control_handler = Arc::new(EmpathControlHandler::new(
+            delivery_service,
+            Some(Arc::clone(&tls_registry)),
+            Some(Arc::clone(&smtp_capabilities)),
+        ));
+        let control_server = self.build_control_server(control_handler)?;
+
+        internal!(
+            "Control server will listen on: {}",
+            self.control_socket_path
+        );
+
+        // Create health server (if enabled)
+        let health_server = self.build_health_server(health_checker).await;
+
+        let mut join_set: JoinSet<(&'static str, anyhow::Result<()>)> = JoinSet::new();
+
+        Self::spawn_metrics_task(&mut join_set, Arc::clone(&tls_registry), spool_path);
+        Self::spawn_service_tasks(
+            &mut join_set,
+            self.smtp_controller,
+            spool,
+            &delivery_arc,
+            control_server,
+            health_server,
+        );
+        let mut first_error = Self::await_first_exit(&mut join_set).await;
+
+        let _ = SHUTDOWN_BROADCAST.send(Signal::Shutdown);
+
+        first_error =
+            Self::drain_shutdown(&mut join_set, self.shutdown_timeout_secs, first_error).await;
+
+        internal!("Shutting down...");
+
+        first_error.map_or(Ok(()), Err)
+    }
+
+    /// Snapshot delivery-related config needed for in-process reloads.
+    #[must_use]
+    pub fn delivery_reload_settings(
+        &self,
+    ) -> (
+        empath_delivery::DomainConfigRegistry,
+        empath_delivery::RateLimitConfig,
+    ) {
+        (
+            self.delivery.domains.clone(),
+            self.delivery.rate_limit.clone(),
+        )
+    }
+
+    fn init_logging_and_metrics(&self) -> anyhow::Result<()> {
         // Initialize logging with configured OTLP endpoint for traces
         // This uses the same endpoint as metrics (just different path: /v1/traces vs /v1/metrics)
         logging::init(Some(&self.metrics.endpoint))?;
-
-        internal!("Controller running");
 
         // Initialize metrics
         if let Err(e) = empath_metrics::init_metrics(&self.metrics) {
             tracing::warn!(error = %e, "Failed to initialize metrics");
         }
 
-        // Initialize health checker
-        let health_checker = Arc::new(HealthChecker::new(self.health.max_queue_size));
+        Ok(())
+    }
 
-        let spool_path: Option<PathBuf> = self.spool.path().map(std::path::Path::to_path_buf);
+    fn init_spool(
+        spool_config: empath_spool::SpoolConfig,
+    ) -> anyhow::Result<(Option<PathBuf>, SpoolType)> {
+        let spool_path: Option<PathBuf> = spool_config.path().map(std::path::Path::to_path_buf);
+        let spool = spool_config.into_spool()?;
+        Ok((spool_path, spool))
+    }
 
-        // Initialize the spool from configuration
-        let spool = self.spool.into_spool()?;
-
-        // Mark spool as ready after successful initialization
-        health_checker.set_spool_ready(true);
-
-        // Extract the backing store for SMTP and delivery
-        let backing_store = spool.backing_store();
-
+    fn init_delivery(
+        &mut self,
+        backing_store: Arc<dyn empath_spool::BackingStore>,
+    ) -> anyhow::Result<()> {
         // Initialize delivery controller first to get the DNS resolver
         // Use default DNS resolver (None = HickoryDnsResolver)
-        self.delivery.init(backing_store.clone(), None)?;
-
+        self.delivery.init(backing_store, None)?;
         modules::set_outbound_bindings(self.delivery.outbound_bindings.names());
-        modules::init(self.modules)?;
+        Ok(())
+    }
 
-        // Mark delivery and DNS as ready after successful initialization
-        health_checker.set_delivery_ready(true);
-        health_checker.set_dns_ready(true);
-
-        // Create SPF DNS adapter from the delivery DNS resolver if available
-        let spf_dns_resolver = self.delivery.dns_resolver().as_ref().map(|resolver| {
+    fn spf_dns_resolver(
+        delivery: &empath_delivery::DeliveryProcessor,
+    ) -> Option<Arc<dyn empath_smtp::spf::SpfDnsResolver>> {
+        delivery.dns_resolver().as_ref().map(|resolver| {
             Arc::new(empath_delivery::SpfDnsAdapter::new(Arc::clone(resolver)))
                 as Arc<dyn empath_smtp::spf::SpfDnsResolver>
-        });
+        })
+    }
 
+    fn init_smtp_controller(
+        smtp_controller: &mut Controller<Smtp>,
+        backing_store: Arc<dyn empath_spool::BackingStore>,
+        spf_dns_resolver: Option<&Arc<dyn empath_smtp::spf::SpfDnsResolver>>,
+        tls_registry: &Arc<TlsContextRegistry>,
+        smtp_capabilities: &Arc<RwLock<Vec<Capability>>>,
+    ) -> anyhow::Result<()> {
         // Configure SMTP with spool and SPF DNS resolver
-        let tls_registry = Arc::new(TlsContextRegistry::new());
-        let smtp_capabilities: Arc<RwLock<Vec<Capability>>> = Arc::new(RwLock::new(Vec::new()));
-        let spf_resolver_clone = spf_dns_resolver.clone();
-        let registry_for_args = Arc::clone(&tls_registry);
-        let capabilities_for_args = Arc::clone(&smtp_capabilities);
-        self.smtp_controller.map_args(move |args| {
+        let spf_resolver_clone = spf_dns_resolver.cloned();
+        let registry_for_args = Arc::clone(tls_registry);
+        let capabilities_for_args = Arc::clone(smtp_capabilities);
+        smtp_controller.map_args(move |args| {
             let capabilities = args.capabilities().to_vec();
             let mut args = args.with_spool(backing_store.clone());
             if let Some(resolver) = spf_resolver_clone.clone() {
@@ -194,35 +327,29 @@ impl Empath {
             args.with_tls_context_registry(&registry_for_args)
         });
 
-        self.smtp_controller.init()?;
+        smtp_controller.init()?;
+        Ok(())
+    }
 
-        // Mark SMTP as ready after successful initialization
-        health_checker.set_smtp_ready(true);
-
-        // Create control server
-        let delivery_arc = Arc::new(self.delivery);
-        let delivery_service = delivery_arc.clone();
-        let control_handler = Arc::new(EmpathControlHandler::new(
-            delivery_service,
-            Some(Arc::clone(&tls_registry)),
-            Some(Arc::clone(&smtp_capabilities)),
-        ));
-        let control_server = ControlServer::with_auth_and_rate_limit(
+    fn build_control_server(
+        &self,
+        control_handler: Arc<EmpathControlHandler>,
+    ) -> anyhow::Result<ControlServer> {
+        ControlServer::with_auth_and_rate_limit(
             &self.control_socket_path,
             control_handler,
             self.control_auth.clone(),
             self.control_rate_limit.clone(),
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create control server: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create control server: {e}"))
+    }
 
-        internal!(
-            "Control server will listen on: {}",
-            self.control_socket_path
-        );
-
-        // Create health server (if enabled)
-        let health_server = if self.health.enabled {
-            match HealthServer::new(self.health, health_checker).await {
+    async fn build_health_server(
+        &self,
+        health_checker: Arc<HealthChecker>,
+    ) -> Option<HealthServer> {
+        if self.health.enabled {
+            match HealthServer::new(self.health.clone(), health_checker).await {
                 Ok(server) => {
                     internal!("Health check server initialized");
                     Some(server)
@@ -235,14 +362,16 @@ impl Empath {
         } else {
             tracing::info!("Health check server is disabled");
             None
-        };
+        }
+    }
 
-        let mut join_set: JoinSet<(&'static str, anyhow::Result<()>)> = JoinSet::new();
-
+    fn spawn_metrics_task(
+        join_set: &mut JoinSet<(&'static str, anyhow::Result<()>)>,
+        tls_registry: Arc<TlsContextRegistry>,
+        spool_path: Option<PathBuf>,
+    ) {
         if let Some(metrics) = empath_metrics::try_metrics() {
             let mut shutdown_rx = SHUTDOWN_BROADCAST.subscribe();
-            let spool_path = spool_path.clone();
-            let tls_registry = Arc::clone(&tls_registry);
             join_set.spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(15));
                 loop {
@@ -264,8 +393,16 @@ impl Empath {
                 ("metrics", Ok(()))
             });
         }
+    }
 
-        let smtp_controller = self.smtp_controller;
+    fn spawn_service_tasks(
+        join_set: &mut JoinSet<(&'static str, anyhow::Result<()>)>,
+        smtp_controller: Controller<Smtp>,
+        spool: SpoolType,
+        delivery_arc: &Arc<empath_delivery::DeliveryProcessor>,
+        control_server: ControlServer,
+        health_server: Option<HealthServer>,
+    ) {
         join_set.spawn(async move {
             (
                 "smtp",
@@ -286,7 +423,7 @@ impl Empath {
             )
         });
 
-        let delivery_handle = Arc::clone(&delivery_arc);
+        let delivery_handle = Arc::clone(delivery_arc);
         join_set.spawn(async move {
             (
                 "delivery",
@@ -320,26 +457,30 @@ impl Empath {
         }
 
         join_set.spawn(async move { ("shutdown", shutdown().await) });
+    }
 
-        let mut first_error: Option<anyhow::Error> = None;
-        if let Some(result) = join_set.join_next().await {
-            match result {
+    async fn await_first_exit(
+        join_set: &mut JoinSet<(&'static str, anyhow::Result<()>)>,
+    ) -> Option<anyhow::Error> {
+        join_set.join_next().await.map_or_else(
+            || None,
+            |result| match result {
                 Ok((name, res)) => {
                     internal!(level = INFO, "Service {name} exited");
-                    if let Err(err) = res {
-                        first_error = Some(err);
-                    }
+                    res.err()
                 }
-                Err(join_err) => {
-                    first_error = Some(anyhow::anyhow!("Join error: {join_err}"));
-                }
-            }
-        }
+                Err(join_err) => Some(anyhow::anyhow!("Join error: {join_err}")),
+            },
+        )
+    }
 
-        let _ = SHUTDOWN_BROADCAST.send(Signal::Shutdown);
-
+    async fn drain_shutdown(
+        join_set: &mut JoinSet<(&'static str, anyhow::Result<()>)>,
+        shutdown_timeout_secs: u64,
+        mut first_error: Option<anyhow::Error>,
+    ) -> Option<anyhow::Error> {
         let deadline =
-            std::time::Instant::now() + std::time::Duration::from_secs(self.shutdown_timeout_secs);
+            std::time::Instant::now() + std::time::Duration::from_secs(shutdown_timeout_secs);
         while !join_set.is_empty() {
             let now = std::time::Instant::now();
             if now >= deadline {
@@ -378,23 +519,7 @@ impl Empath {
             }
         }
 
-        internal!("Shutting down...");
-
-        first_error.map_or(Ok(()), Err)
-    }
-
-    /// Snapshot delivery-related config needed for in-process reloads.
-    #[must_use]
-    pub fn delivery_reload_settings(
-        &self,
-    ) -> (
-        empath_delivery::DomainConfigRegistry,
-        empath_delivery::RateLimitConfig,
-    ) {
-        (
-            self.delivery.domains.clone(),
-            self.delivery.rate_limit.clone(),
-        )
+        first_error
     }
 }
 

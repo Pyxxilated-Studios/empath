@@ -27,15 +27,19 @@ use crate::{
 
 /// Audit logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "Configuration flags are intentionally bool-heavy"
-)]
 pub struct AuditConfig {
     /// Enable audit logging for message lifecycle events
     #[serde(default = "default_true")]
     pub enabled: bool,
 
+    /// Redaction settings for audit logs
+    #[serde(flatten)]
+    pub redaction: AuditRedaction,
+}
+
+/// Redaction configuration for audit logs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditRedaction {
     /// Redact sender email addresses from audit logs (PII protection)
     #[serde(default)]
     pub redact_sender: bool,
@@ -53,6 +57,14 @@ impl Default for AuditConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            redaction: AuditRedaction::default(),
+        }
+    }
+}
+
+impl Default for AuditRedaction {
+    fn default() -> Self {
+        Self {
             redact_sender: false,
             redact_recipients: false,
             redact_message_content: true,
@@ -125,9 +137,10 @@ pub fn log_message_received(
         return;
     }
 
-    let redacted_sender =
-        sender.map_or_else(String::new, |s| redact_email(s, config.redact_sender));
-    let redacted_recipients = redact_emails(recipients, config.redact_recipients);
+    let redacted_sender = sender.map_or_else(String::new, |s| {
+        redact_email(s, config.redaction.redact_sender)
+    });
+    let redacted_recipients = redact_emails(recipients, config.redaction.redact_recipients);
 
     tracing::event!(
         tracing::Level::INFO,
@@ -315,9 +328,9 @@ mod tests {
     fn test_default_config() {
         let config = AuditConfig::default();
         assert!(config.enabled);
-        assert!(!config.redact_sender);
-        assert!(!config.redact_recipients);
-        assert!(config.redact_message_content);
+        assert!(!config.redaction.redact_sender);
+        assert!(!config.redaction.redact_recipients);
+        assert!(config.redaction.redact_message_content);
     }
 
     #[test]
@@ -325,9 +338,11 @@ mod tests {
         // Initialize with disabled config
         init(AuditConfig {
             enabled: false,
-            redact_sender: false,
-            redact_recipients: false,
-            redact_message_content: false,
+            redaction: AuditRedaction {
+                redact_sender: false,
+                redact_recipients: false,
+                redact_message_content: false,
+            },
         });
 
         let sender = EmailAddress::new("sender@example.com")

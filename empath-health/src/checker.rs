@@ -118,10 +118,16 @@ impl HealthChecker {
         HealthStatus {
             alive: self.is_alive(),
             ready: self.is_ready(),
-            smtp_ready: self.smtp_ready.load(Ordering::Relaxed),
-            spool_ready: self.spool_ready.load(Ordering::Relaxed),
-            delivery_ready: self.delivery_ready.load(Ordering::Relaxed),
-            dns_ready: self.dns_ready.load(Ordering::Relaxed),
+            readiness: HealthReadiness {
+                transport: TransportReadiness {
+                    smtp_ready: self.smtp_ready.load(Ordering::Relaxed),
+                    spool_ready: self.spool_ready.load(Ordering::Relaxed),
+                },
+                delivery: DeliveryReadiness {
+                    delivery_ready: self.delivery_ready.load(Ordering::Relaxed),
+                    dns_ready: self.dns_ready.load(Ordering::Relaxed),
+                },
+            },
             queue_size: self.queue_size.load(Ordering::Relaxed),
             max_queue_size: self.max_queue_size,
         }
@@ -130,10 +136,6 @@ impl HealthChecker {
 
 /// Detailed health status information
 #[derive(Debug, Clone, serde::Serialize)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "Status struct intentionally has multiple boolean fields for clarity"
-)]
 pub struct HealthStatus {
     /// Whether the application is alive
     pub alive: bool,
@@ -141,21 +143,40 @@ pub struct HealthStatus {
     /// Whether the application is ready
     pub ready: bool,
 
-    /// Whether SMTP is ready
-    pub smtp_ready: bool,
-
-    /// Whether spool is ready
-    pub spool_ready: bool,
-
-    /// Whether delivery is ready
-    pub delivery_ready: bool,
-
-    /// Whether DNS is ready
-    pub dns_ready: bool,
+    /// Component readiness flags
+    #[serde(flatten)]
+    pub readiness: HealthReadiness,
 
     /// Current queue size
     pub queue_size: u64,
 
     /// Maximum queue size threshold
     pub max_queue_size: u64,
+}
+
+/// Component readiness flags
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HealthReadiness {
+    #[serde(flatten)]
+    pub transport: TransportReadiness,
+    #[serde(flatten)]
+    pub delivery: DeliveryReadiness,
+}
+
+/// SMTP/spool readiness flags
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TransportReadiness {
+    /// Whether SMTP is ready
+    pub smtp_ready: bool,
+    /// Whether spool is ready
+    pub spool_ready: bool,
+}
+
+/// Delivery/DNS readiness flags
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DeliveryReadiness {
+    /// Whether delivery is ready
+    pub delivery_ready: bool,
+    /// Whether DNS is ready
+    pub dns_ready: bool,
 }

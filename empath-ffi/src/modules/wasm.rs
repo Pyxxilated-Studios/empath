@@ -14,6 +14,8 @@ use serde::Deserialize;
 
 use super::{Error, Event};
 
+type WasmModuleLock = OnceLock<WasmModule>;
+
 /// WebAssembly module configuration (deserializable from RON)
 #[derive(Deserialize)]
 pub struct Wasm {
@@ -43,8 +45,7 @@ pub struct Wasm {
 
     /// Loaded WASM module (initialized once)
     #[serde(skip)]
-    #[allow(clippy::type_complexity)]
-    module: OnceLock<WasmModule>,
+    module: WasmModuleLock,
 }
 
 impl Clone for Wasm {
@@ -64,11 +65,8 @@ impl Clone for Wasm {
 impl Wasm {
     /// Construct a WASM module definition from a file path for programmatic/tests use.
     #[must_use]
-    #[allow(
-        clippy::missing_const_for_fn,
-        reason = "PathBuf initialization is not const-capable"
-    )]
     pub fn from_path(path: PathBuf) -> Self {
+        let _ = path.as_os_str();
         Self {
             path,
             timeout_secs: None,
@@ -156,10 +154,9 @@ impl Wasm {
                 .record_execution("wasm", callback_name, duration.as_secs_f64());
 
             // Update memory limit tracking (configured max memory for this module)
-            #[allow(clippy::cast_possible_truncation)]
-            metrics
-                .modules
-                .update_memory(&module_path, module.max_memory_bytes() as u64);
+            if let Ok(max_memory) = u64::try_from(module.max_memory_bytes()) {
+                metrics.modules.update_memory(&module_path, max_memory);
+            }
         }
 
         match result {

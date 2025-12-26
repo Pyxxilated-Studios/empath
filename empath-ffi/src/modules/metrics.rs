@@ -52,10 +52,6 @@ pub(super) fn emit(event: Event, context: &Context) {
             // Extract delivery information from context.delivery
             if let Some(delivery) = &context.delivery {
                 // Calculate duration from queued_at to now
-                #[allow(
-                    clippy::cast_precision_loss,
-                    reason = "Duration as f64 seconds is acceptable for time duration metrics"
-                )]
                 let duration_secs = std::time::SystemTime::now()
                     .duration_since(delivery.queued_at)
                     .map_or(0.0, |d| d.as_secs_f64());
@@ -104,11 +100,10 @@ pub(super) fn emit(event: Event, context: &Context) {
                         if let Some(duration_ms) = context.transaction.get("dns_lookup_duration_ms")
                             && let Ok(duration_ms) = duration_ms.parse::<u128>()
                         {
-                            #[allow(
-                                clippy::cast_precision_loss,
-                                reason = "u128 milliseconds to f64 seconds is acceptable for DNS duration metrics"
-                            )]
-                            let duration_secs = (duration_ms as f64) / 1000.0;
+                            let duration_ms_u64 = u64::try_from(duration_ms).unwrap_or(u64::MAX);
+                            let duration_secs =
+                                f64::from(u32::try_from(duration_ms_u64).unwrap_or(u32::MAX))
+                                    / 1000.0;
                             metrics.dns.record_lookup("mx", duration_secs);
                         }
                     }

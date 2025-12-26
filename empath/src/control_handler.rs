@@ -370,8 +370,7 @@ struct ReloadReport {
 }
 
 impl ReloadReport {
-    #[allow(clippy::missing_const_for_fn)]
-    fn new(applied: Vec<&'static str>, restart_required: Vec<&'static str>) -> Self {
+    const fn new(applied: Vec<&'static str>, restart_required: Vec<&'static str>) -> Self {
         Self {
             applied,
             restart_required,
@@ -411,6 +410,16 @@ impl EmpathControlHandler {
             start_time: Instant::now(),
         }
     }
+}
+
+struct MessageDetailsInput<'a> {
+    message_id: String,
+    msg_id: &'a empath_spool::SpooledMessageId,
+    context: &'a Context,
+    size: usize,
+    headers: Option<HashMap<String, String>>,
+    body_preview: Option<String>,
+    queue_info: Option<empath_delivery::DeliveryInfo>,
 }
 
 #[async_trait]
@@ -573,178 +582,32 @@ impl EmpathControlHandler {
     }
 
     /// Handle system management commands
-    #[allow(
-        clippy::too_many_lines,
-        reason = "Command dispatch remains centralized for audit logging."
-    )]
     fn handle_system_command(&self, command: &SystemCommand) -> empath_control::Result<Response> {
         // Audit log: Record who executed this command
         audit!(INFO, "Control command: System", command = ?command);
 
         let result = match command {
             SystemCommand::Ping => Ok(Response::ok()),
-
-            SystemCommand::Status => {
-                let uptime_secs = self.start_time.elapsed().as_secs();
-
-                let dns_cache_entries = self
-                    .delivery
-                    .dns_resolver()
-                    .as_ref()
-                    .map_or(0, |r| r.cache_stats().total_entries);
-
-                let queue_size = self.delivery.queue_len();
-
-                let status = empath_control::protocol::SystemStatus {
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    uptime_secs,
-                    queue_size,
-                    dns_cache_entries,
-                };
-
-                Ok(Response::data(ResponseData::SystemStatus(status)))
-            }
-
-            SystemCommand::SetLogLevel { level } => {
-                let parsed = LevelFilter::from_str(level.as_str()).map_err(|e| {
-                    ControlError::ServerError(format!("Invalid log level '{level}': {e}"))
-                })?;
-                empath_common::logging::set_log_level(parsed).map_err(|e| {
-                    ControlError::ServerError(format!("Failed to set log level: {e}"))
-                })?;
-                Ok(Response::data(ResponseData::Message(format!(
-                    "Log level set to {parsed}"
-                ))))
-            }
-
-            SystemCommand::ReloadConfig => match reload_config_from_disk(&self.delivery) {
-                Ok(message) => Ok(Response::data(ResponseData::Message(message))),
-                Err(e) => Err(ControlError::ServerError(e)),
-            },
-
-            SystemCommand::ReloadTls => {
-                let registry = self.tls_registry.as_ref().ok_or_else(|| {
-                    ControlError::ServerError("TLS is not configured for this instance".to_string())
-                })?;
-
-                match registry.reload_all() {
-                    Ok(0) => Ok(Response::data(ResponseData::Message(
-                        "No TLS contexts configured".to_string(),
-                    ))),
-                    Ok(count) => Ok(Response::data(ResponseData::Message(format!(
-                        "Reloaded TLS credentials for {count} context(s)",
-                    )))),
-                    Err(err) => Err(ControlError::ServerError(format!(
-                        "Failed to reload TLS credentials: {err}"
-                    ))),
-                }
-            }
-
-            SystemCommand::ListTls => {
-                let registry = self.tls_registry.as_ref().ok_or_else(|| {
-                    ControlError::ServerError("TLS is not configured for this instance".to_string())
-                })?;
-
-                let contexts = registry
-                    .list_contexts()
-                    .into_iter()
-                    .map(|ctx| empath_control::protocol::TlsContextInfo {
-                        certificate_path: ctx.certificate_path.display().to_string(),
-                        key_path: ctx.key_path.display().to_string(),
-                        fingerprint_sha256: ctx.fingerprint_sha256,
-                        subject: ctx.subject,
-                        issuer: ctx.issuer,
-                        not_before: ctx.not_before,
-                        not_after: ctx.not_after,
-                        subject_alt_names: ctx.subject_alt_names,
-                        parse_error: ctx.parse_error,
-                    })
-                    .collect();
-
-                Ok(Response::data(ResponseData::TlsContexts(contexts)))
-            }
-
-            SystemCommand::ConnectionStats => {
-                let stats = self.delivery.connection_stats();
-                Ok(Response::data(ResponseData::ConnectionStats(
-                    empath_control::protocol::ConnectionStats {
-                        queue_size: stats.queue_size,
-                        rate_limit_domains: stats.rate_limit_domains,
-                    },
-                )))
-            }
-
+            SystemCommand::Status => Ok(self.handle_system_status()),
+            SystemCommand::SetLogLevel { level } => Self::handle_system_set_log_level(level),
+            SystemCommand::ReloadConfig => self.handle_system_reload_config(),
+            SystemCommand::ReloadTls => self.handle_system_reload_tls(),
+            SystemCommand::ListTls => self.handle_system_list_tls(),
+            SystemCommand::ConnectionStats => Ok(self.handle_system_connection_stats()),
             SystemCommand::ListBindings => Ok(self.list_bindings_response()),
-
             SystemCommand::SetRateLimit {
                 domain,
                 messages_per_second,
                 burst,
-            } => {
-                self.delivery
-                    .update_rate_limit(domain.clone(), *messages_per_second, *burst)
-                    .map_err(ControlError::ServerError)?;
-                Ok(Response::data(ResponseData::Message(format!(
-                    "Rate limit updated (domain={domain:?}, mps={messages_per_second}, burst={burst})"
-                ))))
-            }
+            } => self.handle_system_set_rate_limit(domain.as_ref(), *messages_per_second, *burst),
             SystemCommand::SetBindingState { name, enabled } => {
-                self.delivery
-                    .set_binding_enabled(name, *enabled)
-                    .map_err(ControlError::ServerError)?;
-                let state = if *enabled { "enabled" } else { "disabled" };
-                Ok(Response::data(ResponseData::Message(format!(
-                    "Binding {name} {state}"
-                ))))
+                self.handle_system_set_binding_state(name, *enabled)
             }
-            SystemCommand::ListCapabilities => {
-                let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
-                    ControlError::ServerError(
-                        "SMTP capabilities are not configured for this instance".to_string(),
-                    )
-                })?;
-                let mut capabilities: Vec<String> = state
-                    .read()
-                    .map_err(|_| {
-                        ControlError::ServerError(
-                            "SMTP capabilities state is unavailable".to_string(),
-                        )
-                    })?
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect();
-                capabilities.sort();
-                Ok(Response::data(ResponseData::SmtpCapabilities(capabilities)))
-            }
+            SystemCommand::ListCapabilities => self.handle_system_list_capabilities(),
             SystemCommand::SetCapabilityState {
                 capability,
                 enabled,
-            } => {
-                let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
-                    ControlError::ServerError(
-                        "SMTP capabilities are not configured for this instance".to_string(),
-                    )
-                })?;
-                let parsed = Capability::parse(capability).ok_or_else(|| {
-                    ControlError::ServerError(format!("Unknown SMTP capability '{capability}'"))
-                })?;
-                let mut guard = state.write().map_err(|_| {
-                    ControlError::ServerError("SMTP capabilities state is unavailable".to_string())
-                })?;
-                if *enabled {
-                    if !guard.contains(&parsed) {
-                        guard.push(parsed.clone());
-                    }
-                } else {
-                    guard.retain(|cap| cap != &parsed);
-                }
-                drop(guard);
-                let action = if *enabled { "enabled" } else { "disabled" };
-                Ok(Response::data(ResponseData::Message(format!(
-                    "SMTP capability {} {action}",
-                    parsed.as_str()
-                ))))
-            }
+            } => self.handle_system_set_capability_state(capability, *enabled),
         };
 
         // Audit log: Record command result
@@ -758,6 +621,174 @@ impl EmpathControlHandler {
         }
 
         result
+    }
+
+    fn handle_system_status(&self) -> Response {
+        let uptime_secs = self.start_time.elapsed().as_secs();
+
+        let dns_cache_entries = self
+            .delivery
+            .dns_resolver()
+            .as_ref()
+            .map_or(0, |r| r.cache_stats().total_entries);
+
+        let queue_size = self.delivery.queue_len();
+
+        let status = empath_control::protocol::SystemStatus {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            uptime_secs,
+            queue_size,
+            dns_cache_entries,
+        };
+
+        Response::data(ResponseData::SystemStatus(status))
+    }
+
+    fn handle_system_set_log_level(level: &str) -> empath_control::Result<Response> {
+        let parsed = LevelFilter::from_str(level)
+            .map_err(|e| ControlError::ServerError(format!("Invalid log level '{level}': {e}")))?;
+        empath_common::logging::set_log_level(parsed)
+            .map_err(|e| ControlError::ServerError(format!("Failed to set log level: {e}")))?;
+        Ok(Response::data(ResponseData::Message(format!(
+            "Log level set to {parsed}"
+        ))))
+    }
+
+    fn handle_system_reload_config(&self) -> empath_control::Result<Response> {
+        match reload_config_from_disk(&self.delivery) {
+            Ok(message) => Ok(Response::data(ResponseData::Message(message))),
+            Err(e) => Err(ControlError::ServerError(e)),
+        }
+    }
+
+    fn handle_system_reload_tls(&self) -> empath_control::Result<Response> {
+        let registry = self.tls_registry.as_ref().ok_or_else(|| {
+            ControlError::ServerError("TLS is not configured for this instance".to_string())
+        })?;
+
+        match registry.reload_all() {
+            Ok(0) => Ok(Response::data(ResponseData::Message(
+                "No TLS contexts configured".to_string(),
+            ))),
+            Ok(count) => Ok(Response::data(ResponseData::Message(format!(
+                "Reloaded TLS credentials for {count} context(s)",
+            )))),
+            Err(err) => Err(ControlError::ServerError(format!(
+                "Failed to reload TLS credentials: {err}"
+            ))),
+        }
+    }
+
+    fn handle_system_list_tls(&self) -> empath_control::Result<Response> {
+        let registry = self.tls_registry.as_ref().ok_or_else(|| {
+            ControlError::ServerError("TLS is not configured for this instance".to_string())
+        })?;
+
+        let contexts = registry
+            .list_contexts()
+            .into_iter()
+            .map(|ctx| empath_control::protocol::TlsContextInfo {
+                certificate_path: ctx.certificate_path.display().to_string(),
+                key_path: ctx.key_path.display().to_string(),
+                fingerprint_sha256: ctx.fingerprint_sha256,
+                subject: ctx.subject,
+                issuer: ctx.issuer,
+                not_before: ctx.not_before,
+                not_after: ctx.not_after,
+                subject_alt_names: ctx.subject_alt_names,
+                parse_error: ctx.parse_error,
+            })
+            .collect();
+
+        Ok(Response::data(ResponseData::TlsContexts(contexts)))
+    }
+
+    fn handle_system_connection_stats(&self) -> Response {
+        let stats = self.delivery.connection_stats();
+        Response::data(ResponseData::ConnectionStats(
+            empath_control::protocol::ConnectionStats {
+                queue_size: stats.queue_size,
+                rate_limit_domains: stats.rate_limit_domains,
+            },
+        ))
+    }
+
+    fn handle_system_set_rate_limit(
+        &self,
+        domain: Option<&String>,
+        messages_per_second: f64,
+        burst: u32,
+    ) -> empath_control::Result<Response> {
+        let domain = domain.map(ToString::to_string);
+        self.delivery
+            .update_rate_limit(domain.clone(), messages_per_second, burst)
+            .map_err(ControlError::ServerError)?;
+        Ok(Response::data(ResponseData::Message(format!(
+            "Rate limit updated (domain={domain:?}, mps={messages_per_second}, burst={burst})"
+        ))))
+    }
+
+    fn handle_system_set_binding_state(
+        &self,
+        name: &str,
+        enabled: bool,
+    ) -> empath_control::Result<Response> {
+        self.delivery
+            .set_binding_enabled(name, enabled)
+            .map_err(ControlError::ServerError)?;
+        let state = if enabled { "enabled" } else { "disabled" };
+        Ok(Response::data(ResponseData::Message(format!(
+            "Binding {name} {state}"
+        ))))
+    }
+
+    fn handle_system_list_capabilities(&self) -> empath_control::Result<Response> {
+        let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
+            ControlError::ServerError(
+                "SMTP capabilities are not configured for this instance".to_string(),
+            )
+        })?;
+        let mut capabilities: Vec<String> = state
+            .read()
+            .map_err(|_| {
+                ControlError::ServerError("SMTP capabilities state is unavailable".to_string())
+            })?
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        capabilities.sort();
+        Ok(Response::data(ResponseData::SmtpCapabilities(capabilities)))
+    }
+
+    fn handle_system_set_capability_state(
+        &self,
+        capability: &str,
+        enabled: bool,
+    ) -> empath_control::Result<Response> {
+        let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
+            ControlError::ServerError(
+                "SMTP capabilities are not configured for this instance".to_string(),
+            )
+        })?;
+        let parsed = Capability::parse(capability).ok_or_else(|| {
+            ControlError::ServerError(format!("Unknown SMTP capability '{capability}'"))
+        })?;
+        let mut guard = state.write().map_err(|_| {
+            ControlError::ServerError("SMTP capabilities state is unavailable".to_string())
+        })?;
+        if enabled {
+            if !guard.contains(&parsed) {
+                guard.push(parsed.clone());
+            }
+        } else {
+            guard.retain(|cap| cap != &parsed);
+        }
+        drop(guard);
+        let action = if enabled { "enabled" } else { "disabled" };
+        Ok(Response::data(ResponseData::Message(format!(
+            "SMTP capability {} {action}",
+            parsed.as_str()
+        ))))
     }
 
     /// Handle queue management commands
@@ -963,15 +994,15 @@ impl EmpathControlHandler {
         };
 
         // Build details from either queue info or persisted delivery context
-        let details = Self::build_message_details(
-            message_id.to_string(),
-            &msg_id,
-            &context,
+        let details = Self::build_message_details(MessageDetailsInput {
+            message_id: message_id.to_string(),
+            msg_id: &msg_id,
+            context: &context,
             size,
             headers,
             body_preview,
-            info,
-        );
+            queue_info: info,
+        });
 
         Ok(Response::data(ResponseData::QueueMessageDetails(details)))
     }
@@ -1440,28 +1471,26 @@ impl EmpathControlHandler {
             .as_secs()
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_message_details(
-        message_id: String,
-        msg_id: &empath_spool::SpooledMessageId,
-        context: &Context,
-        size: usize,
-        headers: Option<HashMap<String, String>>,
-        body_preview: Option<String>,
-        queue_info: Option<empath_delivery::DeliveryInfo>,
+        input: MessageDetailsInput<'_>,
     ) -> empath_control::protocol::QueueMessageDetails {
-        let from = context
+        let from = input
+            .context
             .envelope
             .sender()
             .map_or_else(|| "<>".to_string(), ToString::to_string);
-        let to = context.envelope.recipients().map_or_else(Vec::new, |list| {
-            list.iter().map(std::string::ToString::to_string).collect()
-        });
-        let spooled_at = msg_id.timestamp_ms() / 1000;
+        let to = input
+            .context
+            .envelope
+            .recipients()
+            .map_or_else(Vec::new, |list| {
+                list.iter().map(std::string::ToString::to_string).collect()
+            });
+        let spooled_at = input.msg_id.timestamp_ms() / 1000;
 
-        if let Some(queue_info) = queue_info {
+        if let Some(queue_info) = input.queue_info {
             return empath_control::protocol::QueueMessageDetails {
-                id: message_id,
+                id: input.message_id,
                 from,
                 to,
                 domain: queue_info.recipient_domain.to_string(),
@@ -1474,16 +1503,16 @@ impl EmpathControlHandler {
                         .map(|d| d.as_secs())
                 }),
                 last_error: queue_info.attempts.last().and_then(|a| a.error.clone()),
-                size,
+                size: input.size,
                 spooled_at,
-                headers,
-                body_preview,
+                headers: input.headers,
+                body_preview: input.body_preview,
             };
         }
 
-        if let Some(ref delivery_ctx) = context.delivery {
+        if let Some(ref delivery_ctx) = input.context.delivery {
             return empath_control::protocol::QueueMessageDetails {
-                id: message_id,
+                id: input.message_id,
                 from,
                 to,
                 domain: delivery_ctx.domain.to_string(),
@@ -1499,15 +1528,15 @@ impl EmpathControlHandler {
                     .attempt_history
                     .last()
                     .and_then(|a| a.error.clone()),
-                size,
+                size: input.size,
                 spooled_at,
-                headers,
-                body_preview,
+                headers: input.headers,
+                body_preview: input.body_preview,
             };
         }
 
         empath_control::protocol::QueueMessageDetails {
-            id: message_id,
+            id: input.message_id,
             from,
             to,
             domain: "unknown".to_string(),
@@ -1516,10 +1545,10 @@ impl EmpathControlHandler {
             attempts: 0,
             next_retry: None,
             last_error: None,
-            size,
+            size: input.size,
             spooled_at,
-            headers,
-            body_preview,
+            headers: input.headers,
+            body_preview: input.body_preview,
         }
     }
 }

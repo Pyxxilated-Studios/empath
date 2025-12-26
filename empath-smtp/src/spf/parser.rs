@@ -134,16 +134,15 @@ impl SpfRecord {
 
         // Split mechanism name and value (if present)
         // For mechanisms like "a/24" or "mx/24", the slash indicates CIDR without domain
-        #[allow(clippy::option_if_let_else)]
-        let (mech_name, mech_value) = if let Some(colon_pos) = term.find(':') {
-            (&term[..colon_pos], Some(&term[colon_pos + 1..]))
-        } else if let Some(slash_pos) = term.find('/') {
-            // Handle "a/24" format - mechanism name before slash, CIDR after
-            let name = &term[..slash_pos];
-            let cidr = &term[slash_pos..]; // Include the slash
-            (name, Some(cidr))
-        } else {
-            (term, None)
+        let (mech_name, mech_value) = match (term.find(':'), term.find('/')) {
+            (Some(colon_pos), _) => (&term[..colon_pos], Some(&term[colon_pos + 1..])),
+            (None, Some(slash_pos)) => {
+                // Handle "a/24" format - mechanism name before slash, CIDR after
+                let name = &term[..slash_pos];
+                let cidr = &term[slash_pos..]; // Include the slash
+                (name, Some(cidr))
+            }
+            (None, None) => (term, None),
         };
 
         // Parse based on mechanism type

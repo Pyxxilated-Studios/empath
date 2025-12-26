@@ -17,8 +17,6 @@ use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
 };
 
-use crate::MetricsError;
-
 /// Module metrics collector
 #[derive(Debug)]
 pub struct ModuleMetrics {
@@ -41,11 +39,7 @@ pub struct ModuleMetrics {
 
 impl ModuleMetrics {
     /// Create a new module metrics collector
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if metric instruments cannot be created.
-    pub fn new() -> Result<Self, MetricsError> {
+    pub fn new() -> Self {
         let meter = meter();
 
         let errors_total = meter
@@ -88,13 +82,13 @@ impl ModuleMetrics {
             })
             .build();
 
-        Ok(Self {
+        Self {
             errors_total,
             execution_duration_seconds,
             timeout_total,
             mutations_total,
             memory_bytes: memory_ref,
-        })
+        }
     }
 
     /// Record a module error
@@ -206,6 +200,12 @@ impl ModuleMetrics {
         self.memory_bytes
             .get(module_path)
             .map_or(0, |entry| entry.load(Ordering::Relaxed))
+    }
+}
+
+impl Default for ModuleMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

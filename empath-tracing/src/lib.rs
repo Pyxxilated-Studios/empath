@@ -153,11 +153,6 @@ pub fn traced(
 
     let mut item_fn = parse_macro_input!(item as ItemFn);
 
-    let clippy_attr: syn::Attribute = parse_quote! {
-        #[allow(clippy::items_after_statements)]
-    };
-    item_fn.attrs.push(clippy_attr);
-
     if let Some(instrument) = args.instrument {
         let fields = instrument.to_token_stream();
         let instrument_attr: syn::Attribute = parse_quote! {

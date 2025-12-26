@@ -15,8 +15,6 @@ use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
 };
 
-use crate::MetricsError;
-
 /// DNS metrics collector
 #[derive(Debug)]
 pub struct DnsMetrics {
@@ -40,11 +38,7 @@ pub struct DnsMetrics {
 
 impl DnsMetrics {
     /// Create a new DNS metrics collector
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if metric instruments cannot be created.
-    pub fn new() -> Result<Self, MetricsError> {
+    pub fn new() -> Self {
         let meter = meter();
 
         let lookup_duration = meter
@@ -100,7 +94,7 @@ impl DnsMetrics {
             })
             .build();
 
-        Ok(Self {
+        Self {
             lookup_duration,
             lookups_total,
             errors_total,
@@ -108,7 +102,7 @@ impl DnsMetrics {
             cache_hits_count: cache_hits_ref,
             cache_misses_count: cache_misses_ref,
             cache_evictions_count: cache_evictions_ref,
-        })
+        }
     }
 
     /// Record a DNS lookup
@@ -153,6 +147,12 @@ impl DnsMetrics {
     #[must_use]
     pub fn get_cache_size(&self) -> u64 {
         self.cache_size.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for DnsMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

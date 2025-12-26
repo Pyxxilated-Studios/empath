@@ -7,6 +7,7 @@ use empath_common::{
     email::ServerId,
     tracing::{debug, error, info, warn},
 };
+use empath_spool::SpooledMessageId;
 use tokio::task::JoinSet;
 
 use crate::{
@@ -230,24 +231,34 @@ async fn process_single_message(
 ///
 /// # Errors
 /// Returns an error if processing fails
-#[allow(
-    clippy::too_many_lines,
-    reason = "Queue processing logic naturally requires many branches"
-)]
 pub async fn process_queue_internal(
     processor: Arc<DeliveryProcessor>,
     spool: Arc<dyn empath_spool::BackingStore>,
 ) -> Result<(), DeliveryError> {
     let now = SystemTime::now();
 
-    // Vector to collect messages ready for parallel delivery
+    let (pending_message_ids, to_persist, oldest_pending_age_secs) = scan_queue(&processor, now);
+
+    if let Some(metrics) = &processor.metrics {
+        metrics.update_oldest_message_age(oldest_pending_age_secs);
+    }
+
+    persist_updates(&processor, &spool, to_persist).await;
+    process_pending_messages(processor, spool, pending_message_ids).await;
+
+    Ok(())
+}
+
+fn scan_queue(
+    processor: &DeliveryProcessor,
+    now: SystemTime,
+) -> (Vec<SpooledMessageId>, Vec<SpooledMessageId>, u64) {
     let mut pending_message_ids = Vec::new();
     let mut to_persist = Vec::new();
     let mut oldest_pending_age_secs = 0u64;
 
     for mut entry in processor.queue.queue.iter_mut() {
         let info = entry.value_mut();
-        // Skip messages that are already completed, failed, expired, or in progress
         if matches!(
             info.status,
             DeliveryStatus::Completed
@@ -258,7 +269,6 @@ pub async fn process_queue_internal(
             continue;
         }
 
-        // Track oldest age for pending/retry for metrics
         if matches!(
             info.status,
             DeliveryStatus::Pending | DeliveryStatus::Retry { .. }
@@ -267,70 +277,87 @@ pub async fn process_queue_internal(
             oldest_pending_age_secs = oldest_pending_age_secs.max(age.as_secs());
         }
 
-        // Check if message has expired
-        if let Some(expiration_secs) = processor.message_expiration_secs {
-            let age_secs = now
-                .duration_since(info.queued_at)
-                .unwrap_or_default()
-                .as_secs();
-            if age_secs > expiration_secs {
-                warn!(
-                    message_id = ?info.message_id,
-                    age_secs = age_secs,
-                    expiration_secs = expiration_secs,
-                    "Message expired, marking as Expired"
-                );
-                info.status = DeliveryStatus::Expired;
-                to_persist.push(info.message_id.clone());
-
-                continue;
-            }
-        }
-
-        // For Retry status, check if it's time to retry
-        if matches!(info.status, DeliveryStatus::Retry { .. }) {
-            if let Some(next_retry_at) = info.next_retry_at
-                && now < next_retry_at
-            {
-                // Not yet time to retry, skip this message
-                let wait_secs = next_retry_at
-                    .duration_since(now)
-                    .unwrap_or_default()
-                    .as_secs();
-                debug!(
-                    message_id = ?info.message_id,
-                    wait_secs = wait_secs,
-                    "Skipping message, not yet time to retry"
-                );
-                continue;
-            }
-
-            // Time to retry! Reset status to Pending and reset server index
-            debug!(
-                message_id = ?info.message_id,
-                attempt = info.attempt_count(),
-                "Time to retry delivery"
-            );
-            info.status = DeliveryStatus::Pending;
-            info.reset_server_index();
+        if is_expired(processor, info, now) {
             to_persist.push(info.message_id.clone());
+            continue;
         }
 
-        // Collect Pending messages for parallel processing
+        if !retry_ready(info, now, &mut to_persist) {
+            continue;
+        }
+
         if matches!(info.status, DeliveryStatus::Pending) {
             pending_message_ids.push(info.message_id.clone());
         }
     }
 
-    // Update the oldest pending age metric
-    if let Some(metrics) = &processor.metrics {
-        metrics.update_oldest_message_age(oldest_pending_age_secs);
+    (pending_message_ids, to_persist, oldest_pending_age_secs)
+}
+
+fn is_expired(processor: &DeliveryProcessor, info: &mut DeliveryInfo, now: SystemTime) -> bool {
+    let Some(expiration_secs) = processor.message_expiration_secs else {
+        return false;
+    };
+    let age_secs = now
+        .duration_since(info.queued_at)
+        .unwrap_or_default()
+        .as_secs();
+    if age_secs <= expiration_secs {
+        return false;
     }
 
-    // Persist any status changes that were made without holding DashMap locks across awaits
+    warn!(
+        message_id = ?info.message_id,
+        age_secs = age_secs,
+        expiration_secs = expiration_secs,
+        "Message expired, marking as Expired"
+    );
+    info.status = DeliveryStatus::Expired;
+    true
+}
+
+fn retry_ready(
+    info: &mut DeliveryInfo,
+    now: SystemTime,
+    to_persist: &mut Vec<SpooledMessageId>,
+) -> bool {
+    if !matches!(info.status, DeliveryStatus::Retry { .. }) {
+        return true;
+    }
+
+    if let Some(next_retry_at) = info.next_retry_at
+        && now < next_retry_at
+    {
+        let wait_secs = next_retry_at
+            .duration_since(now)
+            .unwrap_or_default()
+            .as_secs();
+        debug!(
+            message_id = ?info.message_id,
+            wait_secs = wait_secs,
+            "Skipping message, not yet time to retry"
+        );
+        return false;
+    }
+
+    debug!(
+        message_id = ?info.message_id,
+        attempt = info.attempt_count(),
+        "Time to retry delivery"
+    );
+    info.status = DeliveryStatus::Pending;
+    info.reset_server_index();
+    to_persist.push(info.message_id.clone());
+    true
+}
+
+async fn persist_updates(
+    processor: &DeliveryProcessor,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    to_persist: Vec<SpooledMessageId>,
+) {
     for message_id in to_persist {
-        if let Err(e) =
-            super::delivery::persist_delivery_state(&processor, &message_id, &spool).await
+        if let Err(e) = super::delivery::persist_delivery_state(processor, &message_id, spool).await
         {
             warn!(
                 message_id = ?message_id,
@@ -339,47 +366,51 @@ pub async fn process_queue_internal(
             );
         }
     }
+}
 
-    // Process pending messages in parallel using JoinSet
-    if !pending_message_ids.is_empty() {
-        info!(
-            pending_count = pending_message_ids.len(),
-            max_concurrent = processor.max_concurrent_deliveries,
-            "Processing delivery queue with parallel workers"
-        );
+async fn process_pending_messages(
+    processor: Arc<DeliveryProcessor>,
+    spool: Arc<dyn empath_spool::BackingStore>,
+    pending_message_ids: Vec<SpooledMessageId>,
+) {
+    if pending_message_ids.is_empty() {
+        return;
+    }
 
-        let mut join_set: JoinSet<()> = JoinSet::new();
-        let mut pending_iter = pending_message_ids.into_iter();
+    info!(
+        pending_count = pending_message_ids.len(),
+        max_concurrent = processor.max_concurrent_deliveries,
+        "Processing delivery queue with parallel workers"
+    );
 
-        // Spawn initial batch of tasks (up to max_concurrent_deliveries)
-        for _ in 0..processor.max_concurrent_deliveries.min(pending_iter.len()) {
-            if let Some(message_id) = pending_iter.next() {
-                // Clone Arc for this task
-                let processor_clone = Arc::clone(&processor);
-                let spool_clone = Arc::clone(&spool);
+    let mut join_set: JoinSet<()> = JoinSet::new();
+    let mut pending_iter = pending_message_ids.into_iter();
 
-                join_set.spawn(async move {
-                    if let Some(info) = processor_clone.queue.get(&message_id) {
-                        Box::pin(process_single_message(processor_clone, spool_clone, info)).await;
-                    }
-                });
-            }
-        }
-
-        // As tasks complete, spawn new ones for remaining messages
-        while join_set.join_next().await.is_some() {
-            if let Some(message_id) = pending_iter.next() {
-                let processor_clone = Arc::clone(&processor);
-                let spool_clone = Arc::clone(&spool);
-
-                join_set.spawn(async move {
-                    if let Some(info) = processor_clone.queue.get(&message_id) {
-                        Box::pin(process_single_message(processor_clone, spool_clone, info)).await;
-                    }
-                });
-            }
+    for _ in 0..processor.max_concurrent_deliveries.min(pending_iter.len()) {
+        if let Some(message_id) = pending_iter.next() {
+            spawn_delivery_task(&mut join_set, &processor, &spool, message_id);
         }
     }
 
-    Ok(())
+    while join_set.join_next().await.is_some() {
+        if let Some(message_id) = pending_iter.next() {
+            spawn_delivery_task(&mut join_set, &processor, &spool, message_id);
+        }
+    }
+}
+
+fn spawn_delivery_task(
+    join_set: &mut JoinSet<()>,
+    processor: &Arc<DeliveryProcessor>,
+    spool: &Arc<dyn empath_spool::BackingStore>,
+    message_id: SpooledMessageId,
+) {
+    let processor_clone = Arc::clone(processor);
+    let spool_clone = Arc::clone(spool);
+
+    join_set.spawn(async move {
+        if let Some(info) = processor_clone.queue.get(&message_id) {
+            Box::pin(process_single_message(processor_clone, spool_clone, info)).await;
+        }
+    });
 }

@@ -13,19 +13,61 @@ use empath_smtp::client::{ConnectConfig, SmtpClient};
 
 use crate::types::SmtpPoolConfig;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum TlsMode {
+    Disabled,
+    Opportunistic,
+    Required,
+}
+
+impl TlsMode {
+    #[must_use]
+    pub const fn new(attempt_tls: bool, require_tls: bool) -> Self {
+        if !attempt_tls {
+            Self::Disabled
+        } else if require_tls {
+            Self::Required
+        } else {
+            Self::Opportunistic
+        }
+    }
+
+    #[must_use]
+    pub const fn attempt_tls(self) -> bool {
+        matches!(self, Self::Opportunistic | Self::Required)
+    }
+
+    #[must_use]
+    pub const fn require_tls(self) -> bool {
+        matches!(self, Self::Required)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum CertValidation {
+    Strict,
+    AllowInvalid,
+}
+
+impl CertValidation {
+    #[must_use]
+    pub const fn new(accept_invalid_certs: bool) -> Self {
+        if accept_invalid_certs {
+            Self::AllowInvalid
+        } else {
+            Self::Strict
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "Pool keys need the full TLS/binding policy to prevent unsafe reuse."
-)]
 pub struct SmtpPoolKey {
     pub domain: String,
     pub server_address: String,
     pub local_ip: Option<IpAddr>,
     pub local_interface: Option<String>,
-    pub attempt_tls: bool,
-    pub require_tls: bool,
-    pub accept_invalid_certs: bool,
+    pub tls_mode: TlsMode,
+    pub cert_validation: CertValidation,
     pub tls_active: bool,
 }
 
@@ -35,9 +77,8 @@ impl PartialEq for SmtpPoolKey {
             && self.server_address == other.server_address
             && self.local_ip == other.local_ip
             && self.local_interface == other.local_interface
-            && self.attempt_tls == other.attempt_tls
-            && self.require_tls == other.require_tls
-            && self.accept_invalid_certs == other.accept_invalid_certs
+            && self.tls_mode == other.tls_mode
+            && self.cert_validation == other.cert_validation
             && self.tls_active == other.tls_active
     }
 }
@@ -48,26 +89,20 @@ impl Hash for SmtpPoolKey {
         self.server_address.hash(state);
         self.local_ip.hash(state);
         self.local_interface.hash(state);
-        self.attempt_tls.hash(state);
-        self.require_tls.hash(state);
-        self.accept_invalid_certs.hash(state);
+        self.tls_mode.hash(state);
+        self.cert_validation.hash(state);
         self.tls_active.hash(state);
     }
 }
 
 impl SmtpPoolKey {
     #[must_use]
-    #[allow(
-        clippy::fn_params_excessive_bools,
-        reason = "Pool keys need the full TLS/binding policy to prevent unsafe reuse."
-    )]
     pub fn new(
         domain: String,
         server_address: String,
         connect_config: Option<&ConnectConfig>,
-        attempt_tls: bool,
-        require_tls: bool,
-        accept_invalid_certs: bool,
+        tls_mode: TlsMode,
+        cert_validation: CertValidation,
         tls_active: bool,
     ) -> Self {
         let (local_ip, local_interface) = connect_config.map_or((None, None), |config| {
@@ -79,9 +114,8 @@ impl SmtpPoolKey {
             server_address,
             local_ip,
             local_interface,
-            attempt_tls,
-            require_tls,
-            accept_invalid_certs,
+            tls_mode,
+            cert_validation,
             tls_active,
         }
     }
@@ -91,9 +125,8 @@ pub struct SmtpPoolRequest<'a> {
     pub domain: &'a str,
     pub server_address: &'a str,
     pub connect_config: Option<&'a ConnectConfig>,
-    pub attempt_tls: bool,
-    pub require_tls: bool,
-    pub accept_invalid_certs: bool,
+    pub tls_mode: TlsMode,
+    pub cert_validation: CertValidation,
 }
 
 impl<'a> SmtpPoolRequest<'a> {
@@ -102,17 +135,15 @@ impl<'a> SmtpPoolRequest<'a> {
         domain: &'a str,
         server_address: &'a str,
         connect_config: Option<&'a ConnectConfig>,
-        attempt_tls: bool,
-        require_tls: bool,
-        accept_invalid_certs: bool,
+        tls_mode: TlsMode,
+        cert_validation: CertValidation,
     ) -> Self {
         Self {
             domain,
             server_address,
             connect_config,
-            attempt_tls,
-            require_tls,
-            accept_invalid_certs,
+            tls_mode,
+            cert_validation,
         }
     }
 }
@@ -171,23 +202,21 @@ impl SmtpClientPool {
             request.domain.to_string(),
             request.server_address.to_string(),
             request.connect_config,
-            request.attempt_tls,
-            request.require_tls,
-            request.accept_invalid_certs,
+            request.tls_mode,
+            request.cert_validation,
             true,
         );
         let key_plain = SmtpPoolKey::new(
             request.domain.to_string(),
             request.server_address.to_string(),
             request.connect_config,
-            request.attempt_tls,
-            request.require_tls,
-            request.accept_invalid_certs,
+            request.tls_mode,
+            request.cert_validation,
             false,
         );
 
-        let preferred_keys = if request.attempt_tls {
-            if request.require_tls {
+        let preferred_keys = if request.tls_mode.attempt_tls() {
+            if request.tls_mode.require_tls() {
                 vec![key_tls]
             } else {
                 vec![key_tls, key_plain]

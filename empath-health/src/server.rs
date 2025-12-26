@@ -105,10 +105,10 @@ async fn readiness_handler(State(health_checker): State<Arc<HealthChecker>>) -> 
     } else {
         let status = health_checker.get_status();
         tracing::warn!(
-            smtp_ready = status.smtp_ready,
-            spool_ready = status.spool_ready,
-            delivery_ready = status.delivery_ready,
-            dns_ready = status.dns_ready,
+            smtp_ready = status.readiness.transport.smtp_ready,
+            spool_ready = status.readiness.transport.spool_ready,
+            delivery_ready = status.readiness.delivery.delivery_ready,
+            dns_ready = status.readiness.delivery.dns_ready,
             queue_size = status.queue_size,
             max_queue_size = status.max_queue_size,
             "Readiness probe failed"

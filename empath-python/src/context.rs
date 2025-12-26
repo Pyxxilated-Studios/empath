@@ -361,10 +361,9 @@ impl PyContext {
     }
 
     /// Set a header value (replaces existing).
-    #[allow(clippy::redundant_closure_for_method_calls)]
     fn headers_set(&self, name: &str, value: &str) -> PyResult<bool> {
-        match self.with_headers_mut(name, value, "set", |headers, hname, hval| {
-            headers.set(hname, hval)
+        match self.with_headers_mut(name, value, "set", |headers, header, header_value| {
+            headers.set(header, header_value)
         }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_header_error(err)),
@@ -374,10 +373,9 @@ impl PyContext {
     }
 
     /// Append a header value (does not replace existing).
-    #[allow(clippy::redundant_closure_for_method_calls)]
     fn headers_append(&self, name: &str, value: &str) -> PyResult<bool> {
-        match self.with_headers_mut(name, value, "append", |headers, hname, hval| {
-            headers.append(hname, hval)
+        match self.with_headers_mut(name, value, "append", |headers, header, header_value| {
+            headers.append(header, header_value)
         }) {
             Ok(Some(Ok(()))) => Ok(true),
             Ok(Some(Err(err))) => Err(Self::map_header_error(err)),
@@ -387,10 +385,9 @@ impl PyContext {
     }
 
     /// Set a header only if missing. Returns True if newly set.
-    #[allow(clippy::redundant_closure_for_method_calls)]
     fn headers_set_if_absent(&self, name: &str, value: &str) -> PyResult<bool> {
-        match self.with_headers_mut(name, value, "set", |headers, hname, hval| {
-            headers.set_if_absent(hname, hval)
+        match self.with_headers_mut(name, value, "set", |headers, header, header_value| {
+            headers.set_if_absent(header, header_value)
         }) {
             Ok(Some(Ok(updated))) => Ok(updated),
             Ok(Some(Err(err))) => Err(Self::map_header_error(err)),

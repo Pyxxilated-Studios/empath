@@ -114,7 +114,7 @@ impl Event {
 #[derive(Debug)]
 #[repr(C)]
 pub enum Mod {
-    ValidationListener(validate::Validation),
+    ValidationListener(validate::ModuleValidation),
     EventListener {
         module_name: *const libc::c_char,
         init: Init,
@@ -152,7 +152,7 @@ impl Mod {
 }
 
 ///
-/// This solely exists in order to have the `Validation` be parsed
+/// This solely exists in order to have the `ModuleValidation` be parsed
 /// by cbindgen. Perhaps in future it will be done in a better way.
 ///
 #[unsafe(no_mangle)]

@@ -24,7 +24,6 @@ impl Drop for String {
 }
 
 #[repr(C)]
-#[allow(clippy::module_name_repetitions)]
 #[derive(Default)]
 pub struct StringVector {
     pub len: usize,
@@ -142,13 +141,11 @@ impl From<&[Rc<str>]> for StringVector {
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_free_string(ffi_string: String) {
     drop(ffi_string);
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::module_name_repetitions)]
 pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
     drop(ffi_vector);
 }
@@ -157,7 +154,7 @@ pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
 mod test {
     use std::{ptr::null, sync::Arc};
 
-    use crate::string::{String, StringVector, em_free_string, em_free_string_vector};
+    use crate::ffi_string::{String, StringVector, em_free_string, em_free_string_vector};
 
     const TEST: &str = "test";
 

@@ -21,7 +21,7 @@ use opentelemetry::{
     metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter},
 };
 
-use crate::MetricsError;
+use crate::util::u64_to_f64;
 
 /// Delivery metrics collector
 #[derive(Debug)]
@@ -107,6 +107,78 @@ pub struct DeliveryMetrics {
     bucketed_domains_count: Arc<AtomicU64>,
 }
 
+struct DeliveryCounters {
+    delivered: Arc<AtomicU64>,
+    failed: Arc<AtomicU64>,
+    retrying: Arc<AtomicU64>,
+}
+
+impl DeliveryCounters {
+    fn new() -> Self {
+        Self {
+            delivered: Arc::new(AtomicU64::new(0)),
+            failed: Arc::new(AtomicU64::new(0)),
+            retrying: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+struct DeliveryQueueCounters {
+    pending: Arc<AtomicU64>,
+    in_progress: Arc<AtomicU64>,
+    completed: Arc<AtomicU64>,
+    failed: Arc<AtomicU64>,
+    retry: Arc<AtomicU64>,
+    expired: Arc<AtomicU64>,
+}
+
+impl DeliveryQueueCounters {
+    fn new() -> Self {
+        Self {
+            pending: Arc::new(AtomicU64::new(0)),
+            in_progress: Arc::new(AtomicU64::new(0)),
+            completed: Arc::new(AtomicU64::new(0)),
+            failed: Arc::new(AtomicU64::new(0)),
+            retry: Arc::new(AtomicU64::new(0)),
+            expired: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+struct DeliveryPoolState {
+    smtp_pool_sizes: Arc<DashMap<String, Arc<AtomicU64>>>,
+    circuit_breaker_states: Arc<DashMap<String, Arc<AtomicU64>>>,
+    oldest_message_seconds: Arc<AtomicU64>,
+}
+
+impl DeliveryPoolState {
+    fn new() -> Self {
+        Self {
+            smtp_pool_sizes: Arc::new(DashMap::<String, Arc<AtomicU64>>::new()),
+            circuit_breaker_states: Arc::new(DashMap::<String, Arc<AtomicU64>>::new()),
+            oldest_message_seconds: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+struct DeliveryInstruments {
+    attempts_total: Counter<u64>,
+    duration_seconds: Histogram<f64>,
+    retry_count: Histogram<u64>,
+    queue_age_seconds: Histogram<f64>,
+    rate_limited_total: Counter<u64>,
+    rate_limit_delay_seconds: Histogram<f64>,
+    binding_selected_total: Counter<u64>,
+    binding_connect_duration_seconds: Histogram<f64>,
+    binding_ehlo_duration_seconds: Histogram<f64>,
+    binding_health_state: Gauge<u64>,
+    smtp_pool_hits_total: Counter<u64>,
+    smtp_pool_misses_total: Counter<u64>,
+    circuit_breaker_trips_total: Counter<u64>,
+    circuit_breaker_recoveries_total: Counter<u64>,
+    active_connections: UpDownCounter<i64>,
+}
+
 impl DeliveryMetrics {
     /// Create a new delivery metrics collector
     ///
@@ -114,14 +186,62 @@ impl DeliveryMetrics {
     ///
     /// * `max_domains` - Maximum number of unique domains to track before bucketing
     /// * `high_priority_domains` - Domains that always bypass the cardinality limit
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if metric instruments cannot be created.
-    #[allow(clippy::too_many_lines)]
-    pub fn new(max_domains: u64, high_priority_domains: Vec<String>) -> Result<Self, MetricsError> {
+    pub fn new(max_domains: u64, high_priority_domains: Vec<String>) -> Self {
         let meter = meter();
+        let counters = DeliveryCounters::new();
+        let queue = DeliveryQueueCounters::new();
+        let pools = DeliveryPoolState::new();
+        let instruments = Self::build_instruments(&meter);
 
+        Self::register_message_observables(&meter, &counters);
+        Self::register_error_rate_observables(&meter, &counters);
+        Self::register_queue_observables(&meter, &queue);
+        Self::register_pool_observables(&meter, &pools);
+
+        let bucketed_domains_ref = Arc::new(AtomicU64::new(0));
+        Self::register_cardinality_observable(&meter, &bucketed_domains_ref);
+
+        let high_priority_set: HashSet<String> = high_priority_domains.into_iter().collect();
+
+        Self {
+            attempts_total: instruments.attempts_total,
+            duration_seconds: instruments.duration_seconds,
+            active_connections: instruments.active_connections,
+            retry_count: instruments.retry_count,
+            queue_age_seconds: instruments.queue_age_seconds,
+            oldest_message_seconds: pools.oldest_message_seconds,
+            rate_limited_total: instruments.rate_limited_total,
+            rate_limit_delay_seconds: instruments.rate_limit_delay_seconds,
+            binding_selected_total: instruments.binding_selected_total,
+            binding_connect_duration_seconds: instruments.binding_connect_duration_seconds,
+            binding_ehlo_duration_seconds: instruments.binding_ehlo_duration_seconds,
+            binding_health_state: instruments.binding_health_state,
+            smtp_pool_hits_total: instruments.smtp_pool_hits_total,
+            smtp_pool_misses_total: instruments.smtp_pool_misses_total,
+            smtp_pool_sizes: pools.smtp_pool_sizes,
+            circuit_breaker_trips_total: instruments.circuit_breaker_trips_total,
+            circuit_breaker_recoveries_total: instruments.circuit_breaker_recoveries_total,
+            messages_delivered_count: counters.delivered,
+            messages_failed_count: counters.failed,
+            messages_retrying_count: counters.retrying,
+            circuit_breaker_states: pools.circuit_breaker_states,
+            queue_pending: queue.pending,
+            queue_in_progress: queue.in_progress,
+            queue_completed: queue.completed,
+            queue_failed: queue.failed,
+            queue_retry: queue.retry,
+            queue_expired: queue.expired,
+            active_conn_count: AtomicU64::new(0),
+            max_domains,
+            high_priority_domains: high_priority_set,
+            tracked_domains: Arc::new(DashMap::new()),
+            tracked_domains_count: Arc::new(AtomicU64::new(0)),
+            bucketed_domains_count: bucketed_domains_ref,
+            binding_names: Arc::new(DashMap::new()),
+        }
+    }
+
+    fn build_instruments(meter: &Meter) -> DeliveryInstruments {
         let attempts_total = meter
             .u64_counter("empath.delivery.attempts.total")
             .with_description("Total number of delivery attempts by status")
@@ -130,98 +250,6 @@ impl DeliveryMetrics {
         let duration_seconds = meter
             .f64_histogram("empath.delivery.duration.seconds")
             .with_description("Distribution of delivery durations by domain")
-            .build();
-
-        // Create atomic counters for high-frequency metrics
-        let messages_delivered_ref = Arc::new(AtomicU64::new(0));
-        let messages_failed_ref = Arc::new(AtomicU64::new(0));
-        let messages_retrying_ref = Arc::new(AtomicU64::new(0));
-
-        // Observable counter for delivered messages (reads from atomic)
-        // Meter keeps this alive internally via callback
-        let delivered_clone = messages_delivered_ref.clone();
-        meter
-            .u64_observable_counter("empath.delivery.messages.delivered.total")
-            .with_description("Total number of messages delivered successfully")
-            .with_callback(move |observer| {
-                observer.observe(delivered_clone.load(Ordering::Relaxed), &[]);
-            })
-            .build();
-
-        // Observable counter for failed messages (reads from atomic)
-        // Meter keeps this alive internally via callback
-        let failed_clone = messages_failed_ref.clone();
-        meter
-            .u64_observable_counter("empath.delivery.messages.failed.total")
-            .with_description("Total number of messages permanently failed")
-            .with_callback(move |observer| {
-                observer.observe(failed_clone.load(Ordering::Relaxed), &[]);
-            })
-            .build();
-
-        // Observable counter for retrying messages (reads from atomic)
-        // Meter keeps this alive internally via callback
-        let retrying_clone = messages_retrying_ref.clone();
-        meter
-            .u64_observable_counter("empath.delivery.messages.retrying.total")
-            .with_description("Total number of messages retrying")
-            .with_callback(move |observer| {
-                observer.observe(retrying_clone.load(Ordering::Relaxed), &[]);
-            })
-            .build();
-
-        // Observable gauge for delivery error rate (failed / total attempts)
-        // Pre-calculated for easier alerting
-        let delivered_for_error_rate = messages_delivered_ref.clone();
-        let failed_for_error_rate = messages_failed_ref.clone();
-        let retrying_for_error_rate = messages_retrying_ref.clone();
-        meter
-            .f64_observable_gauge("empath.delivery.error_rate")
-            .with_description("Delivery error rate (failed / total attempts, 0-1)")
-            .with_callback(move |observer| {
-                let delivered = delivered_for_error_rate.load(Ordering::Relaxed);
-                let failed = failed_for_error_rate.load(Ordering::Relaxed);
-                let retrying = retrying_for_error_rate.load(Ordering::Relaxed);
-                let total = delivered + failed + retrying;
-
-                let error_rate = if total > 0 {
-                    #[allow(clippy::cast_precision_loss)]
-                    {
-                        failed as f64 / total as f64
-                    }
-                } else {
-                    0.0
-                };
-
-                observer.observe(error_rate, &[]);
-            })
-            .build();
-
-        // Observable gauge for delivery success rate (1 - error_rate)
-        // Pre-calculated for easier alerting
-        let delivered_for_success_rate = messages_delivered_ref.clone();
-        let failed_for_success_rate = messages_failed_ref.clone();
-        let retrying_for_success_rate = messages_retrying_ref.clone();
-        meter
-            .f64_observable_gauge("empath.delivery.success_rate")
-            .with_description("Delivery success rate (delivered / total attempts, 0-1)")
-            .with_callback(move |observer| {
-                let delivered = delivered_for_success_rate.load(Ordering::Relaxed);
-                let failed = failed_for_success_rate.load(Ordering::Relaxed);
-                let retrying = retrying_for_success_rate.load(Ordering::Relaxed);
-                let total = delivered + failed + retrying;
-
-                let success_rate = if total > 0 {
-                    #[allow(clippy::cast_precision_loss)]
-                    {
-                        delivered as f64 / total as f64
-                    }
-                } else {
-                    0.0
-                };
-
-                observer.observe(success_rate, &[]);
-            })
             .build();
 
         let retry_count = meter
@@ -270,20 +298,6 @@ impl DeliveryMetrics {
             .with_description("Total number of outbound SMTP pool misses by domain")
             .build();
 
-        let smtp_pool_sizes_ref = Arc::new(DashMap::<String, Arc<AtomicU64>>::new());
-        let smtp_pool_sizes_clone = smtp_pool_sizes_ref.clone();
-        meter
-            .u64_observable_gauge("empath.delivery.smtp_pool.size")
-            .with_description("Current outbound SMTP pool size by domain")
-            .with_callback(move |observer| {
-                for entry in smtp_pool_sizes_clone.iter() {
-                    let domain = entry.key();
-                    let size = entry.value().load(Ordering::Relaxed);
-                    observer.observe(size, &[KeyValue::new("domain", domain.clone())]);
-                }
-            })
-            .build();
-
         let circuit_breaker_trips_total = meter
             .u64_counter("empath.delivery.circuit_breaker.trips.total")
             .with_description(
@@ -298,11 +312,120 @@ impl DeliveryMetrics {
             )
             .build();
 
-        // Create atomic map for per-domain circuit breaker state tracking
-        let circuit_states_ref = Arc::new(DashMap::<String, Arc<AtomicU64>>::new());
+        let active_connections = meter
+            .i64_up_down_counter("empath.delivery.connections.active")
+            .with_description("Number of currently active outbound SMTP connections")
+            .build();
 
-        // Observable gauge for circuit breaker state by domain (0=Closed, 1=Open, 2=HalfOpen)
-        let circuit_states_clone = circuit_states_ref.clone();
+        DeliveryInstruments {
+            attempts_total,
+            duration_seconds,
+            retry_count,
+            queue_age_seconds,
+            rate_limited_total,
+            rate_limit_delay_seconds,
+            binding_selected_total,
+            binding_connect_duration_seconds,
+            binding_ehlo_duration_seconds,
+            binding_health_state,
+            smtp_pool_hits_total,
+            smtp_pool_misses_total,
+            circuit_breaker_trips_total,
+            circuit_breaker_recoveries_total,
+            active_connections,
+        }
+    }
+
+    fn register_message_observables(meter: &Meter, counters: &DeliveryCounters) {
+        let delivered_clone = counters.delivered.clone();
+        meter
+            .u64_observable_counter("empath.delivery.messages.delivered.total")
+            .with_description("Total number of messages delivered successfully")
+            .with_callback(move |observer| {
+                observer.observe(delivered_clone.load(Ordering::Relaxed), &[]);
+            })
+            .build();
+
+        let failed_clone = counters.failed.clone();
+        meter
+            .u64_observable_counter("empath.delivery.messages.failed.total")
+            .with_description("Total number of messages permanently failed")
+            .with_callback(move |observer| {
+                observer.observe(failed_clone.load(Ordering::Relaxed), &[]);
+            })
+            .build();
+
+        let retrying_clone = counters.retrying.clone();
+        meter
+            .u64_observable_counter("empath.delivery.messages.retrying.total")
+            .with_description("Total number of messages retrying")
+            .with_callback(move |observer| {
+                observer.observe(retrying_clone.load(Ordering::Relaxed), &[]);
+            })
+            .build();
+    }
+
+    fn register_error_rate_observables(meter: &Meter, counters: &DeliveryCounters) {
+        let delivered_for_error_rate = counters.delivered.clone();
+        let failed_for_error_rate = counters.failed.clone();
+        let retrying_for_error_rate = counters.retrying.clone();
+        meter
+            .f64_observable_gauge("empath.delivery.error_rate")
+            .with_description("Delivery error rate (failed / total attempts, 0-1)")
+            .with_callback(move |observer| {
+                let delivered = delivered_for_error_rate.load(Ordering::Relaxed);
+                let failed = failed_for_error_rate.load(Ordering::Relaxed);
+                let retrying = retrying_for_error_rate.load(Ordering::Relaxed);
+                let total = delivered + failed + retrying;
+
+                let error_rate = if total > 0 {
+                    u64_to_f64(failed) / u64_to_f64(total)
+                } else {
+                    0.0
+                };
+
+                observer.observe(error_rate, &[]);
+            })
+            .build();
+
+        let delivered_for_success_rate = counters.delivered.clone();
+        let failed_for_success_rate = counters.failed.clone();
+        let retrying_for_success_rate = counters.retrying.clone();
+        meter
+            .f64_observable_gauge("empath.delivery.success_rate")
+            .with_description("Delivery success rate (delivered / total attempts, 0-1)")
+            .with_callback(move |observer| {
+                let delivered = delivered_for_success_rate.load(Ordering::Relaxed);
+                let failed = failed_for_success_rate.load(Ordering::Relaxed);
+                let retrying = retrying_for_success_rate.load(Ordering::Relaxed);
+                let total = delivered + failed + retrying;
+
+                let success_rate = if total > 0 {
+                    u64_to_f64(delivered) / u64_to_f64(total)
+                } else {
+                    0.0
+                };
+
+                observer.observe(success_rate, &[]);
+            })
+            .build();
+    }
+
+    fn register_pool_observables(meter: &Meter, pools: &DeliveryPoolState) {
+        let smtp_pool_sizes_clone = pools.smtp_pool_sizes.clone();
+        meter
+            .u64_observable_gauge("empath.delivery.smtp_pool.size")
+            .with_description("Current outbound SMTP pool size by domain")
+            .with_callback(move |observer| {
+                for entry in smtp_pool_sizes_clone.iter() {
+                    let domain = entry.key();
+                    let size = entry.value().load(Ordering::Relaxed);
+                    observer.observe(size, &[KeyValue::new("domain", domain.clone())]);
+                }
+            })
+            .build();
+
+        let circuit_states_clone = pools.circuit_breaker_states.clone();
         meter
             .u64_observable_gauge("empath.delivery.circuit_breaker.state")
             .with_description(
@@ -317,11 +440,7 @@ impl DeliveryMetrics {
             })
             .build();
 
-        // Create atomic counter for oldest message tracking
-        let oldest_message_ref = Arc::new(AtomicU64::new(0));
-
-        // Observable gauge for oldest message age (reads from atomic)
-        let oldest_clone = oldest_message_ref.clone();
+        let oldest_clone = pools.oldest_message_seconds.clone();
         meter
             .u64_observable_gauge("empath.delivery.queue.oldest.seconds")
             .with_description("Age of the oldest pending message in the queue")
@@ -329,30 +448,16 @@ impl DeliveryMetrics {
                 observer.observe(oldest_clone.load(Ordering::Relaxed), &[]);
             })
             .build();
+    }
 
-        let active_connections = meter
-            .i64_up_down_counter("empath.delivery.connections.active")
-            .with_description("Number of currently active outbound SMTP connections")
-            .build();
+    fn register_queue_observables(meter: &Meter, queue: &DeliveryQueueCounters) {
+        let pending = queue.pending.clone();
+        let in_progress = queue.in_progress.clone();
+        let completed = queue.completed.clone();
+        let failed = queue.failed.clone();
+        let retry = queue.retry.clone();
+        let expired = queue.expired.clone();
 
-        // Create atomic counters for queue size tracking (wrapped in Arc for sharing)
-        let queue_pending_ref = Arc::new(AtomicU64::new(0));
-        let queue_in_progress_ref = Arc::new(AtomicU64::new(0));
-        let queue_completed_ref = Arc::new(AtomicU64::new(0));
-        let queue_failed_ref = Arc::new(AtomicU64::new(0));
-        let queue_retry_ref = Arc::new(AtomicU64::new(0));
-        let queue_expired_ref = Arc::new(AtomicU64::new(0));
-
-        // Observable gauge that reads from atomic counters
-        let pending = queue_pending_ref.clone();
-        let in_progress = queue_in_progress_ref.clone();
-        let completed = queue_completed_ref.clone();
-        let failed = queue_failed_ref.clone();
-        let retry = queue_retry_ref.clone();
-        let expired = queue_expired_ref.clone();
-
-        // Register observable gauge for queue size metrics
-        // The meter keeps this alive internally via the callback
         meter
             .u64_observable_gauge("empath.delivery.queue.size")
             .with_description("Current queue size by status")
@@ -383,13 +488,10 @@ impl DeliveryMetrics {
                 );
             })
             .build();
+    }
 
-        // Cardinality limiting
-        let bucketed_domains_ref = Arc::new(AtomicU64::new(0));
-        let high_priority_set: HashSet<String> = high_priority_domains.into_iter().collect();
-
-        // Observable gauge for domain cardinality tracking
-        let bucketed_clone = bucketed_domains_ref.clone();
+    fn register_cardinality_observable(meter: &Meter, bucketed_domains: &Arc<AtomicU64>) {
+        let bucketed_clone = bucketed_domains.clone();
         meter
             .u64_observable_gauge("empath.delivery.domain.cardinality")
             .with_description("Number of unique domains currently tracked in metrics")
@@ -400,43 +502,6 @@ impl DeliveryMetrics {
                 );
             })
             .build();
-
-        Ok(Self {
-            attempts_total,
-            duration_seconds,
-            active_connections,
-            retry_count,
-            queue_age_seconds,
-            oldest_message_seconds: oldest_message_ref,
-            rate_limited_total,
-            rate_limit_delay_seconds,
-            binding_selected_total,
-            binding_connect_duration_seconds,
-            binding_ehlo_duration_seconds,
-            binding_health_state,
-            smtp_pool_hits_total,
-            smtp_pool_misses_total,
-            smtp_pool_sizes: smtp_pool_sizes_ref,
-            circuit_breaker_trips_total,
-            circuit_breaker_recoveries_total,
-            messages_delivered_count: messages_delivered_ref,
-            messages_failed_count: messages_failed_ref,
-            messages_retrying_count: messages_retrying_ref,
-            circuit_breaker_states: circuit_states_ref,
-            queue_pending: queue_pending_ref,
-            queue_in_progress: queue_in_progress_ref,
-            queue_completed: queue_completed_ref,
-            queue_failed: queue_failed_ref,
-            queue_retry: queue_retry_ref,
-            queue_expired: queue_expired_ref,
-            active_conn_count: AtomicU64::new(0),
-            max_domains,
-            high_priority_domains: high_priority_set,
-            tracked_domains: Arc::new(DashMap::new()),
-            tracked_domains_count: Arc::new(AtomicU64::new(0)),
-            bucketed_domains_count: bucketed_domains_ref,
-            binding_names: Arc::new(DashMap::new()),
-        })
     }
 
     /// Register configured outbound bindings for metrics labeling.

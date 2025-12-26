@@ -520,7 +520,6 @@ impl WasmModule {
     ///
     /// All these conditions represent unrecoverable states where continuing execution could
     /// lead to data corruption. Panicking is the intentional fail-fast behavior.
-    #[allow(clippy::expect_used, reason = "Panic on poisoned mutex is intentional")]
     pub fn execute_callback(&self, callback_name: &str, context: &mut Context) -> Result<i32> {
         // Build WASI context
         let wasi_ctx = self.build_wasi_ctx()?;
@@ -545,11 +544,8 @@ impl WasmModule {
         // Set epoch deadline for timeout enforcement
         // Convert timeout to epoch ticks (10ms per tick)
         let timeout_ticks = self.timeout.as_millis() / u128::from(EPOCH_TICK_MS);
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "Timeouts are expected to be reasonable (<584 years)"
-        )]
-        store.set_epoch_deadline(timeout_ticks as u64);
+        let timeout_ticks = u64::try_from(timeout_ticks).unwrap_or(u64::MAX);
+        store.set_epoch_deadline(timeout_ticks);
         internal!(
             level = TRACE,
             "Set epoch deadline: {} ticks ({:?} timeout)",
@@ -713,7 +709,6 @@ macro_rules! define_wasm_validations {
             }
         ),+ $(,)?
     ) => {
-        #[allow(clippy::enum_variant_names)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq)]
         enum WasmValidation {
             $( $variant ),*

@@ -16,7 +16,7 @@ use opentelemetry::{
     metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter},
 };
 
-use crate::MetricsError;
+use crate::util::u64_to_f64;
 
 /// SMTP metrics collector
 #[derive(Debug)]
@@ -63,152 +63,65 @@ pub struct SmtpMetrics {
     active_count: AtomicU64,
 }
 
+struct SmtpCounters {
+    connections_total: Arc<AtomicU64>,
+    messages_received: Arc<AtomicU64>,
+    connections_failed: Arc<AtomicU64>,
+}
+
+impl SmtpCounters {
+    fn new() -> Self {
+        Self {
+            connections_total: Arc::new(AtomicU64::new(0)),
+            messages_received: Arc::new(AtomicU64::new(0)),
+            connections_failed: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+struct SmtpInstruments {
+    connections_active: UpDownCounter<i64>,
+    errors_total: Counter<u64>,
+    session_duration: Histogram<f64>,
+    command_duration: Histogram<f64>,
+    message_size_bytes: Histogram<u64>,
+    tls_handshake_duration: Histogram<f64>,
+    tls_handshake_failures: Counter<u64>,
+    dkim_verifications_total: Counter<u64>,
+    dkim_rejections_total: Counter<u64>,
+    tls_cert_contexts_total: Gauge<u64>,
+    tls_cert_expiry_min_seconds: Gauge<u64>,
+    tls_cert_expired_count: Gauge<u64>,
+    tls_cert_parse_errors: Gauge<u64>,
+}
+
 impl SmtpMetrics {
     /// Create a new SMTP metrics collector
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if metric instruments cannot be created.
-    #[allow(clippy::too_many_lines)]
-    pub fn new() -> Result<Self, MetricsError> {
+    pub fn new() -> Self {
         let meter = meter();
+        let counters = SmtpCounters::new();
+        Self::register_observables(&meter, &counters);
+        let instruments = Self::build_instruments(&meter);
 
-        // Create atomic counters for high-frequency metrics
-        let connections_total_ref = Arc::new(AtomicU64::new(0));
-        let messages_received_ref = Arc::new(AtomicU64::new(0));
-        let connections_failed_ref = Arc::new(AtomicU64::new(0));
-
-        // Observable counter for total connections (reads from atomic)
-        // Meter keeps this alive internally via callback
-        let connections_clone = connections_total_ref.clone();
-        meter
-            .u64_observable_counter("empath.smtp.connections.total")
-            .with_description("Total number of SMTP connections established")
-            .with_callback(move |observer| {
-                observer.observe(connections_clone.load(Ordering::Relaxed), &[]);
-            })
-            .build();
-
-        let connections_active = meter
-            .i64_up_down_counter("empath.smtp.connections.active")
-            .with_description("Number of currently active SMTP connections")
-            .build();
-
-        let errors_total = meter
-            .u64_counter("empath.smtp.errors.total")
-            .with_description("Total number of SMTP errors by response code")
-            .build();
-
-        let session_duration = meter
-            .f64_histogram("empath.smtp.session.duration.seconds")
-            .with_description("Distribution of SMTP session durations")
-            .build();
-
-        let command_duration = meter
-            .f64_histogram("empath.smtp.command.duration.seconds")
-            .with_description("Distribution of command processing durations")
-            .build();
-
-        // Observable counter for messages received (reads from atomic)
-        // Meter keeps this alive internally via callback
-        let messages_clone = messages_received_ref.clone();
-        meter
-            .u64_observable_counter("empath.smtp.messages.received.total")
-            .with_description("Total number of messages received via SMTP")
-            .with_callback(move |observer| {
-                observer.observe(messages_clone.load(Ordering::Relaxed), &[]);
-            })
-            .build();
-
-        let message_size_bytes = meter
-            .u64_histogram("empath.smtp.message.size.bytes")
-            .with_description("Distribution of received message sizes")
-            .build();
-
-        let tls_handshake_duration = meter
-            .f64_histogram("empath.smtp.tls.handshake.duration.seconds")
-            .with_description("TLS handshake duration for SMTP connections")
-            .build();
-
-        let tls_handshake_failures = meter
-            .u64_counter("empath.smtp.tls.handshake.failures")
-            .with_description("Count of TLS handshake failures for SMTP connections")
-            .build();
-
-        let dkim_verifications_total = meter
-            .u64_counter("empath.smtp.dkim.verifications.total")
-            .with_description("Total DKIM verification results for SMTP messages")
-            .build();
-
-        let dkim_rejections_total = meter
-            .u64_counter("empath.smtp.dkim.rejections.total")
-            .with_description("Total DKIM enforcement rejections for SMTP messages")
-            .build();
-
-        let tls_cert_contexts_total = meter
-            .u64_gauge("empath.smtp.tls.cert.contexts.total")
-            .with_description("Number of TLS contexts registered for SMTP listeners")
-            .build();
-
-        let tls_cert_expiry_min_seconds = meter
-            .u64_gauge("empath.smtp.tls.cert.expiry.min.seconds")
-            .with_description("Minimum seconds until any TLS cert expires (0 if expired or none)")
-            .with_unit("{seconds}")
-            .build();
-
-        let tls_cert_expired_count = meter
-            .u64_gauge("empath.smtp.tls.cert.expired.count")
-            .with_description("Number of TLS certificates already expired")
-            .build();
-
-        let tls_cert_parse_errors = meter
-            .u64_gauge("empath.smtp.tls.cert.parse_errors.count")
-            .with_description("Number of TLS certificate parse/inspection errors")
-            .build();
-
-        // Observable gauge for SMTP error rate (failed / total connections)
-        // Pre-calculated for easier alerting
-        let total_for_error_rate = connections_total_ref.clone();
-        let failed_for_error_rate = connections_failed_ref.clone();
-        meter
-            .f64_observable_gauge("empath.smtp.connection.error_rate")
-            .with_description("SMTP connection error rate (failed / total connections, 0-1)")
-            .with_callback(move |observer| {
-                let total = total_for_error_rate.load(Ordering::Relaxed);
-                let failed = failed_for_error_rate.load(Ordering::Relaxed);
-
-                let error_rate = if total > 0 {
-                    #[allow(clippy::cast_precision_loss)]
-                    {
-                        failed as f64 / total as f64
-                    }
-                } else {
-                    0.0
-                };
-
-                observer.observe(error_rate, &[]);
-            })
-            .build();
-
-        Ok(Self {
-            connections_active,
-            errors_total,
-            session_duration,
-            command_duration,
-            message_size_bytes,
-            tls_handshake_duration,
-            tls_handshake_failures,
-            dkim_verifications_total,
-            dkim_rejections_total,
-            tls_cert_contexts_total,
-            tls_cert_expiry_min_seconds,
-            tls_cert_expired_count,
-            tls_cert_parse_errors,
-            connections_total_count: connections_total_ref,
-            messages_received_count: messages_received_ref,
-            connections_failed_count: connections_failed_ref,
+        Self {
+            connections_active: instruments.connections_active,
+            errors_total: instruments.errors_total,
+            session_duration: instruments.session_duration,
+            command_duration: instruments.command_duration,
+            message_size_bytes: instruments.message_size_bytes,
+            tls_handshake_duration: instruments.tls_handshake_duration,
+            tls_handshake_failures: instruments.tls_handshake_failures,
+            dkim_verifications_total: instruments.dkim_verifications_total,
+            dkim_rejections_total: instruments.dkim_rejections_total,
+            tls_cert_contexts_total: instruments.tls_cert_contexts_total,
+            tls_cert_expiry_min_seconds: instruments.tls_cert_expiry_min_seconds,
+            tls_cert_expired_count: instruments.tls_cert_expired_count,
+            tls_cert_parse_errors: instruments.tls_cert_parse_errors,
+            connections_total_count: counters.connections_total,
+            messages_received_count: counters.messages_received,
+            connections_failed_count: counters.connections_failed,
             active_count: AtomicU64::new(0),
-        })
+        }
     }
 
     /// Record a new SMTP connection
@@ -302,6 +215,137 @@ impl SmtpMetrics {
         // Fast atomic increment for failed connection tracking
         self.connections_failed_count
             .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl SmtpMetrics {
+    fn build_instruments(meter: &Meter) -> SmtpInstruments {
+        let connections_active = meter
+            .i64_up_down_counter("empath.smtp.connections.active")
+            .with_description("Number of currently active SMTP connections")
+            .build();
+
+        let errors_total = meter
+            .u64_counter("empath.smtp.errors.total")
+            .with_description("Total number of SMTP errors by response code")
+            .build();
+
+        let session_duration = meter
+            .f64_histogram("empath.smtp.session.duration.seconds")
+            .with_description("Distribution of SMTP session durations")
+            .build();
+
+        let command_duration = meter
+            .f64_histogram("empath.smtp.command.duration.seconds")
+            .with_description("Distribution of command processing durations")
+            .build();
+
+        let message_size_bytes = meter
+            .u64_histogram("empath.smtp.message.size.bytes")
+            .with_description("Distribution of received message sizes")
+            .build();
+
+        let tls_handshake_duration = meter
+            .f64_histogram("empath.smtp.tls.handshake.duration.seconds")
+            .with_description("TLS handshake duration for SMTP connections")
+            .build();
+
+        let tls_handshake_failures = meter
+            .u64_counter("empath.smtp.tls.handshake.failures")
+            .with_description("Count of TLS handshake failures for SMTP connections")
+            .build();
+
+        let dkim_verifications_total = meter
+            .u64_counter("empath.smtp.dkim.verifications.total")
+            .with_description("Total DKIM verification results for SMTP messages")
+            .build();
+
+        let dkim_rejections_total = meter
+            .u64_counter("empath.smtp.dkim.rejections.total")
+            .with_description("Total DKIM enforcement rejections for SMTP messages")
+            .build();
+
+        let tls_cert_contexts_total = meter
+            .u64_gauge("empath.smtp.tls.cert.contexts.total")
+            .with_description("Number of TLS contexts registered for SMTP listeners")
+            .build();
+
+        let tls_cert_expiry_min_seconds = meter
+            .u64_gauge("empath.smtp.tls.cert.expiry.min.seconds")
+            .with_description("Minimum seconds until any TLS cert expires (0 if expired or none)")
+            .with_unit("{seconds}")
+            .build();
+
+        let tls_cert_expired_count = meter
+            .u64_gauge("empath.smtp.tls.cert.expired.count")
+            .with_description("Number of TLS certificates already expired")
+            .build();
+
+        let tls_cert_parse_errors = meter
+            .u64_gauge("empath.smtp.tls.cert.parse_errors.count")
+            .with_description("Number of TLS certificate parse/inspection errors")
+            .build();
+
+        SmtpInstruments {
+            connections_active,
+            errors_total,
+            session_duration,
+            command_duration,
+            message_size_bytes,
+            tls_handshake_duration,
+            tls_handshake_failures,
+            dkim_verifications_total,
+            dkim_rejections_total,
+            tls_cert_contexts_total,
+            tls_cert_expiry_min_seconds,
+            tls_cert_expired_count,
+            tls_cert_parse_errors,
+        }
+    }
+
+    fn register_observables(meter: &Meter, counters: &SmtpCounters) {
+        let connections_clone = counters.connections_total.clone();
+        meter
+            .u64_observable_counter("empath.smtp.connections.total")
+            .with_description("Total number of SMTP connections established")
+            .with_callback(move |observer| {
+                observer.observe(connections_clone.load(Ordering::Relaxed), &[]);
+            })
+            .build();
+
+        let messages_clone = counters.messages_received.clone();
+        meter
+            .u64_observable_counter("empath.smtp.messages.received.total")
+            .with_description("Total number of messages received via SMTP")
+            .with_callback(move |observer| {
+                observer.observe(messages_clone.load(Ordering::Relaxed), &[]);
+            })
+            .build();
+
+        let total_for_error_rate = counters.connections_total.clone();
+        let failed_for_error_rate = counters.connections_failed.clone();
+        meter
+            .f64_observable_gauge("empath.smtp.connection.error_rate")
+            .with_description("SMTP connection error rate (failed / total connections, 0-1)")
+            .with_callback(move |observer| {
+                let total = total_for_error_rate.load(Ordering::Relaxed);
+                let failed = failed_for_error_rate.load(Ordering::Relaxed);
+
+                let error_rate = if total > 0 {
+                    u64_to_f64(failed) / u64_to_f64(total)
+                } else {
+                    0.0
+                };
+
+                observer.observe(error_rate, &[]);
+            })
+            .build();
+    }
+}
+
+impl Default for SmtpMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

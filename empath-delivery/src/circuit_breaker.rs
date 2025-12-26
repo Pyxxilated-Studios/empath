@@ -289,7 +289,7 @@ impl CircuitBreakerData {
     }
 
     /// Get current state
-    #[allow(dead_code)]
+    #[cfg(test)]
     const fn get_state(&self) -> CircuitState {
         self.state
     }
@@ -367,7 +367,7 @@ impl CircuitBreaker {
     }
 
     /// Get current circuit state for a domain
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn get_state(&self, domain: &Domain) -> CircuitState {
         let breaker = self.get_breaker(domain);
         let breaker_guard = breaker.lock();
@@ -375,7 +375,7 @@ impl CircuitBreaker {
     }
 
     /// Get statistics for a domain (for monitoring/debugging)
-    #[allow(dead_code, reason = "Reserved for future empathctl commands")]
+    #[cfg(test)]
     pub fn get_stats(&self, domain: &Domain) -> CircuitBreakerStats {
         let breaker = self.get_breaker(domain);
         let breaker_guard = breaker.lock();

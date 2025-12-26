@@ -17,7 +17,6 @@ pub enum Event {
 
 #[derive(Debug)]
 #[repr(C)]
-#[allow(clippy::struct_field_names)]
 pub struct Validators {
     pub validate_connect: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_ehlo: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
@@ -30,17 +29,16 @@ pub struct Validators {
 
 #[derive(Debug)]
 #[repr(C)]
-#[allow(clippy::module_name_repetitions)]
-pub struct Validation {
+pub struct ModuleValidation {
     pub module_name: *const libc::c_char,
     pub init: super::Init,
     pub validators: Validators,
 }
 
-unsafe impl Send for Validation {}
-unsafe impl Sync for Validation {}
+unsafe impl Send for ModuleValidation {}
+unsafe impl Sync for ModuleValidation {}
 
-impl Validation {
+impl ModuleValidation {
     ///
     /// Emit an event to this library's validation module
     ///

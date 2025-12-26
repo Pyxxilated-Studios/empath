@@ -181,7 +181,7 @@ impl<D: ?Sized + SpfDnsResolver> SpfEvaluator<D> {
         record: &SpfRecord,
         domain: &str,
     ) -> SpfEvaluation {
-        let record_str = format!("v=spf1 {}", self.format_record(record));
+        let record_str = format!("v=spf1 {}", Self::format_record(record));
 
         // Evaluate mechanisms in order
         for mechanism in &record.mechanisms {
@@ -238,7 +238,7 @@ impl<D: ?Sized + SpfDnsResolver> SpfEvaluator<D> {
         }
 
         // Check for redirect modifier
-        if let Some(redirect_domain) = self.find_redirect_modifier(record) {
+        if let Some(redirect_domain) = Self::find_redirect_modifier(record) {
             debug!(redirect_domain = %redirect_domain, "Following redirect modifier");
             return self.evaluate_redirect(ctx, &redirect_domain).await;
         }
@@ -256,8 +256,7 @@ impl<D: ?Sized + SpfDnsResolver> SpfEvaluator<D> {
     }
 
     /// Find redirect modifier in record
-    #[allow(clippy::unused_self)]
-    fn find_redirect_modifier(&self, record: &SpfRecord) -> Option<String> {
+    fn find_redirect_modifier(record: &SpfRecord) -> Option<String> {
         record.modifiers.iter().find_map(|m| {
             if let Modifier::Redirect(domain) = m {
                 Some(domain.clone())
@@ -338,8 +337,7 @@ impl<D: ?Sized + SpfDnsResolver> SpfEvaluator<D> {
     }
 
     /// Format record for display
-    #[allow(clippy::unused_self)]
-    fn format_record(&self, record: &SpfRecord) -> String {
+    fn format_record(record: &SpfRecord) -> String {
         let mechanisms: Vec<String> = record
             .mechanisms
             .iter()
@@ -388,8 +386,7 @@ struct EvaluationContext<D: ?Sized> {
 
 impl<D: ?Sized + SpfDnsResolver> EvaluationContext<D> {
     /// Check if we can perform another DNS lookup
-    #[allow(clippy::missing_const_for_fn)] // Modifies self.lookup_count
-    fn check_lookup_limit(&mut self) -> Result<(), SpfError> {
+    const fn check_lookup_limit(&mut self) -> Result<(), SpfError> {
         if self.lookup_count >= self.max_lookups {
             return Err(SpfError::TooManyLookups {
                 limit: self.max_lookups,
@@ -724,23 +721,15 @@ impl<D: ?Sized + SpfDnsResolver> EvaluationContext<D> {
         match (self.client_ip, ip) {
             (IpAddr::V4(client), IpAddr::V4(target)) => {
                 let prefix_len = cidr4.unwrap_or(32);
-                // Try to create network with specified CIDR, fall back to /32 if invalid
-                let network = Ipv4Network::new(target, prefix_len).unwrap_or_else(|_| {
-                    // SAFETY: /32 is always valid for any IPv4 address
-                    #[allow(clippy::expect_used)]
-                    Ipv4Network::new(target, 32).expect("Valid /32 network")
-                });
-                network.contains(client)
+                Ipv4Network::new(target, prefix_len)
+                    .or_else(|_| Ipv4Network::new(target, 32))
+                    .is_ok_and(|network| network.contains(client))
             }
             (IpAddr::V6(client), IpAddr::V6(target)) => {
                 let prefix_len = cidr6.unwrap_or(128);
-                // Try to create network with specified CIDR, fall back to /128 if invalid
-                let network = Ipv6Network::new(target, prefix_len).unwrap_or_else(|_| {
-                    // SAFETY: /128 is always valid for any IPv6 address
-                    #[allow(clippy::expect_used)]
-                    Ipv6Network::new(target, 128).expect("Valid /128 network")
-                });
-                network.contains(client)
+                Ipv6Network::new(target, prefix_len)
+                    .or_else(|_| Ipv6Network::new(target, 128))
+                    .is_ok_and(|network| network.contains(client))
             }
             _ => false, // IPv4 vs IPv6 mismatch
         }

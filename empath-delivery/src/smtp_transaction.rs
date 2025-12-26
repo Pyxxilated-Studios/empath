@@ -78,6 +78,12 @@ enum TlsNegotiationOutcome {
     RetryWithoutTls,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum EhloStage {
+    Initial,
+    AfterStarttls,
+}
+
 /// Extracts the email address string from an Address (for SMTP commands)
 ///
 /// Since Address now wraps Mailbox which is always a simple email address,
@@ -449,35 +455,16 @@ impl<'a> SmtpTransaction<'a> {
     ///
     /// # Errors
     /// Returns an error if TLS is required but fails
-    #[allow(
-        clippy::too_many_lines,
-        reason = "TLS negotiation handles RFC 3207 edge cases."
-    )]
     async fn negotiate_tls(
         &self,
         client: &mut (impl StarttlsClient + Send),
     ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        let helo_domain = self.helo_domain();
+
         if client.is_tls() {
-            let helo_domain = self.helo_domain();
-            let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
-            let ehlo_start = Instant::now();
-            let ehlo_response: ClientResponse =
-                tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-                    .await
-                    .map_err(|_| {
-                        TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
-                    })??;
-            self.record_ehlo_duration(ehlo_start);
-
-            if !ehlo_response.is_success() {
-                return Err(TemporaryError::SmtpTemporary(format!(
-                    "Server rejected EHLO: {}",
-                    ehlo_response.message()
-                ))
-                .into());
-            }
-
-            return Ok(TlsNegotiationOutcome::Success);
+            return self
+                .negotiate_tls_for_existing_session(client, helo_domain)
+                .await;
         }
 
         if !self.attempt_tls {
@@ -488,19 +475,9 @@ impl<'a> SmtpTransaction<'a> {
             return Ok(TlsNegotiationOutcome::Skipped);
         }
 
-        let helo_domain = self.helo_domain();
-
-        // Send initial EHLO
-        let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
-        let ehlo_start = Instant::now();
-        let ehlo_response: ClientResponse =
-            tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-                .await
-                .map_err(|_| {
-                    TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
-                })??;
-        self.record_ehlo_duration(ehlo_start);
-
+        let ehlo_response = self
+            .send_ehlo(client, helo_domain, EhloStage::Initial)
+            .await?;
         if !ehlo_response.is_success() {
             return Err(TemporaryError::SmtpTemporary(format!(
                 "Server rejected EHLO: {}",
@@ -509,86 +486,127 @@ impl<'a> SmtpTransaction<'a> {
             .into());
         }
 
-        // Check if server advertises STARTTLS
-        let supports_starttls = ehlo_response
-            .message()
-            .lines()
-            .any(|line: &str| line.to_uppercase().contains("STARTTLS"));
-
-        // If server doesn't support STARTTLS and it's not required, skip TLS
+        let supports_starttls = Self::supports_starttls(&ehlo_response);
         if !supports_starttls && !self.tls_requirement.is_required() {
             return Ok(TlsNegotiationOutcome::Skipped);
         }
 
         if self.tls_requirement.is_required() || supports_starttls {
-            let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
+            return self.negotiate_starttls(client, helo_domain).await;
+        }
 
-            // Attempt STARTTLS command
-            let starttls_result: Result<ClientResponse, String> =
-                tokio::time::timeout(starttls_timeout, client.starttls())
-                    .await
-                    .map_err(|_| format!("STARTTLS timed out after {starttls_timeout:?}"))
-                    .and_then(|r| r.map_err(|e| format!("STARTTLS failed: {e}")));
+        Ok(TlsNegotiationOutcome::Skipped)
+    }
 
-            let starttls_response: ClientResponse = match starttls_result {
-                Ok(response) => response,
-                Err(error_msg) => {
-                    if self.tls_requirement.is_required() {
-                        return Err(self.require_tls_error(error_msg));
-                    }
-                    // Opportunistic TLS failed - should retry without TLS per RFC 3207
-                    tracing::info!(
-                        domain = helo_domain,
-                        error = %error_msg,
-                        "STARTTLS failed for opportunistic TLS, will retry without TLS per RFC 3207"
-                    );
-                    return Ok(TlsNegotiationOutcome::RetryWithoutTls);
-                }
-            };
+    async fn negotiate_tls_for_existing_session(
+        &self,
+        client: &mut (impl StarttlsClient + Send),
+        helo_domain: &str,
+    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        let ehlo_response = self
+            .send_ehlo(client, helo_domain, EhloStage::Initial)
+            .await?;
+        if !ehlo_response.is_success() {
+            return Err(TemporaryError::SmtpTemporary(format!(
+                "Server rejected EHLO: {}",
+                ehlo_response.message()
+            ))
+            .into());
+        }
+        Ok(TlsNegotiationOutcome::Success)
+    }
 
-            if !starttls_response.is_success() {
-                let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
+    async fn send_ehlo(
+        &self,
+        client: &mut (impl StarttlsClient + Send),
+        helo_domain: &str,
+        stage: EhloStage,
+    ) -> Result<ClientResponse, DeliveryError> {
+        let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+        let ehlo_start = Instant::now();
+        let ehlo_response: ClientResponse =
+            tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                .await
+                .map_err(|_| {
+                    let message = match stage {
+                        EhloStage::Initial => {
+                            format!("EHLO timed out after {ehlo_timeout:?}")
+                        }
+                        EhloStage::AfterStarttls => {
+                            format!("EHLO after STARTTLS timed out after {ehlo_timeout:?}")
+                        }
+                    };
+                    TemporaryError::Timeout(message)
+                })??;
+        self.record_ehlo_duration(ehlo_start);
+        Ok(ehlo_response)
+    }
+
+    fn supports_starttls(response: &ClientResponse) -> bool {
+        response
+            .message()
+            .lines()
+            .any(|line: &str| line.to_uppercase().contains("STARTTLS"))
+    }
+
+    async fn negotiate_starttls(
+        &self,
+        client: &mut (impl StarttlsClient + Send),
+        helo_domain: &str,
+    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
+        let starttls_result: Result<ClientResponse, String> =
+            tokio::time::timeout(starttls_timeout, client.starttls())
+                .await
+                .map_err(|_| format!("STARTTLS timed out after {starttls_timeout:?}"))
+                .and_then(|r| r.map_err(|e| format!("STARTTLS failed: {e}")));
+
+        let starttls_response: ClientResponse = match starttls_result {
+            Ok(response) => response,
+            Err(error_msg) => {
                 if self.tls_requirement.is_required() {
-                    return Err(self.require_tls_error(message));
+                    return Err(self.require_tls_error(error_msg));
                 }
-                // Opportunistic TLS rejected - should retry without TLS per RFC 3207
+                // Opportunistic TLS failed - should retry without TLS per RFC 3207
                 tracing::info!(
                     domain = helo_domain,
-                    response = %starttls_response.message(),
-                    "Server rejected STARTTLS for opportunistic TLS, will retry without TLS per RFC 3207"
+                    error = %error_msg,
+                    "STARTTLS failed for opportunistic TLS, will retry without TLS per RFC 3207"
                 );
                 return Ok(TlsNegotiationOutcome::RetryWithoutTls);
             }
+        };
 
-            // Re-send EHLO after STARTTLS (RFC 3207)
-            let ehlo_start = Instant::now();
-            let ehlo_response: ClientResponse =
-                tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-                    .await
-                    .map_err(|_| {
-                        TemporaryError::Timeout(format!(
-                            "EHLO after STARTTLS timed out after {ehlo_timeout:?}"
-                        ))
-                    })??;
-            self.record_ehlo_duration(ehlo_start);
-
-            if !ehlo_response.is_success() {
-                return Err(TemporaryError::SmtpTemporary(format!(
-                    "Server rejected EHLO after STARTTLS: {}",
-                    ehlo_response.message()
-                ))
-                .into());
+        if !starttls_response.is_success() {
+            let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
+            if self.tls_requirement.is_required() {
+                return Err(self.require_tls_error(message));
             }
-
-            tracing::debug!(
+            // Opportunistic TLS rejected - should retry without TLS per RFC 3207
+            tracing::info!(
                 domain = helo_domain,
-                "TLS successfully negotiated via STARTTLS"
+                response = %starttls_response.message(),
+                "Server rejected STARTTLS for opportunistic TLS, will retry without TLS per RFC 3207"
             );
-            Ok(TlsNegotiationOutcome::Success)
-        } else {
-            // This branch shouldn't be reached given the earlier check, but handle it for completeness
-            Ok(TlsNegotiationOutcome::Skipped)
+            return Ok(TlsNegotiationOutcome::RetryWithoutTls);
         }
+
+        let ehlo_response = self
+            .send_ehlo(client, helo_domain, EhloStage::AfterStarttls)
+            .await?;
+        if !ehlo_response.is_success() {
+            return Err(TemporaryError::SmtpTemporary(format!(
+                "Server rejected EHLO after STARTTLS: {}",
+                ehlo_response.message()
+            ))
+            .into());
+        }
+
+        tracing::debug!(
+            domain = helo_domain,
+            "TLS successfully negotiated via STARTTLS"
+        );
+        Ok(TlsNegotiationOutcome::Success)
     }
 
     /// Send MAIL FROM command

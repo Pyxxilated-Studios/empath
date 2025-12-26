@@ -6,19 +6,34 @@ use empath_tracing::traced;
 use libloading::Library;
 use serde::Deserialize;
 
-#[allow(
-    clippy::unsafe_derive_deserialize,
-    reason = "The unsafe aspects have nothing to do with the struct"
-)]
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Shared {
     pub name: String,
-    #[serde(alias = "args")]
     pub arguments: Arc<[Arc<str>]>,
-    #[serde(skip)]
     module: Option<super::Mod>,
-    #[serde(skip)]
     library: Option<Library>,
+}
+
+#[derive(Deserialize)]
+struct SharedConfig {
+    name: String,
+    #[serde(alias = "args")]
+    arguments: Arc<[Arc<str>]>,
+}
+
+impl<'de> Deserialize<'de> for Shared {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let config = SharedConfig::deserialize(deserializer)?;
+        Ok(Self {
+            name: config.name,
+            arguments: config.arguments,
+            module: None,
+            library: None,
+        })
+    }
 }
 
 unsafe impl Send for Shared {}

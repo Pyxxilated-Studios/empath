@@ -48,6 +48,7 @@ mod exporter;
 mod modules;
 mod smtp;
 mod system;
+mod util;
 
 pub use config::MetricsConfig;
 pub use delivery::DeliveryMetrics;
@@ -60,6 +61,7 @@ pub use system::SystemMetrics;
 
 /// Global metrics instance
 static METRICS_INSTANCE: OnceCell<Metrics> = OnceCell::new();
+static NOOP_METRICS: OnceCell<Metrics> = OnceCell::new();
 
 /// Root metrics container
 #[derive(Debug)]
@@ -119,14 +121,14 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
     opentelemetry::global::set_meter_provider(provider);
 
     // Create metric instruments
-    let smtp = SmtpMetrics::new()?;
+    let smtp = SmtpMetrics::new();
     let delivery = DeliveryMetrics::new(
         config.max_domain_cardinality,
         config.high_priority_domains.clone(),
-    )?;
-    let dns = DnsMetrics::new()?;
-    let system = SystemMetrics::new()?;
-    let modules = ModuleMetrics::new()?;
+    );
+    let dns = DnsMetrics::new();
+    let system = SystemMetrics::new();
+    let modules = ModuleMetrics::new();
 
     let metrics = Metrics {
         smtp,
@@ -148,13 +150,10 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
 
 /// Get a reference to the global metrics instance
 ///
-/// # Panics
-///
-/// Panics if metrics have not been initialized via `init_metrics()`.
-///
 /// # Deprecated
 ///
-/// Use `try_metrics()` instead for safer access without panics.
+/// Use `try_metrics()` instead to detect initialization explicitly.
+/// When metrics are not initialized, this returns a no-op metrics instance.
 ///
 /// # Recommended Usage
 ///
@@ -164,13 +163,24 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
 /// }
 /// ```
 #[must_use]
-#[deprecated(since = "0.0.2", note = "use `try_metrics()` instead to avoid panics")]
-#[allow(
-    clippy::expect_used,
-    reason = "Panicking is intentional - this function is deprecated in favor of try_metrics()"
+#[deprecated(
+    since = "0.0.2",
+    note = "use `try_metrics()` instead for explicit initialization checks"
 )]
 pub fn metrics() -> &'static Metrics {
-    try_metrics().expect("Metrics not initialized. Call init_metrics() first.")
+    METRICS_INSTANCE
+        .get()
+        .unwrap_or_else(|| NOOP_METRICS.get_or_init(build_noop_metrics))
+}
+
+fn build_noop_metrics() -> Metrics {
+    Metrics {
+        smtp: SmtpMetrics::new(),
+        delivery: DeliveryMetrics::new(0, Vec::new()),
+        dns: DnsMetrics::new(),
+        system: SystemMetrics::new(),
+        modules: ModuleMetrics::new(),
+    }
 }
 
 /// Try to get a reference to the global metrics instance

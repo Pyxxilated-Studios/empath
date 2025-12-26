@@ -10,7 +10,7 @@ use empath_metrics::{DeliveryMetrics, DnsMetrics, ModuleMetrics, SmtpMetrics};
 
 #[test]
 fn test_smtp_connection_counter_accuracy() {
-    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let metrics = SmtpMetrics::new();
 
     // Record 10 connections
     for _ in 0..10 {
@@ -51,7 +51,7 @@ fn test_smtp_connection_counter_accuracy() {
 
 #[test]
 fn test_smtp_message_received_counter() {
-    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let metrics = SmtpMetrics::new();
 
     // Record messages with various sizes
     let message_sizes = [1024, 2048, 512, 4096, 8192];
@@ -67,7 +67,7 @@ fn test_smtp_message_received_counter() {
 
 #[test]
 fn test_smtp_error_recording() {
-    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let metrics = SmtpMetrics::new();
 
     // Record various SMTP errors
     metrics.record_error(550); // Mailbox unavailable
@@ -81,7 +81,7 @@ fn test_smtp_error_recording() {
 
 #[test]
 fn test_smtp_command_duration() {
-    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let metrics = SmtpMetrics::new();
 
     // Record command processing durations
     metrics.record_command("EHLO", 0.001);
@@ -95,7 +95,7 @@ fn test_smtp_command_duration() {
 
 #[test]
 fn test_delivery_counter_accuracy() {
-    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]);
 
     // Record successful deliveries
     for _ in 0..5 {
@@ -136,7 +136,7 @@ fn test_delivery_counter_accuracy() {
 
 #[test]
 fn test_dns_cache_metrics() {
-    let metrics = DnsMetrics::new().expect("Failed to create DNS metrics");
+    let metrics = DnsMetrics::new();
 
     // Record cache hits
     for _ in 0..50 {
@@ -177,7 +177,7 @@ fn test_dns_cache_metrics() {
 
 #[test]
 fn test_dns_lookup_duration() {
-    let metrics = DnsMetrics::new().expect("Failed to create DNS metrics");
+    let metrics = DnsMetrics::new();
 
     // Record successful lookups with durations
     metrics.record_lookup("example.com", 0.050);
@@ -193,7 +193,7 @@ fn test_dns_lookup_duration() {
 
 #[test]
 fn test_module_metrics_memory_and_helpers() {
-    let metrics = ModuleMetrics::new().expect("Failed to create module metrics");
+    let metrics = ModuleMetrics::new();
 
     metrics.record_error_with_kind("wasm", "/tmp/module.wasm", "error");
     metrics.record_execution("wasm", "validate_mail_from", 0.123);
@@ -211,7 +211,7 @@ fn test_module_metrics_memory_and_helpers() {
 fn test_concurrent_metric_updates() {
     use std::thread;
 
-    let metrics = Arc::new(SmtpMetrics::new().expect("Failed to create SMTP metrics"));
+    let metrics = Arc::new(SmtpMetrics::new());
 
     // Spawn multiple threads to record connections concurrently
     let mut handles = vec![];
@@ -241,7 +241,7 @@ fn test_concurrent_metric_updates() {
 
 #[test]
 fn test_atomic_counter_ordering() {
-    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let metrics = SmtpMetrics::new();
 
     // Record operations in sequence
     metrics.record_connection(); // active = 1
@@ -263,7 +263,7 @@ fn test_atomic_counter_ordering() {
 
 #[test]
 fn test_delivery_queue_size_consistency() {
-    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]);
 
     // Simulate queue operations for pending status
     metrics.set_queue_size("pending", 0);
@@ -284,7 +284,7 @@ fn test_delivery_queue_size_consistency() {
 
 #[test]
 fn test_dns_cache_size_updates() {
-    let metrics = DnsMetrics::new().expect("Failed to create DNS metrics");
+    let metrics = DnsMetrics::new();
 
     // Simulate cache growth
     for i in 1..=50 {
@@ -302,34 +302,19 @@ fn test_dns_cache_size_updates() {
 #[test]
 fn test_smtp_metrics_creation() {
     // Verify metrics can be created without panicking
-    let result = SmtpMetrics::new();
-    assert!(
-        result.is_ok(),
-        "SMTP metrics creation should succeed: {:?}",
-        result.err()
-    );
+    let _metrics = SmtpMetrics::new();
 }
 
 #[test]
 fn test_delivery_metrics_creation() {
     // Verify metrics can be created without panicking
-    let result = DeliveryMetrics::new(1000, vec![]);
-    assert!(
-        result.is_ok(),
-        "Delivery metrics creation should succeed: {:?}",
-        result.err()
-    );
+    let _metrics = DeliveryMetrics::new(1000, vec![]);
 }
 
 #[test]
 fn test_dns_metrics_creation() {
     // Verify metrics can be created without panicking
-    let result = DnsMetrics::new();
-    assert!(
-        result.is_ok(),
-        "DNS metrics creation should succeed: {:?}",
-        result.err()
-    );
+    let _metrics = DnsMetrics::new();
 }
 
 #[test]
@@ -337,7 +322,7 @@ fn test_dns_metrics_creation() {
 fn test_queue_age_recording() {
     use std::time::{Duration, SystemTime};
 
-    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]);
 
     // Simulate messages queued at different times
     let now = SystemTime::now();
@@ -356,7 +341,7 @@ fn test_queue_age_recording() {
 
 #[test]
 fn test_oldest_message_age_update() {
-    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]);
 
     // Simulate queue with varying message ages
     metrics.update_oldest_message_age(0); // Empty queue
@@ -372,7 +357,7 @@ fn test_oldest_message_age_update() {
 #[test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
 fn test_queue_age_with_system_time_edge_cases() {
-    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]);
 
     // Test with current time (age = 0)
     let now = SystemTime::now();
@@ -386,7 +371,7 @@ fn test_queue_age_with_system_time_edge_cases() {
 
 #[test]
 fn test_delivery_error_rate_calculation() {
-    let metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1000, vec![]);
 
     // Record various delivery outcomes
     metrics.record_delivery_success("example.com", 1.0, 0);
@@ -405,7 +390,7 @@ fn test_delivery_error_rate_calculation() {
 
 #[test]
 fn test_delivery_success_rate_with_zero_attempts() {
-    let _metrics = DeliveryMetrics::new(1000, vec![]).expect("Failed to create delivery metrics");
+    let _metrics = DeliveryMetrics::new(1000, vec![]);
 
     // With zero attempts, success rate should be 0.0 (not NaN or panic)
     // Observable gauge will calculate this when scraped
@@ -414,7 +399,7 @@ fn test_delivery_success_rate_with_zero_attempts() {
 
 #[test]
 fn test_smtp_connection_error_rate() {
-    let metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let metrics = SmtpMetrics::new();
 
     // Record successful connections
     metrics.record_connection();
@@ -432,7 +417,7 @@ fn test_smtp_connection_error_rate() {
 
 #[test]
 fn test_smtp_error_rate_with_zero_connections() {
-    let _metrics = SmtpMetrics::new().expect("Failed to create SMTP metrics");
+    let _metrics = SmtpMetrics::new();
 
     // With zero connections, error rate should be 0.0 (not NaN or panic)
     // Observable gauge will calculate this when scraped
@@ -446,8 +431,7 @@ fn test_delivery_domain_cardinality_limiting() {
 
     // Create metrics with low cardinality limit for testing
     let high_priority = vec!["gmail.com".to_string(), "outlook.com".to_string()];
-    let metrics =
-        DeliveryMetrics::new(3, high_priority).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(3, high_priority);
 
     // Record deliveries to 3 domains (should all be tracked)
     metrics.record_attempt("success", "example1.com");
@@ -475,8 +459,7 @@ fn test_delivery_domain_high_priority_bypass() {
 
     // Create metrics with cardinality limit of 1
     let high_priority = vec!["important.com".to_string()];
-    let metrics =
-        DeliveryMetrics::new(1, high_priority).expect("Failed to create delivery metrics");
+    let metrics = DeliveryMetrics::new(1, high_priority);
 
     // Fill the single tracked slot
     metrics.record_attempt("success", "example1.com");
@@ -501,8 +484,7 @@ fn test_delivery_domain_cardinality_concurrent() {
 
     // Initialize OpenTelemetry (happens once per test process)
 
-    let metrics =
-        Arc::new(DeliveryMetrics::new(10, vec![]).expect("Failed to create delivery metrics"));
+    let metrics = Arc::new(DeliveryMetrics::new(10, vec![]));
 
     // Spawn multiple threads recording to different domains concurrently
     let handles: Vec<_> = (0..20)

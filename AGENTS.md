@@ -14,7 +14,7 @@
 
 ## Agent Runbook
 - Before reporting completion: run `cargo fmt --all` and `cargo clippy --all-targets --all-features`.
-- Always ask before committing or running any tests.
+- Do not ask before running `cargo fmt --all` or `cargo clippy --all-targets --all-features`; run them whenever you make changes. Ask before committing or running any other tests.
 
 ## Coding Style & Naming Conventions
 - Rust nightly (see `rust-toolchain.toml`); format with `cargo fmt --all` (imports grouped per `rustfmt.toml`).

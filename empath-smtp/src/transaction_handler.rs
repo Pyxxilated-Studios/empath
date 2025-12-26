@@ -228,7 +228,7 @@ impl DefaultSmtpTransactionHandler {
     ///
     /// * `ctx` - Business context containing the message data
     async fn spool_message(&self, ctx: &mut Context) {
-        self.record_trace_context(ctx);
+        Self::record_trace_context(ctx);
         self.insert_received_header(ctx);
         let tracking_id = if let Some(spool) = &self.spool
             && ctx.data.is_some()
@@ -281,11 +281,7 @@ impl DefaultSmtpTransactionHandler {
         let _ = modules::dispatch(modules::Event::Event(modules::Ev::SmtpMessageReceived), ctx);
     }
 
-    #[allow(
-        clippy::unused_self,
-        reason = "Kept as method for cohesion with handler logic."
-    )]
-    fn record_trace_context(&self, ctx: &mut Context) {
+    fn record_trace_context(ctx: &mut Context) {
         if ctx.transaction.contains_key(TRACE_ID_CONTEXT_KEY) {
             return;
         }

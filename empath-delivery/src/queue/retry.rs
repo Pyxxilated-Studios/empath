@@ -37,21 +37,14 @@ pub fn calculate_next_retry_time(
     };
 
     // Apply jitter: delay * (1 ± jitter_factor)
-    // Intentional precision loss and casting for randomization
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
-    let jittered_delay = {
-        let jitter_range = (delay as f64) * jitter_factor;
-        let mut rng = rand::rng();
-        let jitter: f64 = rng.random_range(-jitter_range..=jitter_range);
-        ((delay as f64) + jitter).max(0.0) as u64
-    };
+    let delay_secs = f64::from(u32::try_from(delay).unwrap_or(u32::MAX));
+    let jitter_range = delay_secs * jitter_factor;
+    let mut rng = rand::rng();
+    let jitter: f64 = rng.random_range(-jitter_range..=jitter_range);
+    let jittered_delay = (delay_secs + jitter).max(0.0);
 
     // Calculate next retry timestamp
-    SystemTime::now() + Duration::from_secs(jittered_delay)
+    SystemTime::now() + Duration::from_secs_f64(jittered_delay)
 }
 
 #[cfg(test)]

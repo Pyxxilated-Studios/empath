@@ -348,6 +348,18 @@ impl HickoryDnsResolver {
         opts: ResolverOpts,
         dns_config: DnsConfig,
     ) -> Result<Self, DnsError> {
+        Ok(Self::build_with_resolver_config(
+            resolver_config,
+            opts,
+            dns_config,
+        ))
+    }
+
+    fn build_with_resolver_config(
+        resolver_config: ResolverConfig,
+        opts: ResolverOpts,
+        dns_config: DnsConfig,
+    ) -> Self {
         let resolver =
             TokioResolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
                 .with_options(opts)
@@ -358,14 +370,14 @@ impl HickoryDnsResolver {
         let ptr_cache = Arc::new(DashMap::new());
         let a_cache = Arc::new(DashMap::new());
 
-        Ok(Self {
+        Self {
             resolver,
             cache,
             txt_cache,
             ptr_cache,
             a_cache,
             config: dns_config,
-        })
+        }
     }
 
     /// Resolves mail servers for a domain following RFC 5321 section 5.1.
@@ -1029,22 +1041,19 @@ pub struct CacheStats {
 
 impl Default for HickoryDnsResolver {
     fn default() -> Self {
-        // Try system DNS configuration first
-        Self::new().unwrap_or_else(|e| {
-            // System DNS failed, use Cloudflare fallback (1.1.1.1, 1.0.0.1)
-            warn!(
-                error = %e,
-                "System DNS configuration failed, using Cloudflare fallback (1.1.1.1)"
-            );
-
-            #[allow(clippy::expect_used, reason = "The default resolver should not error")]
-            Self::with_resolver_config(
-                ResolverConfig::cloudflare(),
-                ResolverOpts::default(),
-                DnsConfig::default(),
-            )
-            .expect("Fallback DNS resolver failed - this should never happen with hardcoded config")
-        })
+        match Self::new() {
+            Ok(resolver) => resolver,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "System DNS configuration failed, using Cloudflare fallback (1.1.1.1)"
+                );
+                let dns_config = DnsConfig::default();
+                let mut opts = ResolverOpts::default();
+                opts.timeout = Duration::from_secs(dns_config.timeout_secs);
+                Self::build_with_resolver_config(ResolverConfig::cloudflare(), opts, dns_config)
+            }
+        }
     }
 }
 
