@@ -375,12 +375,19 @@ impl Command {
             format!("<{addr}>")
         };
 
-        Some(
-            address_parser::parse_reverse_path(&addr_with_brackets).map_or_else(
-                |err| Err(Self::Invalid(format!("Invalid MAIL FROM address: {err}"))),
-                |mailbox_opt| Ok(Self::MailFrom(mailbox_opt.map(Address::from), mail_params)),
-            ),
-        )
+        let mailbox_opt = match address_parser::parse_reverse_path(&addr_with_brackets) {
+            Ok(mailbox_opt) => mailbox_opt,
+            Err(err) => {
+                return Some(Err(Self::Invalid(format!(
+                    "Invalid MAIL FROM address: {err}"
+                ))));
+            }
+        };
+
+        Some(Ok(Self::MailFrom(
+            mailbox_opt.map(Address::from),
+            mail_params,
+        )))
     }
 
     fn parse_rcpt_to(trimmed: &str, command: &str) -> Option<Result<Self, Self>> {
@@ -401,17 +408,18 @@ impl Command {
             format!("<{addr}>")
         };
 
-        Some(
-            address_parser::parse_forward_path(&addr_with_brackets).map_or_else(
-                |err| Err(Self::Invalid(format!("Invalid RCPT TO address: {err}"))),
-                |mailbox| {
-                    // Convert single Mailbox to AddressList
-                    Ok(Self::RcptTo(AddressList::from(vec![Address::from(
-                        mailbox,
-                    )])))
-                },
-            ),
-        )
+        let mailbox = match address_parser::parse_forward_path(&addr_with_brackets) {
+            Ok(mailbox) => mailbox,
+            Err(err) => {
+                return Some(Err(Self::Invalid(format!(
+                    "Invalid RCPT TO address: {err}"
+                ))));
+            }
+        };
+
+        Some(Ok(Self::RcptTo(AddressList::from(vec![Address::from(
+            mailbox,
+        )]))))
     }
 
     fn parse_xclient(trimmed: &str) -> Option<Result<Self, Self>> {
@@ -599,10 +607,11 @@ impl TryFrom<&[u8]> for Command {
     type Error = Self;
 
     fn try_from(command: &[u8]) -> Result<Self, Self::Error> {
-        std::str::from_utf8(command).map_or_else(
-            |_| Err(Self::Invalid("Unable to interpret command".to_string())),
-            Self::try_from,
-        )
+        let Ok(command) = std::str::from_utf8(command) else {
+            return Err(Self::Invalid("Unable to interpret command".to_string()));
+        };
+
+        Self::try_from(command)
     }
 }
 

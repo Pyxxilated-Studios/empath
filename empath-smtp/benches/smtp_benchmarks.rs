@@ -61,7 +61,9 @@ fn bench_command_parsing(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(cmd.len() as u64));
         group.bench_with_input(BenchmarkId::new("from_str", desc), &cmd, |b, &cmd| {
             b.iter(|| {
-                let result: Result<Command, Command> = black_box(cmd).try_into();
+                let result: Result<Command, String> = black_box(cmd)
+                    .try_into()
+                    .map_err(|err: Command| err.to_string());
                 black_box(result)
             });
         });
@@ -86,7 +88,9 @@ fn bench_command_parsing_bytes(c: &mut Criterion) {
             &cmd_bytes,
             |b, &bytes| {
                 b.iter(|| {
-                    let result: Result<Command, Command> = black_box(bytes).try_into();
+                    let result: Result<Command, String> = black_box(bytes)
+                        .try_into()
+                        .map_err(|err: Command| err.to_string());
                     black_box(result)
                 });
             },

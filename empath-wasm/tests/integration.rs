@@ -42,16 +42,20 @@ fn cargo_profile() -> String {
 
 /// Location of the compiled test WASM module, reusing cached artifacts when available and only
 /// invoking `cargo run -p xtask -- build-wasm` if nothing fresh is present.
+fn workspace_root() -> Result<PathBuf, String> {
+    require_option(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(Path::to_path_buf),
+        "workspace root",
+    )
+}
+
 fn resolved_module_path() -> Result<&'static Path, String> {
     static MODULE_PATH: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 
     let result = MODULE_PATH.get_or_init(|| {
-        let workspace_root = require_option(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .map(Path::to_path_buf),
-            "workspace root",
-        )?;
+        let workspace_root = workspace_root()?;
 
         let profile = cargo_profile();
 
@@ -134,11 +138,28 @@ fn module_fresh(wasm_path: &Path, source_mtime: Option<SystemTime>) -> bool {
 fn load_test_module() -> Result<WasmModule, String> {
     let rt = runtime()?;
     let _guard = rt.enter();
-    require_result(
-        WasmModule::load(resolved_module_path()?)
-            .map(|module| module.with_deterministic_wasi(DeterministicWasiConfig::default())),
-        "Failed to load test module",
-    )
+    let path = resolved_module_path()?;
+    let module = WasmModule::load(path)
+        .map(|module| module.with_deterministic_wasi(DeterministicWasiConfig::default()));
+
+    match module {
+        Ok(module) => Ok(module),
+        Err(err) => {
+            let profile = cargo_profile();
+            let root = workspace_root()?;
+            require_result(
+                build_wasm_example(&root, &profile),
+                "failed to rebuild wasm example via xtask",
+            )?;
+
+            require_result(
+                WasmModule::load(path).map(|module| {
+                    module.with_deterministic_wasi(DeterministicWasiConfig::default())
+                }),
+                &format!("Failed to load test module after rebuild: {err:?}"),
+            )
+        }
+    }
 }
 
 fn runtime() -> Result<&'static Runtime, String> {
