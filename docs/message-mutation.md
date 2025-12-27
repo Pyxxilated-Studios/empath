@@ -49,7 +49,7 @@ Both the Python and shared library examples log their mutations and decorate the
 ```rust
 use empath_wasm_guest::bindings::empath::validator::message;
 
-fn validate_data(_ctx: empath_wasm_guest::bindings::empath::validator::Context) -> i32 {
+fn validate_data(_ctx: empath_wasm_guest::bindings::empath::validator::ValidationContext) -> i32 {
     let _ = message::headers_set("X-Processed-By".into(), "wasm-mutator".into());
     let _ = message::body_set_alternative(
         "Plain text body".into(),

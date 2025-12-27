@@ -23,13 +23,15 @@ The example uses the `empath-wasm-guest` proc macro, which bundles the canonical
 
 empath_wasm_guest::bindings!();
 
-use empath_wasm_guest::{accept, host, Context, ContextExt, ValidationGuest, ValidationResult};
+use empath_wasm_guest::{
+    accept, host, ContextExt, ValidationContext, ValidationGuest, ValidationResult,
+};
 
 struct Validator;
 export!(Validator);
 
 impl ValidationGuest for Validator {
-    fn validate_connect(ctx: Context) -> ValidationResult {
+    fn validate_connect(ctx: ValidationContext) -> ValidationResult {
         host::log(format!("hello {}", ctx.session_id()));
         accept()
     }
@@ -96,6 +98,7 @@ The module implements the `empath:validator` world defined in the canonical WIT 
   - `validate-rcpt-to`: Called on RCPT TO command
   - `validate-data`: Called on DATA command
   - `validate-starttls`: Called on STARTTLS command
+- Validation callbacks receive `ValidationContext`; event callbacks receive `EventContext`.
 
 - **Imports** (host functions):
   - `log`: Log messages from WASM to host

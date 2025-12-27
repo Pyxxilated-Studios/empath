@@ -20,7 +20,10 @@ use wasmtime::{
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder, p2::add_to_linker_sync};
 
 use crate::{
-    bindings::{Validator, exports::empath::validator::validation as wit},
+    bindings::{
+        Validator,
+        exports::empath::validator::{events as wit_events, validation as wit},
+    },
     error::{Result, WasmError},
     host::WasmStore,
 };
@@ -212,7 +215,25 @@ fn start_epoch_manager(engine: Arc<Engine>) {
     }
 }
 
-impl From<&Context> for wit::Context {
+impl From<&Context> for wit::ValidationContext {
+    fn from(ctx: &Context) -> Self {
+        Self {
+            extended: ctx.extended,
+            id: ctx.id.clone(),
+            sender: Some(ctx.sender()),
+            recipients: ctx.recipients(),
+            max_message_size: ctx.max_message_size as u64,
+            transaction: ctx
+                .transaction
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+            tracking_id: ctx.tracking_id.as_ref().map(ToString::to_string),
+        }
+    }
+}
+
+impl From<&Context> for wit_events::EventContext {
     fn from(ctx: &Context) -> Self {
         Self {
             extended: ctx.extended,
@@ -297,7 +318,7 @@ fn call_validation_callback(
     callback_name: &str,
     validator: &Validator,
     store: &mut Store<WasmStore>,
-    wit_context: &wit::Context,
+    wit_context: &wit::ValidationContext,
 ) -> Result<i32> {
     let Some(validation) = WasmValidation::from_name(callback_name) else {
         return Ok(-1); // Unknown callback
@@ -314,7 +335,7 @@ fn call_event_callback(
     callback_name: &str,
     validator: &Validator,
     store: &mut Store<WasmStore>,
-    wit_context: &wit::Context,
+    wit_context: &wit_events::EventContext,
 ) -> Result<()> {
     let Some(event) = WasmEvent::from_name(callback_name) else {
         return Ok(()); // Unknown callback
@@ -567,16 +588,15 @@ impl WasmModule {
         // Instantiate the component using generated bindings
         let validator = Validator::instantiate(&mut store, &self.component, &linker)?;
 
-        // Convert context to WIT format
-        let wit_context = {
-            let ctx_lock = context_arc
-                .lock()
-                .map_err(|e| WasmError::Internal(format!("Failed to lock context mutex: {e}")))?;
-            wit::Context::from(&*ctx_lock)
-        };
-
         // Call the appropriate validation or event function based on callback name
         let return_code = if callback_name.starts_with("validate_") {
+            // Convert context to WIT validation format
+            let wit_context = {
+                let ctx_lock = context_arc.lock().map_err(|e| {
+                    WasmError::Internal(format!("Failed to lock context mutex: {e}"))
+                })?;
+                wit::ValidationContext::from(&*ctx_lock)
+            };
             // Validation callback
             let code =
                 call_validation_callback(callback_name, &validator, &mut store, &wit_context)?;
@@ -590,6 +610,13 @@ impl WasmModule {
                 code
             }
         } else if callback_name.starts_with("on_") {
+            // Convert context to WIT event format
+            let wit_context = {
+                let ctx_lock = context_arc.lock().map_err(|e| {
+                    WasmError::Internal(format!("Failed to lock context mutex: {e}"))
+                })?;
+                wit_events::EventContext::from(&*ctx_lock)
+            };
             // Event callback
             call_event_callback(callback_name, &validator, &mut store, &wit_context)?;
             0
@@ -731,7 +758,7 @@ macro_rules! define_wasm_validations {
                 self,
                 validator: &Validator,
                 store: &mut Store<WasmStore>,
-                wit_context: &wit::Context,
+                wit_context: &wit::ValidationContext,
             ) -> Result<i32> {
                 let callback_name = self.name();
                 let timeout_secs = store.data().timeout.as_secs();
@@ -817,7 +844,7 @@ macro_rules! define_wasm_events {
                 self,
                 validator: &Validator,
                 store: &mut Store<WasmStore>,
-                wit_context: &wit::Context,
+                wit_context: &wit_events::EventContext,
             ) -> Result<()> {
                 let callback_name = self.name();
                 let timeout_secs = store.data().timeout.as_secs();

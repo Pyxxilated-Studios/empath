@@ -1,8 +1,8 @@
 use alloc::string::String;
 
-/// Convenience accessors over the generated `Context` type exposed in WASM modules.
+/// Convenience accessors over the generated validation/event context types exposed in WASM modules.
 ///
-/// The implementation for the generated `Context` is provided by the
+/// The implementations for the generated contexts are provided by the
 /// `bindings!` macro; consumers only need this trait in scope.
 pub trait ContextExt {
     /// Session or spool identifier for the current transaction.

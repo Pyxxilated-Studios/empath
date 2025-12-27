@@ -1,7 +1,7 @@
 # Empath MTA - Completed Tasks Archive
 
 > **Last Updated**: 2025-12-27
-> **Total Completed**: 110 tasks
+> **Total Completed**: 111 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
@@ -10,6 +10,13 @@ This file archives completed tasks from TODO.md to reduce cognitive load and imp
 ## Recently Completed (Last 30 Days)
 
 ### Week of 2025-12-27
+
+#### ✅ NEW-WASM-16 - Split WIT contexts for validation vs events
+**Completed**: 2025-12-27
+**Effort**: N/A
+**Priority**: P2
+
+Split WIT contexts into `validation-context` and `event-context`, updated host/guest bindings plus docs/examples, and kept a validation `Context` alias for compatibility.
 
 #### ✅ NEW-WASM-04 - Component Model with WIT interfaces
 **Completed**: 2025-12-27

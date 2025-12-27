@@ -55,19 +55,60 @@ fn base_tokens(wit_path: &LitStr) -> TokenStream2 {
             world: "validator",
         });
 
-        pub use exports::empath::validator::events::Guest as EventsGuest;
+        pub use exports::empath::validator::events::{EventContext, Guest as EventsGuest};
         pub use exports::empath::validator::validation::{
-            Context,
             Guest as ValidationGuest,
             Rejection,
+            ValidationContext,
             ValidationResult,
         };
+        /// Backwards-compatible alias for validation contexts.
+        pub type Context = ValidationContext;
     }
 }
 
 fn context_impl_tokens() -> TokenStream2 {
     quote! {
-        impl ::empath_wasm_guest::context::ContextExt for Context {
+        impl ::empath_wasm_guest::context::ContextExt for ValidationContext {
+            fn session_id(&self) -> &str {
+                &self.id
+            }
+
+            fn sender(&self) -> Option<&str> {
+                self.sender.as_deref()
+            }
+
+            fn recipients(&self) -> &[::alloc::string::String] {
+                &self.recipients
+            }
+
+            fn tracking_id(&self) -> Option<&str> {
+                self.tracking_id.as_deref()
+            }
+
+            fn transaction_pairs(&self) -> &[(
+                ::alloc::string::String,
+                ::alloc::string::String,
+            )] {
+                &self.transaction
+            }
+
+            fn transaction_value(&self, key: &str) -> Option<&str> {
+                self.transaction
+                    .iter()
+                    .find_map(|(k, v)| if k == key { Some(v.as_str()) } else { None })
+            }
+
+            fn max_message_size(&self) -> usize {
+                usize::try_from(self.max_message_size).unwrap_or(usize::MAX)
+            }
+
+            fn is_extended(&self) -> bool {
+                self.extended
+            }
+        }
+
+        impl ::empath_wasm_guest::context::ContextExt for EventContext {
             fn session_id(&self) -> &str {
                 &self.id
             }

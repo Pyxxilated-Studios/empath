@@ -18,13 +18,15 @@ WebAssembly (WASM) module support for Empath MTA, enabling validation modules wr
 
 empath_wasm_guest::bindings!();
 
-use empath_wasm_guest::{accept, host, Context, ContextExt, ValidationGuest, ValidationResult};
+use empath_wasm_guest::{
+    accept, host, ContextExt, ValidationContext, ValidationGuest, ValidationResult,
+};
 
 struct Validator;
 export!(Validator);
 
 impl ValidationGuest for Validator {
-    fn validate_connect(ctx: Context) -> ValidationResult {
+    fn validate_connect(ctx: ValidationContext) -> ValidationResult {
         host::log(format!("hello {}", ctx.session_id()));
         accept()
     }
@@ -92,12 +94,11 @@ Guest modules can call these host helpers (all exposed under `host::*` via `empa
 
 ## Context Serialization
 
-The `Context` is serialized using postcard and passed to WASM modules. Fields include:
+Validation and event contexts are serialized using postcard and passed to WASM modules. Fields include:
 
 - `id`: Session ID
 - `sender`: Envelope sender (MAIL FROM)
 - `recipients`: Envelope recipients (RCPT TO)
-- `data`: Message content (DATA command)
 - `extended`: ESMTP mode flag
 - `max_message_size`: Size limit in bytes
 - `transaction`: Key-value metadata

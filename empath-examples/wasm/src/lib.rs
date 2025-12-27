@@ -8,7 +8,7 @@ struct Validator;
 
 export!(Validator);
 
-fn maybe_trigger_event_error(ctx: &Context) {
+fn maybe_trigger_event_error(ctx: &EventContext) {
     if ctx.session_id().starts_with("panic-event") {
         panic!("intentional event panic for testing");
     }
@@ -19,7 +19,7 @@ fn maybe_trigger_event_error(ctx: &Context) {
 
 impl ValidationGuest for Validator {
     /// Validate connection - called when client connects
-    fn validate_connect(ctx: Context) -> ValidationResult {
+    fn validate_connect(ctx: ValidationContext) -> ValidationResult {
         host::log(format!(
             "WASM: validate_connect called for session ID: {}",
             ctx.session_id()
@@ -31,7 +31,7 @@ impl ValidationGuest for Validator {
     }
 
     /// Validate EHLO/HELO command
-    fn validate_ehlo(ctx: Context) -> ValidationResult {
+    fn validate_ehlo(ctx: ValidationContext) -> ValidationResult {
         host::log(format!(
             "WASM: validate_ehlo called (extended: {})",
             ctx.is_extended()
@@ -41,7 +41,7 @@ impl ValidationGuest for Validator {
     }
 
     /// Validate MAIL FROM command (sender)
-    fn validate_mail_from(ctx: Context) -> ValidationResult {
+    fn validate_mail_from(ctx: ValidationContext) -> ValidationResult {
         let sender = ctx.sender().unwrap_or("<none>");
         host::log(format!("WASM: validate_mail_from - sender: {sender}"));
 
@@ -69,7 +69,7 @@ impl ValidationGuest for Validator {
     }
 
     /// Validate RCPT TO command (recipient)
-    fn validate_rcpt_to(ctx: Context) -> ValidationResult {
+    fn validate_rcpt_to(ctx: ValidationContext) -> ValidationResult {
         host::log(format!(
             "WASM: validate_rcpt_to - recipients: {:?}",
             ctx.recipients()
@@ -89,7 +89,7 @@ impl ValidationGuest for Validator {
     }
 
     /// Validate DATA command (message content)
-    fn validate_data(_ctx: Context) -> ValidationResult {
+    fn validate_data(_ctx: ValidationContext) -> ValidationResult {
         let data = match message::raw_bytes() {
             Ok(data) => data,
             Err(err) => {
@@ -159,7 +159,7 @@ impl ValidationGuest for Validator {
     }
 
     /// Validate STARTTLS command
-    fn validate_starttls(ctx: Context) -> ValidationResult {
+    fn validate_starttls(ctx: ValidationContext) -> ValidationResult {
         host::log(format!(
             "WASM: validate_starttls called for session {}",
             ctx.session_id()
@@ -171,7 +171,7 @@ impl ValidationGuest for Validator {
 
 impl EventsGuest for Validator {
     /// Called when a client connection is opened
-    fn on_connection_opened(ctx: Context) {
+    fn on_connection_opened(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         host::log(format!(
             "WASM Event: Connection opened - session ID: {}",
@@ -182,7 +182,7 @@ impl EventsGuest for Validator {
     }
 
     /// Called when a client connection is closed
-    fn on_connection_closed(ctx: Context) {
+    fn on_connection_closed(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         host::log(format!(
             "WASM Event: Connection closed - session ID: {}",
@@ -195,7 +195,7 @@ impl EventsGuest for Validator {
     }
 
     /// Called before attempting delivery to a mail server
-    fn on_delivery_attempt(ctx: Context) {
+    fn on_delivery_attempt(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         host::log(format!(
             "WASM Event: Delivery attempt for message {}",
@@ -211,7 +211,7 @@ impl EventsGuest for Validator {
     }
 
     /// Called when delivery succeeds
-    fn on_delivery_success(ctx: Context) {
+    fn on_delivery_success(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         host::log(format!(
             "WASM Event: Delivery succeeded for message {}",
@@ -220,7 +220,7 @@ impl EventsGuest for Validator {
     }
 
     /// Called when delivery fails
-    fn on_delivery_failure(ctx: Context) {
+    fn on_delivery_failure(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         host::log(format!(
             "WASM Event: Delivery failed for message {}",
@@ -229,7 +229,7 @@ impl EventsGuest for Validator {
     }
 
     /// Called when an SMTP command returns an error response
-    fn on_smtp_error(ctx: Context) {
+    fn on_smtp_error(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         host::log(format!(
             "WASM Event: SMTP error for session {}",
@@ -238,7 +238,7 @@ impl EventsGuest for Validator {
     }
 
     /// Called when a complete message is received
-    fn on_smtp_message_received(ctx: Context) {
+    fn on_smtp_message_received(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         // Use host-backed view to avoid relying on inlined context data.
         let data_size = match message::raw_len() {
@@ -257,7 +257,7 @@ impl EventsGuest for Validator {
     }
 
     /// Called after a DNS lookup completes
-    fn on_dns_lookup(ctx: Context) {
+    fn on_dns_lookup(ctx: EventContext) {
         maybe_trigger_event_error(&ctx);
         host::log(format!(
             "WASM Event: DNS lookup completed for session {}",

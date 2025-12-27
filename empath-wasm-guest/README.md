@@ -9,13 +9,15 @@ Helper crate for building Empath WASM validation modules. It packages the canoni
 
 empath_wasm_guest::bindings!();
 
-use empath_wasm_guest::{accept, host, ContextExt, ValidationGuest, ValidationResult};
+use empath_wasm_guest::{
+    accept, host, ContextExt, ValidationContext, ValidationGuest, ValidationResult,
+};
 
 struct Validator;
 export!(Validator);
 
 impl ValidationGuest for Validator {
-    fn validate_mail_from(ctx: Context) -> ValidationResult {
+    fn validate_mail_from(ctx: ValidationContext) -> ValidationResult {
         host::log(format!("MAIL FROM from {:?}", ctx.sender()));
 
         if ctx.sender() == Some("bad@example.com") {
@@ -49,5 +51,6 @@ wit-bindgen = "0.49.0"
 3. Swap `empath::validator::host::*` calls for the shorter `host::*` wrappers.
 4. Replace manual `ValidationResult::Reject(Rejection { code, message })` with `reject(code, message)` (or `reject_temporary` / `reject_permanent`), and `ValidationResult::Accept` with `accept()`.
 5. Prefer the `ContextExt` helpers instead of reaching into struct fields directly.
+6. Event callbacks now receive `EventContext`; validation uses `ValidationContext` (the `Context` alias is preserved for validation-only code).
 
 Run `cargo test -p empath-wasm-guest` to ensure the embedded WIT stays in sync with the host copy.

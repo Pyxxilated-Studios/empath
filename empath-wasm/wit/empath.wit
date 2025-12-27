@@ -45,7 +45,7 @@ interface message {
 interface validation {
     /// Context passed to validation callbacks
     /// Contains all information about the current SMTP transaction
-    record context {
+    record validation-context {
         /// Whether EHLO was used (extended SMTP)
         extended: bool,
         /// Unique session/connection identifier
@@ -81,53 +81,69 @@ interface validation {
     }
 
     /// Validate connection (called when client connects)
-    validate-connect: func(ctx: context) -> validation-result;
+    validate-connect: func(ctx: validation-context) -> validation-result;
 
     /// Validate EHLO/HELO command
-    validate-ehlo: func(ctx: context) -> validation-result;
+    validate-ehlo: func(ctx: validation-context) -> validation-result;
 
     /// Validate MAIL FROM command (sender)
-    validate-mail-from: func(ctx: context) -> validation-result;
+    validate-mail-from: func(ctx: validation-context) -> validation-result;
 
     /// Validate RCPT TO command (recipient)
-    validate-rcpt-to: func(ctx: context) -> validation-result;
+    validate-rcpt-to: func(ctx: validation-context) -> validation-result;
 
     /// Validate DATA command (message content)
-    validate-data: func(ctx: context) -> validation-result;
+    validate-data: func(ctx: validation-context) -> validation-result;
 
     /// Validate STARTTLS command
-    validate-starttls: func(ctx: context) -> validation-result;
+    validate-starttls: func(ctx: validation-context) -> validation-result;
 }
 
 /// Event listener interface for connection lifecycle events
 /// These callbacks don't return validation results - they're for observability and side effects
 interface events {
-    /// Context passed to event callbacks (same as validation context)
-    use validation.{context};
+    /// Context passed to event callbacks (read-only snapshot at event time).
+    /// Currently mirrors the validation context; reserved for event-specific fields.
+    record event-context {
+        /// Whether EHLO was used (extended SMTP)
+        extended: bool,
+        /// Unique session/connection identifier
+        id: string,
+        /// Sender email address (from MAIL FROM)
+        sender: option<string>,
+        /// List of recipient email addresses (from RCPT TO)
+        recipients: list<string>,
+        /// Maximum allowed message size in bytes
+        max-message-size: u64,
+        /// Transaction context key-value pairs (persisted to spool)
+        transaction: list<tuple<string, string>>,
+        /// Optional tracking ID for correlation
+        tracking-id: option<string>,
+    }
 
     /// Called when a client connection is opened
-    on-connection-opened: func(ctx: context);
+    on-connection-opened: func(ctx: event-context);
 
     /// Called when a client connection is closed
-    on-connection-closed: func(ctx: context);
+    on-connection-closed: func(ctx: event-context);
 
     /// Called before attempting delivery to a mail server
-    on-delivery-attempt: func(ctx: context);
+    on-delivery-attempt: func(ctx: event-context);
 
     /// Called when delivery succeeds
-    on-delivery-success: func(ctx: context);
+    on-delivery-success: func(ctx: event-context);
 
     /// Called when delivery fails (temporary or permanent)
-    on-delivery-failure: func(ctx: context);
+    on-delivery-failure: func(ctx: event-context);
 
     /// Called when an SMTP command returns an error response (4xx/5xx)
-    on-smtp-error: func(ctx: context);
+    on-smtp-error: func(ctx: event-context);
 
     /// Called when a complete message is received from a client
-    on-smtp-message-received: func(ctx: context);
+    on-smtp-message-received: func(ctx: event-context);
 
     /// Called after a DNS lookup completes
-    on-dns-lookup: func(ctx: context);
+    on-dns-lookup: func(ctx: event-context);
 }
 
 /// Host functions that guest modules can call
