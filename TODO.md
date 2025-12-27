@@ -1,6 +1,6 @@
 # Empath TODO (Concise)
 
-Last updated: 2025-12-26 (rewritten for an actionable view). See `docs/COMPLETED.md` for history.
+Last updated: 2025-12-27 (rewritten for an actionable view). See `docs/COMPLETED.md` for history.
 
 Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] done.
 
@@ -10,7 +10,6 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 No active P1 items. See P2/P3/New Ideas for candidates.
 
 ## P2 — Next Up / Blocked
-- [ ] NEW-WASM-04: Component Model with WIT interfaces. Optional but aligns with NEW-WASM-16.
 - [ ] NEW-WASM-16: Split WIT context (read-only vs mutable or event-specific views) with compatibility plan.
 - [ ] NEW-TLS-04: Dual-stack TLS profiles. Support configuring multiple cert/key pairs per listener (e.g., “default” and “rotation” profiles) and provide control operations to switch active profiles or drain sockets without aborting in-flight connections.
 - [ ] NEW-SEC-ARC-01: ARC seal handling. Validate incoming ARC seals, detect replayed seals, and add regression tests to ensure archived ARC chains keep passing through the delivery pipeline.
