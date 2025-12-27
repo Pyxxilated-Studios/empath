@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     io as std_io,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -58,6 +59,14 @@ pub struct TlsContext {
     inner: Arc<TlsContextInner>,
 }
 
+/// Named TLS profile set for STARTTLS.
+#[derive(Debug, Clone)]
+pub struct TlsProfileSet {
+    id: Option<String>,
+    profiles: Arc<BTreeMap<String, TlsContext>>,
+    active: Arc<RwLock<String>>,
+}
+
 /// TLS certificate metadata for control plane inspection.
 #[derive(Debug, Clone)]
 pub struct TlsContextInfo {
@@ -81,6 +90,15 @@ pub struct TlsContextInfo {
     pub parse_error: Option<String>,
 }
 
+/// TLS profile metadata for control plane inspection.
+#[derive(Debug, Clone)]
+pub struct TlsProfileInfo {
+    pub set_id: Option<String>,
+    pub profile: String,
+    pub active: bool,
+    pub context: TlsContextInfo,
+}
+
 #[derive(Debug)]
 struct TlsContextInner {
     certificate: PathBuf,
@@ -92,6 +110,22 @@ struct TlsContextInner {
 struct RawTlsContext {
     certificate: PathBuf,
     key: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTlsProfileSet {
+    #[serde(default)]
+    id: Option<String>,
+    profiles: BTreeMap<String, RawTlsContext>,
+    #[serde(default)]
+    active_profile: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawTlsProfileConfig {
+    Single(RawTlsContext),
+    Profiles(RawTlsProfileSet),
 }
 
 impl Clone for TlsContext {
@@ -118,6 +152,35 @@ impl<'de> Deserialize<'de> for TlsContext {
     {
         let raw = RawTlsContext::deserialize(deserializer)?;
         Self::new(raw.certificate, raw.key).map_err(D::Error::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for TlsProfileSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawTlsProfileConfig::deserialize(deserializer)?;
+        let (id, profiles, active) = match raw {
+            RawTlsProfileConfig::Single(single) => {
+                let context =
+                    TlsContext::new(single.certificate, single.key).map_err(D::Error::custom)?;
+                let mut map = BTreeMap::new();
+                map.insert("default".to_string(), context);
+                (None, map, Some("default".to_string()))
+            }
+            RawTlsProfileConfig::Profiles(set) => {
+                let mut map = BTreeMap::new();
+                for (name, ctx) in set.profiles {
+                    let context =
+                        TlsContext::new(ctx.certificate, ctx.key).map_err(D::Error::custom)?;
+                    map.insert(name, context);
+                }
+                (set.id, map, set.active_profile)
+            }
+        };
+
+        Self::new(id, profiles, active).map_err(D::Error::custom)
     }
 }
 
@@ -242,26 +305,133 @@ impl TlsContext {
     }
 }
 
+impl TlsProfileSet {
+    /// Build a TLS profile set from named profiles.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no profiles are provided or if the active profile is missing.
+    pub fn new(
+        id: Option<String>,
+        profiles: BTreeMap<String, TlsContext>,
+        active_profile: Option<String>,
+    ) -> crate::error::TlsResult<Self> {
+        if profiles.is_empty() {
+            return Err(crate::error::TlsError::ProfileConfig(
+                "TLS profile set must include at least one profile".to_string(),
+            ));
+        }
+
+        let active = if let Some(active) = active_profile {
+            if profiles.contains_key(&active) {
+                active
+            } else {
+                return Err(crate::error::TlsError::ProfileNotFound {
+                    set_id: id.as_deref().unwrap_or("<unnamed>").to_string(),
+                    profile: active,
+                });
+            }
+        } else if profiles.contains_key("default") {
+            "default".to_string()
+        } else {
+            profiles
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "default".to_string())
+        };
+
+        Ok(Self {
+            id,
+            profiles: Arc::new(profiles),
+            active: Arc::new(RwLock::new(active)),
+        })
+    }
+
+    /// Convenience helper for creating a single-profile set.
+    #[must_use]
+    pub fn single(context: TlsContext) -> Self {
+        let mut profiles = BTreeMap::new();
+        profiles.insert("default".to_string(), context);
+        Self {
+            id: None,
+            profiles: Arc::new(profiles),
+            active: Arc::new(RwLock::new("default".to_string())),
+        }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+
+    #[must_use]
+    pub fn active_profile(&self) -> String {
+        self.active.read().clone()
+    }
+
+    /// Returns all named TLS profiles.
+    #[must_use]
+    pub fn profiles(&self) -> Vec<(String, TlsContext)> {
+        self.profiles
+            .iter()
+            .map(|(name, ctx)| (name.clone(), ctx.clone()))
+            .collect()
+    }
+
+    /// Returns the active TLS context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the active profile is missing.
+    pub fn active_context(&self) -> crate::error::TlsResult<TlsContext> {
+        let active = self.active_profile();
+        self.profiles
+            .get(&active)
+            .cloned()
+            .ok_or_else(|| crate::error::TlsError::ProfileNotFound {
+                set_id: self.id.clone().unwrap_or_else(|| "<unnamed>".to_string()),
+                profile: active,
+            })
+    }
+
+    /// Update the active profile by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profile does not exist.
+    pub fn set_active_profile(&self, profile: &str) -> crate::error::TlsResult<()> {
+        if !self.profiles.contains_key(profile) {
+            return Err(crate::error::TlsError::ProfileNotFound {
+                set_id: self.id.clone().unwrap_or_else(|| "<unnamed>".to_string()),
+                profile: profile.to_string(),
+            });
+        }
+        *self.active.write() = profile.to_string();
+        Ok(())
+    }
+}
+
 /// Registry used to keep track of every configured TLS context.
 #[derive(Default)]
 pub struct TlsContextRegistry {
-    contexts: RwLock<Vec<TlsContext>>,
+    profiles: RwLock<Vec<TlsProfileSet>>,
 }
 
 impl TlsContextRegistry {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            contexts: RwLock::new(Vec::new()),
+            profiles: RwLock::new(Vec::new()),
         }
     }
 
     /// Register all TLS contexts referenced by the provided extensions.
     pub fn register_extensions(&self, extensions: &[Extension]) {
-        let mut guard = self.contexts.write();
+        let mut guard = self.profiles.write();
         for ext in extensions {
-            if let Extension::Starttls(ctx) = ext {
-                guard.push(ctx.clone());
+            if let Extension::Starttls(profile_set) = ext {
+                guard.push(profile_set.clone());
             }
         }
     }
@@ -272,15 +442,14 @@ impl TlsContextRegistry {
     ///
     /// Propagates any TLS reload error encountered while rebuilding a context.
     pub fn reload_all(&self) -> crate::error::TlsResult<usize> {
-        let contexts = {
-            let guard = self.contexts.read();
-            guard.clone()
-        };
+        let profile_sets = self.profiles.read().clone();
 
         let mut reloaded = 0;
-        for ctx in contexts {
-            ctx.reload()?;
-            reloaded += 1;
+        for profile_set in profile_sets {
+            for (_, ctx) in profile_set.profiles() {
+                ctx.reload()?;
+                reloaded += 1;
+            }
         }
 
         Ok(reloaded)
@@ -288,17 +457,47 @@ impl TlsContextRegistry {
 
     #[must_use]
     pub fn count(&self) -> usize {
-        self.contexts.read().len()
+        self.profiles.read().len()
     }
 
-    /// List all registered TLS contexts with certificate metadata.
+    /// List all registered TLS profiles with certificate metadata.
     #[must_use]
-    pub fn list_contexts(&self) -> Vec<TlsContextInfo> {
-        self.contexts
+    pub fn list_profiles(&self) -> Vec<TlsProfileInfo> {
+        self.profiles
             .read()
             .iter()
-            .map(TlsContext::inspect)
-            .collect()
+            .flat_map(|profile_set| {
+                let active = profile_set.active_profile();
+                let set_id = profile_set.id().map(ToString::to_string);
+                profile_set
+                    .profiles()
+                    .into_iter()
+                    .map(move |(name, ctx)| TlsProfileInfo {
+                        set_id: set_id.clone(),
+                        profile: name.clone(),
+                        active: name == active,
+                        context: ctx.inspect(),
+                    })
+            })
+            .collect::<Vec<_>>()
+    }
+
+    /// Set the active profile for a TLS profile set by id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profile set or profile name is invalid.
+    pub fn set_active_profile(&self, set_id: &str, profile: &str) -> crate::error::TlsResult<()> {
+        let profile_set = {
+            let guard = self.profiles.read();
+            guard.iter().find(|set| set.id() == Some(set_id)).cloned()
+        };
+        let Some(profile_set) = profile_set else {
+            return Err(crate::error::TlsError::ProfileSetNotFound {
+                set_id: set_id.to_string(),
+            });
+        };
+        profile_set.set_active_profile(profile)
     }
 }
 
@@ -362,7 +561,7 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use super::TlsContext;
+    use super::{TlsContext, TlsProfileSet};
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -386,6 +585,43 @@ mod tests {
         assert!(
             info.not_after.is_some(),
             "certificate expiry should be present"
+        );
+    }
+
+    #[test]
+    fn profile_set_defaults_to_default() {
+        let primary =
+            TlsContext::new("cert.pem".into(), "key.pem".into()).expect("create TLS context");
+        let rotation =
+            TlsContext::new("cert2.pem".into(), "key2.pem".into()).expect("create TLS context");
+
+        let mut profiles = std::collections::BTreeMap::new();
+        profiles.insert("default".to_string(), primary);
+        profiles.insert("rotation".to_string(), rotation);
+
+        let set = TlsProfileSet::new(Some("smtp".to_string()), profiles, None)
+            .expect("create profile set");
+
+        assert_eq!(set.active_profile(), "default");
+    }
+
+    #[test]
+    fn profile_set_rejects_missing_profile() {
+        let primary =
+            TlsContext::new("cert.pem".into(), "key.pem".into()).expect("create TLS context");
+        let mut profiles = std::collections::BTreeMap::new();
+        profiles.insert("default".to_string(), primary);
+
+        let err = TlsProfileSet::new(
+            Some("smtp".to_string()),
+            profiles,
+            Some("missing".to_string()),
+        )
+        .expect_err("expected missing profile error");
+
+        assert_eq!(
+            err.to_string(),
+            "TLS profile 'missing' not found in set 'smtp'"
         );
     }
 }
@@ -664,7 +900,13 @@ impl Session {
         tracing::debug!("Max message size: {max_message_size}");
 
         let tls_context = config.extensions.iter().find_map(|ext| match ext {
-            Extension::Starttls(context) => Some(context.clone()),
+            Extension::Starttls(profile_set) => match profile_set.active_context() {
+                Ok(context) => Some(context),
+                Err(err) => {
+                    tracing::error!(error = %err, "Invalid active TLS profile");
+                    None
+                }
+            },
             _ => None,
         });
 

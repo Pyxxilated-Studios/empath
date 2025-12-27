@@ -26,7 +26,7 @@ pub use command::MailParameters;
 use empath_common::{context::Capability, error::ProtocolError, traits::protocol::Protocol};
 use empath_tracing::traced;
 use serde::Deserialize;
-pub use session::{Session, TlsContextInfo, TlsContextRegistry};
+pub use session::{Session, TlsContextInfo, TlsContextRegistry, TlsProfileInfo};
 // Re-export the type-safe state machine from the state module
 pub use state::State;
 use tokio::net::TcpStream;
@@ -281,27 +281,35 @@ impl Protocol for Smtp {
 
     #[traced(instrument(skip(self, args)), timing(precision = "ns"))]
     fn validate(&mut self, args: &mut Self::Args) -> Result<(), ProtocolError> {
-        if let Some(Extension::Starttls(tls)) = args
+        if let Some(Extension::Starttls(profile_set)) = args
             .extensions
             .iter()
             .find(|arg| matches!(arg, Extension::Starttls(_)))
         {
-            let cert_path = tls.certificate_path();
-            if !cert_path.try_exists()? {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Unable to find TLS Certificate {}", cert_path.display()),
-                )
-                .into());
-            }
+            for (profile, tls) in profile_set.profiles() {
+                let cert_path = tls.certificate_path();
+                if !cert_path.try_exists()? {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!(
+                            "Unable to find TLS certificate {} for profile '{profile}'",
+                            cert_path.display()
+                        ),
+                    )
+                    .into());
+                }
 
-            let key_path = tls.key_path();
-            if !key_path.try_exists()? {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Unable to find TLS Key {}", key_path.display()),
-                )
-                .into());
+                let key_path = tls.key_path();
+                if !key_path.try_exists()? {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!(
+                            "Unable to find TLS key {} for profile '{profile}'",
+                            key_path.display()
+                        ),
+                    )
+                    .into());
+                }
             }
         }
 

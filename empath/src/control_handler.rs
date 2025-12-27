@@ -593,6 +593,10 @@ impl EmpathControlHandler {
             SystemCommand::ReloadConfig => self.handle_system_reload_config(),
             SystemCommand::ReloadTls => self.handle_system_reload_tls(),
             SystemCommand::ListTls => self.handle_system_list_tls(),
+            SystemCommand::SetTlsProfile { set_id, profile } => {
+                self.handle_system_set_tls_profile(set_id, profile)
+            }
+            SystemCommand::DrainListener { socket } => Self::handle_system_drain_listener(socket),
             SystemCommand::ConnectionStats => Ok(self.handle_system_connection_stats()),
             SystemCommand::ListBindings => Ok(self.list_bindings_response()),
             SystemCommand::SetRateLimit {
@@ -685,22 +689,64 @@ impl EmpathControlHandler {
         })?;
 
         let contexts = registry
-            .list_contexts()
+            .list_profiles()
             .into_iter()
-            .map(|ctx| empath_control::protocol::TlsContextInfo {
-                certificate_path: ctx.certificate_path.display().to_string(),
-                key_path: ctx.key_path.display().to_string(),
-                fingerprint_sha256: ctx.fingerprint_sha256,
-                subject: ctx.subject,
-                issuer: ctx.issuer,
-                not_before: ctx.not_before,
-                not_after: ctx.not_after,
-                subject_alt_names: ctx.subject_alt_names,
-                parse_error: ctx.parse_error,
+            .map(|profile| empath_control::protocol::TlsContextInfo {
+                set_id: profile.set_id,
+                profile: Some(profile.profile),
+                active: profile.active,
+                certificate_path: profile.context.certificate_path.display().to_string(),
+                key_path: profile.context.key_path.display().to_string(),
+                fingerprint_sha256: profile.context.fingerprint_sha256,
+                subject: profile.context.subject,
+                issuer: profile.context.issuer,
+                not_before: profile.context.not_before,
+                not_after: profile.context.not_after,
+                subject_alt_names: profile.context.subject_alt_names,
+                parse_error: profile.context.parse_error,
             })
             .collect();
 
         Ok(Response::data(ResponseData::TlsContexts(contexts)))
+    }
+
+    fn handle_system_set_tls_profile(
+        &self,
+        set_id: &str,
+        profile: &str,
+    ) -> empath_control::Result<Response> {
+        let registry = self.tls_registry.as_ref().ok_or_else(|| {
+            ControlError::ServerError("TLS is not configured for this instance".to_string())
+        })?;
+
+        registry
+            .set_active_profile(set_id, profile)
+            .map_err(|err| {
+                ControlError::ServerError(format!("Failed to switch TLS profile: {err}"))
+            })?;
+
+        Ok(Response::data(ResponseData::Message(format!(
+            "TLS profile '{profile}' is now active for '{set_id}'"
+        ))))
+    }
+
+    fn handle_system_drain_listener(socket: &str) -> empath_control::Result<Response> {
+        let target = socket.parse().map_err(|err| {
+            ControlError::ServerError(format!("Invalid socket '{socket}': {err}"))
+        })?;
+
+        if crate::controller::SHUTDOWN_BROADCAST
+            .send(empath_common::Signal::Drain(target))
+            .is_err()
+        {
+            return Err(ControlError::ServerError(
+                "Failed to send drain signal".to_string(),
+            ));
+        }
+
+        Ok(Response::data(ResponseData::Message(format!(
+            "Listener {socket} entering drain mode"
+        ))))
     }
 
     fn handle_system_connection_stats(&self) -> Response {

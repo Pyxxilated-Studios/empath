@@ -530,6 +530,7 @@ impl DeliveryProcessor {
                             internal!("Delivery processor shutdown complete");
                             break;
                         }
+                        Ok(Signal::Drain(_)) => {}
                         Err(e) => {
                             empath_common::tracing::error!("Delivery processor shutdown channel error: {e}");
                             break;

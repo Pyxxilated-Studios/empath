@@ -92,13 +92,28 @@ impl<Proto: Protocol> Listener<Proto> {
 
         let mut shutdown_signal = shutdown.resubscribe();
 
+        let mut draining = false;
+
         loop {
             tokio::select! {
                 sig = shutdown_signal.recv() => {
-                    if matches!(sig, Ok(Signal::Shutdown)) {
-                        internal!(level = INFO, "{} Listener {}:{} Received Shutdown signal, aborting {} active sessions ...", Proto::ty(), address, port, sessions.len());
-                        sessions.abort_all();
-                        return Ok(());
+                    match sig {
+                        Ok(Signal::Shutdown) => {
+                            internal!(level = INFO, "{} Listener {}:{} Received Shutdown signal, aborting {} active sessions ...", Proto::ty(), address, port, sessions.len());
+                            sessions.abort_all();
+                            return Ok(());
+                        }
+                        Ok(Signal::Drain(target)) if target == self.socket => {
+                            if !draining {
+                                draining = true;
+                                internal!(level = INFO, "{} Listener {}:{} entering drain mode ({} active sessions)", Proto::ty(), address, port, sessions.len());
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            internal!(level = WARN, "Listener {}:{} received shutdown channel error: {e}", address, port);
+                            return Ok(());
+                        }
                     }
                 }
 
@@ -122,9 +137,13 @@ impl<Proto: Protocol> Listener<Proto> {
                             internal!(level = ERROR, "Session join error on {}: {e}", self.socket);
                         }
                     }
+                    if draining && sessions.is_empty() {
+                        internal!(level = INFO, "{} Listener {}:{} drain complete", Proto::ty(), address, port);
+                        return Ok(());
+                    }
                 }
 
-                connection = listener.accept() => {
+                connection = listener.accept(), if !draining => {
                     tracing::debug!("Connection received on {}", self.socket);
 
                     let (stream, address) = connection?;

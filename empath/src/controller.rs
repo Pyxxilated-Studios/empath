@@ -529,13 +529,14 @@ fn record_tls_watchdog_metrics(metrics: &empath_metrics::Metrics, registry: &Tls
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let contexts = registry.list_contexts();
+    let profiles = registry.list_profiles();
 
     let mut expired = 0;
     let mut parse_errors = 0;
     let mut min_seconds_until_expiry: Option<u64> = None;
 
-    for ctx in &contexts {
+    for profile in &profiles {
+        let ctx = &profile.context;
         if ctx.parse_error.is_some() {
             parse_errors += 1;
             continue;
@@ -559,7 +560,7 @@ fn record_tls_watchdog_metrics(metrics: &empath_metrics::Metrics, registry: &Tls
     }
 
     metrics.smtp.record_tls_cert_status(
-        u64::try_from(contexts.len()).unwrap_or(u64::MAX),
+        u64::try_from(profiles.len()).unwrap_or(u64::MAX),
         min_seconds_until_expiry,
         expired,
         parse_errors,

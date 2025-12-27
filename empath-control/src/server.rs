@@ -202,6 +202,7 @@ impl ControlServer {
                             info!("Control server shutting down");
                             break;
                         }
+                        Ok(empath_common::Signal::Drain(_)) => {}
                         Err(e) => {
                             error!("Control server shutdown channel error: {e}");
                             break;

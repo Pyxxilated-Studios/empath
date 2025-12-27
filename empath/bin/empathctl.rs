@@ -111,6 +111,18 @@ enum SystemAction {
     ReloadTls,
     /// List active TLS contexts and certificate metadata
     Tls,
+    /// Switch active TLS profile for a listener profile set
+    SetTlsProfile {
+        /// TLS profile set id
+        set_id: String,
+        /// Profile name to activate
+        profile: String,
+    },
+    /// Drain a listener socket (stop accepting new connections)
+    DrainListener {
+        /// Listener socket address
+        socket: String,
+    },
     /// Set runtime log level (e.g., info, debug, trace)
     SetLogLevel {
         /// New log level
@@ -548,6 +560,13 @@ fn print_tls_contexts(contexts: &[empath_control::protocol::TlsContextInfo]) {
     } else {
         for (idx, ctx) in contexts.iter().enumerate() {
             println!("Context {}:", idx + 1);
+            if let Some(set_id) = ctx.set_id.as_ref() {
+                println!("  set_id: {set_id}");
+            }
+            if let Some(profile) = ctx.profile.as_ref() {
+                println!("  profile: {profile}");
+                println!("  active: {}", ctx.active);
+            }
             println!("  certificate_path: {}", ctx.certificate_path);
             println!("  key_path: {}", ctx.key_path);
             if let Some(fingerprint) = &ctx.fingerprint_sha256 {
@@ -605,6 +624,10 @@ fn build_system_request(action: SystemAction) -> Request {
         SystemAction::ReloadConfig => SystemCommand::ReloadConfig,
         SystemAction::ReloadTls => SystemCommand::ReloadTls,
         SystemAction::Tls => SystemCommand::ListTls,
+        SystemAction::SetTlsProfile { set_id, profile } => {
+            SystemCommand::SetTlsProfile { set_id, profile }
+        }
+        SystemAction::DrainListener { socket } => SystemCommand::DrainListener { socket },
         SystemAction::SetLogLevel { level } => SystemCommand::SetLogLevel { level },
         SystemAction::ConnectionStats => SystemCommand::ConnectionStats,
         SystemAction::Bindings => SystemCommand::ListBindings,

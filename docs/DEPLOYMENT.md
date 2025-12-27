@@ -561,8 +561,18 @@ Empath(
                     // STARTTLS - Opportunistic encryption (RFC 3207)
                     {
                         "starttls": {
-                            "key": "/etc/empath/tls/private.key",
-                            "certificate": "/etc/empath/tls/certificate.crt",
+                            "id": "smtp-primary",
+                            "active_profile": "default",
+                            "profiles": {
+                                "default": {
+                                    "key": "/etc/empath/tls/private.key",
+                                    "certificate": "/etc/empath/tls/certificate.crt",
+                                },
+                                "rotation": {
+                                    "key": "/etc/empath/tls/private.next.key",
+                                    "certificate": "/etc/empath/tls/certificate.next.crt",
+                                },
+                            },
                         }
                     },
                 ],

@@ -3,7 +3,7 @@ use core::fmt::{self, Display};
 use empath_common::context::Capability;
 use serde::Deserialize;
 
-use crate::session::TlsContext;
+use crate::session::TlsProfileSet;
 
 /// SMTP protocol extensions advertised in EHLO response.
 ///
@@ -16,7 +16,7 @@ pub enum Extension {
     ///
     /// When advertised, clients can use the STARTTLS command to initiate
     /// TLS negotiation before transmitting sensitive data.
-    Starttls(TlsContext),
+    Starttls(TlsProfileSet),
 
     /// HELP extension - Provides command help information.
     ///
@@ -82,7 +82,7 @@ impl TryInto<Capability> for &Extension {
 #[cfg(test)]
 mod test {
     use super::Extension;
-    use crate::session::TlsContext;
+    use crate::session::{TlsContext, TlsProfileSet};
 
     #[test]
     fn extension_display() -> Result<(), String> {
@@ -96,10 +96,10 @@ mod test {
 
         // Other extensions
         assert_eq!(
-            Extension::Starttls(
+            Extension::Starttls(TlsProfileSet::single(
                 TlsContext::new("cert.pem".into(), "key.pem".into())
-                    .map_err(|err| err.to_string())?
-            )
+                    .map_err(|err| err.to_string())?,
+            ))
             .to_string(),
             "STARTTLS"
         );

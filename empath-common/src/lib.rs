@@ -28,4 +28,5 @@ pub use tracing;
 pub enum Signal {
     Shutdown,
     Finalised,
+    Drain(std::net::SocketAddr),
 }

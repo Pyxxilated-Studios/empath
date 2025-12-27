@@ -61,6 +61,15 @@ pub enum TlsError {
     /// Rustls library error.
     #[error("TLS error: {0}")]
     Rustls(String),
+    /// TLS profile set is missing in registry.
+    #[error("TLS profile set '{set_id}' not found")]
+    ProfileSetNotFound { set_id: String },
+    /// TLS profile name was not found.
+    #[error("TLS profile '{profile}' not found in set '{set_id}'")]
+    ProfileNotFound { set_id: String, profile: String },
+    /// TLS profile configuration error.
+    #[error("TLS profile configuration error: {0}")]
+    ProfileConfig(String),
 }
 
 impl From<tokio_rustls::rustls::Error> for TlsError {

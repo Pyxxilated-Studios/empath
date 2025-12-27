@@ -106,6 +106,14 @@ impl CommandHandler for MockHandler {
                     "TLS credentials reloaded".to_string(),
                 ))),
                 SystemCommand::ListTls => Ok(Response::data(ResponseData::TlsContexts(Vec::new()))),
+                SystemCommand::SetTlsProfile { set_id, profile } => {
+                    Ok(Response::data(ResponseData::Message(format!(
+                        "TLS profile '{profile}' activated for '{set_id}'"
+                    ))))
+                }
+                SystemCommand::DrainListener { socket } => Ok(Response::data(
+                    ResponseData::Message(format!("Listener {socket} draining")),
+                )),
                 SystemCommand::ConnectionStats => Ok(Response::data(
                     ResponseData::ConnectionStats(ConnectionStats {
                         queue_size: 42,

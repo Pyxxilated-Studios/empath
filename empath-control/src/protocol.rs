@@ -9,7 +9,7 @@ use chrono::{TimeZone, Utc, offset::LocalResult};
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Format timestamp (milliseconds since epoch) as human-readable
 fn format_timestamp(timestamp_ms: u64) -> String {
@@ -88,6 +88,18 @@ pub enum SystemCommand {
     ReloadTls,
     /// List active TLS contexts and certificate metadata
     ListTls,
+    /// Switch active TLS profile for a listener profile set
+    SetTlsProfile {
+        /// TLS profile set id
+        set_id: String,
+        /// Profile name to activate
+        profile: String,
+    },
+    /// Drain a listener socket (stop accepting new connections)
+    DrainListener {
+        /// Listener socket address
+        socket: String,
+    },
     /// Runtime connection/rate-limit stats
     ConnectionStats,
     /// List configured outbound bindings
@@ -315,6 +327,15 @@ pub struct OutboundBindingInfo {
 /// TLS certificate metadata for control responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsContextInfo {
+    /// TLS profile set id (if configured)
+    #[serde(default)]
+    pub set_id: Option<String>,
+    /// TLS profile name (if configured)
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Whether this profile is currently active
+    #[serde(default)]
+    pub active: bool,
     /// Path to certificate PEM file
     pub certificate_path: String,
     /// Path to key PEM file

@@ -56,6 +56,9 @@ const fn tls_error_reason(err: &TlsError) -> &'static str {
         TlsError::UpgradeFailed(_) => "handshake",
         TlsError::ProtocolInfoMissing(_) => "protocol_info_missing",
         TlsError::Rustls(_) => "rustls",
+        TlsError::ProfileSetNotFound { .. }
+        | TlsError::ProfileNotFound { .. }
+        | TlsError::ProfileConfig(_) => "profile_config",
     }
 }
 

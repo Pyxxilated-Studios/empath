@@ -1,7 +1,7 @@
 # Empath MTA - Completed Tasks Archive
 
 > **Last Updated**: 2025-12-27
-> **Total Completed**: 111 tasks
+> **Total Completed**: 112 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
@@ -10,6 +10,13 @@ This file archives completed tasks from TODO.md to reduce cognitive load and imp
 ## Recently Completed (Last 30 Days)
 
 ### Week of 2025-12-27
+
+#### ✅ NEW-TLS-04 - Dual-stack TLS profiles
+**Completed**: 2025-12-27
+**Effort**: N/A
+**Priority**: P2
+
+Added STARTTLS profile sets with active selection, control commands to switch profiles and drain listener sockets, plus updated docs/examples.
 
 #### ✅ NEW-WASM-16 - Split WIT contexts for validation vs events
 **Completed**: 2025-12-27
