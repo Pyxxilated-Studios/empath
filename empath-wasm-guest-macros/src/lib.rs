@@ -1,6 +1,7 @@
-#![feature(proc_macro_quote)]
-
-use proc_macro::{TokenStream, quote};
+use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::quote;
+use syn::LitStr;
 
 const fn wit_path_literal() -> &'static str {
     // Embed an absolute path to the canonical WIT file; this avoids inlining the
@@ -24,12 +25,12 @@ pub fn bindings(input: TokenStream) -> TokenStream {
         .into();
     }
 
-    let wit_path = wit_path_literal();
+    let wit_path = LitStr::new(wit_path_literal(), Span::call_site());
 
-    bindings_tokens(wit_path)
+    bindings_tokens(&wit_path).into()
 }
 
-fn bindings_tokens(wit_path: &str) -> TokenStream {
+fn bindings_tokens(wit_path: &LitStr) -> TokenStream2 {
     let base = base_tokens(wit_path);
     let context_impl = context_impl_tokens();
     let read_error_impl = read_error_impl_tokens();
@@ -38,19 +39,19 @@ fn bindings_tokens(wit_path: &str) -> TokenStream {
     let message_module = message_module_tokens();
 
     quote! {
-        $base
-        $context_impl
-        $read_error_impl
-        $helpers
-        $host_module
-        $message_module
+        #base
+        #context_impl
+        #read_error_impl
+        #helpers
+        #host_module
+        #message_module
     }
 }
 
-fn base_tokens(wit_path: &str) -> TokenStream {
+fn base_tokens(wit_path: &LitStr) -> TokenStream2 {
     quote! {
         ::wit_bindgen::generate!({
-            path: $wit_path,
+            path: #wit_path,
             world: "validator",
         });
 
@@ -64,7 +65,7 @@ fn base_tokens(wit_path: &str) -> TokenStream {
     }
 }
 
-fn context_impl_tokens() -> TokenStream {
+fn context_impl_tokens() -> TokenStream2 {
     quote! {
         impl ::empath_wasm_guest::context::ContextExt for Context {
             fn session_id(&self) -> &str {
@@ -107,7 +108,7 @@ fn context_impl_tokens() -> TokenStream {
     }
 }
 
-fn read_error_impl_tokens() -> TokenStream {
+fn read_error_impl_tokens() -> TokenStream2 {
     quote! {
         impl ::core::convert::From<crate::empath::validator::message::ReadError>
             for ::empath_wasm_guest::message_helpers::MessageReadError
@@ -132,7 +133,7 @@ fn read_error_impl_tokens() -> TokenStream {
     }
 }
 
-fn helpers_tokens() -> TokenStream {
+fn helpers_tokens() -> TokenStream2 {
     quote! {
         pub use ::empath_wasm_guest::prelude::*;
 
@@ -162,7 +163,7 @@ fn helpers_tokens() -> TokenStream {
     }
 }
 
-fn host_module_tokens() -> TokenStream {
+fn host_module_tokens() -> TokenStream2 {
     quote! {
         pub mod host {
             pub use crate::empath::validator::host::OutboundBinding;
@@ -208,7 +209,7 @@ fn host_module_tokens() -> TokenStream {
     }
 }
 
-fn message_module_tokens() -> TokenStream {
+fn message_module_tokens() -> TokenStream2 {
     let message_read = message_read_tokens();
     let message_headers = message_header_tokens();
     let message_body = message_body_tokens();
@@ -222,14 +223,14 @@ fn message_module_tokens() -> TokenStream {
 
             const DEFAULT_READ_CHUNK: u32 = 64 * 1024;
 
-            $message_read
-            $message_headers
-            $message_body
+            #message_read
+            #message_headers
+            #message_body
         }
     }
 }
 
-fn message_read_tokens() -> TokenStream {
+fn message_read_tokens() -> TokenStream2 {
     quote! {
         pub fn raw_len() -> ReadResult<u64> {
             map_read_result(crate::empath::validator::message::raw_len())
@@ -258,7 +259,7 @@ fn message_read_tokens() -> TokenStream {
     }
 }
 
-fn message_header_tokens() -> TokenStream {
+fn message_header_tokens() -> TokenStream2 {
     quote! {
         pub fn headers_get(name: &str) -> ::alloc::vec::Vec<::alloc::string::String> {
             crate::empath::validator::message::headers_get(name)
@@ -300,7 +301,7 @@ fn message_header_tokens() -> TokenStream {
     }
 }
 
-fn message_body_tokens() -> TokenStream {
+fn message_body_tokens() -> TokenStream2 {
     quote! {
         pub fn body_len() -> ReadResult<u64> {
             map_read_result(crate::empath::validator::message::body_len())
