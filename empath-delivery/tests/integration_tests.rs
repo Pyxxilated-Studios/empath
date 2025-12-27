@@ -15,7 +15,10 @@ use empath_delivery::{
     DeliveryInfo, DeliveryProcessor, DomainConfig, DomainConfigRegistry, SmtpTimeouts,
 };
 use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
-use tokio::sync::broadcast;
+use tokio::{
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
+    sync::broadcast,
+};
 
 fn create_test_context(from: &str, to: &str) -> Context {
     let mut envelope = Envelope::default();
@@ -495,15 +498,43 @@ async fn test_cleanup_queue_exponential_backoff() {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+async fn read_response<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    code_prefix: &str,
+    contains: Option<&str>,
+) {
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .await
+        .expect("Failed to read response");
+    assert!(line.starts_with(code_prefix));
+    if let Some(expected) = contains {
+        assert!(line.contains(expected));
+    }
+}
+
+async fn write_command<W: AsyncWrite + Unpin>(writer: &mut W, command: &[u8]) {
+    writer
+        .write_all(command)
+        .await
+        .expect("Failed to write command");
+    writer.flush().await.expect("Failed to flush");
+}
+
+async fn write_message_content<W: AsyncWrite + Unpin>(writer: &mut W) {
+    writer
+        .write_all(b"Subject: Test\r\n\r\nTest message body\r\n.\r\n")
+        .await
+        .expect("Failed to write message content");
+    writer.flush().await.expect("Failed to flush");
+}
+
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_mock_smtp_server_basic() {
     use support::mock_server::{MockSmtpServer, SmtpCommand};
-    use tokio::{
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::TcpStream,
-    };
+    use tokio::net::TcpStream;
 
     // Create a mock server with default configuration
     let server = MockSmtpServer::builder()
@@ -527,115 +558,36 @@ async fn test_mock_smtp_server_basic() {
     let mut stream = TcpStream::connect(addr).await.expect("Failed to connect");
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
-    let mut line = String::new();
 
     // Read greeting
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read greeting");
-    assert!(line.starts_with("220"));
-    line.clear();
+    read_response(&mut reader, "220", None).await;
 
     // Send EHLO
-    writer
-        .write_all(b"EHLO client.local\r\n")
-        .await
-        .expect("Failed to write EHLO");
-    writer.flush().await.expect("Failed to flush");
+    write_command(&mut writer, b"EHLO client.local\r\n").await;
 
     // Read EHLO response (multi-line)
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read EHLO response");
-    assert!(line.starts_with("250"));
-    line.clear();
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read EHLO capabilities");
-    assert!(line.starts_with("250"));
-    line.clear();
+    read_response(&mut reader, "250", None).await;
+    read_response(&mut reader, "250", None).await;
 
     // Send MAIL FROM
-    writer
-        .write_all(b"MAIL FROM:<sender@example.com>\r\n")
-        .await
-        .expect("Failed to write MAIL FROM");
-    writer.flush().await.expect("Failed to flush");
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read MAIL FROM response");
-    assert!(line.starts_with("250"));
-    assert!(line.contains("Sender OK"));
-    line.clear();
+    write_command(&mut writer, b"MAIL FROM:<sender@example.com>\r\n").await;
+    read_response(&mut reader, "250", Some("Sender OK")).await;
 
     // Send RCPT TO
-    writer
-        .write_all(b"RCPT TO:<recipient@example.com>\r\n")
-        .await
-        .expect("Failed to write RCPT TO");
-    writer.flush().await.expect("Failed to flush");
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read RCPT TO response");
-    assert!(line.starts_with("250"));
-    assert!(line.contains("Recipient OK"));
-    line.clear();
+    write_command(&mut writer, b"RCPT TO:<recipient@example.com>\r\n").await;
+    read_response(&mut reader, "250", Some("Recipient OK")).await;
 
     // Send DATA
-    writer
-        .write_all(b"DATA\r\n")
-        .await
-        .expect("Failed to write DATA");
-    writer.flush().await.expect("Failed to flush");
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read DATA response");
-    assert!(line.starts_with("354"));
-    line.clear();
+    write_command(&mut writer, b"DATA\r\n").await;
+    read_response(&mut reader, "354", None).await;
 
     // Send message content
-    writer
-        .write_all(b"Subject: Test\r\n")
-        .await
-        .expect("Failed to write subject");
-    writer
-        .write_all(b"\r\n")
-        .await
-        .expect("Failed to write blank line");
-    writer
-        .write_all(b"Test message body\r\n")
-        .await
-        .expect("Failed to write body");
-    writer
-        .write_all(b".\r\n")
-        .await
-        .expect("Failed to write terminator");
-    writer.flush().await.expect("Failed to flush");
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read end response");
-    assert!(line.starts_with("250"));
-    assert!(line.contains("Message accepted"));
-    line.clear();
+    write_message_content(&mut writer).await;
+    read_response(&mut reader, "250", Some("Message accepted")).await;
 
     // Send QUIT
-    writer
-        .write_all(b"QUIT\r\n")
-        .await
-        .expect("Failed to write QUIT");
-    writer.flush().await.expect("Failed to flush");
-    reader
-        .read_line(&mut line)
-        .await
-        .expect("Failed to read QUIT response");
-    assert!(line.starts_with("221"));
+    write_command(&mut writer, b"QUIT\r\n").await;
+    read_response(&mut reader, "221", None).await;
 
     // Verify commands were tracked
     let commands = server.commands().await;
@@ -646,6 +598,24 @@ async fn test_mock_smtp_server_basic() {
     assert!(matches!(commands[3], SmtpCommand::Data));
     assert!(matches!(commands[4], SmtpCommand::MessageContent(_)));
     assert!(matches!(commands[5], SmtpCommand::Quit));
+
+    server.shutdown();
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
+async fn test_mock_smtp_server_builder_options() {
+    use support::mock_server::MockSmtpServer;
+
+    let server = MockSmtpServer::builder()
+        .with_helo_response(250, "Hello")
+        .with_starttls_response(220, "Ready")
+        .with_connection_delay(Duration::from_millis(1))
+        .with_response_delay(Duration::from_millis(1))
+        .with_timeout_on_command(1)
+        .build()
+        .await
+        .expect("Failed to start mock server");
 
     server.shutdown();
 }

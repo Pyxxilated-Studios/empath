@@ -1,7 +1,6 @@
 //! Mock SMTP server for testing delivery scenarios
 //!
 //! This module provides a configurable mock SMTP server that can:
-#![allow(dead_code)] // Test utility module - not all methods used in every test
 //! - Simulate various SMTP responses (success, failure, temporary errors)
 //! - Inject network failures (timeouts, connection drops)
 //! - Track received commands for verification
@@ -41,7 +40,7 @@ use std::{
 };
 
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     sync::RwLock,
     time::timeout,
@@ -161,7 +160,6 @@ impl Default for MockServerConfig {
 /// Mock SMTP server for testing
 pub struct MockSmtpServer {
     addr: SocketAddr,
-    config: Arc<MockServerConfig>,
     commands_received: Arc<RwLock<Vec<SmtpCommand>>>,
     shutdown: Arc<AtomicBool>,
     command_count: Arc<AtomicUsize>,
@@ -197,58 +195,39 @@ impl MockSmtpServer {
     }
 
     /// Handle a single client connection
-    #[allow(clippy::too_many_lines)]
     async fn handle_client(
         mut stream: TcpStream,
         config: Arc<MockServerConfig>,
         commands: Arc<RwLock<Vec<SmtpCommand>>>,
         command_count: Arc<AtomicUsize>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Apply connection delay if configured
         if let Some(delay) = config.connection_delay {
             tokio::time::sleep(delay).await;
         }
 
         let (reader, mut writer) = stream.split();
         let mut reader = BufReader::new(reader);
+
+        Self::send_greeting(&mut writer, &config).await?;
+
         let mut line = String::new();
         let mut local_command_count = 0;
-
-        // Send greeting
-        writer.write_all(&config.greeting.to_bytes()).await?;
-        writer.flush().await?;
-
         loop {
             line.clear();
 
-            // Check if we should drop the connection
-            if let Some(drop_after) = config.drop_after_commands
-                && local_command_count >= drop_after
-            {
-                // Silently close connection
+            if Self::should_drop_connection(&config, local_command_count) {
                 return Ok(());
             }
 
-            // Check if we should timeout on this command
-            if let Some(timeout_on) = config.timeout_on_command
-                && local_command_count == timeout_on
-            {
-                // Sleep indefinitely to simulate timeout
+            if Self::should_timeout_on_command(&config, local_command_count) {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
                 return Ok(());
             }
 
-            // Read command with timeout (10 seconds)
-            let read_result = timeout(Duration::from_secs(10), reader.read_line(&mut line)).await;
-
-            if read_result.is_err() {
-                // Timeout reading command
+            let Some(bytes_read) = Self::read_command_line(&mut reader, &mut line).await? else {
                 return Ok(());
-            }
-
-            let bytes_read = read_result??;
+            };
             if bytes_read == 0 {
-                // Connection closed
                 return Ok(());
             }
 
@@ -258,111 +237,158 @@ impl MockSmtpServer {
             let cmd_line = line.trim();
             tracing::debug!("Mock server received: {}", cmd_line);
 
-            // Parse command
-            let parts: Vec<&str> = cmd_line.splitn(2, ' ').collect();
-            let command = parts[0].to_uppercase();
-
-            let (response, smtp_cmd) = match command.as_str() {
-                "EHLO" => {
-                    let hostname = parts.get(1).unwrap_or(&"").to_string();
-                    let cmd = SmtpCommand::Ehlo(hostname);
-                    let resp = config
-                        .ehlo_response
-                        .as_ref()
-                        .map_or_else(|| config.helo_response.to_bytes(), EhloResponse::to_bytes);
-                    (resp, cmd)
-                }
-                "HELO" => {
-                    let hostname = parts.get(1).unwrap_or(&"").to_string();
-                    (config.helo_response.to_bytes(), SmtpCommand::Helo(hostname))
-                }
-                "MAIL" => {
-                    let from = parts.get(1).unwrap_or(&"").to_string();
-                    (
-                        config.mail_from_response.to_bytes(),
-                        SmtpCommand::MailFrom(from),
-                    )
-                }
-                "RCPT" => {
-                    let to = parts.get(1).unwrap_or(&"").to_string();
-                    (config.rcpt_to_response.to_bytes(), SmtpCommand::RcptTo(to))
-                }
-                "DATA" => (config.data_response.to_bytes(), SmtpCommand::Data),
-                "QUIT" => {
-                    let resp = config.quit_response.to_bytes();
-                    commands.write().await.push(SmtpCommand::Quit);
-                    writer.write_all(&resp).await?;
-                    writer.flush().await?;
-                    return Ok(());
-                }
-                "STARTTLS" => config.starttls_response.as_ref().map_or_else(
-                    || {
-                        (
-                            SmtpResponse::new(502, "Command not implemented").to_bytes(),
-                            SmtpCommand::StartTls,
-                        )
-                    },
-                    |starttls_resp| (starttls_resp.to_bytes(), SmtpCommand::StartTls),
-                ),
-                _ => (
-                    SmtpResponse::new(500, "Unknown command").to_bytes(),
-                    SmtpCommand::Other(cmd_line.to_string()),
-                ),
-            };
-
-            // Store command
+            let (response, smtp_cmd, should_quit) = Self::parse_command(cmd_line, &config);
             commands.write().await.push(smtp_cmd.clone());
 
-            // Handle DATA content if we just sent DATA response
+            if should_quit {
+                writer.write_all(&response).await?;
+                writer.flush().await?;
+                return Ok(());
+            }
+
             if matches!(smtp_cmd, SmtpCommand::Data) && config.data_response.code == 354 {
                 writer.write_all(&response).await?;
                 writer.flush().await?;
-
                 command_count.fetch_add(1, Ordering::Relaxed);
-
-                // Read message content until we see <CRLF>.<CRLF>
-                let mut message_content = Vec::new();
-                let mut data_line = String::new();
-
-                loop {
-                    data_line.clear();
-                    let bytes_read = reader.read_line(&mut data_line).await?;
-                    if bytes_read == 0 {
-                        break;
-                    }
-
-                    if data_line.trim() == "." {
-                        // End of message
-                        commands
-                            .write()
-                            .await
-                            .push(SmtpCommand::MessageContent(message_content.clone()));
-
-                        // Send data end response
-                        if let Some(delay) = config.response_delay {
-                            tokio::time::sleep(delay).await;
-                        }
-                        writer
-                            .write_all(&config.data_end_response.to_bytes())
-                            .await?;
-                        writer.flush().await?;
-                        break;
-                    }
-
-                    message_content.extend_from_slice(data_line.as_bytes());
-                }
+                Self::handle_data_block(&mut reader, &mut writer, &config, &commands).await?;
                 continue;
             }
 
-            // Apply response delay if configured
             if let Some(delay) = config.response_delay {
                 tokio::time::sleep(delay).await;
             }
 
-            // Send response
             writer.write_all(&response).await?;
             writer.flush().await?;
         }
+    }
+
+    async fn send_greeting<W: AsyncWrite + Unpin>(
+        writer: &mut W,
+        config: &MockServerConfig,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        writer.write_all(&config.greeting.to_bytes()).await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
+    fn should_drop_connection(config: &MockServerConfig, local_command_count: usize) -> bool {
+        config
+            .drop_after_commands
+            .is_some_and(|drop_after| local_command_count >= drop_after)
+    }
+
+    fn should_timeout_on_command(config: &MockServerConfig, local_command_count: usize) -> bool {
+        config
+            .timeout_on_command
+            .is_some_and(|timeout_on| local_command_count == timeout_on)
+    }
+
+    async fn read_command_line<R: AsyncBufRead + Unpin>(
+        reader: &mut R,
+        line: &mut String,
+    ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
+        let read_result = timeout(Duration::from_secs(10), reader.read_line(line)).await;
+        match read_result {
+            Ok(result) => Ok(Some(result?)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn parse_command(cmd_line: &str, config: &MockServerConfig) -> (Vec<u8>, SmtpCommand, bool) {
+        let parts: Vec<&str> = cmd_line.splitn(2, ' ').collect();
+        let command = parts[0].to_uppercase();
+
+        match command.as_str() {
+            "EHLO" => {
+                let hostname = parts.get(1).unwrap_or(&"").to_string();
+                let cmd = SmtpCommand::Ehlo(hostname);
+                let resp = config
+                    .ehlo_response
+                    .as_ref()
+                    .map_or_else(|| config.helo_response.to_bytes(), EhloResponse::to_bytes);
+                (resp, cmd, false)
+            }
+            "HELO" => {
+                let hostname = parts.get(1).unwrap_or(&"").to_string();
+                (
+                    config.helo_response.to_bytes(),
+                    SmtpCommand::Helo(hostname),
+                    false,
+                )
+            }
+            "MAIL" => {
+                let from = parts.get(1).unwrap_or(&"").to_string();
+                (
+                    config.mail_from_response.to_bytes(),
+                    SmtpCommand::MailFrom(from),
+                    false,
+                )
+            }
+            "RCPT" => {
+                let to = parts.get(1).unwrap_or(&"").to_string();
+                (
+                    config.rcpt_to_response.to_bytes(),
+                    SmtpCommand::RcptTo(to),
+                    false,
+                )
+            }
+            "DATA" => (config.data_response.to_bytes(), SmtpCommand::Data, false),
+            "QUIT" => (config.quit_response.to_bytes(), SmtpCommand::Quit, true),
+            "STARTTLS" => config.starttls_response.as_ref().map_or_else(
+                || {
+                    (
+                        SmtpResponse::new(502, "Command not implemented").to_bytes(),
+                        SmtpCommand::StartTls,
+                        false,
+                    )
+                },
+                |starttls_resp| (starttls_resp.to_bytes(), SmtpCommand::StartTls, false),
+            ),
+            _ => (
+                SmtpResponse::new(500, "Unknown command").to_bytes(),
+                SmtpCommand::Other(cmd_line.to_string()),
+                false,
+            ),
+        }
+    }
+
+    async fn handle_data_block<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
+        reader: &mut R,
+        writer: &mut W,
+        config: &MockServerConfig,
+        commands: &Arc<RwLock<Vec<SmtpCommand>>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut message_content = Vec::new();
+        let mut data_line = String::new();
+
+        loop {
+            data_line.clear();
+            let bytes_read = reader.read_line(&mut data_line).await?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            if data_line.trim() == "." {
+                commands
+                    .write()
+                    .await
+                    .push(SmtpCommand::MessageContent(message_content.clone()));
+
+                if let Some(delay) = config.response_delay {
+                    tokio::time::sleep(delay).await;
+                }
+                writer
+                    .write_all(&config.data_end_response.to_bytes())
+                    .await?;
+                writer.flush().await?;
+                break;
+            }
+
+            message_content.extend_from_slice(data_line.as_bytes());
+        }
+
+        Ok(())
     }
 }
 
@@ -518,7 +544,6 @@ impl MockSmtpServerBuilder {
 
         Ok(MockSmtpServer {
             addr,
-            config,
             commands_received: commands,
             shutdown,
             command_count,

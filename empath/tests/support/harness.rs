@@ -70,7 +70,6 @@ pub struct E2ETestHarness {
     shutdown_tx: broadcast::Sender<Signal>,
 
     /// Backing store for message verification
-    #[allow(dead_code)] // Available for advanced test scenarios
     backing_store: Arc<dyn BackingStore>,
 }
 
@@ -83,14 +82,12 @@ impl E2ETestHarness {
 
     /// Get the SMTP port the Empath server is listening on
     #[must_use]
-    #[allow(dead_code)] // Available for advanced test scenarios
     pub const fn smtp_port(&self) -> u16 {
         self.smtp_port
     }
 
     /// Get the mock server address
     #[must_use]
-    #[allow(dead_code)] // Available for advanced test scenarios
     pub const fn mock_addr(&self) -> SocketAddr {
         self.mock_server.addr()
     }
@@ -193,7 +190,6 @@ impl E2ETestHarness {
 
     /// Get the backing store for direct message inspection
     #[must_use]
-    #[allow(dead_code)] // Available for advanced test scenarios
     pub fn backing_store(&self) -> Arc<dyn BackingStore> {
         self.backing_store.clone()
     }
@@ -309,7 +305,6 @@ impl E2ETestHarnessBuilder {
 
     /// Set the maximum delivery attempts (default: 3)
     #[must_use]
-    #[allow(dead_code)] // Available for advanced test scenarios
     pub const fn with_max_attempts(mut self, attempts: u32) -> Self {
         self.max_attempts = attempts;
         self
@@ -324,7 +319,6 @@ impl E2ETestHarnessBuilder {
 
     /// Configure mock server to reject MAIL FROM commands
     #[must_use]
-    #[allow(dead_code)] // Available for advanced test scenarios
     pub const fn with_mock_mail_from_rejection(mut self) -> Self {
         self.mock_mail_from_code = 550;
         self
@@ -342,32 +336,13 @@ impl E2ETestHarnessBuilder {
     /// If not provided, a `MockDnsResolver` will be created automatically
     /// that points to the mock server.
     #[must_use]
-    #[allow(dead_code)] // Used in Phase 3 DNS failure scenario tests
     pub fn with_dns_resolver(mut self, resolver: Arc<dyn empath_delivery::DnsResolver>) -> Self {
         self.dns_resolver = Some(resolver);
         self
     }
 
-    /// Build and start the E2E test harness
-    ///
-    /// This will:
-    /// 1. Start a mock SMTP server on a random port
-    /// 2. Start an Empath SMTP receiver on a random port
-    /// 3. Configure delivery to route the test domain to the mock server
-    /// 4. Start the spool watcher
-    /// 5. Start the delivery processor
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any component fails to start.
-    #[allow(clippy::too_many_lines)]
-    pub async fn build(self) -> anyhow::Result<E2ETestHarness> {
-        // Initialize FFI modules (adds core module to MODULE_STORE)
-        // This only needs to be done once per test process
-        let _ = empath_ffi::modules::init(vec![]);
-
-        // 1. Start mock SMTP server
-        let mock_server: MockSmtpServer = MockSmtpServer::builder()
+    async fn start_mock_server(&self) -> anyhow::Result<MockSmtpServer> {
+        MockSmtpServer::builder()
             .with_greeting(self.mock_greeting_code, &self.mock_greeting_msg)
             .with_ehlo_response(250, vec!["localhost".to_string()])
             .with_mail_from_response(self.mock_mail_from_code, "OK")
@@ -375,42 +350,39 @@ impl E2ETestHarnessBuilder {
             .with_data_response(354, "Start mail input")
             .with_data_end_response(self.mock_data_end_code, "Message accepted")
             .build()
-            .await?;
+            .await
+            .map_err(Into::into)
+    }
 
-        let mock_addr = mock_server.addr();
+    fn build_dns_resolver(&self, mock_addr: SocketAddr) -> Arc<dyn empath_delivery::DnsResolver> {
+        self.dns_resolver.clone().unwrap_or_else(|| {
+            let mock_dns = empath_delivery::MockDnsResolver::new();
+            mock_dns.add_response(
+                &self.test_domain,
+                Ok(vec![empath_delivery::MailServer::new(
+                    "localhost".to_string(),
+                    0,
+                    mock_addr.port(),
+                )]),
+            );
+            Arc::new(mock_dns)
+        })
+    }
 
-        // Create DNS resolver (use injected one or create default MockDnsResolver)
-        let dns_resolver: Arc<dyn empath_delivery::DnsResolver> =
-            self.dns_resolver.unwrap_or_else(|| {
-                // Default: Create MockDnsResolver pointing to mock server
-                let mock_dns = empath_delivery::MockDnsResolver::new();
-                mock_dns.add_response(
-                    &self.test_domain,
-                    Ok(vec![empath_delivery::MailServer::new(
-                        "localhost".to_string(),
-                        0,
-                        mock_addr.port(),
-                    )]),
-                );
-                Arc::new(mock_dns)
-            });
-
-        // 2. Create backing store (memory-backed for speed)
-        let backing_store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
-
-        // 3. Create SMTP controller with random port
+    async fn start_smtp_controller(
+        &self,
+        backing_store: Arc<dyn BackingStore>,
+        shutdown_tx: &broadcast::Sender<Signal>,
+    ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         let smtp_listener = TcpListener::bind("127.0.0.1:0").await?;
         let smtp_addr = smtp_listener.local_addr()?;
         let smtp_port = smtp_addr.port();
 
         let smtp = Smtp;
         let smtp_args = SmtpArgs::builder()
-            .with_extensions(self.smtp_extensions)
-            .with_spool(backing_store.clone());
+            .with_extensions(self.smtp_extensions.clone())
+            .with_spool(backing_store);
 
-        let (shutdown_tx, _) = broadcast::channel(16);
-
-        // Spawn SMTP controller task
         let shutdown_rx_smtp = shutdown_tx.subscribe();
         let smtp_handle = tokio::spawn(async move {
             while let Ok((stream, peer)) = smtp_listener.accept().await {
@@ -429,12 +401,15 @@ impl E2ETestHarnessBuilder {
             Ok(())
         });
 
-        // 4. Create spool (memory-backed for simplicity in tests)
-        // File-backed spool would require inotify which adds complexity
+        Ok((smtp_port, smtp_handle))
+    }
+
+    fn start_spool_watcher(
+        shutdown_tx: &broadcast::Sender<Signal>,
+    ) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
         let spool_config = empath_spool::SpoolConfig::Memory(MemoryConfig { capacity: None });
         let spool = spool_config.into_spool()?;
 
-        // Spawn spool watcher task
         let shutdown_rx_spool = shutdown_tx.subscribe();
         let spool_handle = tokio::spawn(async move {
             spool
@@ -443,8 +418,14 @@ impl E2ETestHarnessBuilder {
                 .map_err(|e| anyhow::anyhow!(e))
         });
 
-        // 5. Create delivery processor with domain config
-        // NOTE: No mx_override needed since we're using MockDnsResolver
+        Ok(spool_handle)
+    }
+
+    fn build_delivery_processor(
+        &self,
+        backing_store: Arc<dyn BackingStore>,
+        dns_resolver: Arc<dyn empath_delivery::DnsResolver>,
+    ) -> anyhow::Result<DeliveryProcessor> {
         let domains = DomainConfigRegistry::new();
         domains.insert(
             self.test_domain.clone(),
@@ -461,18 +442,55 @@ impl E2ETestHarnessBuilder {
         delivery.retry_policy.max_attempts = self.max_attempts;
         delivery.accept_invalid_certs = true; // Global fallback
 
-        // Initialize with injected DNS resolver
-        delivery.init(backing_store.clone(), Some(dns_resolver))?;
+        delivery.init(backing_store, Some(dns_resolver))?;
+        Ok(delivery)
+    }
 
-        // Spawn delivery processor task
+    fn spawn_delivery_processor(
+        delivery: DeliveryProcessor,
+        shutdown_tx: &broadcast::Sender<Signal>,
+    ) -> JoinHandle<anyhow::Result<()>> {
         let shutdown_rx_delivery = shutdown_tx.subscribe();
         let delivery_arc = Arc::new(delivery);
-        let delivery_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             delivery_arc
                 .serve(shutdown_rx_delivery)
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
-        });
+        })
+    }
+
+    /// Build and start the E2E test harness
+    ///
+    /// This will:
+    /// 1. Start a mock SMTP server on a random port
+    /// 2. Start an Empath SMTP receiver on a random port
+    /// 3. Configure delivery to route the test domain to the mock server
+    /// 4. Start the spool watcher
+    /// 5. Start the delivery processor
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any component fails to start.
+    pub async fn build(self) -> anyhow::Result<E2ETestHarness> {
+        // Initialize FFI modules (adds core module to MODULE_STORE)
+        // This only needs to be done once per test process
+        let _ = empath_ffi::modules::init(vec![]);
+
+        let mock_server = self.start_mock_server().await?;
+        let mock_addr = mock_server.addr();
+
+        let dns_resolver = self.build_dns_resolver(mock_addr);
+        let backing_store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+
+        let (shutdown_tx, _) = broadcast::channel(16);
+
+        let (smtp_port, smtp_handle) = self
+            .start_smtp_controller(backing_store.clone(), &shutdown_tx)
+            .await?;
+        let spool_handle = Self::start_spool_watcher(&shutdown_tx)?;
+        let delivery = self.build_delivery_processor(backing_store.clone(), dns_resolver)?;
+        let delivery_handle = Self::spawn_delivery_processor(delivery, &shutdown_tx);
 
         // Give everything a moment to start
         tokio::time::sleep(Duration::from_millis(100)).await;

@@ -172,6 +172,44 @@ async fn test_delivery_with_recipient_rejection() {
     harness.shutdown().await;
 }
 
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
+async fn test_harness_builder_options_smoke() {
+    let harness = E2ETestHarness::builder()
+        .with_test_domain("test.example.com")
+        .with_mock_mail_from_rejection()
+        .build()
+        .await
+        .expect("Failed to build test harness");
+
+    let _ = harness.smtp_port();
+    let _ = harness.mock_addr();
+    let _ = harness.backing_store();
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
+async fn test_mock_server_builder_options_smoke() {
+    use support::mock_server::MockSmtpServer;
+
+    let server = MockSmtpServer::builder()
+        .with_helo_response(250, "Hello")
+        .with_quit_response(221, "Bye")
+        .with_starttls_response(220, "Ready")
+        .with_connection_delay(Duration::from_millis(1))
+        .with_response_delay(Duration::from_millis(1))
+        .with_network_error_after_commands(1)
+        .with_timeout_on_command(1)
+        .build()
+        .await
+        .expect("Failed to start mock server");
+
+    let _ = server.command_count();
+    server.shutdown();
+}
+
 /// Test message content preservation through the pipeline
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
