@@ -349,7 +349,6 @@ fn extract_original_headers(original_context: &Context) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use empath_common::{
         DeliveryAttempt, address_parser::Mailbox, domain::Domain, email::ServerId,
@@ -358,6 +357,8 @@ mod tests {
 
     use super::*;
     use crate::{TemporaryError, types::DeliveryInfo};
+
+    type TestResult = std::result::Result<(), String>;
 
     #[test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
@@ -446,7 +447,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    fn test_generate_dsn_creates_valid_context() {
+    fn test_generate_dsn_creates_valid_context() -> TestResult {
         let mut context = Context::default();
         let sender_mailbox = Mailbox {
             local_part: "sender".to_string(),
@@ -473,7 +474,7 @@ mod tests {
             attempts: vec![DeliveryAttempt {
                 timestamp: SystemTime::now(),
                 error: Some("Connection refused".to_string()),
-                server: ServerId::new("mx.example.com:25").unwrap(),
+                server: ServerId::new("mx.example.com:25").map_err(|err| err.to_string())?,
             }],
             queued_at: SystemTime::now(),
             next_retry_at: None,
@@ -488,23 +489,32 @@ mod tests {
 
         let config = DsnConfig::default();
 
-        let dsn = generate_dsn(&context, &info, &error, &config).unwrap();
+        let dsn = generate_dsn(&context, &info, &error, &config).map_err(|err| err.to_string())?;
 
         // Verify DSN envelope
         assert!(dsn.envelope.sender().is_some());
         assert!(dsn.envelope.recipients().is_some());
-        assert_eq!(dsn.envelope.recipients().unwrap().len(), 1);
+        let recipients = dsn
+            .envelope
+            .recipients()
+            .ok_or_else(|| "missing recipients".to_string())?;
+        assert_eq!(recipients.len(), 1);
 
         // Verify DSN has message data
         assert!(dsn.data.is_some());
 
         // Verify DSN contains required parts
-        let dsn_body = String::from_utf8_lossy(dsn.data.as_ref().unwrap());
+        let data = dsn
+            .data
+            .as_ref()
+            .ok_or_else(|| "missing dsn data".to_string())?;
+        let dsn_body = String::from_utf8_lossy(data);
         assert!(dsn_body.contains("multipart/report"));
         assert!(dsn_body.contains("delivery-status"));
         assert!(dsn_body.contains("Reporting-MTA"));
         assert!(dsn_body.contains("Final-Recipient"));
         assert!(dsn_body.contains("Action: failed"));
         assert!(dsn_body.contains("Status: 5.0.0"));
+        Ok(())
     }
 }

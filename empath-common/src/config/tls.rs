@@ -214,8 +214,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::panic)]
-    fn test_tls_policy_serde_variants() {
+    fn test_tls_policy_serde_variants() -> Result<(), Box<dyn std::error::Error>> {
         let cases = [
             ("opportunistic", TlsPolicy::Opportunistic),
             ("required", TlsPolicy::Required),
@@ -223,26 +222,22 @@ mod tests {
         ];
 
         for (json, expected) in cases {
-            let parsed: TlsPolicy = match ron::from_str(json) {
-                Ok(value) => value,
-                Err(e) => panic!("should deserialize: {e}"),
-            };
+            let parsed: TlsPolicy = ron::from_str(json)?;
             assert_eq!(parsed, expected, "ron: {json}");
 
-            let serialized = match ron::to_string(&parsed) {
-                Ok(value) => value,
-                Err(e) => panic!("should serialize: {e}"),
-            };
+            let serialized = ron::to_string(&parsed)?;
             assert_eq!(serialized, json);
         }
+        Ok(())
     }
 
     #[test]
-    #[allow(clippy::panic)]
-    fn test_tls_policy_rejects_unknown_variant() {
+    fn test_tls_policy_rejects_unknown_variant() -> Result<(), Box<dyn std::error::Error>> {
         let err = match ron::from_str::<TlsPolicy>("strict") {
-            Ok(value) => panic!("expected error, got {value:?}"),
-            Err(e) => e,
+            Ok(value) => {
+                return Err(format!("expected error, got {value:?}").into());
+            }
+            Err(err) => err,
         };
         assert!(
             err.to_string()
@@ -250,5 +245,6 @@ mod tests {
                 .contains("unexpected variant"),
             "unexpected error: {err}"
         );
+        Ok(())
     }
 }

@@ -615,7 +615,6 @@ impl TryFrom<String> for Command {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use empath_common::{
         address::{Address, AddressList},
@@ -623,6 +622,8 @@ mod test {
     };
 
     use crate::command::{Command, HeloVariant, MailParameters, XclientParameters};
+
+    type TestResult = std::result::Result<(), String>;
 
     // Idea copied from https://gitlab.com/erichdongubler-experiments/rust_case_permutations/blob/master/src/lib.rs#L97
     fn string_casing(string: &str) -> impl Iterator<Item = String> {
@@ -651,8 +652,9 @@ mod test {
     }
 
     #[test]
-    fn mail_from_command() {
-        let expected_mailbox = address_parser::parse_forward_path("<test@gmail.com>").unwrap();
+    fn mail_from_command() -> TestResult {
+        let expected_mailbox = address_parser::parse_forward_path("<test@gmail.com>")
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(
             Command::try_from("Mail From: <test@gmail.com>"),
             Ok(Command::MailFrom(
@@ -673,7 +675,8 @@ mod test {
         // Test SIZE parameter parsing
         let mut params_with_size = MailParameters::new();
         params_with_size.insert("SIZE", "12345");
-        let expected_mailbox2 = address_parser::parse_forward_path("<test@gmail.com>").unwrap();
+        let expected_mailbox2 = address_parser::parse_forward_path("<test@gmail.com>")
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(
             Command::try_from("MAIL FROM: <test@gmail.com> SIZE=12345"),
             Ok(Command::MailFrom(
@@ -695,10 +698,11 @@ mod test {
                 Ok(Command::MailFrom(_, params)) if params.is_empty()
             ));
         }
+        Ok(())
     }
 
     #[test]
-    fn mail_from_size_edge_cases() {
+    fn mail_from_size_edge_cases() -> TestResult {
         // SIZE=0 should be rejected (semantically invalid)
         assert!(matches!(
             Command::try_from("MAIL FROM: <test@example.com> SIZE=0"),
@@ -725,7 +729,8 @@ mod test {
         // Case insensitive SIZE parameter
         let mut params_lower = MailParameters::new();
         params_lower.insert("SIZE", "5000");
-        let mailbox1 = address_parser::parse_forward_path("<test@example.com>").unwrap();
+        let mailbox1 = address_parser::parse_forward_path("<test@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> size=5000"),
             Ok(Command::MailFrom(
@@ -736,7 +741,8 @@ mod test {
 
         let mut params_mixed = MailParameters::new();
         params_mixed.insert("SIZE", "3000");
-        let mailbox2 = address_parser::parse_forward_path("<test@example.com>").unwrap();
+        let mailbox2 = address_parser::parse_forward_path("<test@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> SiZe=3000"),
             Ok(Command::MailFrom(
@@ -749,7 +755,8 @@ mod test {
         let mut params_multi = MailParameters::new();
         params_multi.insert("SIZE", "1000");
         params_multi.insert("BODY", "8BITMIME");
-        let mailbox3 = address_parser::parse_forward_path("<test@example.com>").unwrap();
+        let mailbox3 = address_parser::parse_forward_path("<test@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(
             Command::try_from("MAIL FROM: <test@example.com> SIZE=1000 BODY=8BITMIME"),
             Ok(Command::MailFrom(
@@ -765,11 +772,13 @@ mod test {
             Command::try_from("MAIL FROM: <> SIZE=500"),
             Ok(Command::MailFrom(None, params_null))
         );
+        Ok(())
     }
 
     #[test]
-    fn rcpt_to_command() {
-        let mailbox = address_parser::parse_forward_path("<test@gmail.com>").unwrap();
+    fn rcpt_to_command() -> TestResult {
+        let mailbox = address_parser::parse_forward_path("<test@gmail.com>")
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(
             Command::try_from("Rcpt To: <test@gmail.com>"),
             Ok(Command::RcptTo(AddressList::from(vec![Address::from(
@@ -787,6 +796,7 @@ mod test {
                 Ok(Command::RcptTo(_))
             ));
         }
+        Ok(())
     }
 
     #[test]

@@ -724,7 +724,6 @@ pub const fn requires_validation(state: &State) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use empath_common::{
         address::{Address, AddressList},
@@ -734,32 +733,40 @@ mod tests {
     use super::*;
     use crate::MailParameters;
 
+    type TestResult = std::result::Result<(), String>;
+
     #[test]
-    fn test_default_handler_creation() {
+    fn test_default_handler_creation() -> TestResult {
         let handler = DefaultSmtpTransactionHandler::new(
             None,
-            "127.0.0.1:1234".parse().unwrap(),
+            "127.0.0.1:1234"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             None,
             crate::spf::SpfConfig::default(),
             false,
         );
         assert!(handler.spool.is_none());
         assert_eq!(handler.peer.to_string(), "127.0.0.1:1234");
+        Ok(())
     }
 
     #[test]
-    fn test_default_handler_with_spool() {
+    fn test_default_handler_with_spool() -> TestResult {
         use empath_spool::MemoryBackingStore;
 
         let spool = Arc::new(MemoryBackingStore::default());
         let handler = DefaultSmtpTransactionHandler::new(
             Some(spool),
-            "127.0.0.1:1234".parse().unwrap(),
+            "127.0.0.1:1234"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             None,
             crate::spf::SpfConfig::default(),
             false,
         );
         assert!(handler.spool.is_some());
+        Ok(())
     }
 
     #[test]
@@ -793,10 +800,12 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn received_header_is_inserted_before_body() {
+    fn received_header_is_inserted_before_body() -> TestResult {
         let handler = DefaultSmtpTransactionHandler::new(
             None,
-            "203.0.113.5:2525".parse().unwrap(),
+            "203.0.113.5:2525"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             None,
             crate::spf::SpfConfig::default(),
             false,
@@ -811,8 +820,8 @@ mod tests {
             ..Context::default()
         };
 
-        let recipient_mailbox =
-            address_parser::parse_forward_path("<recipient@example.com>").unwrap();
+        let recipient_mailbox = address_parser::parse_forward_path("<recipient@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         let recipient_address = Address::from(recipient_mailbox);
         Arc::make_mut(&mut ctx.envelope)
             .recipients_mut()
@@ -822,27 +831,34 @@ mod tests {
 
         handler.insert_received_header(&mut ctx);
 
-        let data = ctx.data.as_ref().expect("message data");
+        let data = ctx
+            .data
+            .as_ref()
+            .ok_or_else(|| "message data missing".to_string())?;
         let header_end = data
             .windows(2)
             .position(|window| window == b"\r\n")
-            .expect("missing CRLF");
-        let first_line = std::str::from_utf8(&data[..header_end]).unwrap();
+            .ok_or_else(|| "missing CRLF".to_string())?;
+        let first_line = std::str::from_utf8(&data[..header_end]).map_err(|err| err.to_string())?;
 
         assert!(first_line.starts_with("Received: from client.example.com"));
         assert!(first_line.contains(" by mail.example.com (Empath)"));
         assert!(first_line.contains(" with ESMTPS id <"));
         assert!(first_line.contains(" for <recipient@example.com>"));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_spf_evaluation_integration() {
+    async fn test_spf_evaluation_integration() -> TestResult {
         use std::{net::IpAddr, sync::Mutex};
 
         use empath_common::{address_parser::Mailbox, envelope::Envelope};
 
-        use crate::spf::{MailServer, SpfConfig, SpfResult, dns::SpfDnsResolver};
+        use crate::spf::{
+            MailServer, SpfConfig, SpfResult,
+            dns::{DnsLookupError, SpfDnsResolver},
+        };
 
         // Mock DNS resolver that returns SPF records
         #[derive(Debug)]
@@ -857,11 +873,12 @@ mod tests {
                 }
             }
 
-            fn add_txt(&self, domain: &str, records: Vec<String>) {
+            fn add_txt(&self, domain: &str, records: Vec<String>) -> Result<(), DnsLookupError> {
                 self.txt_records
                     .lock()
-                    .unwrap()
+                    .map_err(|_| DnsLookupError::LookupFailed("lock poisoned".to_string()))?
                     .insert(domain.to_string(), records);
+                Ok(())
             }
         }
 
@@ -871,14 +888,11 @@ mod tests {
                 &self,
                 domain: &str,
             ) -> Result<Arc<Vec<String>>, crate::spf::dns::DnsLookupError> {
-                Ok(Arc::new(
-                    self.txt_records
-                        .lock()
-                        .unwrap()
-                        .get(domain)
-                        .cloned()
-                        .unwrap_or_default(),
-                ))
+                let records = self
+                    .txt_records
+                    .lock()
+                    .map_err(|_| DnsLookupError::LookupFailed("lock poisoned".to_string()))?;
+                Ok(Arc::new(records.get(domain).cloned().unwrap_or_default()))
             }
 
             async fn ptr_lookup(
@@ -892,7 +906,10 @@ mod tests {
                 &self,
                 _domain: &str,
             ) -> Result<Arc<Vec<IpAddr>>, crate::spf::dns::DnsLookupError> {
-                Ok(Arc::new(vec!["192.0.2.100".parse().unwrap()]))
+                let ip = "192.0.2.100"
+                    .parse::<IpAddr>()
+                    .map_err(|err| DnsLookupError::LookupFailed(err.to_string()))?;
+                Ok(Arc::new(vec![ip]))
             }
 
             async fn mx_lookup(
@@ -905,15 +922,19 @@ mod tests {
 
         // Setup mock resolver with SPF record
         let resolver = Arc::new(MockSpfResolver::new());
-        resolver.add_txt(
-            "example.com",
-            vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
-        );
+        resolver
+            .add_txt(
+                "example.com",
+                vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
+            )
+            .map_err(|err| err.to_string())?;
 
         // Create transaction handler with SPF resolver
         let mut handler = DefaultSmtpTransactionHandler::new(
             None,
-            "192.0.2.100:1234".parse().unwrap(),
+            "192.0.2.100:1234"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             Some(resolver),
             SpfConfig::default(),
             false,
@@ -942,7 +963,11 @@ mod tests {
         // (Note: modules::dispatch may return a non-accept result when no modules loaded,
         // but SPF evaluation should still have occurred)
         assert!(ctx.transaction.contains_key("spf_result"));
-        let spf_result = ctx.transaction.get("spf_result").unwrap();
+        let spf_result = ctx
+            .transaction
+            .get("spf_result")
+            .ok_or_else(|| "spf_result missing".to_string())?;
         assert_eq!(spf_result, SpfResult::Pass.to_string().as_str());
+        Ok(())
     }
 }

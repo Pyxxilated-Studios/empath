@@ -1331,43 +1331,50 @@ impl<D: ?Sized + DnsResolver> empath_smtp::spf::SpfDnsResolver for SpfDnsAdapter
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
+    type TestResult = std::result::Result<(), String>;
+
     #[tokio::test]
     #[ignore = "Requires network access"]
-    async fn test_mx_lookup_gmail() {
-        let resolver = HickoryDnsResolver::new().unwrap();
-        let servers = resolver.resolve_mail_servers("gmail.com").await.unwrap();
+    async fn test_mx_lookup_gmail() -> TestResult {
+        let resolver = HickoryDnsResolver::new().map_err(|err| err.to_string())?;
+        let servers = resolver
+            .resolve_mail_servers("gmail.com")
+            .await
+            .map_err(|err| err.to_string())?;
 
         assert!(!servers.is_empty());
         assert!(servers.iter().all(|s| s.port == 25));
         // Verify sorted by priority
         assert!(servers.windows(2).all(|w| w[0].priority <= w[1].priority));
+        Ok(())
     }
 
     #[tokio::test]
     #[ignore = "Requires network access"]
-    async fn test_a_record_fallback() {
+    async fn test_a_record_fallback() -> TestResult {
         // Use a domain that has A records but no MX records
         // Note: This test may fail if the domain changes its DNS configuration
-        let resolver = HickoryDnsResolver::new().unwrap();
+        let resolver = HickoryDnsResolver::new().map_err(|err| err.to_string())?;
         let servers = resolver.resolve_mail_servers("example.com").await;
 
         // Either MX or A/AAAA should work
         assert!(servers.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
     #[ignore = "Requires network access"]
-    async fn test_domain_not_found() {
-        let resolver = HickoryDnsResolver::new().unwrap();
+    async fn test_domain_not_found() -> TestResult {
+        let resolver = HickoryDnsResolver::new().map_err(|err| err.to_string())?;
         let result = resolver
             .resolve_mail_servers("this-domain-definitely-does-not-exist-12345.com")
             .await;
 
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]

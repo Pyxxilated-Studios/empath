@@ -289,9 +289,10 @@ pub struct RateLimitStats {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), String>;
 
     #[test]
     fn test_token_bucket_consume() {
@@ -315,7 +316,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
-    fn test_token_bucket_refill() {
+    fn test_token_bucket_refill() -> TestResult {
         let mut bucket = TokenBucket::new(10.0, 20);
 
         // Consume all tokens
@@ -325,17 +326,20 @@ mod tests {
         assert!(!bucket.try_consume());
 
         // Wait for refill (simulate time passing)
-        bucket.last_refill = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+        bucket.last_refill = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .ok_or_else(|| "failed to subtract duration".to_string())?;
         bucket.refill();
 
         // Should have ~10 tokens after 1 second at 10/sec rate
         assert!(bucket.tokens >= 9.9 && bucket.tokens <= 10.1);
         assert!(bucket.try_consume());
+        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
-    fn test_rate_limiter_default_limits() {
+    fn test_rate_limiter_default_limits() -> TestResult {
         let config = RateLimitConfig::default();
         let limiter = RateLimiter::new(config);
         let domain = Domain::new("example.com");
@@ -348,8 +352,11 @@ mod tests {
         // Should rate limit after burst
         let result = limiter.check_rate_limit(&domain);
         assert!(result.is_err());
-        let wait_time = result.unwrap_err();
+        let wait_time = result
+            .err()
+            .ok_or_else(|| "expected rate limit".to_string())?;
         assert!(wait_time > Duration::ZERO);
+        Ok(())
     }
 
     #[test]
@@ -382,7 +389,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
-    fn test_rate_limiter_stats() {
+    fn test_rate_limiter_stats() -> TestResult {
         let config = RateLimitConfig::default();
         let limiter = RateLimiter::new(config);
         let domain = Domain::new("example.com");
@@ -391,18 +398,27 @@ mod tests {
         assert!(limiter.get_stats(&domain).is_none());
 
         // Access the domain to create the bucket
-        limiter.check_rate_limit(&domain).unwrap();
+        limiter
+            .check_rate_limit(&domain)
+            .map_err(|err| format!("{err:?}"))?;
 
         // Now get stats after first consumption
-        let stats = limiter.get_stats(&domain).unwrap();
+        let stats = limiter
+            .get_stats(&domain)
+            .ok_or_else(|| "expected stats".to_string())?;
         assert!((stats.available_tokens - 19.0).abs() < 0.1); // One token consumed
         assert!((stats.capacity - 20.0_f64).abs() < f64::MIN_POSITIVE);
         assert!((stats.refill_rate - 10.0_f64).abs() < f64::MIN_POSITIVE);
 
         // Consume some more tokens
-        limiter.check_rate_limit(&domain).unwrap();
+        limiter
+            .check_rate_limit(&domain)
+            .map_err(|err| format!("{err:?}"))?;
 
-        let stats = limiter.get_stats(&domain).unwrap();
+        let stats = limiter
+            .get_stats(&domain)
+            .ok_or_else(|| "expected stats".to_string())?;
         assert!((stats.available_tokens - 18.0).abs() < 0.1);
+        Ok(())
     }
 }

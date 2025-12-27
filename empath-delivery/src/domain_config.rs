@@ -207,9 +207,10 @@ impl<'de> Deserialize<'de> for DomainConfigRegistry {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), String>;
 
     #[test]
     fn test_domain_config_defaults() {
@@ -233,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_operations() {
+    fn test_registry_operations() -> TestResult {
         let registry = DomainConfigRegistry::new();
         assert!(registry.is_empty());
         assert_eq!(registry.len(), 0);
@@ -251,11 +252,17 @@ mod tests {
         assert!(registry.has_config("test.example.com"));
         assert!(!registry.has_config("other.example.com"));
 
-        assert!(registry.get("test.example.com").unwrap().has_mx_override());
+        assert!(
+            registry
+                .get("test.example.com")
+                .ok_or_else(|| "missing test.example.com config".to_string())?
+                .has_mx_override()
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_serde_roundtrip() {
+    fn test_serde_roundtrip() -> TestResult {
         let registry = DomainConfigRegistry::new();
         registry.insert(
             "gmail.com".to_string(),
@@ -277,22 +284,29 @@ mod tests {
             },
         );
 
-        let serialized = ron::to_string(&registry).unwrap();
-        let deserialized: DomainConfigRegistry = ron::from_str(&serialized).unwrap();
+        let serialized = ron::to_string(&registry).map_err(|err| err.to_string())?;
+        let deserialized: DomainConfigRegistry =
+            ron::from_str(&serialized).map_err(|err| err.to_string())?;
 
         assert_eq!(deserialized.len(), 2);
-        assert!(deserialized.get("gmail.com").unwrap().require_tls);
+        assert!(
+            deserialized
+                .get("gmail.com")
+                .ok_or_else(|| "missing gmail.com config".to_string())?
+                .require_tls
+        );
         assert_eq!(
             deserialized
                 .get("test.local")
-                .unwrap()
+                .ok_or_else(|| "missing test.local config".to_string())?
                 .mx_override_address(),
             Some("localhost:1025")
         );
+        Ok(())
     }
 
     #[test]
-    fn test_deserialize_from_config_format() {
+    fn test_deserialize_from_config_format() -> TestResult {
         // Test the exact format used in empath.config.ron (with implicit_some extension)
         let config_str = r#"{
             "test.example.com": (
@@ -311,19 +325,23 @@ mod tests {
         let registry: DomainConfigRegistry = ron::Options::default()
             .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
             .from_str(config_str)
-            .unwrap();
+            .map_err(|err| err.to_string())?;
 
         assert_eq!(registry.len(), 3);
 
         // Verify test.example.com has mx_override
-        let test_config = registry.get("test.example.com").unwrap();
+        let test_config = registry
+            .get("test.example.com")
+            .ok_or_else(|| "missing test.example.com config".to_string())?;
         assert_eq!(test_config.mx_override_address(), Some("localhost:1025"));
         assert!(!test_config.require_tls);
         drop(test_config);
 
         // Verify secure.example.com has TLS and connection limit
 
-        let secure_config = registry.get("secure.example.com").unwrap();
+        let secure_config = registry
+            .get("secure.example.com")
+            .ok_or_else(|| "missing secure.example.com config".to_string())?;
         assert!(secure_config.require_tls);
         assert_eq!(secure_config.max_connections, Some(5));
         assert!(secure_config.mx_override.is_none());
@@ -331,15 +349,18 @@ mod tests {
 
         // Verify gmail.com has connection and rate limits
 
-        let gmail_config = registry.get("gmail.com").unwrap();
+        let gmail_config = registry
+            .get("gmail.com")
+            .ok_or_else(|| "missing gmail.com config".to_string())?;
         assert_eq!(gmail_config.max_connections, Some(10));
         assert_eq!(gmail_config.rate_limit, Some(100));
         assert!(gmail_config.mx_override.is_none());
         drop(gmail_config);
+        Ok(())
     }
 
     #[test]
-    fn test_accept_invalid_certs_configuration() {
+    fn test_accept_invalid_certs_configuration() -> TestResult {
         // Test per-domain override of certificate validation
         let registry = DomainConfigRegistry::new();
 
@@ -372,11 +393,15 @@ mod tests {
         );
 
         // Verify configurations
-        let test_config = registry.get("test.local").unwrap();
+        let test_config = registry
+            .get("test.local")
+            .ok_or_else(|| "missing test.local config".to_string())?;
         assert_eq!(test_config.accept_invalid_certs, Some(true));
         drop(test_config);
 
-        let secure_config = registry.get("secure.example.com").unwrap();
+        let secure_config = registry
+            .get("secure.example.com")
+            .ok_or_else(|| "missing secure.example.com config".to_string())?;
         assert_eq!(secure_config.accept_invalid_certs, Some(false));
         assert!(secure_config.require_tls);
         drop(secure_config);
@@ -384,14 +409,15 @@ mod tests {
         assert_eq!(
             registry
                 .get("default.example.com")
-                .unwrap()
+                .ok_or_else(|| "missing default.example.com config".to_string())?
                 .accept_invalid_certs,
             None
         );
+        Ok(())
     }
 
     #[test]
-    fn test_runtime_updates() {
+    fn test_runtime_updates() -> TestResult {
         // Test runtime MX override updates without requiring &mut self
         let registry = DomainConfigRegistry::new();
 
@@ -408,7 +434,7 @@ mod tests {
         assert_eq!(
             registry
                 .get("test.example.com")
-                .unwrap()
+                .ok_or_else(|| "missing test.example.com config".to_string())?
                 .mx_override_address(),
             Some("localhost:1025")
         );
@@ -426,7 +452,7 @@ mod tests {
         assert_eq!(
             registry
                 .get("test.example.com")
-                .unwrap()
+                .ok_or_else(|| "missing test.example.com config".to_string())?
                 .mx_override_address(),
             Some("localhost:2525")
         );
@@ -436,5 +462,6 @@ mod tests {
         assert!(removed.is_some());
         assert_eq!(registry.len(), 0);
         assert!(registry.get("test.example.com").is_none());
+        Ok(())
     }
 }

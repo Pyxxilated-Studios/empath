@@ -7,14 +7,10 @@ use empath_smtp::command::Command;
 use proptest::prelude::*;
 
 /// Strategy to generate valid domain names
-fn domain_strategy() -> impl Strategy<Value = String> {
-    #[allow(
-        clippy::expect_used,
-        reason = "compile-time constant regex should be valid"
-    )]
-    let regex = prop::string::string_regex("[a-z]{3,10}\\.[a-z]{2,5}")
-        .expect("domain regex should be valid");
-    regex.prop_map(|s| s.to_lowercase())
+fn domain_strategy() -> BoxedStrategy<String> {
+    regex_strategy("[a-z]{3,10}\\.[a-z]{2,5}", "example.com")
+        .prop_map(|s| s.to_lowercase())
+        .boxed()
 }
 
 /// Strategy to generate valid email local parts according to RFC 5321
@@ -25,18 +21,15 @@ fn domain_strategy() -> impl Strategy<Value = String> {
 /// - Cannot start or end with a dot
 /// - Cannot have consecutive dots
 /// - Valid atext chars include: alphanumeric and special characters
-fn email_local_strategy() -> impl Strategy<Value = String> {
+fn email_local_strategy() -> BoxedStrategy<String> {
     // Generate an atom (1-10 valid atext characters)
     // Using a subset of atext that's commonly used: alphanumeric, dot, plus, underscore, hyphen
-    #[allow(
-        clippy::expect_used,
-        reason = "compile-time constant regex should be valid"
-    )]
-    let atom_regex =
-        prop::string::string_regex("[a-z0-9+_-]{1,10}").expect("atom regex should be valid");
+    let atom_regex = regex_strategy("[a-z0-9+_-]{1,10}", "local");
 
     // Generate 1-3 atoms and join them with dots to create a valid Dot-string
-    prop::collection::vec(atom_regex, 1..=3).prop_map(|atoms| atoms.join("."))
+    prop::collection::vec(atom_regex, 1..=3)
+        .prop_map(|atoms| atoms.join("."))
+        .boxed()
 }
 
 /// Strategy to generate valid email addresses
@@ -79,6 +72,17 @@ fn mail_from_strategy() -> impl Strategy<Value = String> {
 /// Strategy to generate RCPT TO commands
 fn rcpt_to_strategy() -> impl Strategy<Value = String> {
     email_strategy().prop_map(|email| format!("RCPT TO:<{email}>"))
+}
+
+fn invalid_command_strategy() -> BoxedStrategy<String> {
+    regex_strategy("[A-Z]{1,20}", "INVALID")
+}
+
+fn regex_strategy(pattern: &str, fallback: &str) -> BoxedStrategy<String> {
+    prop::string::string_regex(pattern).map_or_else(
+        |_| Just(fallback.to_string()).boxed(),
+        proptest::strategy::Strategy::boxed,
+    )
 }
 
 /// Strategy to generate any valid SMTP command
@@ -139,22 +143,30 @@ proptest! {
             }
         }).collect::<String>();
 
-        let lower_result = Command::try_from(lower.as_str());
-        let upper_result = Command::try_from(upper.as_str());
-        let mixed_result = Command::try_from(mixed.as_str());
-
-        prop_assert!(lower_result.is_ok(), "Failed to parse lowercase: {}", lower);
-        prop_assert!(upper_result.is_ok(), "Failed to parse uppercase: {}", upper);
-        prop_assert!(mixed_result.is_ok(), "Failed to parse mixed case: {}", mixed);
-
-        // All variations should parse to the same command variant
-        // SAFETY: We just checked that all results are Ok above
-        #[allow(clippy::unwrap_used, reason = "checked with prop_assert above")]
-        let lower_cmd = lower_result.unwrap();
-        #[allow(clippy::unwrap_used, reason = "checked with prop_assert above")]
-        let upper_cmd = upper_result.unwrap();
-        #[allow(clippy::unwrap_used, reason = "checked with prop_assert above")]
-        let mixed_cmd = mixed_result.unwrap();
+        let lower_cmd = match Command::try_from(lower.as_str()) {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse lowercase: {lower}: {err:?}"
+                )));
+            }
+        };
+        let upper_cmd = match Command::try_from(upper.as_str()) {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse uppercase: {upper}: {err:?}"
+                )));
+            }
+        };
+        let mixed_cmd = match Command::try_from(mixed.as_str()) {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse mixed case: {mixed}: {err:?}"
+                )));
+            }
+        };
 
         prop_assert_eq!(
             std::mem::discriminant(&lower_cmd),
@@ -169,12 +181,7 @@ proptest! {
     /// Test that invalid commands are handled gracefully
     #[test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    fn test_invalid_commands_dont_panic(s in {
-        #[allow(clippy::expect_used, reason = "compile-time constant regex should be valid")]
-        let regex = prop::string::string_regex("[A-Z]{1,20}")
-            .expect("invalid command regex should be valid");
-        regex
-    }) {
+    fn test_invalid_commands_dont_panic(s in invalid_command_strategy()) {
         // This test ensures we don't panic on arbitrary input
         let _ = Command::try_from(s.as_str());
         // If we get here without panicking, the test passes
@@ -217,20 +224,24 @@ mod roundtrip_tests {
         #[test]
         #[cfg_attr(miri, ignore = "Calls an unsupported method")]
         fn test_simple_command_roundtrip(cmd in simple_command_strategy()) {
-            let parsed1_result = Command::try_from(cmd.as_str());
-            prop_assert!(parsed1_result.is_ok(), "First parse failed for: {}", cmd);
-
-            // SAFETY: We just checked that parsed1_result is Ok above
-            #[allow(clippy::unwrap_used, reason = "checked with prop_assert above")]
-            let parsed1 = parsed1_result.unwrap();
+            let parsed1 = match Command::try_from(cmd.as_str()) {
+                Ok(cmd) => cmd,
+                Err(err) => {
+                    return Err(TestCaseError::fail(format!(
+                        "First parse failed for {cmd}: {err:?}"
+                    )));
+                }
+            };
 
             let displayed = parsed1.to_string();
-            let parsed2_result = Command::try_from(displayed.as_str());
-            prop_assert!(parsed2_result.is_ok(), "Second parse failed for: {}", displayed);
-
-            // SAFETY: We just checked that parsed2_result is Ok above
-            #[allow(clippy::unwrap_used, reason = "checked with prop_assert above")]
-            let parsed2 = parsed2_result.unwrap();
+            let parsed2 = match Command::try_from(displayed.as_str()) {
+                Ok(cmd) => cmd,
+                Err(err) => {
+                    return Err(TestCaseError::fail(format!(
+                        "Second parse failed for {displayed}: {err:?}"
+                    )));
+                }
+            };
 
             // Both should parse to the same command variant
             prop_assert_eq!(

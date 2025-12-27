@@ -402,7 +402,6 @@ impl State {
 // ============================================================================
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use empath_common::{
         address::{Address, AddressList},
@@ -411,6 +410,8 @@ mod test {
 
     use super::*;
     use crate::MailParameters;
+
+    type TestResult = std::result::Result<(), String>;
 
     #[test]
     fn connect_to_ehlo() {
@@ -466,7 +467,7 @@ mod test {
     }
 
     #[test]
-    fn mail_transaction_flow() {
+    fn mail_transaction_flow() -> TestResult {
         let mut ctx = Context {
             extended: true,
             ..Context::default()
@@ -481,7 +482,8 @@ mod test {
         assert!(matches!(state, State::Ehlo(_)));
 
         // MAIL FROM
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         let state = state.transition(
             Command::MailFrom(
                 Some(Address::from(sender_mailbox)),
@@ -492,7 +494,8 @@ mod test {
         assert!(matches!(state, State::MailFrom(_)));
 
         // RCPT TO
-        let rcpt_mailbox = address_parser::parse_forward_path("<recipient@example.com>").unwrap();
+        let rcpt_mailbox = address_parser::parse_forward_path("<recipient@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         let rcpt = AddressList::from(vec![Address::from(rcpt_mailbox)]);
         let state = state.transition(Command::RcptTo(rcpt), &mut ctx);
         assert!(matches!(state, State::RcptTo(_)));
@@ -500,6 +503,7 @@ mod test {
         // DATA
         let state = state.transition(Command::Data, &mut ctx);
         assert!(matches!(state, State::Data(_)));
+        Ok(())
     }
 
     #[test]
@@ -521,7 +525,7 @@ mod test {
     }
 
     #[test]
-    fn rset_clears_transaction() {
+    fn rset_clears_transaction() -> TestResult {
         let mut ctx = Context {
             extended: true,
             id: "client.example.com".to_string(),
@@ -529,7 +533,8 @@ mod test {
         };
 
         // Start with MailFrom state
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         let sender_addr = Address::from(sender_mailbox);
         *Arc::make_mut(&mut ctx.envelope).sender_mut() = Some(sender_addr.clone());
 
@@ -549,6 +554,7 @@ mod test {
         assert!(ctx.envelope.sender().is_none());
         assert!(ctx.envelope.recipients().is_none());
         assert!(ctx.envelope.mail_params().is_none());
+        Ok(())
     }
 
     #[test]
@@ -572,7 +578,7 @@ mod test {
     }
 
     #[test]
-    fn rset_preserves_session_clears_transaction() {
+    fn rset_preserves_session_clears_transaction() -> TestResult {
         use std::borrow::Cow;
 
         let mut ctx = Context {
@@ -601,7 +607,8 @@ mod test {
             .insert(Cow::Borrowed("recipient_count"), "2".to_string());
 
         // Set up a mail transaction
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         let sender_addr = Address::from(sender_mailbox);
         *Arc::make_mut(&mut ctx.envelope).sender_mut() = Some(sender_addr.clone());
 
@@ -652,5 +659,6 @@ mod test {
         assert_eq!(ctx.transaction.get("declared_size"), None);
         assert_eq!(ctx.transaction.get("spam_score"), None);
         assert_eq!(ctx.transaction.get("recipient_count"), None);
+        Ok(())
     }
 }

@@ -89,11 +89,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_truncation
-    )]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_exponential_backoff_with_jitter() {
         // Test that jitter is applied (result should be different from exact calculation)
@@ -108,8 +103,9 @@ mod tests {
 
         // Check that delay is within jitter range
         let expected = 120;
-        let min = expected - (expected as f64 * jitter_factor) as u64;
-        let max = expected + (expected as f64 * jitter_factor) as u64;
+        let jitter = expected / 5; // 20% of 120 seconds
+        let min = expected - jitter;
+        let max = expected + jitter;
         assert!(
             delay >= min && delay <= max,
             "Delay {delay} should be within jitter range [{min}, {max}]"

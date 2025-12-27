@@ -512,45 +512,62 @@ const fn is_qtext_smtp(ch: char) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
+    type TestResult = std::result::Result<(), String>;
+
     #[test]
-    fn test_parse_null_sender() {
-        assert_eq!(parse_reverse_path("<>").unwrap(), None);
-        assert_eq!(parse_reverse_path(" <> ").unwrap(), None);
+    fn test_parse_null_sender() -> TestResult {
+        assert_eq!(
+            parse_reverse_path("<>").map_err(|err| format!("parse null sender: {err:?}"))?,
+            None
+        );
+        assert_eq!(
+            parse_reverse_path(" <> ").map_err(|err| format!("parse null sender: {err:?}"))?,
+            None
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_parse_simple_mailbox() {
-        let result = parse_forward_path("<user@example.com>").unwrap();
+    fn test_parse_simple_mailbox() -> TestResult {
+        let result = parse_forward_path("<user@example.com>").map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.local_part, "user");
         assert_eq!(result.domain, "example.com");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_dotted_local_part() {
-        let result = parse_forward_path("<first.last@example.com>").unwrap();
+    fn test_parse_dotted_local_part() -> TestResult {
+        let result =
+            parse_forward_path("<first.last@example.com>").map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.local_part, "first.last");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_quoted_local_part() {
-        let result = parse_forward_path(r#"<"user name"@example.com>"#).unwrap();
+    fn test_parse_quoted_local_part() -> TestResult {
+        let result =
+            parse_forward_path(r#"<"user name"@example.com>"#).map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.local_part, r#""user name""#);
+        Ok(())
     }
 
     #[test]
-    fn test_parse_address_literal_ipv4() {
-        let result = parse_forward_path("<user@[192.168.1.1]>").unwrap();
+    fn test_parse_address_literal_ipv4() -> TestResult {
+        let result =
+            parse_forward_path("<user@[192.168.1.1]>").map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.domain, "[192.168.1.1]");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_address_literal_ipv6() {
-        let result = parse_forward_path("<user@[IPv6:2001:db8::1]>").unwrap();
+    fn test_parse_address_literal_ipv6() -> TestResult {
+        let result =
+            parse_forward_path("<user@[IPv6:2001:db8::1]>").map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.domain, "[IPv6:2001:db8::1]");
+        Ok(())
     }
 
     #[test]
@@ -579,41 +596,49 @@ mod tests {
     }
 
     #[test]
-    fn test_path_too_long() {
+    fn test_path_too_long() -> TestResult {
         let long_path = format!("<{}@example.com>", "a".repeat(300));
-        assert_eq!(
-            parse_forward_path(&long_path).unwrap_err(),
-            AddressError::PathTooLong
-        );
+        let Err(err) = parse_forward_path(&long_path) else {
+            return Err("expected path too long error".to_string());
+        };
+        assert_eq!(err, AddressError::PathTooLong);
+        Ok(())
     }
 
     #[test]
-    fn test_local_part_too_long() {
+    fn test_local_part_too_long() -> TestResult {
         let long_local = format!("<{}@example.com>", "a".repeat(70));
-        assert_eq!(
-            parse_forward_path(&long_local).unwrap_err(),
-            AddressError::LocalPartTooLong
-        );
+        let Err(err) = parse_forward_path(&long_local) else {
+            return Err("expected local part too long error".to_string());
+        };
+        assert_eq!(err, AddressError::LocalPartTooLong);
+        Ok(())
     }
 
     #[test]
-    fn test_source_routing_ignored() {
+    fn test_source_routing_ignored() -> TestResult {
         // Source routing is deprecated but we should accept it
-        let result = parse_forward_path("<@relay1.com,@relay2.com:user@example.com>").unwrap();
+        let result = parse_forward_path("<@relay1.com,@relay2.com:user@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.local_part, "user");
         assert_eq!(result.domain, "example.com");
+        Ok(())
     }
 
     #[test]
-    fn test_special_chars_in_local_part() {
-        let result = parse_forward_path("<user+tag@example.com>").unwrap();
+    fn test_special_chars_in_local_part() -> TestResult {
+        let result =
+            parse_forward_path("<user+tag@example.com>").map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.local_part, "user+tag");
+        Ok(())
     }
 
     #[test]
-    fn test_quoted_pair_in_local_part() {
-        let result = parse_forward_path(r#"<"user\"quote"@example.com>"#).unwrap();
+    fn test_quoted_pair_in_local_part() -> TestResult {
+        let result = parse_forward_path(r#"<"user\"quote"@example.com>"#)
+            .map_err(|err| format!("{err:?}"))?;
         assert_eq!(result.local_part, r#""user\"quote""#);
+        Ok(())
     }
 
     #[test]

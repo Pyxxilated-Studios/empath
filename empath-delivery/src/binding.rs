@@ -165,7 +165,6 @@ fn normalize_binding_name(value: &str) -> Option<&str> {
 }
 
 #[cfg(test)]
-#[allow(clippy::manual_let_else, clippy::panic)]
 mod tests {
     use std::collections::HashMap;
 
@@ -195,21 +194,21 @@ mod tests {
     }
 
     #[test]
-    fn resolves_default_binding() {
+    fn resolves_default_binding() -> Result<(), DeliveryError> {
         let registry = registry_with_default();
         let context = Context::default();
         let domains = DomainConfigRegistry::default();
         let resolver = DomainPolicyResolver::new(domains, false);
 
-        let name = registry
-            .resolve_binding_name(&context, &Domain::new("example.com"), &resolver)
-            .unwrap_or_else(|err| panic!("binding resolution should succeed: {err}"));
+        let name =
+            registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)?;
 
         assert_eq!(name.as_deref(), Some("primary"));
+        Ok(())
     }
 
     #[test]
-    fn resolves_domain_override_before_default() {
+    fn resolves_domain_override_before_default() -> Result<(), DeliveryError> {
         let registry = registry_with_default();
         let context = Context::default();
         let domains = DomainConfigRegistry::from_map(HashMap::from([(
@@ -221,15 +220,15 @@ mod tests {
         )]));
         let resolver = DomainPolicyResolver::new(domains, false);
 
-        let name = registry
-            .resolve_binding_name(&context, &Domain::new("example.com"), &resolver)
-            .unwrap_or_else(|err| panic!("binding resolution should succeed: {err}"));
+        let name =
+            registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)?;
 
         assert_eq!(name.as_deref(), Some("backup"));
+        Ok(())
     }
 
     #[test]
-    fn resolves_module_override_before_domain() {
+    fn resolves_module_override_before_domain() -> Result<(), DeliveryError> {
         let registry = registry_with_default();
         let mut context = Context::default();
         context
@@ -244,15 +243,15 @@ mod tests {
         )]));
         let resolver = DomainPolicyResolver::new(domains, false);
 
-        let name = registry
-            .resolve_binding_name(&context, &Domain::new("example.com"), &resolver)
-            .unwrap_or_else(|err| panic!("binding resolution should succeed: {err}"));
+        let name =
+            registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)?;
 
         assert_eq!(name.as_deref(), Some("backup"));
+        Ok(())
     }
 
     #[test]
-    fn rejects_unknown_override() {
+    fn rejects_unknown_override() -> Result<(), DeliveryError> {
         let registry = registry_with_default();
         let mut context = Context::default();
         context
@@ -261,15 +260,18 @@ mod tests {
         let domains = DomainConfigRegistry::default();
         let resolver = DomainPolicyResolver::new(domains, false);
 
-        let err =
-            match registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver) {
-                Ok(_) => panic!("expected unknown binding error"),
-                Err(err) => err,
-            };
+        let Err(err) =
+            registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)
+        else {
+            return Err(
+                SystemError::Configuration("expected unknown binding error".to_string()).into(),
+            );
+        };
 
         assert!(matches!(
             err,
             DeliveryError::System(SystemError::Configuration(_))
         ));
+        Ok(())
     }
 }

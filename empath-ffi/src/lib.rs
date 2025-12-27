@@ -1398,7 +1398,6 @@ mod api {
 pub use api::*;
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use std::{
         borrow::Cow,
@@ -1421,6 +1420,8 @@ mod test {
         em_outbound_binding_is_valid, em_outbound_bindings_list,
     };
 
+    type TestResult = std::result::Result<(), String>;
+
     macro_rules! cstr {
         ($st:literal) => {
             concat!($st, "\0").as_ptr().cast()
@@ -1428,7 +1429,7 @@ mod test {
     }
 
     #[test]
-    fn test_id() {
+    fn test_id() -> TestResult {
         let validate_context = Context {
             id: String::from("Testing"),
             ..Default::default()
@@ -1439,19 +1440,20 @@ mod test {
 
             assert_eq!(
                 CString::from_raw(ffi_string.data.cast_mut()),
-                CString::new(validate_context.id()).unwrap()
+                CString::new(validate_context.id()).map_err(|err| err.to_string())?
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn test_recipients() {
+    fn test_recipients() -> TestResult {
         let mut validate_context = Context::default();
 
-        let recipient1 =
-            empath_common::address_parser::parse_forward_path("<test@gmail.com>").unwrap();
-        let recipient2 =
-            empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
+        let recipient1 = empath_common::address_parser::parse_forward_path("<test@gmail.com>")
+            .map_err(|err| err.to_string())?;
+        let recipient2 = empath_common::address_parser::parse_forward_path("<test@test.com>")
+            .map_err(|err| err.to_string())?;
         *Arc::make_mut(&mut validate_context.envelope).recipients_mut() = Some(AddressList(vec![
             Address::from(recipient1),
             Address::from(recipient2),
@@ -1461,31 +1463,32 @@ mod test {
         assert_eq!(buffer.len, 2);
 
         unsafe {
-            let data = std::mem::ManuallyDrop::new(Vec::from_raw_parts(
-                buffer.data.cast_mut(),
-                buffer.len,
-                buffer.len,
-            ));
+            let data: std::mem::ManuallyDrop<Box<[crate::string::String]>> =
+                std::mem::ManuallyDrop::new(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                    buffer.data.cast_mut(),
+                    buffer.len,
+                )));
 
             assert_eq!(
                 CStr::from_ptr(data[0].data.cast_mut()).to_owned(),
-                CString::new("RCPT TO:test@gmail.com").unwrap()
+                CString::new("RCPT TO:test@gmail.com").map_err(|err| err.to_string())?
             );
 
             assert_eq!(
                 CStr::from_ptr(data[1].data.cast_mut()).to_owned(),
-                CString::new("RCPT TO:test@test.com").unwrap()
+                CString::new("RCPT TO:test@test.com").map_err(|err| err.to_string())?
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn test_outbound_binding_helpers() {
+    fn test_outbound_binding_helpers() -> TestResult {
         crate::modules::set_outbound_bindings(vec!["primary".to_string(), "backup".to_string()]);
 
         let mut validate_context = Context::default();
 
-        let primary = CString::new("primary").unwrap();
+        let primary = CString::new("primary").map_err(|err| err.to_string())?;
         let selection = EmOutboundBindingSelection {
             kind: EmOutboundBindingKind::Named,
             name: primary.as_ptr(),
@@ -1499,7 +1502,7 @@ mod test {
             Some("primary")
         );
 
-        let unknown = CString::new("unknown").unwrap();
+        let unknown = CString::new("unknown").map_err(|err| err.to_string())?;
         let selection = EmOutboundBindingSelection {
             kind: EmOutboundBindingKind::Named,
             name: unknown.as_ptr(),
@@ -1523,10 +1526,11 @@ mod test {
 
         let bindings = em_outbound_bindings_list();
         assert_eq!(bindings.len, 2);
+        Ok(())
     }
 
     #[test]
-    fn test_set_sender() {
+    fn test_set_sender() -> TestResult {
         let mut validate_context = Context {
             id: String::from("Testing"),
             envelope: Arc::new(Envelope::default()),
@@ -1539,18 +1543,21 @@ mod test {
                 cstr!("<test@test.com>")
             ));
             let expected_mailbox =
-                empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
+                empath_common::address_parser::parse_forward_path("<test@test.com>")
+                    .map_err(|err| err.to_string())?;
             assert_eq!(
                 validate_context.envelope.sender(),
                 Some(&Address::from(expected_mailbox))
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn test_null_sender() {
+    fn test_null_sender() -> TestResult {
         let mut envelope = Envelope::default();
-        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
+        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>")
+            .map_err(|err| err.to_string())?;
         *envelope.sender_mut() = Some(Address::from(mailbox));
 
         let mut validate_context = Context {
@@ -1563,11 +1570,13 @@ mod test {
             assert!(em_context_set_sender(&mut validate_context, null()));
             assert_eq!(validate_context.envelope.sender(), None);
         }
+        Ok(())
     }
 
     #[test]
-    fn test_invalid_sender() {
-        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>").unwrap();
+    fn test_invalid_sender() -> TestResult {
+        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>")
+            .map_err(|err| err.to_string())?;
         let original_sender = Address::from(mailbox);
         let mut envelope = Envelope::default();
         *envelope.sender_mut() = Some(original_sender.clone());
@@ -1582,6 +1591,7 @@ mod test {
             assert!(!em_context_set_sender(&mut validate_context, cstr!("---")));
             assert_eq!(validate_context.envelope.sender(), Some(&original_sender));
         }
+        Ok(())
     }
 
     #[test]

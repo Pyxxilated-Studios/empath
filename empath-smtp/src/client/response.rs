@@ -169,59 +169,72 @@ impl Response {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
+    type TestResult = std::result::Result<(), String>;
+
     #[test]
-    fn test_parse_single_line() {
+    fn test_parse_single_line() -> TestResult {
         let line = ResponseLine {
             code: 220,
             is_last: true,
             message: "mail.example.com ESMTP".to_string(),
         };
         assert_eq!(
-            Response::parse_line("220 mail.example.com ESMTP").unwrap(),
+            Response::parse_line("220 mail.example.com ESMTP").map_err(|err| err.to_string())?,
             line
         );
+        Ok(())
     }
 
     #[test]
-    fn test_parse_multi_line_indicator() {
+    fn test_parse_multi_line_indicator() -> TestResult {
         let line = ResponseLine {
             code: 250,
             is_last: false,
             message: "mail.example.com".to_string(),
         };
-        assert_eq!(Response::parse_line("250-mail.example.com").unwrap(), line);
+        assert_eq!(
+            Response::parse_line("250-mail.example.com").map_err(|err| err.to_string())?,
+            line
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_parse_complete_response() {
+    fn test_parse_complete_response() -> TestResult {
         let data = b"250 OK\r\n";
-        let (response, consumed) = Response::parse_response(data).unwrap().unwrap();
+        let (response, consumed) = Response::parse_response(data)
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "expected parsed response".to_string())?;
         assert_eq!(response.code, 250);
         assert_eq!(response.lines, vec!["OK"]);
         assert_eq!(consumed, 8);
+        Ok(())
     }
 
     #[test]
-    fn test_parse_multi_line_response() {
+    fn test_parse_multi_line_response() -> TestResult {
         let data = b"250-mail.example.com\r\n250-SIZE 10000000\r\n250 HELP\r\n";
-        let (response, consumed) = Response::parse_response(data).unwrap().unwrap();
+        let (response, consumed) = Response::parse_response(data)
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "expected parsed response".to_string())?;
         assert_eq!(response.code, 250);
         assert_eq!(
             response.lines,
             vec!["mail.example.com", "SIZE 10000000", "HELP"]
         );
         assert_eq!(consumed, 51); // 22 + 19 + 10 = 51
+        Ok(())
     }
 
     #[test]
-    fn test_parse_incomplete_response() {
+    fn test_parse_incomplete_response() -> TestResult {
         let data = b"250-mail.example.com\r\n250-SIZE";
-        let result = Response::parse_response(data).unwrap();
+        let result = Response::parse_response(data).map_err(|err| err.to_string())?;
         assert!(result.is_none()); // Need more data
+        Ok(())
     }
 
     #[test]

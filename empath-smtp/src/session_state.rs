@@ -132,11 +132,12 @@ impl SessionState {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use empath_common::{address::Address, address_parser};
 
     use super::*;
+
+    type TestResult = std::result::Result<(), String>;
 
     #[test]
     fn test_new_session_state() {
@@ -153,11 +154,12 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_transaction() {
+    fn test_reset_transaction() -> TestResult {
         let mut ctx = SessionState::with_id("client.example.com".to_string(), true);
 
         // Set up a mail transaction
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         *ctx.envelope_mut().sender_mut() = Some(Address::from(sender_mailbox));
 
         // Reset should clear transaction but keep session state
@@ -166,26 +168,30 @@ mod tests {
         assert_eq!(ctx.id(), "client.example.com");
         assert!(ctx.is_extended());
         assert!(ctx.envelope().sender().is_none());
+        Ok(())
     }
 
     #[test]
-    fn test_envelope_access() {
+    fn test_envelope_access() -> TestResult {
         let mut ctx = SessionState::new();
 
-        let mailbox = address_parser::parse_forward_path("<test@example.com>").unwrap();
+        let mailbox = address_parser::parse_forward_path("<test@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         *ctx.envelope_mut().sender_mut() = Some(Address::from(mailbox));
         assert!(ctx.envelope().sender().is_some());
+        Ok(())
     }
 
     #[test]
-    fn test_from_context() {
+    fn test_from_context() -> TestResult {
         let mut business_ctx = Context {
             id: "mail.example.com".to_string(),
             extended: true,
             ..Default::default()
         };
 
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         *Arc::make_mut(&mut business_ctx.envelope).sender_mut() =
             Some(Address::from(sender_mailbox));
 
@@ -194,13 +200,15 @@ mod tests {
         assert_eq!(session_state.id(), "mail.example.com");
         assert!(session_state.is_extended());
         assert!(session_state.envelope().sender().is_some());
+        Ok(())
     }
 
     #[test]
-    fn test_sync_to_context() {
+    fn test_sync_to_context() -> TestResult {
         let mut session_state = SessionState::with_id("client.example.com".to_string(), true);
 
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         *session_state.envelope_mut().sender_mut() = Some(Address::from(sender_mailbox));
 
         let mut business_ctx = Context::default();
@@ -209,17 +217,19 @@ mod tests {
         assert_eq!(business_ctx.id, "client.example.com");
         assert!(business_ctx.extended);
         assert!(business_ctx.envelope.sender().is_some());
+        Ok(())
     }
 
     #[test]
-    fn test_roundtrip_conversion() {
+    fn test_roundtrip_conversion() -> TestResult {
         let mut original_ctx = Context {
             extended: true,
             id: "test.example.com".to_string(),
             ..Default::default()
         };
 
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         *Arc::make_mut(&mut original_ctx.envelope).sender_mut() =
             Some(Address::from(sender_mailbox));
 
@@ -234,5 +244,6 @@ mod tests {
         assert_eq!(new_ctx.id, original_ctx.id);
         assert_eq!(new_ctx.extended, original_ctx.extended);
         assert!(new_ctx.envelope.sender().is_some());
+        Ok(())
     }
 }

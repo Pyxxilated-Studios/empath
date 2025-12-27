@@ -380,42 +380,45 @@ fn guess_content_type(path: &Path) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
+    type TestResult = std::result::Result<(), String>;
+
     #[test]
-    fn test_simple_message() {
+    fn test_simple_message() -> TestResult {
         let message = MessageBuilder::new()
             .from("sender@example.com")
             .to("recipient@example.com")
             .subject("Test")
             .body("Hello World")
             .build()
-            .unwrap();
+            .map_err(|err| err.to_string())?;
 
         assert!(message.contains("From: sender@example.com"));
         assert!(message.contains("To: recipient@example.com"));
         assert!(message.contains("Subject: Test"));
         assert!(message.contains("Hello World"));
+        Ok(())
     }
 
     #[test]
-    fn test_multiple_recipients() {
+    fn test_multiple_recipients() -> TestResult {
         let message = MessageBuilder::new()
             .from("sender@example.com")
             .to("recipient1@example.com")
             .to("recipient2@example.com")
             .subject("Test")
             .build()
-            .unwrap();
+            .map_err(|err| err.to_string())?;
 
         assert!(message.contains("To: recipient1@example.com, recipient2@example.com"));
+        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    fn test_with_attachment() {
+    fn test_with_attachment() -> TestResult {
         let message = MessageBuilder::new()
             .from("sender@example.com")
             .to("recipient@example.com")
@@ -423,11 +426,12 @@ mod tests {
             .body("See attachment")
             .attach("test.txt", "text/plain", b"File content".to_vec())
             .build()
-            .unwrap();
+            .map_err(|err| err.to_string())?;
 
         assert!(message.contains("multipart/mixed"));
         assert!(message.contains("test.txt"));
         assert!(message.contains("base64"));
+        Ok(())
     }
 
     #[test]
@@ -438,15 +442,16 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_headers() {
+    fn test_custom_headers() -> TestResult {
         let message = MessageBuilder::new()
             .from("sender@example.com")
             .to("recipient@example.com")
             .header("X-Custom-Header", "custom-value")
             .body("Test")
             .build()
-            .unwrap();
+            .map_err(|err| err.to_string())?;
 
         assert!(message.contains("X-Custom-Header: custom-value"));
+        Ok(())
     }
 }

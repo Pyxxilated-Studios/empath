@@ -130,9 +130,10 @@ mod defaults {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), String>;
 
     #[test]
     fn test_retry_policy_defaults() {
@@ -184,7 +185,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    fn test_calculate_next_retry() {
+    fn test_calculate_next_retry() -> TestResult {
         let policy = RetryPolicy {
             max_attempts: 25,
             base_retry_delay_secs: 60,
@@ -198,7 +199,7 @@ mod tests {
         let next = policy.calculate_next_retry(0);
         let delay = next
             .duration_since(now)
-            .expect("next retry should be in future")
+            .map_err(|err| err.to_string())?
             .as_secs();
         assert_eq!(delay, 60);
 
@@ -207,7 +208,7 @@ mod tests {
         let next = policy.calculate_next_retry(1);
         let delay = next
             .duration_since(now)
-            .expect("next retry should be in future")
+            .map_err(|err| err.to_string())?
             .as_secs();
         assert_eq!(delay, 120);
 
@@ -216,9 +217,10 @@ mod tests {
         let next = policy.calculate_next_retry(2);
         let delay = next
             .duration_since(now)
-            .expect("next retry should be in future")
+            .map_err(|err| err.to_string())?
             .as_secs();
         assert_eq!(delay, 240);
+        Ok(())
     }
 
     #[test]

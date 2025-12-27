@@ -754,7 +754,6 @@ impl Mechanism {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use std::sync::Mutex;
 
@@ -763,55 +762,60 @@ mod tests {
     use super::*;
     use crate::spf::dns::{DnsLookupError, MailServer};
 
-    fn sender(s: &str) -> EmailAddress {
-        EmailAddress::new(s).unwrap()
+    type TestResult = std::result::Result<(), String>;
+
+    fn sender(s: &str) -> Result<EmailAddress, String> {
+        EmailAddress::new(s).map_err(|err| err.to_string())
     }
 
     /// Mock DNS resolver for testing
-    #[allow(clippy::struct_field_names)]
     struct MockDnsResolver {
-        txt_records: Mutex<AHashMap<String, Vec<String>>>,
-        a_records: Mutex<AHashMap<String, Vec<IpAddr>>>,
-        mx_records: Mutex<AHashMap<String, Vec<MailServer>>>,
-        ptr_records: Mutex<AHashMap<String, Vec<String>>>,
+        txt: Mutex<AHashMap<String, Vec<String>>>,
+        a: Mutex<AHashMap<String, Vec<IpAddr>>>,
+        mx: Mutex<AHashMap<String, Vec<MailServer>>>,
+        ptr: Mutex<AHashMap<String, Vec<String>>>,
     }
 
     impl MockDnsResolver {
         fn new() -> Self {
             Self {
-                txt_records: Mutex::new(AHashMap::new()),
-                a_records: Mutex::new(AHashMap::new()),
-                mx_records: Mutex::new(AHashMap::new()),
-                ptr_records: Mutex::new(AHashMap::new()),
+                txt: Mutex::new(AHashMap::new()),
+                a: Mutex::new(AHashMap::new()),
+                mx: Mutex::new(AHashMap::new()),
+                ptr: Mutex::new(AHashMap::new()),
             }
         }
 
-        fn add_txt(&self, domain: &str, records: Vec<String>) {
-            self.txt_records
+        fn add_txt(&self, domain: &str, records: Vec<String>) -> Result<(), String> {
+            self.txt
                 .lock()
-                .unwrap()
+                .map_err(|_| "txt_records lock poisoned".to_string())?
                 .insert(domain.to_string(), records);
+            Ok(())
         }
 
-        fn add_a(&self, domain: &str, ips: Vec<IpAddr>) {
-            self.a_records
+        fn add_a(&self, domain: &str, ips: Vec<IpAddr>) -> Result<(), String> {
+            self.a
                 .lock()
-                .unwrap()
+                .map_err(|_| "a_records lock poisoned".to_string())?
                 .insert(domain.to_string(), ips);
+            Ok(())
         }
 
-        fn add_mx(&self, domain: &str, servers: Vec<MailServer>) {
-            self.mx_records
+        fn add_mx(&self, domain: &str, servers: Vec<MailServer>) -> Result<(), String> {
+            self.mx
                 .lock()
-                .unwrap()
+                .map_err(|_| "mx_records lock poisoned".to_string())?
                 .insert(domain.to_string(), servers);
+            Ok(())
         }
 
-        fn add_ptr(&self, ip: IpAddr, names: Vec<String>) {
-            self.ptr_records
+        fn add_ptr(&self, ip: IpAddr, names: Vec<String>) -> Result<(), String> {
+            self.ptr
                 .lock()
-                .unwrap()
+                .map_err(|_| "ptr_records lock poisoned".to_string())?
                 .insert(ip.to_string(), names);
+            Ok(())
         }
     }
 
@@ -819,67 +823,57 @@ mod tests {
     impl SpfDnsResolver for MockDnsResolver {
         async fn txt_lookup(&self, domain: &str) -> Result<Arc<Vec<String>>, DnsLookupError> {
             // Return empty vector if no records (not an error - DNS succeeded but found nothing)
-            Ok(Arc::new(
-                self.txt_records
-                    .lock()
-                    .unwrap()
-                    .get(domain)
-                    .cloned()
-                    .unwrap_or_default(),
-            ))
+            let records = self.txt.lock().map_err(|_| {
+                DnsLookupError::LookupFailed("txt_records lock poisoned".to_string())
+            })?;
+            Ok(Arc::new(records.get(domain).cloned().unwrap_or_default()))
         }
 
         async fn ptr_lookup(&self, ip: IpAddr) -> Result<Arc<Vec<String>>, DnsLookupError> {
             // Return empty vector if no records
+            let records = self.ptr.lock().map_err(|_| {
+                DnsLookupError::LookupFailed("ptr_records lock poisoned".to_string())
+            })?;
             Ok(Arc::new(
-                self.ptr_records
-                    .lock()
-                    .unwrap()
-                    .get(&ip.to_string())
-                    .cloned()
-                    .unwrap_or_default(),
+                records.get(&ip.to_string()).cloned().unwrap_or_default(),
             ))
         }
 
         async fn a_lookup(&self, domain: &str) -> Result<Arc<Vec<IpAddr>>, DnsLookupError> {
             // Return empty vector if no records
-            Ok(Arc::new(
-                self.a_records
-                    .lock()
-                    .unwrap()
-                    .get(domain)
-                    .cloned()
-                    .unwrap_or_default(),
-            ))
+            let records = self
+                .a
+                .lock()
+                .map_err(|_| DnsLookupError::LookupFailed("a_records lock poisoned".to_string()))?;
+            Ok(Arc::new(records.get(domain).cloned().unwrap_or_default()))
         }
 
         async fn mx_lookup(&self, domain: &str) -> Result<Arc<Vec<MailServer>>, DnsLookupError> {
             // Return empty vector if no records
-            Ok(Arc::new(
-                self.mx_records
-                    .lock()
-                    .unwrap()
-                    .get(domain)
-                    .cloned()
-                    .unwrap_or_default(),
-            ))
+            let records = self.mx.lock().map_err(|_| {
+                DnsLookupError::LookupFailed("mx_records lock poisoned".to_string())
+            })?;
+            Ok(Arc::new(records.get(domain).cloned().unwrap_or_default()))
         }
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_ip4_mechanism_match() {
+    async fn test_ip4_mechanism_match() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
-        );
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.100".parse().unwrap(),
+                &sender,
+                "192.0.2.100"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
@@ -889,171 +883,211 @@ mod tests {
             result.matched_mechanism,
             Some("ip4:192.0.2.0/24".to_string())
         );
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_ip4_mechanism_no_match() {
+    async fn test_ip4_mechanism_no_match() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
-        );
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "198.51.100.1".parse().unwrap(),
+                &sender,
+                "198.51.100.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::Fail);
         assert_eq!(result.matched_mechanism, Some("all".to_string()));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_ip6_mechanism() {
+    async fn test_ip6_mechanism() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 ip6:2001:db8::/32 -all".to_string()],
-        );
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "2001:db8::1".parse().unwrap(),
+                &sender,
+                "2001:db8::1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::Pass);
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_a_mechanism() {
+    async fn test_a_mechanism() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
-        resolver.add_txt("example.com", vec!["v=spf1 a -all".to_string()]);
-        resolver.add_a("example.com", vec!["192.0.2.1".parse().unwrap()]);
+        resolver.add_txt("example.com", vec!["v=spf1 a -all".to_string()])?;
+        resolver.add_a(
+            "example.com",
+            vec![
+                "192.0.2.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
+            ],
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.1".parse().unwrap(),
+                &sender,
+                "192.0.2.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::Pass);
         assert_eq!(result.matched_mechanism, Some("a".to_string()));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_mx_mechanism() {
+    async fn test_mx_mechanism() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
-        resolver.add_txt("example.com", vec!["v=spf1 mx -all".to_string()]);
+        resolver.add_txt("example.com", vec!["v=spf1 mx -all".to_string()])?;
         resolver.add_mx(
             "example.com",
             vec![MailServer {
                 host: "mail.example.com".to_string(),
                 priority: 10,
             }],
-        );
-        resolver.add_a("mail.example.com", vec!["192.0.2.10".parse().unwrap()]);
+        )?;
+        resolver.add_a(
+            "mail.example.com",
+            vec![
+                "192.0.2.10"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
+            ],
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.10".parse().unwrap(),
+                &sender,
+                "192.0.2.10"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::Pass);
         assert_eq!(result.matched_mechanism, Some("mx".to_string()));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_all_mechanism() {
+    async fn test_all_mechanism() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
-        resolver.add_txt("example.com", vec!["v=spf1 -all".to_string()]);
+        resolver.add_txt("example.com", vec!["v=spf1 -all".to_string()])?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "1.2.3.4".parse().unwrap(),
+                &sender,
+                "1.2.3.4".parse::<IpAddr>().map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::Fail);
         assert_eq!(result.matched_mechanism, Some("all".to_string()));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_softfail_qualifier() {
+    async fn test_softfail_qualifier() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
-        resolver.add_txt("example.com", vec!["v=spf1 ~all".to_string()]);
+        resolver.add_txt("example.com", vec!["v=spf1 ~all".to_string()])?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "1.2.3.4".parse().unwrap(),
+                &sender,
+                "1.2.3.4".parse::<IpAddr>().map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::SoftFail);
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_neutral_qualifier() {
+    async fn test_neutral_qualifier() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
-        resolver.add_txt("example.com", vec!["v=spf1 ?all".to_string()]);
+        resolver.add_txt("example.com", vec!["v=spf1 ?all".to_string()])?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "1.2.3.4".parse().unwrap(),
+                &sender,
+                "1.2.3.4".parse::<IpAddr>().map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::Neutral);
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_include_mechanism_pass() {
+    async fn test_include_mechanism_pass() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 include:_spf.example.com -all".to_string()],
-        );
+        )?;
         resolver.add_txt(
             "_spf.example.com",
             vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
-        );
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.100".parse().unwrap(),
+                &sender,
+                "192.0.2.100"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
@@ -1063,26 +1097,30 @@ mod tests {
             result.matched_mechanism,
             Some("include:_spf.example.com".to_string())
         );
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_include_mechanism_no_match() {
+    async fn test_include_mechanism_no_match() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 include:_spf.example.com -all".to_string()],
-        );
+        )?;
         resolver.add_txt(
             "_spf.example.com",
             vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
-        );
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "198.51.100.1".parse().unwrap(),
+                &sender,
+                "198.51.100.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
@@ -1091,80 +1129,92 @@ mod tests {
         // So we fall through to -all
         assert_eq!(result.result, SpfResult::Fail);
         assert_eq!(result.matched_mechanism, Some("all".to_string()));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_redirect_modifier() {
+    async fn test_redirect_modifier() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 redirect=_spf.example.com".to_string()],
-        );
+        )?;
         resolver.add_txt(
             "_spf.example.com",
             vec!["v=spf1 ip4:192.0.2.0/24 -all".to_string()],
-        );
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.100".parse().unwrap(),
+                &sender,
+                "192.0.2.100"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::Pass);
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_dns_lookup_limit() {
+    async fn test_dns_lookup_limit() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
 
         // Create a chain of includes that exceeds the limit
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 include:spf1.example.com -all".to_string()],
-        );
+        )?;
 
         for i in 1..=12 {
             resolver.add_txt(
                 &format!("spf{i}.example.com"),
                 vec![format!("v=spf1 include:spf{}.example.com -all", i + 1)],
-            );
+            )?;
         }
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.1".parse().unwrap(),
+                &sender,
+                "192.0.2.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::PermError);
-        assert!(result.explanation.unwrap().contains("Too many DNS lookups"));
+        let explanation = result
+            .explanation
+            .ok_or_else(|| "missing explanation".to_string())?;
+        assert!(explanation.contains("Too many DNS lookups"));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_recursion_depth_limit() {
+    async fn test_recursion_depth_limit() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
 
         // Create a deep redirect chain
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 redirect=spf1.example.com".to_string()],
-        );
+        )?;
 
         for i in 1..=12 {
             resolver.add_txt(
                 &format!("spf{i}.example.com"),
                 vec![format!("v=spf1 redirect=spf{}.example.com", i + 1)],
-            );
+            )?;
         }
 
         // Use higher DNS limit to ensure we hit recursion depth limit first
@@ -1174,54 +1224,72 @@ mod tests {
         };
 
         let evaluator = SpfEvaluator::new(resolver, config);
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.1".parse().unwrap(),
+                &sender,
+                "192.0.2.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::PermError);
-        assert!(result.explanation.unwrap().contains("Recursion depth"));
+        let explanation = result
+            .explanation
+            .ok_or_else(|| "missing explanation".to_string())?;
+        assert!(explanation.contains("Recursion depth"));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_no_spf_record() {
+    async fn test_no_spf_record() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.1".parse().unwrap(),
+                &sender,
+                "192.0.2.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
 
         assert_eq!(result.result, SpfResult::None);
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_exists_mechanism() {
+    async fn test_exists_mechanism() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 exists:%{i}.whitelist.example.com -all".to_string()],
-        );
+        )?;
         // For now, exists just checks if the domain has A records (macro expansion not implemented)
         resolver.add_a(
             "%{i}.whitelist.example.com",
-            vec!["127.0.0.1".parse().unwrap()],
-        );
+            vec![
+                "127.0.0.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
+            ],
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.1".parse().unwrap(),
+                &sender,
+                "192.0.2.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
@@ -1230,46 +1298,54 @@ mod tests {
         assert!(
             result
                 .matched_mechanism
-                .unwrap()
+                .ok_or_else(|| "matched_mechanism missing".to_string())?
                 .contains("exists:%{i}.whitelist.example.com")
         );
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_ptr_mechanism() {
+    async fn test_ptr_mechanism() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
-        resolver.add_txt("example.com", vec!["v=spf1 ptr -all".to_string()]);
+        resolver.add_txt("example.com", vec!["v=spf1 ptr -all".to_string()])?;
 
-        let client_ip: IpAddr = "192.0.2.1".parse().unwrap();
-        resolver.add_ptr(client_ip, vec!["mail.example.com".to_string()]);
-        resolver.add_a("mail.example.com", vec![client_ip]);
+        let client_ip: IpAddr = "192.0.2.1"
+            .parse::<IpAddr>()
+            .map_err(|err| err.to_string())?;
+        resolver.add_ptr(client_ip, vec!["mail.example.com".to_string()])?;
+        resolver.add_a("mail.example.com", vec![client_ip])?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
         let result = evaluator
-            .evaluate(&sender("user@example.com"), client_ip, "mail.example.com")
+            .evaluate(&sender, client_ip, "mail.example.com")
             .await;
 
         assert_eq!(result.result, SpfResult::Pass);
         assert_eq!(result.matched_mechanism, Some("ptr".to_string()));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_multiple_mechanisms() {
+    async fn test_multiple_mechanisms() -> TestResult {
         let resolver = Arc::new(MockDnsResolver::new());
         resolver.add_txt(
             "example.com",
             vec!["v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.0/24 -all".to_string()],
-        );
+        )?;
 
         let evaluator = SpfEvaluator::new(resolver, SpfConfig::default());
+        let sender = sender("user@example.com")?;
 
         // First IP range
         let result1 = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "192.0.2.50".parse().unwrap(),
+                &sender,
+                "192.0.2.50"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
@@ -1278,8 +1354,10 @@ mod tests {
         // Second IP range
         let result2 = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "198.51.100.50".parse().unwrap(),
+                &sender,
+                "198.51.100.50"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
@@ -1288,11 +1366,14 @@ mod tests {
         // Neither range
         let result3 = evaluator
             .evaluate(
-                &sender("user@example.com"),
-                "203.0.113.1".parse().unwrap(),
+                &sender,
+                "203.0.113.1"
+                    .parse::<IpAddr>()
+                    .map_err(|err| err.to_string())?,
                 "mail.example.com",
             )
             .await;
         assert_eq!(result3.result, SpfResult::Fail);
+        Ok(())
     }
 }

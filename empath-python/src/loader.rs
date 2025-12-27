@@ -186,7 +186,6 @@ impl Clone for PythonModule {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::borrow::Cow;
 
@@ -205,6 +204,8 @@ mod tests {
         }
     }
 
+    type TestResult = std::result::Result<(), String>;
+
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
     fn test_load_nonexistent_module() {
@@ -214,99 +215,106 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
-    fn test_execute_simple_callback() {
+    fn test_execute_simple_callback() -> TestResult {
         use std::io::Write;
 
         use tempfile::NamedTempFile;
 
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "def validate_connect(ctx):").unwrap();
-        writeln!(file, "    return True").unwrap();
-        file.flush().unwrap();
+        let mut file = NamedTempFile::new().map_err(|err| err.to_string())?;
+        writeln!(file, "def validate_connect(ctx):").map_err(|err| err.to_string())?;
+        writeln!(file, "    return True").map_err(|err| err.to_string())?;
+        file.flush().map_err(|err| err.to_string())?;
 
-        let module = PythonModule::load(file.path()).unwrap();
-        module.initialize().unwrap();
+        let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
+        module.initialize().map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module
             .execute_callback("validate_connect", &mut context)
-            .unwrap();
+            .map_err(|err| err.to_string())?;
         assert!(result);
+        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
-    fn test_execute_reject_callback() {
+    fn test_execute_reject_callback() -> TestResult {
         use std::io::Write;
 
         use tempfile::NamedTempFile;
 
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "def validate_mail_from(ctx):").unwrap();
-        writeln!(file, "    ctx.reject(550, 'Sender blocked')").unwrap();
-        writeln!(file, "    return False").unwrap();
-        file.flush().unwrap();
+        let mut file = NamedTempFile::new().map_err(|err| err.to_string())?;
+        writeln!(file, "def validate_mail_from(ctx):").map_err(|err| err.to_string())?;
+        writeln!(file, "    ctx.reject(550, 'Sender blocked')").map_err(|err| err.to_string())?;
+        writeln!(file, "    return False").map_err(|err| err.to_string())?;
+        file.flush().map_err(|err| err.to_string())?;
 
-        let module = PythonModule::load(file.path()).unwrap();
-        module.initialize().unwrap();
+        let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
+        module.initialize().map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module
             .execute_callback("validate_mail_from", &mut context)
-            .unwrap();
+            .map_err(|err| err.to_string())?;
         assert!(!result);
         // Check that rejection was set in response field
         assert!(context.response.is_some());
-        let (status, message) = context.response.unwrap();
+        let (status, message) = context
+            .response
+            .ok_or_else(|| "missing response".to_string())?;
         assert_eq!(u32::from(status), 550);
         assert_eq!(message.as_ref(), "Sender blocked");
+        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
-    fn test_execute_context_modification() {
+    fn test_execute_context_modification() -> TestResult {
         use std::io::Write;
 
         use tempfile::NamedTempFile;
 
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "def validate_data(ctx):").unwrap();
-        writeln!(file, "    ctx.transaction_set('spam_score', '2.5')").unwrap();
-        writeln!(file, "    return True").unwrap();
-        file.flush().unwrap();
+        let mut file = NamedTempFile::new().map_err(|err| err.to_string())?;
+        writeln!(file, "def validate_data(ctx):").map_err(|err| err.to_string())?;
+        writeln!(file, "    ctx.transaction_set('spam_score', '2.5')")
+            .map_err(|err| err.to_string())?;
+        writeln!(file, "    return True").map_err(|err| err.to_string())?;
+        file.flush().map_err(|err| err.to_string())?;
 
-        let module = PythonModule::load(file.path()).unwrap();
-        module.initialize().unwrap();
+        let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
+        module.initialize().map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module
             .execute_callback("validate_data", &mut context)
-            .unwrap();
+            .map_err(|err| err.to_string())?;
         assert!(result);
         assert_eq!(
             context.transaction.get(&Cow::Borrowed("spam_score")),
             Some(&"2.5".to_string())
         );
+        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
-    fn test_callback_not_found_allows() {
+    fn test_callback_not_found_allows() -> TestResult {
         use std::io::Write;
 
         use tempfile::NamedTempFile;
 
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "# Empty module").unwrap();
-        file.flush().unwrap();
+        let mut file = NamedTempFile::new().map_err(|err| err.to_string())?;
+        writeln!(file, "# Empty module").map_err(|err| err.to_string())?;
+        file.flush().map_err(|err| err.to_string())?;
 
-        let module = PythonModule::load(file.path()).unwrap();
-        module.initialize().unwrap();
+        let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
+        module.initialize().map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module
             .execute_callback("validate_connect", &mut context)
-            .unwrap();
+            .map_err(|err| err.to_string())?;
         assert!(result); // Allow by default
+        Ok(())
     }
 }

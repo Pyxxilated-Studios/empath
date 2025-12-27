@@ -294,26 +294,23 @@ pub fn log_delivery_failure(
 }
 
 #[cfg(test)]
-#[allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::email::EmailValidationError;
 
     #[test]
-    fn test_redact_email() {
-        let email = EmailAddress::new("user@example.com")
-            .unwrap_or_else(|e| panic!("expected valid email: {e}"));
+    fn test_redact_email() -> Result<(), EmailValidationError> {
+        let email = EmailAddress::new("user@example.com")?;
         assert_eq!(redact_email(&email, true), "[REDACTED]@example.com");
         assert_eq!(redact_email(&email, false), "user@example.com");
+        Ok(())
     }
 
     #[test]
-    fn test_redact_emails() {
-        let emails = vec![
-            EmailAddress::new("user1@example.com")
-                .unwrap_or_else(|e| panic!("expected valid email: {e}")),
-            EmailAddress::new("user2@example.org")
-                .unwrap_or_else(|e| panic!("expected valid email: {e}")),
-        ];
+    fn test_redact_emails() -> Result<(), EmailValidationError> {
+        let email_one = EmailAddress::new("user1@example.com")?;
+        let email_two = EmailAddress::new("user2@example.org")?;
+        let emails = vec![email_one, email_two];
 
         let redacted = redact_emails(&emails, true);
         assert_eq!(redacted[0], "[REDACTED]@example.com");
@@ -322,6 +319,7 @@ mod tests {
         let not_redacted = redact_emails(&emails, false);
         assert_eq!(not_redacted[0], "user1@example.com");
         assert_eq!(not_redacted[1], "user2@example.org");
+        Ok(())
     }
 
     #[test]
@@ -334,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn test_audit_disabled() {
+    fn test_audit_disabled() -> Result<(), EmailValidationError> {
         // Initialize with disabled config
         init(AuditConfig {
             enabled: false,
@@ -345,20 +343,17 @@ mod tests {
             },
         });
 
-        let sender = EmailAddress::new("sender@example.com")
-            .unwrap_or_else(|e| panic!("expected valid email: {e}"));
-        let recipients = vec![
-            EmailAddress::new("rcpt@example.com")
-                .unwrap_or_else(|e| panic!("expected valid email: {e}")),
-        ];
+        let sender = EmailAddress::new("sender@example.com")?;
+        let recipient = EmailAddress::new("rcpt@example.com")?;
+        let recipients = vec![recipient];
         let domain = Domain::new("example.com");
-        let server = ServerId::new("mx1.example.com:25")
-            .unwrap_or_else(|e| panic!("expected valid server id: {e}"));
+        let server = ServerId::new("mx1.example.com:25")?;
 
         // These should not panic even when disabled
         log_message_received("test-id", Some(&sender), &recipients, 1024, "192.168.1.1");
         log_delivery_attempt("test-id", &domain, &server, 1);
         log_delivery_success("test-id", &domain, &server, 1, 1000);
         log_delivery_failure("test-id", &domain, "connection refused", 1, "Failed");
+        Ok(())
     }
 }

@@ -264,7 +264,6 @@ impl<'buf> Message<'buf> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod test {
     use pretty_assertions::assert_eq;
 
@@ -289,7 +288,7 @@ mod test {
     }
 
     #[test]
-    fn parse_message() {
+    fn parse_message() -> Result<(), String> {
         let message = include_bytes!("../test/test_message.eml");
 
         let headers = vec![
@@ -310,17 +309,14 @@ mod test {
 
         assert!(headers.contains(&hhead));
 
-        let message = Message::parse(message.as_ref());
-
-        assert!(message.is_ok());
-
         assert_eq!(
-            message.unwrap(),
+            Message::parse(message.as_ref()).map_err(|err| format!("{err:?}"))?,
             Message {
                 headers: Headers(headers),
                 body: Body::Basic(std::borrow::Cow::Borrowed(b"Body Here\r\n.\r\n")),
             }
         );
+        Ok(())
     }
 
     #[test]

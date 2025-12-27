@@ -84,12 +84,13 @@ impl FiniteStateMachine for State {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use empath_common::{address::Address, address_parser, traits::fsm::FiniteStateMachine};
 
     use super::*;
     use crate::{MailParameters, command::HeloVariant};
+
+    type TestResult = std::result::Result<(), String>;
 
     #[test]
     fn test_fsm_trait_ehlo_transition() {
@@ -128,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fsm_trait_mail_transaction() {
+    fn test_fsm_trait_mail_transaction() -> TestResult {
         let mut session_state = SessionState::with_id("client.example.com".to_string(), true);
 
         // Start with Ehlo state
@@ -137,7 +138,8 @@ mod tests {
         });
 
         // MAIL FROM
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         let state = FiniteStateMachine::transition(
             state,
             Command::MailFrom(
@@ -149,6 +151,7 @@ mod tests {
 
         assert!(matches!(state, State::MailFrom(_)));
         assert!(session_state.envelope().sender().is_some());
+        Ok(())
     }
 
     #[test]
@@ -174,11 +177,12 @@ mod tests {
     }
 
     #[test]
-    fn test_fsm_trait_rset_clears_envelope() {
+    fn test_fsm_trait_rset_clears_envelope() -> TestResult {
         let mut session_state = SessionState::with_id("client.example.com".to_string(), true);
 
         // Set up a mail transaction
-        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>").unwrap();
+        let sender_mailbox = address_parser::parse_forward_path("<sender@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         *session_state.envelope_mut().sender_mut() = Some(Address::from(sender_mailbox));
 
         let state = State::Ehlo(crate::state::Ehlo {
@@ -190,6 +194,7 @@ mod tests {
 
         assert!(matches!(new_state, State::Ehlo(_)));
         assert!(session_state.envelope().sender().is_none());
+        Ok(())
     }
 
     #[test]

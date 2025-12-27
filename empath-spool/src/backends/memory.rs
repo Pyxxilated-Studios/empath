@@ -221,7 +221,6 @@ impl BackingStore for MemoryBackingStore {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use std::sync::Arc;
 
@@ -229,6 +228,8 @@ mod tests {
     use empath_common::envelope::Envelope;
 
     use super::*;
+
+    type TestResult = std::result::Result<(), String>;
 
     fn create_test_context(data: &str) -> Context {
         Context {
@@ -244,33 +245,37 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    async fn test_memory_store_basic_operations() {
+    async fn test_memory_store_basic_operations() -> TestResult {
         let store = MemoryBackingStore::new();
         let mut context = create_test_context("test message");
         let expected_data = context.data.clone();
 
         // Write context and get tracking ID
-        let id = store.write(&mut context).await.expect("Failed to write");
+        let id = store
+            .write(&mut context)
+            .await
+            .map_err(|err| err.to_string())?;
 
         // List messages
-        let ids = store.list().await.expect("Failed to list");
+        let ids = store.list().await.map_err(|err| err.to_string())?;
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id);
 
         // Read context
-        let read_ctx = store.read(&id).await.expect("Failed to read");
+        let read_ctx = store.read(&id).await.map_err(|err| err.to_string())?;
         assert_eq!(read_ctx.data.as_deref(), expected_data.as_deref());
         assert_eq!(read_ctx.tracking_id, Some(id.clone()));
 
         // Delete message
-        store.delete(&id).await.expect("Failed to delete");
-        let ids_after = store.list().await.expect("Failed to list");
+        store.delete(&id).await.map_err(|err| err.to_string())?;
+        let ids_after = store.list().await.map_err(|err| err.to_string())?;
         assert_eq!(ids_after.len(), 0);
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    async fn test_memory_store_capacity_limit() {
+    async fn test_memory_store_capacity_limit() -> TestResult {
         let store = MemoryBackingStore::with_capacity(2);
 
         // Write up to capacity
@@ -279,34 +284,35 @@ mod tests {
         store
             .write(&mut ctx1)
             .await
-            .expect("First write should succeed");
+            .map_err(|err| err.to_string())?;
         store
             .write(&mut ctx2)
             .await
-            .expect("Second write should succeed");
+            .map_err(|err| err.to_string())?;
 
         // Third write should fail
         let mut ctx3 = create_test_context("message 3");
-        let result = store.write(&mut ctx3).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("capacity exceeded")
-        );
+        let err = store
+            .write(&mut ctx3)
+            .await
+            .err()
+            .ok_or_else(|| "expected capacity exceeded error".to_string())?;
+        assert!(err.to_string().contains("capacity exceeded"));
 
         // After deleting one, we should be able to write again
-        let ids = store.list().await.expect("Failed to list");
-        store.delete(&ids[0]).await.expect("Failed to delete");
+        let ids = store.list().await.map_err(|err| err.to_string())?;
+        store.delete(&ids[0]).await.map_err(|err| err.to_string())?;
 
-        let result = store.write(&mut ctx3).await;
-        assert!(result.is_ok());
+        store
+            .write(&mut ctx3)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    async fn test_unique_id_generation() {
+    async fn test_unique_id_generation() -> TestResult {
         let store = MemoryBackingStore::new();
 
         // Write multiple messages concurrently
@@ -322,11 +328,14 @@ mod tests {
 
         // Wait for all writes
         for handle in handles {
-            handle.await.expect("Task panicked").expect("Write failed");
+            handle
+                .await
+                .map_err(|err| err.to_string())?
+                .map_err(|err| err.to_string())?;
         }
 
         // All IDs should be unique
-        let ids = store.list().await.expect("Failed to list");
+        let ids = store.list().await.map_err(|err| err.to_string())?;
         assert_eq!(ids.len(), 100);
 
         // Check for uniqueness
@@ -334,23 +343,24 @@ mod tests {
         for id in &ids {
             assert!(id_set.insert(id.clone()), "Found duplicate ID: {id}");
         }
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    async fn test_message_ordering() {
+    async fn test_message_ordering() -> TestResult {
         let store = MemoryBackingStore::new();
 
         // Write messages and collect IDs in generation order
         let mut generated_ids = Vec::new();
         for i in 0..10 {
             let mut msg = create_test_context(&format!("message {i}"));
-            let id = store.write(&mut msg).await.expect("Failed to write");
+            let id = store.write(&mut msg).await.map_err(|err| err.to_string())?;
             generated_ids.push(id);
         }
 
         // List should return sorted lexicographically
-        let listed_ids = store.list().await.expect("Failed to list");
+        let listed_ids = store.list().await.map_err(|err| err.to_string())?;
         assert_eq!(listed_ids.len(), 10);
 
         // Sort the generated IDs and verify they match the listed order
@@ -367,6 +377,7 @@ mod tests {
             .collect::<std::collections::HashSet<_>>()
             .len();
         assert_eq!(unique_count, 10, "All ULIDs should be unique");
+        Ok(())
     }
 
     #[test]

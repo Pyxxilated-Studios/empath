@@ -153,7 +153,6 @@ impl Spool<FileBackingStore> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use std::sync::Arc;
 
@@ -161,6 +160,8 @@ mod tests {
     use empath_common::envelope::Envelope;
 
     use super::*;
+
+    type TestResult = std::result::Result<(), String>;
 
     fn create_test_context(data: &str) -> Context {
         Context {
@@ -176,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    async fn test_spool_wrapper() {
+    async fn test_spool_wrapper() -> TestResult {
         let store = MemoryBackingStore::new();
         let spool = Spool::new(store);
 
@@ -187,41 +188,52 @@ mod tests {
         let id = spool
             .spool_message(&mut message)
             .await
-            .expect("Failed to spool");
+            .map_err(|err| err.to_string())?;
 
-        let ids = spool.list_messages().await.expect("Failed to list");
+        let ids = spool.list_messages().await.map_err(|err| err.to_string())?;
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id);
 
-        let read_msg = spool.read_message(&id).await.expect("Failed to read");
+        let read_msg = spool
+            .read_message(&id)
+            .await
+            .map_err(|err| err.to_string())?;
         assert_eq!(read_msg.data.as_ref(), expected_data.as_ref());
 
-        spool.delete_message(&id).await.expect("Failed to delete");
+        spool
+            .delete_message(&id)
+            .await
+            .map_err(|err| err.to_string())?;
 
-        let ids_after = spool.list_messages().await.expect("Failed to list");
+        let ids_after = spool.list_messages().await.map_err(|err| err.to_string())?;
         assert_eq!(ids_after.len(), 0);
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    async fn test_polymorphic_backing_store() {
+    async fn test_polymorphic_backing_store() -> TestResult {
         // Test that we can use trait objects
         let store: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::new());
         let mut message = create_test_context("polymorphic test");
         let expected_data = message.data.clone();
 
-        let id = store.write(&mut message).await.expect("Failed to write");
-        let ids = store.list().await.expect("Failed to list");
+        let id = store
+            .write(&mut message)
+            .await
+            .map_err(|err| err.to_string())?;
+        let ids = store.list().await.map_err(|err| err.to_string())?;
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], id);
 
-        let read_msg = store.read(&id).await.expect("Failed to read");
+        let read_msg = store.read(&id).await.map_err(|err| err.to_string())?;
         assert_eq!(read_msg.data.as_ref(), expected_data.as_ref());
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-    async fn test_session_not_persisted() {
+    async fn test_session_not_persisted() -> TestResult {
         use std::borrow::Cow;
 
         let store = MemoryBackingStore::new();
@@ -261,10 +273,13 @@ mod tests {
         let id = spool
             .spool_message(&mut message)
             .await
-            .expect("Failed to spool");
+            .map_err(|err| err.to_string())?;
 
         // Read message back from spool
-        let read_msg = spool.read_message(&id).await.expect("Failed to read");
+        let read_msg = spool
+            .read_message(&id)
+            .await
+            .map_err(|err| err.to_string())?;
 
         // CRITICAL: Session context should NOT be persisted
         assert_eq!(
@@ -297,5 +312,6 @@ mod tests {
 
         // Verify message data is intact
         assert_eq!(read_msg.data, message.data);
+        Ok(())
     }
 }

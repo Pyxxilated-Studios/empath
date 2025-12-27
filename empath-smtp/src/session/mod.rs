@@ -693,12 +693,6 @@ impl Session {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::unreachable
-)]
 mod test {
     use std::sync::{Arc, RwLock};
 
@@ -728,13 +722,16 @@ mod test {
         transaction_handler::SmtpTransactionHandler,
     };
 
+    type TestResult = std::result::Result<(), String>;
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn session() {
+    async fn session() -> TestResult {
         // Initialize modules to add core module
-        let _ = modules::init(vec![]);
+        modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
+        let banner =
+            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -742,25 +739,30 @@ mod test {
         };
 
         let (mut session, _handler, _tls) = Session::create(
-            "[::]:25".parse().unwrap(),
+            "[::]:25"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             SessionConfig::builder().with_banner(banner.clone()).build(),
         );
 
         let response = session.response(&mut context).await;
-        assert!(response.0.is_some());
-        assert_eq!(
-            response.0.unwrap().first().unwrap(),
-            &format!("{} {}", Status::ServiceReady, banner)
-        );
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
+        assert_eq!(line, &format!("{} {}", Status::ServiceReady, banner));
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn helo() {
+    async fn helo() -> TestResult {
         // Initialize modules to add core module
-        let _ = modules::init(vec![]);
+        modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
+        let banner =
+            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -770,7 +772,9 @@ mod test {
         let host = "Test";
 
         let (mut session, _handler, _tls) = Session::create(
-            "[::]:25".parse().unwrap(),
+            "[::]:25"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             SessionConfig::builder().with_banner(banner.clone()).build(),
         );
 
@@ -782,19 +786,25 @@ mod test {
 
         // HELO doesn't need emit(), it's not validated
         let response = session.response(&mut context).await;
-        assert!(response.0.is_some());
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
         assert_eq!(
-            response.0.unwrap().first().unwrap(),
+            line,
             &format!("{} {banner} says hello to {host}", Status::Ok)
         );
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn supports_extended_commands() {
-        let _ = modules::init(vec![]);
+    async fn supports_extended_commands() -> TestResult {
+        modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
+        let banner =
+            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -802,7 +812,9 @@ mod test {
         };
 
         let (mut session, _handler, _tls) = Session::create(
-            "[::]:25".parse().unwrap(),
+            "[::]:25"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             SessionConfig::builder().with_banner(banner).build(),
         );
 
@@ -811,51 +823,72 @@ mod test {
 
         session.handle_command_reception(b"NOOP", &mut context);
         let response = session.response(&mut context).await;
-        assert_eq!(
-            response.0.unwrap().first().unwrap(),
-            &format!("{} Ok", Status::Ok)
-        );
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
+        assert_eq!(line, &format!("{} Ok", Status::Ok));
         context.response = None;
 
         session.handle_command_reception(b"VRFY user@example.com", &mut context);
         let response = session.response(&mut context).await;
-        assert_eq!(
-            response.0.unwrap().first().unwrap(),
-            &format!("{} Cannot VRFY user", Status::Unknown(252))
-        );
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
+        assert_eq!(line, &format!("{} Cannot VRFY user", Status::Unknown(252)));
         context.response = None;
 
         session.handle_command_reception(b"EXPN staff", &mut context);
         let response = session.response(&mut context).await;
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
         assert_eq!(
-            response.0.unwrap().first().unwrap(),
+            line,
             &format!("{} Cannot expand list", Status::Unknown(252))
         );
         context.response = None;
 
         session.handle_command_reception(b"ETRN example.com", &mut context);
         let response = session.response(&mut context).await;
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
         assert_eq!(
-            response.0.unwrap().first().unwrap(),
+            line,
             &format!("{} Command not implemented", Status::Unknown(502))
         );
         context.response = None;
 
         session.handle_command_reception(b"TURN", &mut context);
         let response = session.response(&mut context).await;
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
         assert_eq!(
-            response.0.unwrap().first().unwrap(),
+            line,
             &format!("{} Command not implemented", Status::Unknown(502))
         );
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn spool_integration() {
+    async fn spool_integration() -> TestResult {
         // Initialize modules to add core module
-        let _ = modules::init(vec![]);
+        modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
+        let banner =
+            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -868,7 +901,9 @@ mod test {
         let mock_spool = Arc::new(TestBackingStore::default());
 
         let (mut session, mut transaction_handler, _tls) = Session::create(
-            "[::]:25".parse().unwrap(),
+            "[::]:25"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             SessionConfig::builder()
                 .with_spool(Some(mock_spool.clone()))
                 .with_banner(banner.clone())
@@ -881,12 +916,14 @@ mod test {
             params: crate::MailParameters::new(),
         });
         let sender_mailbox =
-            empath_common::address_parser::parse_forward_path("<test@example.com>").unwrap();
+            empath_common::address_parser::parse_forward_path("<test@example.com>")
+                .map_err(|err| format!("{err:?}"))?;
         Arc::make_mut(&mut context.envelope)
             .sender_mut()
             .replace(Address::from(sender_mailbox));
         let recipient_mailbox =
-            empath_common::address_parser::parse_forward_path("<recipient@example.com>").unwrap();
+            empath_common::address_parser::parse_forward_path("<recipient@example.com>")
+                .map_err(|err| format!("{err:?}"))?;
         Arc::make_mut(&mut context.envelope)
             .recipients_mut()
             .replace(AddressList::from(vec![Address::from(recipient_mailbox)]));
@@ -904,8 +941,9 @@ mod test {
             .with(OpenTelemetryLayer::new(tracer))
             .try_init();
 
-        let trace_id = TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").expect("trace id");
-        let span_id = SpanId::from_hex("00f067aa0ba902b7").expect("span id");
+        let trace_id =
+            TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").map_err(|err| err.to_string())?;
+        let span_id = SpanId::from_hex("00f067aa0ba902b7").map_err(|err| err.to_string())?;
         let span_context = SpanContext::new(
             trace_id,
             span_id,
@@ -932,13 +970,18 @@ mod test {
         mock_spool
             .wait_for_count(1, std::time::Duration::from_secs(5))
             .await
-            .expect("Spool operation should complete within timeout");
+            .map_err(|err| err.to_string())?;
 
         // Verify message was spooled
         assert_eq!(mock_spool.message_count(), 1);
-        let ids = mock_spool.list().await.unwrap();
-        let spooled_msg_id = ids.first().unwrap();
-        let mut spooled_msg = mock_spool.read(spooled_msg_id).await.unwrap();
+        let ids = mock_spool.list().await.map_err(|err| err.to_string())?;
+        let spooled_msg_id = ids
+            .first()
+            .ok_or_else(|| "missing spooled id".to_string())?;
+        let mut spooled_msg = mock_spool
+            .read(spooled_msg_id)
+            .await
+            .map_err(|err| err.to_string())?;
         assert!(spooled_msg.body_view().is_ok_and(|body| {
             body.is_some_and(|body| body.as_str_lossy() == "Hello World\r\n.\r\n")
         }));
@@ -950,12 +993,14 @@ mod test {
             spooled_msg.transaction.get(SPAN_ID_CONTEXT_KEY),
             Some(&span_context.span_id().to_string())
         );
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn modules() {
-        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
+    async fn modules() -> TestResult {
+        let banner =
+            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -963,11 +1008,12 @@ mod test {
         };
 
         let module = Module::TestModule(RwLock::default());
-        let inited = modules::init(vec![module]);
-        assert!(inited.is_ok());
+        modules::init(vec![module]).map_err(|err| err.to_string())?;
 
         let (mut session, mut transaction_handler, _tls) = Session::create(
-            "[::]:25".parse().unwrap(),
+            "[::]:25"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             SessionConfig::builder().with_banner(banner.clone()).build(),
         );
 
@@ -985,32 +1031,36 @@ mod test {
         transaction_handler.validate_mail_from(&mut context).await;
 
         let response = session.response(&mut context).await;
-        assert!(response.0.is_some());
-        assert_eq!(
-            response.0.unwrap().first().unwrap(),
-            &format!("{} Ok", Status::Ok)
-        );
+        let line = response
+            .0
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .ok_or_else(|| "missing response".to_string())?;
+        assert_eq!(line, &format!("{} Ok", Status::Ok));
 
-        let modules = MODULE_STORE.get().cloned().unwrap();
+        let modules = MODULE_STORE
+            .get()
+            .cloned()
+            .ok_or_else(|| "MODULE_STORE missing".to_string())?;
         for module in modules.iter() {
             if let Module::TestModule(mute) = module {
                 assert!(
                     mute.read()
-                        .unwrap()
+                        .map_err(|_| "module lock poisoned".to_string())?
                         .validators_called
                         .contains(&Event::MailFrom)
                 );
 
-                return;
+                return Ok(());
             }
         }
 
-        panic!("Expected TestModule to exist");
+        Err("Expected TestModule to exist".to_string())
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_injectable_transaction_handler() {
+    async fn test_injectable_transaction_handler() -> TestResult {
         use std::{
             borrow::Cow,
             sync::{
@@ -1055,7 +1105,8 @@ mod test {
             }
         }
 
-        let banner = empath_common::email::BannerHostname::new("testing").unwrap();
+        let banner =
+            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -1068,7 +1119,9 @@ mod test {
         };
 
         let (mut session, mut transaction_handler, _tls) = Session::create(
-            "[::]:25".parse().unwrap(),
+            "[::]:25"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|err| err.to_string())?,
             SessionConfig::builder()
                 .with_banner(banner.clone())
                 .with_transaction_handler(Some(Box::new(handler)))
@@ -1082,12 +1135,16 @@ mod test {
 
         // Test that validation fails
         assert!(context.response.is_some());
-        let (status, message) = context.response.as_ref().unwrap();
+        let (status, message) = context
+            .response
+            .as_ref()
+            .ok_or_else(|| "missing response".to_string())?;
         assert_eq!(*status, Status::Unavailable);
         assert_eq!(message, "Connection rejected");
 
         // Manually transition to Reject state (orchestrator would do this)
         session.context.state = State::Reject(state::Reject);
         assert!(matches!(session.context.state, State::Reject(_)));
+        Ok(())
     }
 }

@@ -287,46 +287,53 @@ impl SpfRecord {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
 
+    type TestResult = std::result::Result<(), String>;
+
     #[test]
-    fn test_parse_simple_spf() {
-        let record = SpfRecord::parse("v=spf1 mx -all").unwrap();
+    fn test_parse_simple_spf() -> TestResult {
+        let record = SpfRecord::parse("v=spf1 mx -all").map_err(|err| err.to_string())?;
         assert_eq!(record.version, "spf1");
         assert_eq!(record.mechanisms.len(), 2);
         assert!(matches!(record.mechanisms[0], Mechanism::Mx { .. }));
         assert_eq!(record.mechanisms[1], Mechanism::All(Qualifier::Fail));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_ip4_mechanism() {
-        let record = SpfRecord::parse("v=spf1 ip4:192.0.2.0/24 -all").unwrap();
+    fn test_parse_ip4_mechanism() -> TestResult {
+        let record =
+            SpfRecord::parse("v=spf1 ip4:192.0.2.0/24 -all").map_err(|err| err.to_string())?;
         assert_eq!(record.mechanisms.len(), 2);
         if let Mechanism::Ip4 { qualifier, network } = &record.mechanisms[0] {
             assert_eq!(*qualifier, Qualifier::Pass);
             assert_eq!(network.to_string(), "192.0.2.0/24");
         } else {
-            panic!("Expected Ip4 mechanism");
+            return Err("Expected Ip4 mechanism".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_ip6_mechanism() {
-        let record = SpfRecord::parse("v=spf1 ip6:2001:db8::/32 -all").unwrap();
+    fn test_parse_ip6_mechanism() -> TestResult {
+        let record =
+            SpfRecord::parse("v=spf1 ip6:2001:db8::/32 -all").map_err(|err| err.to_string())?;
         assert_eq!(record.mechanisms.len(), 2);
         if let Mechanism::Ip6 { qualifier, network } = &record.mechanisms[0] {
             assert_eq!(*qualifier, Qualifier::Pass);
             assert_eq!(network.to_string(), "2001:db8::/32");
         } else {
-            panic!("Expected Ip6 mechanism");
+            return Err("Expected Ip6 mechanism".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_qualifiers() {
-        let record = SpfRecord::parse("v=spf1 +mx -ip4:192.0.2.1 ~all").unwrap();
+    fn test_parse_qualifiers() -> TestResult {
+        let record =
+            SpfRecord::parse("v=spf1 +mx -ip4:192.0.2.1 ~all").map_err(|err| err.to_string())?;
         assert_eq!(record.mechanisms.len(), 3);
 
         if let Mechanism::Mx { qualifier, .. } = record.mechanisms[0] {
@@ -340,11 +347,13 @@ mod tests {
         if let Mechanism::All(qualifier) = record.mechanisms[2] {
             assert_eq!(qualifier, Qualifier::SoftFail);
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_a_mechanism_with_domain() {
-        let record = SpfRecord::parse("v=spf1 a:example.com -all").unwrap();
+    fn test_parse_a_mechanism_with_domain() -> TestResult {
+        let record =
+            SpfRecord::parse("v=spf1 a:example.com -all").map_err(|err| err.to_string())?;
         if let Mechanism::A {
             domain,
             cidr4,
@@ -356,13 +365,14 @@ mod tests {
             assert_eq!(*cidr4, None);
             assert_eq!(*cidr6, None);
         } else {
-            panic!("Expected A mechanism");
+            return Err("Expected A mechanism".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_a_mechanism_with_cidr() {
-        let record = SpfRecord::parse("v=spf1 a/24 -all").unwrap();
+    fn test_parse_a_mechanism_with_cidr() -> TestResult {
+        let record = SpfRecord::parse("v=spf1 a/24 -all").map_err(|err| err.to_string())?;
         if let Mechanism::A {
             domain,
             cidr4,
@@ -374,13 +384,15 @@ mod tests {
             assert_eq!(*cidr4, Some(24));
             assert_eq!(*cidr6, Some(24));
         } else {
-            panic!("Expected A mechanism");
+            return Err("Expected A mechanism".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_a_mechanism_with_dual_cidr() {
-        let record = SpfRecord::parse("v=spf1 a:example.com/24/64 -all").unwrap();
+    fn test_parse_a_mechanism_with_dual_cidr() -> TestResult {
+        let record =
+            SpfRecord::parse("v=spf1 a:example.com/24/64 -all").map_err(|err| err.to_string())?;
         if let Mechanism::A {
             domain,
             cidr4,
@@ -392,62 +404,73 @@ mod tests {
             assert_eq!(*cidr4, Some(24));
             assert_eq!(*cidr6, Some(64));
         } else {
-            panic!("Expected A mechanism");
+            return Err("Expected A mechanism".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_include_mechanism() {
-        let record = SpfRecord::parse("v=spf1 include:_spf.example.com -all").unwrap();
+    fn test_parse_include_mechanism() -> TestResult {
+        let record = SpfRecord::parse("v=spf1 include:_spf.example.com -all")
+            .map_err(|err| err.to_string())?;
         if let Mechanism::Include { domain, .. } = &record.mechanisms[0] {
             assert_eq!(domain, "_spf.example.com");
         } else {
-            panic!("Expected Include mechanism");
+            return Err("Expected Include mechanism".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_exists_mechanism() {
-        let record = SpfRecord::parse("v=spf1 exists:%{i}._spf.example.com -all").unwrap();
+    fn test_parse_exists_mechanism() -> TestResult {
+        let record = SpfRecord::parse("v=spf1 exists:%{i}._spf.example.com -all")
+            .map_err(|err| err.to_string())?;
         if let Mechanism::Exists { domain, .. } = &record.mechanisms[0] {
             assert_eq!(domain, "%{i}._spf.example.com");
         } else {
-            panic!("Expected Exists mechanism");
+            return Err("Expected Exists mechanism".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_redirect_modifier() {
-        let record = SpfRecord::parse("v=spf1 redirect=_spf.example.com").unwrap();
+    fn test_parse_redirect_modifier() -> TestResult {
+        let record =
+            SpfRecord::parse("v=spf1 redirect=_spf.example.com").map_err(|err| err.to_string())?;
         assert_eq!(record.modifiers.len(), 1);
         if let Modifier::Redirect(domain) = &record.modifiers[0] {
             assert_eq!(domain, "_spf.example.com");
         } else {
-            panic!("Expected Redirect modifier");
+            return Err("Expected Redirect modifier".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_exp_modifier() {
-        let record = SpfRecord::parse("v=spf1 mx -all exp=explain.example.com").unwrap();
+    fn test_parse_exp_modifier() -> TestResult {
+        let record = SpfRecord::parse("v=spf1 mx -all exp=explain.example.com")
+            .map_err(|err| err.to_string())?;
         assert_eq!(record.modifiers.len(), 1);
         if let Modifier::Exp(domain) = &record.modifiers[0] {
             assert_eq!(domain, "explain.example.com");
         } else {
-            panic!("Expected Exp modifier");
+            return Err("Expected Exp modifier".to_string());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_unknown_modifier() {
-        let record = SpfRecord::parse("v=spf1 mx custom=value -all").unwrap();
+    fn test_parse_unknown_modifier() -> TestResult {
+        let record =
+            SpfRecord::parse("v=spf1 mx custom=value -all").map_err(|err| err.to_string())?;
         assert_eq!(record.modifiers.len(), 1);
         if let Modifier::Unknown(name, value) = &record.modifiers[0] {
             assert_eq!(name, "custom");
             assert_eq!(value, "value");
         } else {
-            panic!("Expected Unknown modifier");
+            return Err("Expected Unknown modifier".to_string());
         }
+        Ok(())
     }
 
     #[test]
@@ -457,11 +480,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_complex_record() {
+    fn test_parse_complex_record() -> TestResult {
         let record = SpfRecord::parse(
             "v=spf1 ip4:192.0.2.0/24 ip6:2001:db8::/32 a mx include:_spf.example.com -all",
         )
-        .unwrap();
+        .map_err(|err| err.to_string())?;
         assert_eq!(record.mechanisms.len(), 6);
         assert!(matches!(record.mechanisms[0], Mechanism::Ip4 { .. }));
         assert!(matches!(record.mechanisms[1], Mechanism::Ip6 { .. }));
@@ -472,5 +495,6 @@ mod tests {
             record.mechanisms[5],
             Mechanism::All(Qualifier::Fail)
         ));
+        Ok(())
     }
 }

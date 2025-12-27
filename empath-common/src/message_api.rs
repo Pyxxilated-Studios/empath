@@ -925,15 +925,15 @@ impl std::fmt::Display for Charset {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
-    fn multi_value_header_order_preserved() {
+    fn multi_value_header_order_preserved() -> Result<(), String> {
         let raw = b"X-Test: one\r\nX-Test: two\r\n\r\nBody";
-        let mut parts = MessageParts::from_bytes(raw).expect("parse headers");
-        let name = HeaderName::new("X-Test").unwrap();
+        let mut parts =
+            MessageParts::from_bytes(raw).map_err(|err| format!("parse headers: {err:?}"))?;
+        let name = HeaderName::new("X-Test").map_err(|err| format!("{err:?}"))?;
 
         let values: Vec<String> = parts
             .headers_view()
@@ -942,10 +942,12 @@ mod tests {
             .collect();
         assert_eq!(values, vec!["one", "two"]);
 
-        let value = HeaderValue::new(b"three").unwrap();
+        let value = HeaderValue::new(b"three").map_err(|err| format!("{err:?}"))?;
         {
             let mut headers = parts.headers_mut(HeaderLimits::default(), None);
-            headers.append(&name, &value).expect("append header");
+            headers
+                .append(&name, &value)
+                .map_err(|err| format!("append header: {err:?}"))?;
         }
 
         let values: Vec<String> = parts
@@ -954,40 +956,49 @@ mod tests {
             .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
             .collect();
         assert_eq!(values, vec!["one", "two", "three"]);
+        Ok(())
     }
 
     #[test]
-    fn encoded_word_folding_preserves_spacing() {
+    fn encoded_word_folding_preserves_spacing() -> Result<(), String> {
         let raw = b"Subject: =?utf-8?Q?foo?=\r\n =?utf-8?Q?bar?=\r\n\r\n";
-        let parts = MessageParts::from_bytes(raw).expect("parse headers");
-        let name = HeaderName::new("Subject").unwrap();
+        let parts =
+            MessageParts::from_bytes(raw).map_err(|err| format!("parse headers: {err:?}"))?;
+        let name = HeaderName::new("Subject").map_err(|err| format!("{err:?}"))?;
         let view = parts.headers_view();
-        let value = view.get(&name).expect("subject value");
+        let value = view
+            .get(&name)
+            .ok_or_else(|| "subject value missing".to_string())?;
         let decoded = String::from_utf8_lossy(value.as_bytes());
         assert_eq!(decoded, "=?utf-8?Q?foo?= =?utf-8?Q?bar?=");
+        Ok(())
     }
 
     #[test]
-    fn body_set_normalizes_newlines() {
+    fn body_set_normalizes_newlines() -> Result<(), String> {
         let raw = b"Subject: test\r\n\r\nLine1\nLine2\n";
-        let mut parts = MessageParts::from_bytes(raw).expect("parse body");
+        let mut parts =
+            MessageParts::from_bytes(raw).map_err(|err| format!("parse body: {err:?}"))?;
         {
             let mut body = parts.body_mut(BodyLimits::default(), None);
             body.set_bytes(b"Line1\nLine2\n", BodyOpts::default())
-                .expect("set bytes");
+                .map_err(|err| format!("set bytes: {err:?}"))?;
         }
         assert_eq!(parts.body_view().as_bytes(), b"Line1\r\nLine2\r\n");
+        Ok(())
     }
 
     #[test]
-    fn body_append_normalizes_newlines() {
+    fn body_append_normalizes_newlines() -> Result<(), String> {
         let raw = b"Subject: test\r\n\r\nLine1\r\n";
-        let mut parts = MessageParts::from_bytes(raw).expect("parse body");
+        let mut parts =
+            MessageParts::from_bytes(raw).map_err(|err| format!("parse body: {err:?}"))?;
         {
             let mut body = parts.body_mut(BodyLimits::default(), None);
             body.append_bytes(b"Line2\nLine3\r\n", BodyOpts::default())
-                .expect("append bytes");
+                .map_err(|err| format!("append bytes: {err:?}"))?;
         }
         assert_eq!(parts.body_view().as_bytes(), b"Line1\r\nLine2\r\nLine3\r\n");
+        Ok(())
     }
 }

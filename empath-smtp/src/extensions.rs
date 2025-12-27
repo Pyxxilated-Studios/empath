@@ -85,8 +85,7 @@ mod test {
     use crate::session::TlsContext;
 
     #[test]
-    #[allow(clippy::expect_used)]
-    fn extension_display() {
+    fn extension_display() -> Result<(), String> {
         // SIZE with limit should show the value
         let size_limited = Extension::Size(100_000_000);
         assert_eq!(size_limited.to_string(), "SIZE 100000000");
@@ -99,11 +98,12 @@ mod test {
         assert_eq!(
             Extension::Starttls(
                 TlsContext::new("cert.pem".into(), "key.pem".into())
-                    .expect("static tls context creation should succeed")
+                    .map_err(|err| err.to_string())?
             )
             .to_string(),
             "STARTTLS"
         );
         assert_eq!(Extension::Help.to_string(), "HELP");
+        Ok(())
     }
 }

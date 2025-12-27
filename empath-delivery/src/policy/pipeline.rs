@@ -244,7 +244,6 @@ impl<'a> DeliveryPipeline<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::{
@@ -253,6 +252,8 @@ mod tests {
         domain_config::{DomainConfig, DomainConfigRegistry},
         rate_limiter::{RateLimitConfig, RateLimiter},
     };
+
+    type TestResult = std::result::Result<(), String>;
 
     fn create_test_pipeline<'a>(
         dns_resolver: &'a dyn DnsResolver,
@@ -266,7 +267,7 @@ mod tests {
         all(miri, target_os = "macos"),
         ignore = "kqueue not supported in Miri on macOS"
     )]
-    async fn test_resolve_mail_servers_with_override() {
+    async fn test_resolve_mail_servers_with_override() -> TestResult {
         let registry = DomainConfigRegistry::new();
         registry.insert(
             "test.example.com".to_string(),
@@ -283,11 +284,12 @@ mod tests {
         let result = pipeline
             .resolve_mail_servers("test.example.com")
             .await
-            .unwrap();
+            .map_err(|err| err.to_string())?;
 
         assert_eq!(result.mail_servers.len(), 1);
         assert_eq!(result.primary_server.host, "localhost");
         assert_eq!(result.primary_server.port, 1025);
+        Ok(())
     }
 
     #[test]

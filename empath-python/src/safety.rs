@@ -94,74 +94,91 @@ pub fn call_callback<'py>(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use pyo3::types::PyTuple;
 
     use super::*;
 
+    type TestResult = std::result::Result<(), String>;
+
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
-    fn test_call_callback_success() {
+    fn test_call_callback_success() -> TestResult {
         Python::initialize();
 
-        Python::attach(|py| {
-            let module = PyDict::new(py);
-            py.run(
-                std::ffi::CString::new("def test_func(x): return x * 2")
-                    .unwrap()
-                    .as_c_str(),
-                Some(&module),
-                None,
-            )
-            .unwrap();
+        let result: std::result::Result<(), String> =
+            Python::attach(|py| -> std::result::Result<(), String> {
+                let module = PyDict::new(py);
+                py.run(
+                    std::ffi::CString::new("def test_func(x): return x * 2")
+                        .map_err(|err| err.to_string())?
+                        .as_c_str(),
+                    Some(&module),
+                    None,
+                )
+                .map_err(|err| err.to_string())?;
 
-            let args = PyTuple::new(py, [5]).unwrap();
-            let result =
-                call_callback(py, &module, "test_func", &args, Duration::from_secs(5)).unwrap();
+                let args = PyTuple::new(py, [5]).map_err(|err| err.to_string())?;
+                let result = call_callback(py, &module, "test_func", &args, Duration::from_secs(5))
+                    .map_err(|err| err.to_string())?;
 
-            assert!(result.is_some());
-            let value: i32 = result.unwrap().extract().unwrap();
-            assert_eq!(value, 10);
-        });
+                assert!(result.is_some());
+                let value: i32 = result
+                    .ok_or_else(|| "missing callback result".to_string())?
+                    .extract()
+                    .map_err(|err: pyo3::PyErr| err.to_string())?;
+                assert_eq!(value, 10);
+                Ok(())
+            });
+        result?;
+        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
-    fn test_call_callback_not_found() {
+    fn test_call_callback_not_found() -> TestResult {
         Python::initialize();
 
-        Python::attach(|py| {
-            let module = PyDict::new(py);
-            let args = PyTuple::new(py, &[] as &[i32]).unwrap();
+        let result: std::result::Result<(), String> =
+            Python::attach(|py| -> std::result::Result<(), String> {
+                let module = PyDict::new(py);
+                let args = PyTuple::new(py, &[] as &[i32]).map_err(|err| err.to_string())?;
 
-            let result =
-                call_callback(py, &module, "nonexistent", &args, Duration::from_secs(5)).unwrap();
+                let result =
+                    call_callback(py, &module, "nonexistent", &args, Duration::from_secs(5))
+                        .map_err(|err| err.to_string())?;
 
-            assert!(result.is_none());
-        });
+                assert!(result.is_none());
+                Ok(())
+            });
+        result?;
+        Ok(())
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
-    fn test_call_callback_exception() {
+    fn test_call_callback_exception() -> TestResult {
         Python::initialize();
 
-        Python::attach(|py| {
-            let module = PyDict::new(py);
-            py.run(
-                std::ffi::CString::new("def test_func(): raise ValueError('test error')")
-                    .unwrap()
-                    .as_c_str(),
-                Some(&module),
-                None,
-            )
-            .unwrap();
+        let result: std::result::Result<(), String> =
+            Python::attach(|py| -> std::result::Result<(), String> {
+                let module = PyDict::new(py);
+                py.run(
+                    std::ffi::CString::new("def test_func(): raise ValueError('test error')")
+                        .map_err(|err| err.to_string())?
+                        .as_c_str(),
+                    Some(&module),
+                    None,
+                )
+                .map_err(|err| err.to_string())?;
 
-            let args = PyTuple::new(py, &[] as &[i32]).unwrap();
-            let result = call_callback(py, &module, "test_func", &args, Duration::from_secs(5));
+                let args = PyTuple::new(py, &[] as &[i32]).map_err(|err| err.to_string())?;
+                let result = call_callback(py, &module, "test_func", &args, Duration::from_secs(5));
 
-            assert!(result.is_err());
-        });
+                assert!(result.is_err());
+                Ok(())
+            });
+        result?;
+        Ok(())
     }
 }

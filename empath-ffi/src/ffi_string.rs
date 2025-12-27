@@ -33,7 +33,12 @@ pub struct StringVector {
 impl Drop for StringVector {
     fn drop(&mut self) {
         if !self.data.is_null() {
-            let _ = unsafe { Vec::from_raw_parts(self.data.cast_mut(), self.len, self.len) };
+            let _: Box<[String]> = unsafe {
+                Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                    self.data.cast_mut(),
+                    self.len,
+                ))
+            };
             self.data = null();
         }
     }

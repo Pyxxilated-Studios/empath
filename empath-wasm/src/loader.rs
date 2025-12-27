@@ -877,7 +877,6 @@ define_wasm_events! {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "Inside tests")]
 mod tests {
     use super::*;
 
