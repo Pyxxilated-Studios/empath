@@ -20,7 +20,7 @@ No active P1 items. See P2/P3/New Ideas for candidates.
 - [ ] 0.14 DNSSEC validation/logging — backlog after 1.0.
 - [ ] 5.2/5.3 Config hot reload & TLS policy enforcement — post-Phase 4.
 - [ ] NEW-WASM-15+16 performance cleanup after macro/context changes (profiling).
-- [ ] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
+- [x] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 
 ## New Ideas / Quick Wins
 - [ ] NEW-EXPE-01: WASM module fuzz harness. Generate randomized SMTP contexts/events against the WASM API to catch panics/resource leaks in validation modules before deployment.

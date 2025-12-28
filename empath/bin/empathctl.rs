@@ -7,8 +7,9 @@
 //! - Viewing statistics
 
 use std::{
+    fs,
     io::{Write, stdin, stdout},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use chrono::{TimeZone, Utc};
@@ -73,6 +74,48 @@ enum Commands {
     System {
         #[command(subcommand)]
         action: SystemAction,
+    },
+    /// Backup local state (spool/config/tls)
+    Backup {
+        /// Output directory for the backup
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Include the spool directory
+        #[arg(long, default_value_t = true)]
+        include_spool: bool,
+        /// Include the queue state file
+        #[arg(long, default_value_t = true)]
+        include_queue_state: bool,
+        /// Path to config file to include (optional)
+        #[arg(long)]
+        config_path: Option<PathBuf>,
+        /// Path to TLS directory to include (optional)
+        #[arg(long)]
+        tls_path: Option<PathBuf>,
+        /// Overwrite output directory if it exists
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Restore local state from a backup directory
+    Restore {
+        /// Input directory containing backup artifacts
+        #[arg(long)]
+        input_dir: PathBuf,
+        /// Restore spool directory
+        #[arg(long, default_value_t = true)]
+        include_spool: bool,
+        /// Restore queue state file
+        #[arg(long, default_value_t = true)]
+        include_queue_state: bool,
+        /// Path to restore config file to (optional)
+        #[arg(long)]
+        config_path: Option<PathBuf>,
+        /// Path to restore TLS directory to (optional)
+        #[arg(long)]
+        tls_path: Option<PathBuf>,
+        /// Overwrite existing targets
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 }
 
@@ -322,6 +365,54 @@ async fn main() -> anyhow::Result<()> {
         Commands::System { action } => {
             handle_system_command_direct(&cli.control_socket, cli.control_token.as_deref(), action)
                 .await?;
+        }
+        Commands::Backup {
+            output_dir,
+            include_spool,
+            include_queue_state,
+            config_path,
+            tls_path,
+            force,
+        } => {
+            let queue_state = cli
+                .queue_state
+                .clone()
+                .unwrap_or_else(|| cli.spool_path.join("queue_state.bin"));
+            let plan = BackupPlan {
+                spool_path: cli.spool_path.clone(),
+                queue_state_path: queue_state,
+                output_dir,
+                include_spool,
+                include_queue_state,
+                config_path,
+                tls_path,
+                force,
+            };
+            handle_backup(&plan)?;
+        }
+        Commands::Restore {
+            input_dir,
+            include_spool,
+            include_queue_state,
+            config_path,
+            tls_path,
+            force,
+        } => {
+            let queue_state = cli
+                .queue_state
+                .clone()
+                .unwrap_or_else(|| cli.spool_path.join("queue_state.bin"));
+            let plan = RestorePlan {
+                spool_path: cli.spool_path.clone(),
+                queue_state_path: queue_state,
+                input_dir,
+                include_spool,
+                include_queue_state,
+                config_path,
+                tls_path,
+                force,
+            };
+            handle_restore(&plan)?;
         }
     }
 
@@ -1019,6 +1110,166 @@ fn display_spool_stats(stats: &empath_control::protocol::SpoolStats) {
     if let Some(age) = stats.oldest_message_age_secs {
         println!("\nOldest message age: {}", format_duration(age));
     }
+}
+
+// ============================================================================
+// Backup/Restore helpers (local filesystem)
+// ============================================================================
+
+struct BackupPlan {
+    spool_path: PathBuf,
+    queue_state_path: PathBuf,
+    output_dir: PathBuf,
+    include_spool: bool,
+    include_queue_state: bool,
+    config_path: Option<PathBuf>,
+    tls_path: Option<PathBuf>,
+    force: bool,
+}
+
+struct RestorePlan {
+    spool_path: PathBuf,
+    queue_state_path: PathBuf,
+    input_dir: PathBuf,
+    include_spool: bool,
+    include_queue_state: bool,
+    config_path: Option<PathBuf>,
+    tls_path: Option<PathBuf>,
+    force: bool,
+}
+
+fn handle_backup(plan: &BackupPlan) -> anyhow::Result<()> {
+    prepare_output_dir(&plan.output_dir, plan.force)?;
+
+    if plan.include_spool {
+        let spool_dest = plan.output_dir.join("spool");
+        copy_recursively(&plan.spool_path, &spool_dest)?;
+    }
+
+    if plan.include_queue_state {
+        let queue_dest = plan.output_dir.join("queue_state.bin");
+        copy_file(&plan.queue_state_path, &queue_dest)?;
+    }
+
+    if let Some(config_path) = plan.config_path.as_deref() {
+        let config_dest = plan.output_dir.join("empath.config.ron");
+        copy_file(config_path, &config_dest)?;
+    }
+
+    if let Some(tls_path) = plan.tls_path.as_deref() {
+        let tls_dest = plan.output_dir.join("tls");
+        copy_recursively(tls_path, &tls_dest)?;
+    }
+
+    println!("Backup completed at {}", plan.output_dir.display());
+    Ok(())
+}
+
+fn handle_restore(plan: &RestorePlan) -> anyhow::Result<()> {
+    if !plan.input_dir.exists() {
+        anyhow::bail!(
+            "Backup directory does not exist: {}",
+            plan.input_dir.display()
+        );
+    }
+
+    if plan.include_spool {
+        let spool_src = plan.input_dir.join("spool");
+        replace_dir(&spool_src, &plan.spool_path, plan.force)?;
+    }
+
+    if plan.include_queue_state {
+        let queue_src = plan.input_dir.join("queue_state.bin");
+        replace_file(&queue_src, &plan.queue_state_path, plan.force)?;
+    }
+
+    if let Some(config_path) = plan.config_path.as_deref() {
+        let config_src = plan.input_dir.join("empath.config.ron");
+        replace_file(&config_src, config_path, plan.force)?;
+    }
+
+    if let Some(tls_path) = plan.tls_path.as_deref() {
+        let tls_src = plan.input_dir.join("tls");
+        replace_dir(&tls_src, tls_path, plan.force)?;
+    }
+
+    println!("Restore completed from {}", plan.input_dir.display());
+    Ok(())
+}
+
+fn prepare_output_dir(output_dir: &Path, force: bool) -> anyhow::Result<()> {
+    if output_dir.exists() {
+        if !force {
+            anyhow::bail!(
+                "Output directory already exists (use --force to overwrite): {}",
+                output_dir.display()
+            );
+        }
+        fs::remove_dir_all(output_dir)?;
+    }
+    fs::create_dir_all(output_dir)?;
+    Ok(())
+}
+
+fn replace_dir(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    if !src.exists() {
+        anyhow::bail!("Missing backup directory: {}", src.display());
+    }
+    if dest.exists() {
+        if !force {
+            anyhow::bail!(
+                "Destination exists (use --force to overwrite): {}",
+                dest.display()
+            );
+        }
+        fs::remove_dir_all(dest)?;
+    }
+    copy_recursively(src, dest)
+}
+
+fn replace_file(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    if !src.exists() {
+        anyhow::bail!("Missing backup file: {}", src.display());
+    }
+    if dest.exists() && !force {
+        anyhow::bail!(
+            "Destination exists (use --force to overwrite): {}",
+            dest.display()
+        );
+    }
+    copy_file(src, dest)
+}
+
+fn copy_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    if !src.is_file() {
+        anyhow::bail!("Source file not found: {}", src.display());
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(src, dest)?;
+    Ok(())
+}
+
+fn copy_recursively(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    if src.is_file() {
+        return copy_file(src, dest);
+    }
+    if !src.is_dir() {
+        anyhow::bail!("Source directory not found: {}", src.display());
+    }
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if path.is_dir() {
+            copy_recursively(&path, &dest_path)?;
+        } else {
+            copy_file(&path, &dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Display queue statistics

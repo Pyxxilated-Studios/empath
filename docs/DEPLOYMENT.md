@@ -23,6 +23,7 @@ This guide provides comprehensive instructions for deploying and operating Empat
   - [Queue Management](#queue-management)
   - [DNS Cache Management](#dns-cache-management)
   - [Backup and Recovery](#backup-and-recovery)
+  - [Disaster Recovery](#disaster-recovery)
 - [Troubleshooting](#troubleshooting)
 - [Maintenance](#maintenance)
 - [Scaling](#scaling)
@@ -1432,6 +1433,13 @@ sudo cp /etc/empath/empath.config.ron \
 sudo tar -czf /backup/empath/tls-$(date +%Y%m%d).tar.gz \
   -C /etc/empath tls
 ```
+
+---
+
+### Disaster Recovery
+
+See `docs/DISASTER_RECOVERY.md` for a full runbook, including `empathctl backup`
+and `empathctl restore` usage, RTO/RPO guidance, and validation scenarios.
 
 ---
 
