@@ -474,6 +474,20 @@ async fn resolve_primary_server(
     info: &DeliveryInfo,
     pipeline: &crate::policy::DeliveryPipeline<'_>,
 ) -> Result<(String, ServerId), DeliveryError> {
+    if let Some(current) = info.current_mail_server() {
+        let mx_address = current.address();
+        let mx_server_id = server_id_from(&mx_address)?;
+
+        internal!(
+            "Using cached MX host for {:?}: {} (priority {})",
+            message_id,
+            mx_address,
+            current.priority
+        );
+
+        return Ok((mx_address, mx_server_id));
+    }
+
     let dns_resolution = pipeline
         .resolve_mail_servers(&info.recipient_domain)
         .await?;

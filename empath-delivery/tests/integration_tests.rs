@@ -358,6 +358,77 @@ async fn test_retry_scheduling_with_backoff() {
     assert_eq!(info.next_retry_at, Some(future_time));
 }
 
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Calls an unsupported method")]
+async fn test_multi_mx_priority_fallback() {
+    use support::mock_server::MockSmtpServer;
+
+    let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
+    let mut context = create_test_context("sender@example.org", "recipient@test.example.com");
+    let _msg_id = spool.write(&mut context).await.unwrap();
+
+    let primary = MockSmtpServer::builder()
+        .with_greeting(220, "Primary MX")
+        .with_ehlo_response(250, vec!["primary.test".to_string()])
+        .with_network_error_after_commands(1)
+        .build()
+        .await
+        .expect("Failed to start primary MX");
+    let secondary = MockSmtpServer::builder()
+        .with_greeting(220, "Secondary MX")
+        .with_ehlo_response(250, vec!["secondary.test".to_string()])
+        .build()
+        .await
+        .expect("Failed to start secondary MX");
+
+    let mock_dns = empath_delivery::MockDnsResolver::new();
+    mock_dns.add_response(
+        "test.example.com",
+        Ok(vec![
+            empath_delivery::MailServer::new("127.0.0.1".to_string(), 10, primary.addr().port()),
+            empath_delivery::MailServer::new("127.0.0.1".to_string(), 20, secondary.addr().port()),
+        ]),
+    );
+
+    let mut processor = DeliveryProcessor::default();
+    processor.scan_interval_secs = 1;
+    processor.process_interval_secs = 1;
+    processor.retry_policy.max_attempts = 3;
+    processor
+        .init(spool.clone(), Some(Arc::new(mock_dns)))
+        .unwrap();
+
+    let (shutdown_tx, shutdown_rx) = broadcast::channel(16);
+    let processor = Arc::new(processor);
+    let processor_handle = tokio::spawn(async move { processor.serve(shutdown_rx).await });
+
+    let start = std::time::Instant::now();
+    let mut saw_secondary = false;
+    while start.elapsed() < Duration::from_secs(10) {
+        if secondary.command_count() > 0 {
+            saw_secondary = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    assert!(
+        primary.command_count() > 0,
+        "Primary MX should be attempted first"
+    );
+    assert!(
+        saw_secondary,
+        "Secondary MX should be attempted after failure"
+    );
+
+    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(35), processor_handle).await;
+    assert!(result.is_ok(), "Processor should shutdown within timeout");
+
+    primary.shutdown();
+    secondary.shutdown();
+}
+
 #[test]
 fn test_smtp_timeouts_default() {
     let timeouts = SmtpTimeouts::default();

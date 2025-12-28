@@ -27,7 +27,7 @@ No active P1 items. See P2/P3/New Ideas for candidates.
 - [ ] NEW-OBS-ARC-02: DMARC sampling dashboard. Surface a sampled subset of DMARC-failed messages (sender, IP, policy) in metrics/logs to help tune enforcement without sifting through entire logs.
 - [ ] NEW-QUEUE-01: Priority spool tiers. Allow modules or policies to opt messages into priority delivery tiers and adjust routing/delivery pacing based on queue age/throttles.
 - [ ] NEW-SEC-ROT-01: Secret rotation helpers. Provide tooling (maybe via `just rotate-secrets`) that mirrors control socket TLS reloads but also rotates API tokens, HMAC keys, cert bundles, etc., to streamline ops.
-- [ ] NEW-TEST-MX-01: E2E multi-MX coverage. Extend the test harness to support multiple MX priority ordering (mock server port injection or deferred harness build).
+- [x] NEW-TEST-MX-01: E2E multi-MX coverage. Extend the test harness to support multiple MX priority ordering (mock server port injection or deferred harness build).
 
 ## Notes
 - Prefer `just test-nextest` locally; `just ci` before PRs.
