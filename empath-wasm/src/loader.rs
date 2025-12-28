@@ -217,17 +217,18 @@ fn start_epoch_manager(engine: Arc<Engine>) {
 
 impl From<&Context> for wit::ValidationContext {
     fn from(ctx: &Context) -> Self {
+        let mut transaction = Vec::with_capacity(ctx.transaction.len());
+        for (key, value) in &ctx.transaction {
+            transaction.push((key.to_string(), value.clone()));
+        }
+
         Self {
             extended: ctx.extended,
             id: ctx.id.clone(),
             sender: Some(ctx.sender()),
             recipients: ctx.recipients(),
             max_message_size: ctx.max_message_size as u64,
-            transaction: ctx
-                .transaction
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect(),
+            transaction,
             tracking_id: ctx.tracking_id.as_ref().map(ToString::to_string),
         }
     }
@@ -235,17 +236,18 @@ impl From<&Context> for wit::ValidationContext {
 
 impl From<&Context> for wit_events::EventContext {
     fn from(ctx: &Context) -> Self {
+        let mut transaction = Vec::with_capacity(ctx.transaction.len());
+        for (key, value) in &ctx.transaction {
+            transaction.push((key.to_string(), value.clone()));
+        }
+
         Self {
             extended: ctx.extended,
             id: ctx.id.clone(),
             sender: Some(ctx.sender()),
             recipients: ctx.recipients(),
             max_message_size: ctx.max_message_size as u64,
-            transaction: ctx
-                .transaction
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect(),
+            transaction,
             tracking_id: ctx.tracking_id.as_ref().map(ToString::to_string),
         }
     }

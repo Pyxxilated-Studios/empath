@@ -466,7 +466,11 @@ impl Context {
     /// Returns the recipients of this [`Context`] as protocol-formatted strings.
     pub fn recipients(&self) -> Vec<String> {
         self.envelope.recipients().map_or_else(Vec::new, |addrs| {
-            addrs.iter().map(|addr| format!("RCPT TO:{addr}")).collect()
+            let mut recipients = Vec::with_capacity(addrs.len());
+            for addr in addrs.iter() {
+                recipients.push(format!("RCPT TO:{addr}"));
+            }
+            recipients
         })
     }
 

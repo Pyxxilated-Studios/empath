@@ -48,21 +48,27 @@ pub struct SerializableContext {
 
 impl From<&Context> for SerializableContext {
     fn from(ctx: &Context) -> Self {
+        let recipients = ctx.envelope.recipients().map_or_else(Vec::new, |addrs| {
+            let mut recipients = Vec::with_capacity(addrs.len());
+            for addr in addrs.iter() {
+                recipients.push(addr.to_string());
+            }
+            recipients
+        });
+        let mut transaction = Vec::with_capacity(ctx.transaction.len());
+        for (key, value) in &ctx.transaction {
+            transaction.push((key.to_string(), value.clone()));
+        }
+
         Self {
             extended: ctx.extended,
             id: ctx.id.clone(),
             sender: ctx.envelope.sender().map(ToString::to_string),
-            recipients: ctx.envelope.recipients().map_or_else(Vec::new, |addrs| {
-                addrs.iter().map(ToString::to_string).collect()
-            }),
+            recipients,
             // Do not inline message data; modules can request body bytes via host functions.
             data: None,
             max_message_size: ctx.max_message_size,
-            transaction: ctx
-                .transaction
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect(),
+            transaction,
             tracking_id: ctx.tracking_id.as_ref().map(ToString::to_string),
         }
     }
