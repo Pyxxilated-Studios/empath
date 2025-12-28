@@ -19,6 +19,7 @@ use empath_common::{
 use empath_ffi::modules;
 use empath_spool::BackingStore;
 use opentelemetry::trace::TraceContextExt as _;
+use sha2::{Digest, Sha256};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use ulid::Ulid;
 
@@ -759,6 +760,7 @@ impl DefaultSmtpTransactionHandler {
         .await;
 
         Self::record_dmarc_evaluation(ctx, from_domain, &evaluation);
+        self.sample_dmarc_failure(ctx, &evaluation);
     }
 
     fn record_dmarc_evaluation(
@@ -822,6 +824,59 @@ impl DefaultSmtpTransactionHandler {
             dmarc::DmarcResult::Pass => {}
         }
     }
+
+    fn sample_dmarc_failure(&self, ctx: &mut Context, evaluation: &dmarc::DmarcEvaluation) {
+        if evaluation.result != dmarc::DmarcResult::Fail {
+            return;
+        }
+
+        let sender = ctx
+            .sender_email()
+            .map_or_else(|| "unknown".to_string(), |value| value.as_str().to_string());
+        let client_ip = self.client_ip(ctx);
+        let policy = ctx
+            .transaction
+            .get("dmarc_policy")
+            .map_or_else(|| "none".to_string(), |value| value.as_str().to_string());
+        let domain = ctx
+            .transaction
+            .get("dmarc_domain")
+            .map_or_else(|| "unknown".to_string(), |value| value.as_str().to_string());
+
+        let sample_key = format!(
+            "{}|{}|{}|{}|{}",
+            sender,
+            client_ip,
+            policy,
+            domain,
+            ctx.id()
+        );
+
+        if !should_sample_dmarc(&sample_key) {
+            return;
+        }
+
+        ctx.transaction
+            .insert(Cow::Borrowed("dmarc_sampled"), "true".to_string());
+        ctx.transaction.insert(
+            Cow::Borrowed("dmarc_sample_rate_bps"),
+            DMARC_SAMPLE_RATE_BPS.to_string(),
+        );
+
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            metrics
+                .smtp
+                .record_dmarc_sample(&sender, client_ip, &policy);
+        }
+
+        tracing::info!(
+            dmarc_sender = %sender,
+            dmarc_client_ip = %client_ip,
+            dmarc_policy = %policy,
+            dmarc_domain = %domain,
+            "Sampled DMARC failure"
+        );
+    }
 }
 
 fn normalize_dkim_result(ctx: &mut Context) -> Option<String> {
@@ -862,6 +917,17 @@ const fn dmarc_enforcement_action(result: &str, policy: Option<&str>) -> Option<
         Some(policy) if policy.eq_ignore_ascii_case("quarantine") => Some("quarantine"),
         _ => None,
     }
+}
+
+const DMARC_SAMPLE_DENOMINATOR: u32 = 10_000;
+const DMARC_SAMPLE_RATE_BPS: u32 = 100;
+
+fn should_sample_dmarc(key: &str) -> bool {
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    let digest = hasher.finalize();
+    let bucket = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]);
+    bucket % DMARC_SAMPLE_DENOMINATOR < DMARC_SAMPLE_RATE_BPS
 }
 
 /// Helper function to determine if state requires validation.

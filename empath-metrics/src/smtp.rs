@@ -50,6 +50,8 @@ pub struct SmtpMetrics {
     dmarc_evaluations_total: Counter<u64>,
     /// DMARC enforcement actions
     dmarc_enforcements_total: Counter<u64>,
+    /// Sampled DMARC failures
+    dmarc_samples_total: Counter<u64>,
     /// ARC verification results
     arc_verifications_total: Counter<u64>,
 
@@ -97,6 +99,7 @@ struct SmtpInstruments {
     dkim_rejections_total: Counter<u64>,
     dmarc_evaluations_total: Counter<u64>,
     dmarc_enforcements_total: Counter<u64>,
+    dmarc_samples_total: Counter<u64>,
     arc_verifications_total: Counter<u64>,
     tls_cert_contexts_total: Gauge<u64>,
     tls_cert_expiry_min_seconds: Gauge<u64>,
@@ -124,6 +127,7 @@ impl SmtpMetrics {
             dkim_rejections_total: instruments.dkim_rejections_total,
             dmarc_evaluations_total: instruments.dmarc_evaluations_total,
             dmarc_enforcements_total: instruments.dmarc_enforcements_total,
+            dmarc_samples_total: instruments.dmarc_samples_total,
             arc_verifications_total: instruments.arc_verifications_total,
             tls_cert_contexts_total: instruments.tls_cert_contexts_total,
             tls_cert_expiry_min_seconds: instruments.tls_cert_expiry_min_seconds,
@@ -225,6 +229,16 @@ impl SmtpMetrics {
         self.dmarc_enforcements_total.add(1, &attributes);
     }
 
+    /// Record a sampled DMARC failure for observability.
+    pub fn record_dmarc_sample(&self, sender: &str, client_ip: std::net::IpAddr, policy: &str) {
+        let attributes = [
+            KeyValue::new("sender", sender.to_string()),
+            KeyValue::new("client_ip", client_ip.to_string()),
+            KeyValue::new("policy", policy.to_string()),
+        ];
+        self.dmarc_samples_total.add(1, &attributes);
+    }
+
     /// Record ARC verification result for a message.
     pub fn record_arc_verification(&self, result: &str, replayed: bool, chain_len: usize) {
         let attributes = [
@@ -324,6 +338,11 @@ impl SmtpMetrics {
             .with_description("Total DMARC enforcement actions for SMTP messages")
             .build();
 
+        let dmarc_samples_total = meter
+            .u64_counter("empath.smtp.dmarc.samples.total")
+            .with_description("Sampled DMARC failures with sender/IP/policy attributes")
+            .build();
+
         let arc_verifications_total = meter
             .u64_counter("empath.smtp.arc.verifications.total")
             .with_description("Total ARC verification results for SMTP messages")
@@ -362,6 +381,7 @@ impl SmtpMetrics {
             dkim_rejections_total,
             dmarc_evaluations_total,
             dmarc_enforcements_total,
+            dmarc_samples_total,
             arc_verifications_total,
             tls_cert_contexts_total,
             tls_cert_expiry_min_seconds,

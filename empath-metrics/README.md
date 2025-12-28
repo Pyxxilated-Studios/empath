@@ -70,6 +70,7 @@ metrics().dns.record_cache_hit("MX");
 - `empath.smtp.dkim.rejections.total{result}` - DKIM enforcement rejections
 - `empath.smtp.dmarc.evaluations.total{result,policy,spf_aligned,dkim_aligned}` - DMARC evaluation results
 - `empath.smtp.dmarc.enforcements.total{action,policy,result}` - DMARC enforcement actions
+- `empath.smtp.dmarc.samples.total{sender,client_ip,policy}` - Sampled DMARC failures
 - `empath.smtp.arc.verifications.total{result,replayed,chain_len}` - ARC verification results
 
 ### Delivery Metrics
