@@ -105,6 +105,10 @@ setup:
 doctor:
     @./scripts/doctor.sh
 
+# Rotate secrets (tokens/API keys) and print config snippets
+rotate-secrets:
+    @./scripts/rotate-secrets.sh --help
+
 # Development workflow: format, lint, test
 dev: fmt lint test
     @echo "✅ Development checks passed"

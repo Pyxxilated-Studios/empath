@@ -25,6 +25,7 @@ Minimal, action-oriented guide for day-to-day operations.
 - Cannot connect to control socket: ensure Empath is running and `--control-socket` matches (default `/tmp/empath.sock`).
 - Oldest message age growing: run `queue stats --watch`, trigger `process-now`, check spool disk space, and review rate limits.
 - STARTTLS errors: confirm domain `require_tls` settings and cert paths; for test-only self-signed flows set per-domain `accept_invalid_certs: true`.
+- Secret rotation: use `scripts/rotate-secrets.sh` to generate control tokens/API keys, update config, then run `empathctl system reload-config` and `empathctl system reload-tls` after swapping certificates.
 - Spool disk pressure: `empathctl spool stats` then `spool cleanup-completed`; expand `spool.path` if needed.
 - DNS anomalies: `dns list-cache` and `dns refresh <domain>`; remove overrides if misrouted.
 
