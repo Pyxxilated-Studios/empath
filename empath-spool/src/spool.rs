@@ -233,6 +233,50 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    async fn test_arc_headers_preserved_in_spool() -> TestResult {
+        let store = MemoryBackingStore::new();
+        let spool = Spool::new(store);
+
+        let arc_message = concat!(
+            "ARC-Seal: i=1; a=rsa-sha256; d=example.org; s=arc;",
+            " t=1700000000; cv=none; b=abc123;\r\n",
+            "ARC-Message-Signature: i=1; a=rsa-sha256; d=example.org; s=arc;",
+            " t=1700000000; h=from:to:subject; bh=deadbeef; b=beefdead;\r\n",
+            "ARC-Authentication-Results: i=1; example.org; dkim=pass header.d=example.org;\r\n",
+            "From: Sender <sender@example.org>\r\n",
+            "To: Recipient <recipient@example.org>\r\n",
+            "Subject: ARC test\r\n",
+            "\r\n",
+            "Body.\r\n"
+        );
+
+        let mut message = create_test_context(arc_message);
+        let expected_data = message.data.clone();
+
+        let id = spool
+            .spool_message(&mut message)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let read_msg = spool
+            .read_message(&id)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        assert_eq!(read_msg.data.as_ref(), expected_data.as_ref());
+        let raw = read_msg
+            .data
+            .as_ref()
+            .and_then(|data| std::str::from_utf8(data).ok())
+            .ok_or_else(|| "Failed to parse message data".to_string())?;
+        assert!(raw.contains("ARC-Seal:"));
+        assert!(raw.contains("ARC-Message-Signature:"));
+        assert!(raw.contains("ARC-Authentication-Results:"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     async fn test_session_not_persisted() -> TestResult {
         use std::borrow::Cow;
 

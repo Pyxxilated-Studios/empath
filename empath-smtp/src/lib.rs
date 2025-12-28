@@ -1,3 +1,4 @@
+pub mod arc;
 pub mod auth;
 pub mod client;
 pub mod command;

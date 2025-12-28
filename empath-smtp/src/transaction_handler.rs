@@ -22,7 +22,7 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use ulid::Ulid;
 
-use crate::{State, dkim, dmarc};
+use crate::{State, arc, dkim, dmarc};
 
 /// SMTP transaction handler for business logic.
 ///
@@ -488,6 +488,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
     }
 
     async fn handle_message(&mut self, ctx: &mut Context) -> bool {
+        self.evaluate_arc(ctx).await;
         self.evaluate_dkim(ctx).await;
         self.evaluate_dmarc(ctx).await;
 
@@ -619,6 +620,70 @@ impl DefaultSmtpTransactionHandler {
             }
             "neutral" | "none" => {
                 tracing::debug!(dkim_result = %evaluation.result, "DKIM verification skipped");
+            }
+            _ => {}
+        }
+    }
+
+    async fn evaluate_arc(&self, ctx: &mut Context) {
+        let Some(raw) = ctx.data.as_ref() else {
+            ctx.transaction
+                .insert(Cow::Borrowed("arc_result"), "none".to_string());
+            ctx.transaction.insert(
+                Cow::Borrowed("arc_reason"),
+                "missing_message_data".to_string(),
+            );
+            return;
+        };
+
+        let evaluation = arc::verify(raw).await;
+
+        ctx.transaction
+            .insert(Cow::Borrowed("arc_result"), evaluation.result.to_string());
+        ctx.transaction.insert(
+            Cow::Borrowed("arc_chain_len"),
+            evaluation.chain_len.to_string(),
+        );
+        ctx.transaction.insert(
+            Cow::Borrowed("arc_replayed"),
+            evaluation.replayed.to_string(),
+        );
+        if let Some(hash) = evaluation.chain_hash {
+            ctx.transaction
+                .insert(Cow::Borrowed("arc_chain_hash"), hash);
+        }
+        if let Some(error) = evaluation.error {
+            ctx.transaction.insert(Cow::Borrowed("arc_error"), error);
+        }
+
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            metrics.smtp.record_arc_verification(
+                evaluation.result,
+                evaluation.replayed,
+                evaluation.chain_len,
+            );
+        }
+
+        if evaluation.replayed {
+            tracing::warn!(
+                arc_result = %evaluation.result,
+                arc_chain_len = evaluation.chain_len,
+                arc_chain_hash = %ctx.transaction.get("arc_chain_hash").map_or("", String::as_str),
+                "ARC replay detected"
+            );
+        }
+
+        match evaluation.result {
+            "fail" | "permerror" | "temperror" => {
+                let error = ctx.transaction.get("arc_error").map(String::as_str);
+                tracing::warn!(
+                    arc_result = %evaluation.result,
+                    arc_error = error.unwrap_or(""),
+                    "ARC verification failed"
+                );
+            }
+            "neutral" | "none" => {
+                tracing::debug!(arc_result = %evaluation.result, "ARC verification skipped");
             }
             _ => {}
         }

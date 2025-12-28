@@ -50,6 +50,8 @@ pub struct SmtpMetrics {
     dmarc_evaluations_total: Counter<u64>,
     /// DMARC enforcement actions
     dmarc_enforcements_total: Counter<u64>,
+    /// ARC verification results
+    arc_verifications_total: Counter<u64>,
 
     /// Total TLS contexts registered
     tls_cert_contexts_total: Gauge<u64>,
@@ -95,6 +97,7 @@ struct SmtpInstruments {
     dkim_rejections_total: Counter<u64>,
     dmarc_evaluations_total: Counter<u64>,
     dmarc_enforcements_total: Counter<u64>,
+    arc_verifications_total: Counter<u64>,
     tls_cert_contexts_total: Gauge<u64>,
     tls_cert_expiry_min_seconds: Gauge<u64>,
     tls_cert_expired_count: Gauge<u64>,
@@ -121,6 +124,7 @@ impl SmtpMetrics {
             dkim_rejections_total: instruments.dkim_rejections_total,
             dmarc_evaluations_total: instruments.dmarc_evaluations_total,
             dmarc_enforcements_total: instruments.dmarc_enforcements_total,
+            arc_verifications_total: instruments.arc_verifications_total,
             tls_cert_contexts_total: instruments.tls_cert_contexts_total,
             tls_cert_expiry_min_seconds: instruments.tls_cert_expiry_min_seconds,
             tls_cert_expired_count: instruments.tls_cert_expired_count,
@@ -221,6 +225,16 @@ impl SmtpMetrics {
         self.dmarc_enforcements_total.add(1, &attributes);
     }
 
+    /// Record ARC verification result for a message.
+    pub fn record_arc_verification(&self, result: &str, replayed: bool, chain_len: usize) {
+        let attributes = [
+            KeyValue::new("result", result.to_string()),
+            KeyValue::new("replayed", replayed.to_string()),
+            KeyValue::new("chain_len", chain_len.to_string()),
+        ];
+        self.arc_verifications_total.add(1, &attributes);
+    }
+
     /// Record TLS certificate watchdog metrics.
     pub fn record_tls_cert_status(
         &self,
@@ -310,6 +324,11 @@ impl SmtpMetrics {
             .with_description("Total DMARC enforcement actions for SMTP messages")
             .build();
 
+        let arc_verifications_total = meter
+            .u64_counter("empath.smtp.arc.verifications.total")
+            .with_description("Total ARC verification results for SMTP messages")
+            .build();
+
         let tls_cert_contexts_total = meter
             .u64_gauge("empath.smtp.tls.cert.contexts.total")
             .with_description("Number of TLS contexts registered for SMTP listeners")
@@ -343,6 +362,7 @@ impl SmtpMetrics {
             dkim_rejections_total,
             dmarc_evaluations_total,
             dmarc_enforcements_total,
+            arc_verifications_total,
             tls_cert_contexts_total,
             tls_cert_expiry_min_seconds,
             tls_cert_expired_count,
