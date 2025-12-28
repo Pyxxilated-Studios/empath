@@ -23,7 +23,7 @@ No active P1 items. See P2/P3/New Ideas for candidates.
 - [x] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 
 ## New Ideas / Quick Wins
-- [ ] NEW-EXPE-01: WASM module fuzz harness. Generate randomized SMTP contexts/events against the WASM API to catch panics/resource leaks in validation modules before deployment.
+- [x] NEW-EXPE-01: WASM module fuzz harness. Generate randomized SMTP contexts/events against the WASM API to catch panics/resource leaks in validation modules before deployment.
 - [ ] NEW-OBS-ARC-02: DMARC sampling dashboard. Surface a sampled subset of DMARC-failed messages (sender, IP, policy) in metrics/logs to help tune enforcement without sifting through entire logs.
 - [x] NEW-QUEUE-01: Priority spool tiers. Allow modules or policies to opt messages into priority delivery tiers and adjust routing/delivery pacing based on queue age/throttles.
 - [x] NEW-SEC-ROT-01: Secret rotation helpers. Provide tooling (maybe via `just rotate-secrets`) that mirrors control socket TLS reloads but also rotates API tokens, HMAC keys, cert bundles, etc., to streamline ops.

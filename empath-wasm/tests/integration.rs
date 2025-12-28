@@ -21,8 +21,10 @@ use empath_common::{
     address_parser::parse_forward_path,
     context::Context,
     envelope::Envelope,
+    message_id::SpooledMessageId,
 };
 use empath_wasm::{DeterministicWasiConfig, WasmError, WasmModule};
+use proptest::{prelude::*, test_runner::TestCaseError};
 use tokio::runtime::Runtime;
 
 type TestResult = Result<(), String>;
@@ -206,6 +208,15 @@ fn init_test_module_with_memory_limit(max_memory_bytes: usize) -> Result<WasmMod
     Ok(module)
 }
 
+fn fuzz_module() -> Result<&'static WasmModule, String> {
+    static MODULE: OnceLock<Result<WasmModule, String>> = OnceLock::new();
+    let result = MODULE.get_or_init(init_test_module);
+    match result {
+        Ok(module) => Ok(module),
+        Err(err) => Err(err.clone()),
+    }
+}
+
 /// Create a test context with sensible defaults
 fn create_test_context() -> Context {
     Context {
@@ -226,6 +237,127 @@ fn create_test_context() -> Context {
         message_dirty: false,
         module_context: None,
     }
+}
+
+fn regex_strategy(pattern: &str, fallback: &str) -> BoxedStrategy<String> {
+    prop::string::string_regex(pattern).map_or_else(
+        |_| Just(fallback.to_string()).boxed(),
+        proptest::strategy::Strategy::boxed,
+    )
+}
+
+fn session_id_strategy() -> BoxedStrategy<String> {
+    regex_strategy("[a-z0-9-]{1,24}", "session-1")
+}
+
+fn local_part_strategy() -> BoxedStrategy<String> {
+    regex_strategy("[a-z0-9]{1,16}", "local")
+}
+
+fn domain_label_strategy() -> BoxedStrategy<String> {
+    regex_strategy("[a-z]{3,10}", "example")
+}
+
+fn domain_strategy() -> BoxedStrategy<String> {
+    (domain_label_strategy(), regex_strategy("[a-z]{2,6}", "com"))
+        .prop_map(|(label, tld)| format!("{label}.{tld}"))
+        .boxed()
+}
+
+fn mailbox_strategy() -> BoxedStrategy<String> {
+    (local_part_strategy(), domain_strategy())
+        .prop_map(|(local, domain)| format!("<{local}@{domain}>"))
+        .boxed()
+}
+
+fn address_strategy() -> BoxedStrategy<Address> {
+    mailbox_strategy()
+        .prop_filter_map("valid mailbox", |path| {
+            parse_forward_path(&path).ok().map(Address::from)
+        })
+        .boxed()
+}
+
+fn sender_strategy() -> BoxedStrategy<Option<Address>> {
+    prop_oneof![Just(None), address_strategy().prop_map(Some)].boxed()
+}
+
+fn recipients_strategy() -> BoxedStrategy<Vec<Address>> {
+    prop::collection::vec(address_strategy(), 0..=12).boxed()
+}
+
+fn transaction_key_strategy() -> BoxedStrategy<String> {
+    regex_strategy("[a-z_]{1,12}", "key")
+        .prop_filter("avoid panic_event", |key| key != "panic_event")
+        .boxed()
+}
+
+fn transaction_entries_strategy() -> BoxedStrategy<Vec<(String, String)>> {
+    prop::collection::vec(
+        (
+            transaction_key_strategy(),
+            regex_strategy("[a-z0-9_-]{0,24}", "value"),
+        ),
+        0..=8,
+    )
+    .boxed()
+}
+
+fn message_data_strategy() -> BoxedStrategy<Vec<u8>> {
+    prop::collection::vec(any::<u8>(), 0..=2048).boxed()
+}
+
+fn sanitize_session_id(mut session_id: String) -> String {
+    if session_id.starts_with("panic-event") {
+        session_id.insert_str(0, "safe-");
+    }
+    session_id
+}
+
+fn sanitize_message_data(mut data: Vec<u8>) -> Vec<u8> {
+    if data.starts_with(b"timeout") || data.starts_with(b"alloc:") {
+        if data.is_empty() {
+            data.push(b'x');
+        } else {
+            data[0] = b'x';
+        }
+    }
+    data
+}
+
+struct FuzzContextInput {
+    session_id: String,
+    sender: Option<Address>,
+    recipients: Vec<Address>,
+    extended: bool,
+    data: Vec<u8>,
+    max_message_size: usize,
+    transaction_entries: Vec<(String, String)>,
+    include_tracking: bool,
+}
+
+fn build_fuzz_context(input: FuzzContextInput) -> Context {
+    let mut envelope = Envelope::default();
+    *envelope.sender_mut() = input.sender;
+    if !input.recipients.is_empty() {
+        *envelope.recipients_mut() = Some(AddressList::from(input.recipients));
+    }
+
+    let mut ctx = create_test_context();
+    ctx.id = sanitize_session_id(input.session_id);
+    ctx.extended = input.extended;
+    ctx.envelope = Arc::new(envelope);
+    let data = sanitize_message_data(input.data);
+    ctx.data_len = Some(data.len());
+    ctx.data = Some(Arc::from(data));
+    ctx.max_message_size = input.max_message_size;
+    ctx.transaction = input
+        .transaction_entries
+        .into_iter()
+        .map(|(key, value)| (Cow::Owned(key), value))
+        .collect();
+    ctx.tracking_id = input.include_tracking.then(SpooledMessageId::generate);
+    ctx
 }
 
 #[test]
@@ -921,4 +1053,66 @@ fn test_module_path() -> TestResult {
         module.path()
     );
     Ok(())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 32,
+        max_shrink_iters: 0,
+        ..ProptestConfig::default()
+    })]
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_wasm_context_fuzz(
+        session_id in session_id_strategy(),
+        sender in sender_strategy(),
+        recipients in recipients_strategy(),
+        extended in any::<bool>(),
+        data in message_data_strategy(),
+        max_message_size in 1_024usize..=2_000_000,
+        transaction_entries in transaction_entries_strategy(),
+        include_tracking in any::<bool>(),
+    ) {
+        let module = match fuzz_module() {
+            Ok(module) => module,
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "failed to initialize wasm module for fuzz test: {err}"
+                )));
+            }
+        };
+        let mut ctx = build_fuzz_context(FuzzContextInput {
+            session_id,
+            sender,
+            recipients,
+            extended,
+            data,
+            max_message_size,
+            transaction_entries,
+            include_tracking,
+        });
+
+        let callbacks = [
+            "on_connection_opened",
+            "validate_connect",
+            "validate_ehlo",
+            "validate_mail_from",
+            "validate_rcpt_to",
+            "validate_data",
+            "validate_starttls",
+            "on_smtp_message_received",
+            "on_delivery_attempt",
+            "on_delivery_success",
+            "on_delivery_failure",
+            "on_smtp_error",
+            "on_dns_lookup",
+            "on_connection_closed",
+        ];
+
+        for callback in callbacks {
+            let result = module.execute_callback(callback, &mut ctx);
+            prop_assert!(result.is_ok(), "callback {callback} failed: {:?}", result.err());
+        }
+    }
 }
