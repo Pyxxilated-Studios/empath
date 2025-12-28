@@ -103,7 +103,7 @@ encoding_rs = "0.8.35"
 fs2 = "0.4"
 futures-util = "0.3"
 hex = "0.4"
-hickory-resolver = "0.25"
+hickory-resolver = { version = "0.25", features = ["dnssec-ring"] }
 mail-auth = { version = "0.7", default-features = false, features = ["ring"] }
 hyper = "1"
 hyper-rustls = "0.27"

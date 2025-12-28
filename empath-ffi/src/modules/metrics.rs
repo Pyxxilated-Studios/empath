@@ -87,14 +87,18 @@ pub(super) fn emit(event: Event, context: &Context) {
 
         // DNS Events
         Ev::DnsLookup => {
+            let query_type = context
+                .transaction
+                .get("dns_query_type")
+                .map_or("mx", String::as_str);
             // Extract cache hit/miss from context.transaction (DNS lookups are per-transaction)
             if let Some(cache_status) = context.transaction.get("dns_cache_status") {
                 match cache_status.as_str() {
                     "hit" => {
-                        metrics.dns.record_cache_hit("mx");
+                        metrics.dns.record_cache_hit(query_type);
                     }
                     "miss" => {
-                        metrics.dns.record_cache_miss("mx");
+                        metrics.dns.record_cache_miss(query_type);
 
                         // Record lookup duration for cache misses
                         if let Some(duration_ms) = context.transaction.get("dns_lookup_duration_ms")
@@ -104,11 +108,17 @@ pub(super) fn emit(event: Event, context: &Context) {
                             let duration_secs =
                                 f64::from(u32::try_from(duration_ms_u64).unwrap_or(u32::MAX))
                                     / 1000.0;
-                            metrics.dns.record_lookup("mx", duration_secs);
+                            metrics.dns.record_lookup(query_type, duration_secs);
                         }
                     }
                     _ => {}
                 }
+            }
+
+            if let Some(status) = context.transaction.get("dnssec_status")
+                && matches!(status.as_str(), "bogus" | "indeterminate")
+            {
+                metrics.dns.record_dnssec_failure(query_type, status);
             }
 
             // Update cache size metric

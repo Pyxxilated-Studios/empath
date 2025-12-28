@@ -27,6 +27,9 @@ pub struct DnsMetrics {
     /// Total number of DNS errors by type
     errors_total: Counter<u64>,
 
+    /// Total number of DNSSEC validation failures by status
+    dnssec_validation_failures_total: Counter<u64>,
+
     /// Current cache size
     cache_size: AtomicU64,
 
@@ -83,6 +86,11 @@ impl DnsMetrics {
             .with_description("Total number of DNS errors by type")
             .build();
 
+        let dnssec_validation_failures_total = meter
+            .u64_counter("empath.dns.dnssec.validation.failures.total")
+            .with_description("Total number of DNSSEC validation failures by status")
+            .build();
+
         // Observable counter for cache evictions (reads from atomic)
         // Meter keeps this alive internally via callback
         let evictions_clone = cache_evictions_ref.clone();
@@ -98,6 +106,7 @@ impl DnsMetrics {
             lookup_duration,
             lookups_total,
             errors_total,
+            dnssec_validation_failures_total,
             cache_size: AtomicU64::new(0),
             cache_hits_count: cache_hits_ref,
             cache_misses_count: cache_misses_ref,
@@ -130,6 +139,15 @@ impl DnsMetrics {
     pub fn record_error(&self, error_type: &str) {
         let attributes = [KeyValue::new("error_type", error_type.to_string())];
         self.errors_total.add(1, &attributes);
+    }
+
+    /// Record a DNSSEC validation failure
+    pub fn record_dnssec_failure(&self, query_type: &str, status: &str) {
+        let attributes = [
+            KeyValue::new("query_type", query_type.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ];
+        self.dnssec_validation_failures_total.add(1, &attributes);
     }
 
     /// Update the cache size

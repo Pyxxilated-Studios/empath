@@ -31,6 +31,7 @@ use hickory_resolver::{
     TokioResolver,
     config::{ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
+    proto::rr::Record,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -54,6 +55,13 @@ pub enum DnsError {
     /// DNS query timed out.
     #[error("DNS query timed out for domain: {0}")]
     Timeout(String),
+
+    /// DNSSEC validation failed (bogus or indeterminate).
+    #[error("DNSSEC validation failed for {target}: {status}")]
+    DnssecValidationFailed {
+        target: String,
+        status: DnssecStatus,
+    },
 }
 
 impl DnsError {
@@ -61,6 +69,45 @@ impl DnsError {
     #[must_use]
     pub const fn is_temporary(&self) -> bool {
         matches!(self, Self::Timeout(_) | Self::LookupFailed(_))
+            || matches!(
+                self,
+                Self::DnssecValidationFailed {
+                    status: DnssecStatus::Indeterminate,
+                    ..
+                }
+            )
+    }
+}
+
+/// DNSSEC validation status for a lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DnssecStatus {
+    Secure,
+    Insecure,
+    Bogus,
+    Indeterminate,
+}
+
+impl DnssecStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Secure => "secure",
+            Self::Insecure => "insecure",
+            Self::Bogus => "bogus",
+            Self::Indeterminate => "indeterminate",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_failure(self) -> bool {
+        matches!(self, Self::Bogus | Self::Indeterminate)
+    }
+}
+
+impl std::fmt::Display for DnssecStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -92,6 +139,14 @@ pub struct DnsConfig {
     /// The cache uses lock-free concurrent access for better throughput.
     #[serde(default = "default_cache_size")]
     pub cache_size: usize,
+
+    /// Enable DNSSEC validation in the resolver (default: false).
+    #[serde(default)]
+    pub dnssec_enabled: bool,
+
+    /// Fail lookups on DNSSEC bogus/indeterminate results (default: false).
+    #[serde(default)]
+    pub dnssec_strict: bool,
 }
 
 const fn default_timeout_secs() -> u64 {
@@ -118,6 +173,8 @@ impl Default for DnsConfig {
             min_cache_ttl_secs: default_min_cache_ttl_secs(),
             max_cache_ttl_secs: default_max_cache_ttl_secs(),
             cache_size: default_cache_size(),
+            dnssec_enabled: false,
+            dnssec_strict: false,
         }
     }
 }
@@ -140,6 +197,8 @@ struct CachedResult {
     servers: Arc<Vec<MailServer>>,
     /// When this cache entry expires
     expires_at: Instant,
+    /// DNSSEC validation status for the cached lookup
+    dnssec_status: Option<DnssecStatus>,
 }
 
 /// Cached TXT record result
@@ -149,6 +208,8 @@ struct CachedTxtResult {
     txt_records: Arc<Vec<String>>,
     /// When this cache entry expires
     expires_at: Instant,
+    /// DNSSEC validation status for the cached lookup
+    dnssec_status: Option<DnssecStatus>,
 }
 
 /// Cached PTR record result
@@ -158,6 +219,33 @@ struct CachedPtrResult {
     ptr_names: Arc<Vec<String>>,
     /// When this cache entry expires
     expires_at: Instant,
+    /// DNSSEC validation status for the cached lookup
+    dnssec_status: Option<DnssecStatus>,
+}
+
+fn dnssec_status_from_records<'a>(records: impl Iterator<Item = &'a Record>) -> DnssecStatus {
+    let mut saw_secure = false;
+    let mut saw_insecure = false;
+
+    for record in records {
+        let proof = record.proof();
+        if proof.is_bogus() {
+            return DnssecStatus::Bogus;
+        }
+        if proof.is_secure() {
+            saw_secure = true;
+        } else if proof.is_insecure() {
+            saw_insecure = true;
+        }
+    }
+
+    if saw_secure {
+        DnssecStatus::Secure
+    } else if saw_insecure {
+        DnssecStatus::Insecure
+    } else {
+        DnssecStatus::Indeterminate
+    }
 }
 
 impl MailServer {
@@ -300,6 +388,7 @@ impl HickoryDnsResolver {
     pub fn with_dns_config(dns_config: DnsConfig) -> Result<Self, DnsError> {
         let mut opts = ResolverOpts::default();
         opts.timeout = Duration::from_secs(dns_config.timeout_secs);
+        opts.validate = dns_config.dnssec_enabled;
 
         // Try system DNS configuration first
         let resolver_result = TokioResolver::builder(TokioConnectionProvider::default())
@@ -357,9 +446,10 @@ impl HickoryDnsResolver {
 
     fn build_with_resolver_config(
         resolver_config: ResolverConfig,
-        opts: ResolverOpts,
+        mut opts: ResolverOpts,
         dns_config: DnsConfig,
     ) -> Self {
+        opts.validate = dns_config.dnssec_enabled;
         let resolver =
             TokioResolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
                 .with_options(opts)
@@ -411,12 +501,28 @@ impl HickoryDnsResolver {
                 ctx.transaction
                     .insert(Cow::Borrowed("dns_cache_status"), "hit".to_string());
                 ctx.transaction
+                    .insert(Cow::Borrowed("dns_query_type"), "mx".to_string());
+                ctx.transaction
                     .insert(Cow::Borrowed("dns_domain"), domain.to_string());
                 ctx.transaction.insert(
                     Cow::Borrowed("dns_cache_size"),
                     self.cache.len().to_string(),
                 );
+                if let Some(status) = cached.dnssec_status {
+                    ctx.transaction
+                        .insert(Cow::Borrowed("dnssec_status"), status.as_str().to_string());
+                }
                 let _ = modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
+
+                if let Some(status) = cached.dnssec_status
+                    && self.config.dnssec_strict
+                    && status.is_failure()
+                {
+                    return Err(DnsError::DnssecValidationFailed {
+                        target: domain.to_string(),
+                        status,
+                    });
+                }
 
                 return Ok(Arc::clone(&cached.servers));
             }
@@ -425,9 +531,12 @@ impl HickoryDnsResolver {
 
         // Cache miss or expired, perform DNS lookup
         let lookup_start = Instant::now();
-        let (servers, dns_ttl) = self.resolve_mail_servers_uncached(domain).await?;
+        let (servers, dns_ttl, dnssec_status) = self.resolve_mail_servers_uncached(domain).await?;
         let lookup_duration = lookup_start.elapsed();
         let servers = Arc::new(servers);
+
+        let dnssec_failure =
+            dnssec_status.is_some_and(|status| self.config.dnssec_strict && status.is_failure());
 
         // Determine cache TTL: use override if set, otherwise use DNS TTL with bounds
         let cache_ttl = self.config.cache_ttl_secs.unwrap_or_else(|| {
@@ -438,20 +547,25 @@ impl HickoryDnsResolver {
             )
         });
 
-        // Cache the result (lock-free write)
-        let expires_at = Instant::now() + Duration::from_secs(cache_ttl);
-        let cached_result = CachedResult {
-            servers: Arc::clone(&servers),
-            expires_at,
-        };
+        if !dnssec_failure {
+            // Cache the result (lock-free write)
+            let expires_at = Instant::now() + Duration::from_secs(cache_ttl);
+            let cached_result = CachedResult {
+                servers: Arc::clone(&servers),
+                expires_at,
+                dnssec_status,
+            };
 
-        self.cache.insert(domain.to_string(), cached_result);
+            self.cache.insert(domain.to_string(), cached_result);
+        }
 
         // Dispatch DNS cache miss event
         let mut ctx = Context::default();
         // DNS lookup results are transaction context
         ctx.transaction
             .insert(Cow::Borrowed("dns_cache_status"), "miss".to_string());
+        ctx.transaction
+            .insert(Cow::Borrowed("dns_query_type"), "mx".to_string());
         ctx.transaction
             .insert(Cow::Borrowed("dns_domain"), domain.to_string());
         ctx.transaction.insert(
@@ -462,12 +576,25 @@ impl HickoryDnsResolver {
             Cow::Borrowed("dns_cache_size"),
             self.cache.len().to_string(),
         );
+        if let Some(status) = dnssec_status {
+            ctx.transaction
+                .insert(Cow::Borrowed("dnssec_status"), status.as_str().to_string());
+        }
         let _ = modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
 
-        debug!(
-            "Cached result for {domain}, DNS TTL: {dns_ttl}s, cache TTL: {cache_ttl}s, {} server(s)",
-            servers.len()
-        );
+        if dnssec_failure && let Some(status) = dnssec_status {
+            return Err(DnsError::DnssecValidationFailed {
+                target: domain.to_string(),
+                status,
+            });
+        }
+
+        if !dnssec_failure {
+            debug!(
+                "Cached result for {domain}, DNS TTL: {dns_ttl}s, cache TTL: {cache_ttl}s, {} server(s)",
+                servers.len()
+            );
+        }
         Ok(servers)
     }
 
@@ -477,10 +604,23 @@ impl HickoryDnsResolver {
     async fn resolve_mail_servers_uncached(
         &self,
         domain: &str,
-    ) -> Result<(Vec<MailServer>, u32), DnsError> {
+    ) -> Result<(Vec<MailServer>, u32, Option<DnssecStatus>), DnsError> {
         // Try MX lookup first
         match self.resolver.mx_lookup(domain).await {
             Ok(mx_lookup) => {
+                let dnssec_status = self
+                    .config
+                    .dnssec_enabled
+                    .then(|| dnssec_status_from_records(mx_lookup.as_lookup().record_iter()));
+                if let Some(status) = dnssec_status {
+                    debug!(
+                        dnssec_status = %status,
+                        dns_query_type = "mx",
+                        target = %domain,
+                        "DNSSEC validation status"
+                    );
+                }
+
                 // Extract minimum TTL from all MX records
                 let min_ttl = mx_lookup
                     .as_lookup()
@@ -516,7 +656,7 @@ impl HickoryDnsResolver {
                     "Resolved {} MX record(s) for {domain} with TTL {min_ttl}s",
                     servers.len()
                 );
-                Ok((servers, min_ttl))
+                Ok((servers, min_ttl, dnssec_status))
             }
             Err(err) => {
                 // Check if this is NoRecordsFound (no MX records exist)
@@ -534,11 +674,27 @@ impl HickoryDnsResolver {
     /// Falls back to A/AAAA records when no MX records exist (RFC 5321).
     ///
     /// Returns IP addresses as implicit MX records with priority 0, along with the minimum TTL.
-    async fn fallback_to_a_aaaa(&self, domain: &str) -> Result<(Vec<MailServer>, u32), DnsError> {
+    async fn fallback_to_a_aaaa(
+        &self,
+        domain: &str,
+    ) -> Result<(Vec<MailServer>, u32, Option<DnssecStatus>), DnsError> {
         debug!("Attempting A/AAAA fallback for {domain}");
 
         match self.resolver.lookup_ip(domain).await {
             Ok(ip_lookup) => {
+                let dnssec_status = self
+                    .config
+                    .dnssec_enabled
+                    .then(|| dnssec_status_from_records(ip_lookup.as_lookup().record_iter()));
+                if let Some(status) = dnssec_status {
+                    debug!(
+                        dnssec_status = %status,
+                        dns_query_type = "a",
+                        target = %domain,
+                        "DNSSEC validation status"
+                    );
+                }
+
                 // Extract minimum TTL from all A/AAAA records
                 // Note: clippy suggests using Record::ttl directly, but the path it suggests doesn't exist
                 let min_ttl = ip_lookup
@@ -565,7 +721,7 @@ impl HickoryDnsResolver {
                         "Resolved {} A/AAAA record(s) for {domain} with TTL {min_ttl}s",
                         servers.len()
                     );
-                    Ok((servers, min_ttl))
+                    Ok((servers, min_ttl, dnssec_status))
                 }
             }
             Err(err) => {
@@ -757,6 +913,15 @@ impl HickoryDnsResolver {
                     "TXT cache hit for {domain}, {} record(s)",
                     cached.txt_records.len()
                 );
+                if let Some(status) = cached.dnssec_status
+                    && self.config.dnssec_strict
+                    && status.is_failure()
+                {
+                    return Err(DnsError::DnssecValidationFailed {
+                        target: domain.to_string(),
+                        status,
+                    });
+                }
                 return Ok(Arc::clone(&cached.txt_records));
             }
             debug!("TXT cache entry expired for {domain}");
@@ -765,6 +930,28 @@ impl HickoryDnsResolver {
         // Perform DNS lookup
         match self.resolver.txt_lookup(domain).await {
             Ok(txt_lookup) => {
+                let dnssec_status = self
+                    .config
+                    .dnssec_enabled
+                    .then(|| dnssec_status_from_records(txt_lookup.as_lookup().record_iter()));
+                if let Some(status) = dnssec_status {
+                    debug!(
+                        dnssec_status = %status,
+                        dns_query_type = "txt",
+                        target = %domain,
+                        "DNSSEC validation status"
+                    );
+                }
+                if let Some(status) = dnssec_status
+                    && self.config.dnssec_strict
+                    && status.is_failure()
+                {
+                    return Err(DnsError::DnssecValidationFailed {
+                        target: domain.to_string(),
+                        status,
+                    });
+                }
+
                 // Extract minimum TTL
                 let min_ttl = txt_lookup
                     .as_lookup()
@@ -805,6 +992,7 @@ impl HickoryDnsResolver {
                     CachedTxtResult {
                         txt_records: Arc::clone(&txt_records),
                         expires_at,
+                        dnssec_status,
                     },
                 );
 
@@ -842,6 +1030,15 @@ impl HickoryDnsResolver {
                     "PTR cache hit for {ip}, {} record(s)",
                     cached.ptr_names.len()
                 );
+                if let Some(status) = cached.dnssec_status
+                    && self.config.dnssec_strict
+                    && status.is_failure()
+                {
+                    return Err(DnsError::DnssecValidationFailed {
+                        target: cache_key,
+                        status,
+                    });
+                }
                 return Ok(Arc::clone(&cached.ptr_names));
             }
             debug!("PTR cache entry expired for {ip}");
@@ -850,6 +1047,28 @@ impl HickoryDnsResolver {
         // Perform reverse DNS lookup
         match self.resolver.reverse_lookup(ip).await {
             Ok(ptr_lookup) => {
+                let dnssec_status = self
+                    .config
+                    .dnssec_enabled
+                    .then(|| dnssec_status_from_records(ptr_lookup.as_lookup().record_iter()));
+                if let Some(status) = dnssec_status {
+                    debug!(
+                        dnssec_status = %status,
+                        dns_query_type = "ptr",
+                        target = %ip,
+                        "DNSSEC validation status"
+                    );
+                }
+                if let Some(status) = dnssec_status
+                    && self.config.dnssec_strict
+                    && status.is_failure()
+                {
+                    return Err(DnsError::DnssecValidationFailed {
+                        target: cache_key,
+                        status,
+                    });
+                }
+
                 // Extract minimum TTL
                 let min_ttl = ptr_lookup
                     .as_lookup()
@@ -883,6 +1102,7 @@ impl HickoryDnsResolver {
                     CachedPtrResult {
                         ptr_names: Arc::clone(&ptr_names),
                         expires_at,
+                        dnssec_status,
                     },
                 );
 
@@ -922,6 +1142,15 @@ impl HickoryDnsResolver {
                     .filter_map(|s| s.parse().ok())
                     .collect();
                 debug!("A/AAAA cache hit for {domain}, {} record(s)", ips.len());
+                if let Some(status) = cached.dnssec_status
+                    && self.config.dnssec_strict
+                    && status.is_failure()
+                {
+                    return Err(DnsError::DnssecValidationFailed {
+                        target: domain.to_string(),
+                        status,
+                    });
+                }
                 return Ok(Arc::new(ips));
             }
             debug!("A/AAAA cache entry expired for {domain}");
@@ -930,6 +1159,28 @@ impl HickoryDnsResolver {
         // Perform DNS lookup
         match self.resolver.lookup_ip(domain).await {
             Ok(ip_lookup) => {
+                let dnssec_status = self
+                    .config
+                    .dnssec_enabled
+                    .then(|| dnssec_status_from_records(ip_lookup.as_lookup().record_iter()));
+                if let Some(status) = dnssec_status {
+                    debug!(
+                        dnssec_status = %status,
+                        dns_query_type = "a",
+                        target = %domain,
+                        "DNSSEC validation status"
+                    );
+                }
+                if let Some(status) = dnssec_status
+                    && self.config.dnssec_strict
+                    && status.is_failure()
+                {
+                    return Err(DnsError::DnssecValidationFailed {
+                        target: domain.to_string(),
+                        status,
+                    });
+                }
+
                 // Extract minimum TTL
                 let min_ttl = ip_lookup
                     .as_lookup()
@@ -966,6 +1217,7 @@ impl HickoryDnsResolver {
                     CachedPtrResult {
                         ptr_names: Arc::new(ip_strings),
                         expires_at,
+                        dnssec_status,
                     },
                 );
 
@@ -1403,6 +1655,20 @@ mod tests {
         assert!(DnsError::Timeout("example.com".to_string()).is_temporary());
         assert!(!DnsError::NoMailServers("example.com".to_string()).is_temporary());
         assert!(!DnsError::DomainNotFound("example.com".to_string()).is_temporary());
+        assert!(
+            DnsError::DnssecValidationFailed {
+                target: "example.com".to_string(),
+                status: DnssecStatus::Indeterminate,
+            }
+            .is_temporary()
+        );
+        assert!(
+            !DnsError::DnssecValidationFailed {
+                target: "example.com".to_string(),
+                status: DnssecStatus::Bogus,
+            }
+            .is_temporary()
+        );
     }
 
     #[test]

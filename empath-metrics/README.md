@@ -91,6 +91,7 @@ metrics().dns.record_cache_hit("MX");
 - `empath.dns.cache.hits.total{query_type}` - Cache hits
 - `empath.dns.cache.misses.total{query_type}` - Cache misses
 - `empath.dns.errors.total{error_type}` - DNS errors
+- `empath.dns.dnssec.validation.failures.total{query_type,status}` - DNSSEC validation failures
 - `empath.dns.cache.evictions.total` - Cache evictions
 
 ## Configuration

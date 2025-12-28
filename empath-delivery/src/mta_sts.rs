@@ -121,10 +121,12 @@ pub async fn evaluate(resolver: &dyn DnsResolver, domain: &str) -> MtaStsEvaluat
     let txt_lookup = match resolver.txt_lookup(&lookup_domain).await {
         Ok(records) => records,
         Err(err) => {
-            let result = match err {
-                DnsError::Timeout(_) | DnsError::LookupFailed(_) => MtaStsResult::TempError,
-                DnsError::DomainNotFound(_) => MtaStsResult::None,
-                DnsError::NoMailServers(_) => MtaStsResult::PermError,
+            let result = if err.is_temporary() {
+                MtaStsResult::TempError
+            } else if matches!(err, DnsError::DomainNotFound(_)) {
+                MtaStsResult::None
+            } else {
+                MtaStsResult::PermError
             };
             return MtaStsEvaluation {
                 result,

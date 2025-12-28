@@ -286,6 +286,7 @@ Warnings are inhibited when related critical alerts fire:
 | `empath.dns.cache.hits.total` | Counter | DNS cache hits | DnsCacheHitRateLow |
 | `empath.dns.cache.misses.total` | Counter | DNS cache misses | DnsCacheHitRateLow |
 | `empath.dns.lookup.duration.seconds{query_type}` | Histogram | DNS lookup duration | Performance monitoring |
+| `empath.dns.dnssec.validation.failures.total{query_type,status}` | Counter | DNSSEC validation failures | DNSSEC validation monitoring |
 
 ### System Metrics
 

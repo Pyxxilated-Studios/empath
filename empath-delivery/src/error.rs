@@ -61,6 +61,10 @@ pub enum PermanentError {
     /// TLS is required but not available or failed.
     #[error("TLS required: {0}")]
     TlsRequired(String),
+
+    /// DNSSEC validation failed for a lookup.
+    #[error("DNSSEC validation failed: {0}")]
+    DnssecValidationFailed(String),
 }
 
 /// Temporary errors that should be retried with exponential backoff.
@@ -171,6 +175,16 @@ impl From<DnsError> for DeliveryError {
             DnsError::LookupFailed(err) => {
                 Self::Temporary(TemporaryError::DnsLookupFailed(err.to_string()))
             }
+            DnsError::DnssecValidationFailed { target, status } => match status {
+                crate::dns::DnssecStatus::Indeterminate => {
+                    Self::Temporary(TemporaryError::DnsLookupFailed(format!(
+                        "DNSSEC validation indeterminate for {target}"
+                    )))
+                }
+                _ => Self::Permanent(PermanentError::DnssecValidationFailed(format!(
+                    "{target} ({status})"
+                ))),
+            },
         }
     }
 }
@@ -298,6 +312,22 @@ mod tests {
         let dns_err = DnsError::Timeout("example.com".to_string());
         let delivery_err: DeliveryError = dns_err.into();
         assert!(delivery_err.is_temporary());
+
+        // Test DNSSEC indeterminate -> Temporary
+        let dns_err = DnsError::DnssecValidationFailed {
+            target: "example.com".to_string(),
+            status: crate::dns::DnssecStatus::Indeterminate,
+        };
+        let delivery_err: DeliveryError = dns_err.into();
+        assert!(delivery_err.is_temporary());
+
+        // Test DNSSEC bogus -> Permanent
+        let dns_err = DnsError::DnssecValidationFailed {
+            target: "example.com".to_string(),
+            status: crate::dns::DnssecStatus::Bogus,
+        };
+        let delivery_err: DeliveryError = dns_err.into();
+        assert!(delivery_err.is_permanent());
     }
 
     #[test]

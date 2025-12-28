@@ -122,7 +122,7 @@ This file contains tasks deferred to post-1.0 release. These are enhancements an
 ### 🔵 0.14 / 1.2.1 - DNSSEC Validation
 **Priority**: Low (Deferred - Premature)
 **Effort**: 2 days
-**Status**: Deferred to post-1.0
+**Status**: ✅ Complete
 **Tags**: dns, security
 
 **Expert Review**: Premature - no DNSSEC infrastructure in most deployments. Defer until core reliability proven.
@@ -132,11 +132,11 @@ This file contains tasks deferred to post-1.0 release. These are enhancements an
 **Solution**: Enable DNSSEC validation in resolver and log validation status.
 
 **Success Criteria**:
-- [ ] DNSSEC validation enabled in Hickory DNS resolver
-- [ ] Log DNSSEC validation status (secure, insecure, bogus)
-- [ ] Metrics: dnssec_validation_failures_total
-- [ ] Configurable: fail delivery on DNSSEC failure (strict mode)
-- [ ] Documentation: DNSSEC deployment guide
+- [x] DNSSEC validation enabled in Hickory DNS resolver
+- [x] Log DNSSEC validation status (secure, insecure, bogus)
+- [x] Metrics: dnssec_validation_failures_total
+- [x] Configurable: fail delivery on DNSSEC failure (strict mode)
+- [x] Documentation: DNSSEC deployment guide
 
 ---
 

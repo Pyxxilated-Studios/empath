@@ -682,11 +682,18 @@ export RUST_LOG=empath_control=info,empath=info
    - Fallback to A/AAAA records if no MX
    - Port specification support
 
+4. **DNSSEC Validation (Optional):**
+   - Enable DNSSEC verification in the resolver
+   - Logs validation status (secure/insecure/bogus/indeterminate)
+   - Strict mode can fail delivery on bogus or indeterminate results
+
 **Configuration:**
 ```ron
 dns: (
     min_ttl_secs: 60,      // Minimum cache TTL (prevents query flood)
     max_ttl_secs: 3600,    // Maximum cache TTL (ensures freshness)
+    dnssec_enabled: true,  // Enable DNSSEC validation
+    dnssec_strict: false,  // Fail delivery on bogus/indeterminate DNSSEC
 )
 ```
 
@@ -705,7 +712,7 @@ empathctl dns clear-cache
 ```
 
 **Known Limitations:**
-- ⚠️ **DNSSEC validation not yet implemented** (see roadmap)
+- DNSSEC validation is optional; if disabled, trust relies on upstream resolver
 - Cache poisoning still possible via upstream resolver
 
 ---
@@ -903,11 +910,11 @@ sudo cp /var/spool/empath/queue_state.bin /backup/queue_state-$(date +%Y%m%d).bi
    - **Roadmap:** Task 3.3 (medium priority)
    - **Risk:** MEDIUM (DoS via excessive connections)
 
-4. **No DNSSEC Validation**
-   - **Impact:** DNS queries not cryptographically verified
-   - **Workaround:** Use trusted recursive resolvers
-   - **Roadmap:** Task 1.2.1 (medium priority)
-   - **Risk:** LOW (requires compromised DNS resolver)
+4. **DNSSEC Validation Optional**
+   - **Impact:** DNS queries rely on upstream resolver unless DNSSEC is enabled
+   - **Workaround:** Enable `dnssec_enabled` and use resolvers with DNSSEC support
+   - **Roadmap:** Task 1.2.1 completed with optional DNSSEC validation
+   - **Risk:** LOW when DNSSEC is enabled; MEDIUM if upstream resolver is untrusted
 
 5. **Module Loading Security**
    - **Impact:** Malicious shared libraries can execute arbitrary code
@@ -937,7 +944,7 @@ sudo cp /var/spool/empath/queue_state.bin /backup/queue_state-$(date +%Y%m%d).bi
 
 | Task | Description | Effort | Status |
 |------|-------------|--------|--------|
-| 1.2.1 | DNSSEC validation | 2-3 days | Planned |
+| 1.2.1 | DNSSEC validation | 2-3 days | **✅ Complete** |
 | 0.14 | DNS logging and alerting | 1-2 days | Planned |
 
 ### Phase 3: Rate Limiting and Resource Control (Medium Priority)
