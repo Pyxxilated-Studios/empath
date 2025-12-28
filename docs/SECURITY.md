@@ -474,18 +474,28 @@ chmod 660 /var/run/empath.sock  # Group read/write
    ```ron
    control_auth: (
        enabled: true,
-       token_hashes: [
-           // SHA-256 hash of "your-secret-token"
-           "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e",
+       tokens: [
+           (
+               // SHA-256 hash of "read-token"
+               hash: "0328587016f9e316b9c31c94f944a2c453e1494a564062b5eab68039c75b58bf",
+               role: "read_only",
+           ),
+           (
+               // SHA-256 hash of "admin-token"
+               hash: "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a",
+               role: "admin",
+           ),
        ],
+       // token_hashes: ["..."] // legacy admin-only tokens
    )
    ```
 
 **Implementation Details:**
 - Tokens stored as SHA-256 hashes (not plaintext)
-- Multiple tokens supported for different access levels
+- Multiple tokens supported for read-only vs admin access
 - Client sends plaintext token, server validates against hash
 - Authentication failures logged with warnings
+- Read-only tokens can only run list/status commands
 
 **Generating Tokens:**
 ```bash

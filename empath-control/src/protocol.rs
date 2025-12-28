@@ -211,6 +211,55 @@ pub enum SpoolCommand {
     Stats,
 }
 
+impl RequestCommand {
+    /// Returns true if the command is read-only (safe for read-only role).
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        match self {
+            Self::Dns(cmd) => cmd.is_read_only(),
+            Self::System(cmd) => cmd.is_read_only(),
+            Self::Queue(cmd) => cmd.is_read_only(),
+            Self::Spool(cmd) => cmd.is_read_only(),
+        }
+    }
+}
+
+impl DnsCommand {
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        matches!(self, Self::ListCache | Self::ListOverrides)
+    }
+}
+
+impl SystemCommand {
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        matches!(
+            self,
+            Self::Ping
+                | Self::Status
+                | Self::ListTls
+                | Self::ConnectionStats
+                | Self::ListBindings
+                | Self::ListCapabilities
+        )
+    }
+}
+
+impl QueueCommand {
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        matches!(self, Self::List { .. } | Self::View { .. } | Self::Stats)
+    }
+}
+
+impl SpoolCommand {
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        matches!(self, Self::List { .. } | Self::View { .. } | Self::Stats)
+    }
+}
+
 /// Response from the control server (versioned wrapper)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {

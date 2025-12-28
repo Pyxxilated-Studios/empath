@@ -13,13 +13,16 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use empath_control::{
-    ControlClient, ControlError, ControlServer, Result,
+    ControlAuthConfig, ControlClient, ControlError, ControlServer, Result,
+    auth::{ControlRole, ControlToken},
     protocol::{
         CachedMailServer, ConnectionStats, DnsCommand, QueueCommand, Request, RequestCommand,
         Response, ResponseData, ResponsePayload, SystemCommand, SystemStatus,
     },
     server::CommandHandler,
 };
+use hex::encode;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::sync::broadcast;
 
@@ -166,6 +169,12 @@ impl CommandHandler for MockHandler {
     }
 }
 
+fn hash_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    encode(hasher.finalize())
+}
+
 /// Helper to start a test control server
 async fn start_test_server(
     socket_path: &str,
@@ -175,6 +184,31 @@ async fn start_test_server(
     broadcast::Sender<empath_common::Signal>,
 ) {
     let server = ControlServer::new(socket_path, handler).expect("Failed to create server");
+    let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = server.serve(shutdown_rx).await {
+            eprintln!("Server error: {e}");
+        }
+    });
+
+    // Give server time to bind
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    (server_handle, shutdown_tx)
+}
+
+/// Helper to start a test control server with authentication enabled
+async fn start_test_server_with_auth(
+    socket_path: &str,
+    handler: Arc<dyn CommandHandler>,
+    auth_config: ControlAuthConfig,
+) -> (
+    tokio::task::JoinHandle<()>,
+    broadcast::Sender<empath_common::Signal>,
+) {
+    let server = ControlServer::with_auth(socket_path, handler, Some(auth_config))
+        .expect("Failed to create server");
     let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
     let server_handle = tokio::spawn(async move {
@@ -217,6 +251,98 @@ async fn test_dns_list_cache() {
         },
         _ => panic!("Expected Data response"),
     }
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_control_auth_read_only_blocks_write() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test.sock");
+    let socket_str = socket_path.to_str().unwrap();
+
+    let auth_config = ControlAuthConfig {
+        enabled: true,
+        token_hashes: vec![hash_token("admin-token")],
+        tokens: vec![ControlToken {
+            hash: hash_token("read-token"),
+            role: ControlRole::ReadOnly,
+        }],
+    };
+    assert_eq!(
+        auth_config.role_for_token("read-token"),
+        Some(ControlRole::ReadOnly)
+    );
+
+    let handler = Arc::new(MockHandler::new());
+    let (_server_handle, _shutdown_tx) =
+        start_test_server_with_auth(socket_str, handler, auth_config).await;
+
+    let client = ControlClient::new(socket_str).with_token("read-token");
+    let request = Request::new(RequestCommand::Dns(DnsCommand::ClearCache));
+    let result = client.send_request(request).await;
+
+    match result {
+        Err(ControlError::ServerError(err)) => {
+            assert!(
+                err.contains("Authorization failed"),
+                "unexpected error: {err}"
+            );
+        }
+        other => {
+            panic!("Expected authorization failure, got {other:?}");
+        }
+    }
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_control_auth_read_only_allows_read() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test.sock");
+    let socket_str = socket_path.to_str().unwrap();
+
+    let auth_config = ControlAuthConfig {
+        enabled: true,
+        token_hashes: Vec::new(),
+        tokens: vec![ControlToken {
+            hash: hash_token("read-token"),
+            role: ControlRole::ReadOnly,
+        }],
+    };
+
+    let handler = Arc::new(MockHandler::new());
+    let (_server_handle, _shutdown_tx) =
+        start_test_server_with_auth(socket_str, handler, auth_config).await;
+
+    let client = ControlClient::new(socket_str).with_token("read-token");
+    let request = Request::new(RequestCommand::Dns(DnsCommand::ListCache));
+    let response = client.send_request(request).await.unwrap();
+
+    assert!(response.is_success());
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_control_auth_admin_allows_write() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test.sock");
+    let socket_str = socket_path.to_str().unwrap();
+
+    let auth_config = ControlAuthConfig {
+        enabled: true,
+        token_hashes: vec![hash_token("admin-token")],
+        tokens: Vec::new(),
+    };
+
+    let handler = Arc::new(MockHandler::new());
+    let (_server_handle, _shutdown_tx) =
+        start_test_server_with_auth(socket_str, handler, auth_config).await;
+
+    let client = ControlClient::new(socket_str).with_token("admin-token");
+    let request = Request::new(RequestCommand::Dns(DnsCommand::ClearCache));
+    let response = client.send_request(request).await.unwrap();
+
+    assert!(response.is_success());
 }
 
 #[tokio::test]

@@ -44,6 +44,10 @@ struct Cli {
     #[arg(short = 'c', long, default_value = DEFAULT_CONTROL_SOCKET)]
     control_socket: String,
 
+    /// Authentication token for control socket commands
+    #[arg(long = "token")]
+    control_token: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -296,16 +300,20 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Queue { action } => {
-            handle_queue_command_direct(&cli.control_socket, action).await?;
+            handle_queue_command_direct(&cli.control_socket, cli.control_token.as_deref(), action)
+                .await?;
         }
         Commands::Spool { action } => {
-            handle_spool_command_direct(&cli.control_socket, action).await?;
+            handle_spool_command_direct(&cli.control_socket, cli.control_token.as_deref(), action)
+                .await?;
         }
         Commands::Dns { action } => {
-            handle_dns_command_direct(&cli.control_socket, action).await?;
+            handle_dns_command_direct(&cli.control_socket, cli.control_token.as_deref(), action)
+                .await?;
         }
         Commands::System { action } => {
-            handle_system_command_direct(&cli.control_socket, action).await?;
+            handle_system_command_direct(&cli.control_socket, cli.control_token.as_deref(), action)
+                .await?;
         }
     }
 
@@ -317,8 +325,13 @@ async fn main() -> anyhow::Result<()> {
 // ============================================================================
 
 /// Check control socket connectivity and return client
-fn check_control_socket(socket_path: &str) -> anyhow::Result<ControlClient> {
+fn check_control_socket(socket_path: &str, token: Option<&str>) -> anyhow::Result<ControlClient> {
     let client = ControlClient::new(socket_path);
+    let client = if let Some(token) = token {
+        client.with_token(token)
+    } else {
+        client
+    };
 
     // Check if socket exists first for better error messages
     if let Err(e) = client.check_socket_exists() {
@@ -335,27 +348,36 @@ fn check_control_socket(socket_path: &str) -> anyhow::Result<ControlClient> {
 }
 
 /// Handle DNS commands directly
-async fn handle_dns_command_direct(socket_path: &str, action: DnsAction) -> anyhow::Result<()> {
-    let client = check_control_socket(socket_path)?;
+async fn handle_dns_command_direct(
+    socket_path: &str,
+    token: Option<&str>,
+    action: DnsAction,
+) -> anyhow::Result<()> {
+    let client = check_control_socket(socket_path, token)?;
     handle_dns_command(&client, action).await
 }
 
 /// Handle system commands directly
 async fn handle_system_command_direct(
     socket_path: &str,
+    token: Option<&str>,
     action: SystemAction,
 ) -> anyhow::Result<()> {
-    let client = check_control_socket(socket_path)?;
+    let client = check_control_socket(socket_path, token)?;
     handle_system_command(&client, action).await
 }
 
 /// Handle queue commands directly
-async fn handle_queue_command_direct(socket_path: &str, action: QueueAction) -> anyhow::Result<()> {
+async fn handle_queue_command_direct(
+    socket_path: &str,
+    token: Option<&str>,
+    action: QueueAction,
+) -> anyhow::Result<()> {
     // Enable persistent connections for watch mode to reduce socket overhead
     let client = if matches!(action, QueueAction::Stats { watch: true, .. }) {
-        check_control_socket(socket_path)?.with_persistent_connection()
+        check_control_socket(socket_path, token)?.with_persistent_connection()
     } else {
-        check_control_socket(socket_path)?
+        check_control_socket(socket_path, token)?
     };
     handle_queue_command(&client, action).await
 }
@@ -839,8 +861,12 @@ async fn handle_queue_command(client: &ControlClient, action: QueueAction) -> an
 }
 
 /// Handle spool commands directly
-async fn handle_spool_command_direct(socket_path: &str, action: SpoolAction) -> anyhow::Result<()> {
-    let client = check_control_socket(socket_path)?;
+async fn handle_spool_command_direct(
+    socket_path: &str,
+    token: Option<&str>,
+    action: SpoolAction,
+) -> anyhow::Result<()> {
+    let client = check_control_socket(socket_path, token)?;
     handle_spool_command(&client, action).await
 }
 

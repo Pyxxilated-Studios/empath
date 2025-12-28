@@ -16,7 +16,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     ControlAuthConfig, ControlError, ControlRateLimitConfig, Request, Response, Result,
-    rate_limit::ControlRateLimiter,
+    auth::ControlRole, rate_limit::ControlRateLimiter,
 };
 
 /// Handler trait for processing control requests
@@ -238,12 +238,11 @@ impl ControlServer {
 
         trace!("Received request: {request:?}");
 
-        // Validate authentication if enabled
-        if let Some(auth) = &auth_config
+        let role = if let Some(auth) = &auth_config
             && auth.requires_auth()
         {
-            match auth.validate_token_option(request.token.as_deref()) {
-                Ok(()) => {
+            match auth.authorize_token_option(request.token.as_deref()) {
+                Ok(role) => {
                     // Get user info for audit logging
                     let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
                     #[cfg(unix)]
@@ -255,8 +254,10 @@ impl ControlServer {
                         user = %user,
                         uid = %uid,
                         command = ?request.command,
+                        role = ?role,
                         "Control socket authentication successful"
                     );
+                    role
                 }
                 Err(e) => {
                     warn!(
@@ -271,6 +272,20 @@ impl ControlServer {
                     return Ok(());
                 }
             }
+        } else {
+            ControlRole::Admin
+        };
+
+        if role == ControlRole::ReadOnly && !request.command.is_read_only() {
+            warn!(
+                command = ?request.command,
+                "Control socket authorization failed"
+            );
+            let response = Response::error("Authorization failed: admin role required");
+            tokio::time::timeout(timeout, Self::write_response(&mut stream, &response))
+                .await
+                .map_err(|_| ControlError::Timeout)??;
+            return Ok(());
         }
 
         if let Some(limiter) = &rate_limiter

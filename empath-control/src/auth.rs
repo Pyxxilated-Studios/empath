@@ -7,6 +7,27 @@ use hex::encode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+/// Role assigned to a control token.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlRole {
+    /// Read-only access (list/status commands only).
+    ReadOnly,
+    /// Full administrative access.
+    #[default]
+    Admin,
+}
+
+/// Token entry with associated role.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ControlToken {
+    /// SHA-256 hash of the token.
+    pub hash: String,
+    /// Role for this token.
+    #[serde(default)]
+    pub role: ControlRole,
+}
+
 /// Authentication configuration for control socket
 ///
 /// When enabled, all control socket requests must include a valid bearer token
@@ -50,6 +71,12 @@ pub struct ControlAuthConfig {
     /// Incoming tokens are hashed and compared against this list.
     #[serde(default)]
     pub token_hashes: Vec<String>,
+
+    /// Role-aware tokens (preferred).
+    ///
+    /// When provided, each token hash is paired with a role (read-only/admin).
+    #[serde(default)]
+    pub tokens: Vec<ControlToken>,
 }
 
 impl ControlAuthConfig {
@@ -86,6 +113,7 @@ impl ControlAuthConfig {
     ///         // Hash of "test-token"
     /// "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e".to_string(),
     ///     ],
+    ///     tokens: Vec::new(),
     /// };
     ///
     /// assert!(config.validate_token("test-token"));
@@ -96,14 +124,7 @@ impl ControlAuthConfig {
         if !self.enabled {
             return true; // Auth disabled, allow all
         }
-
-        // Hash the provided token
-        let mut hasher = Sha256::new();
-        hasher.update(token.as_bytes());
-        let hash = encode(hasher.finalize());
-
-        // Check if hash matches any configured hash
-        self.token_hashes.iter().any(|h| h == &hash)
+        self.role_for_token(token).is_some()
     }
 
     /// Validate an optional token
@@ -132,6 +153,7 @@ impl ControlAuthConfig {
     ///         // Hash of "test-token"
     ///         "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e".to_string(),
     ///     ],
+    ///     tokens: Vec::new(),
     /// };
     ///
     /// assert!(config.validate_token_option(Some("test-token")).is_ok());
@@ -143,21 +165,56 @@ impl ControlAuthConfig {
     ///
     /// This function does not panic.
     pub fn validate_token_option(&self, token: Option<&str>) -> Result<(), String> {
+        self.authorize_token_option(token).map(|_| ())
+    }
+
+    /// Resolve the role for a given token.
+    #[must_use]
+    pub fn role_for_token(&self, token: &str) -> Option<ControlRole> {
+        let hash = hash_token(token);
+        for entry in self.resolved_tokens() {
+            if entry.hash == hash {
+                return Some(entry.role);
+            }
+        }
+        None
+    }
+
+    /// Authorize an optional token, returning the resolved role.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if authentication is enabled but the token is missing or invalid.
+    pub fn authorize_token_option(&self, token: Option<&str>) -> Result<ControlRole, String> {
         if !self.enabled {
-            return Ok(()); // Auth disabled, allow all
+            return Ok(ControlRole::Admin);
         }
 
         token.map_or_else(
             || Err("Authentication required but no token provided".to_string()),
             |t| {
-                if self.validate_token(t) {
-                    Ok(())
-                } else {
-                    Err("Invalid authentication token".to_string())
-                }
+                self.role_for_token(t)
+                    .ok_or_else(|| "Invalid authentication token".to_string())
             },
         )
     }
+
+    fn resolved_tokens(&self) -> Vec<ControlToken> {
+        let mut tokens = self.tokens.clone();
+        if !self.token_hashes.is_empty() {
+            tokens.extend(self.token_hashes.iter().cloned().map(|hash| ControlToken {
+                hash,
+                role: ControlRole::Admin,
+            }));
+        }
+        tokens
+    }
+}
+
+fn hash_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    encode(hasher.finalize())
 }
 
 #[cfg(test)]
@@ -170,6 +227,7 @@ mod tests {
         let config = ControlAuthConfig {
             enabled: false,
             token_hashes: Vec::new(),
+            tokens: Vec::new(),
         };
 
         assert!(!config.requires_auth());
@@ -189,6 +247,7 @@ mod tests {
                 // Hash of "another-token"
                 "9e78bcb94091b75109fd6773524fc8d6a4f8a6dfb3dae39a9c26c5001879bcf3".to_string(),
             ],
+            tokens: Vec::new(),
         };
 
         assert!(config.requires_auth());
@@ -206,6 +265,7 @@ mod tests {
                 // Hash of "test-token"
                 "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e".to_string(),
             ],
+            tokens: Vec::new(),
         };
 
         assert!(!config.validate_token("wrong-token"));
@@ -223,6 +283,7 @@ mod tests {
                 // Hash of "test-token"
                 "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e".to_string(),
             ],
+            tokens: Vec::new(),
         };
 
         assert!(config.validate_token_option(None).is_err());
@@ -234,6 +295,7 @@ mod tests {
         let config = ControlAuthConfig {
             enabled: true,
             token_hashes: Vec::new(),
+            tokens: Vec::new(),
         };
 
         assert!(!config.validate_token("any-token"));
@@ -249,6 +311,7 @@ mod tests {
                 // Hash of "consistent-token"
                 "4c7d2efece9175af9dff6b77a4b452d0ab42a2f424cdb97f3016525c8c754657".to_string(),
             ],
+            tokens: Vec::new(),
         };
 
         // Same token should always validate
@@ -263,6 +326,25 @@ mod tests {
         let config = ControlAuthConfig::default();
         assert!(!config.enabled);
         assert!(config.token_hashes.is_empty());
+        assert!(config.tokens.is_empty());
         assert!(!config.requires_auth());
+    }
+
+    #[test]
+    fn test_role_resolution() {
+        let config = ControlAuthConfig {
+            enabled: true,
+            token_hashes: Vec::new(),
+            tokens: vec![ControlToken {
+                hash: hash_token("read-token"),
+                role: ControlRole::ReadOnly,
+            }],
+        };
+
+        assert_eq!(
+            config.role_for_token("read-token"),
+            Some(ControlRole::ReadOnly)
+        );
+        assert_eq!(config.role_for_token("missing"), None);
     }
 }
