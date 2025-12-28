@@ -891,11 +891,11 @@ sudo cp /var/spool/empath/queue_state.bin /backup/queue_state-$(date +%Y%m%d).bi
    - **Roadmap:** Task 0.28 (high priority)
    - **Risk:** HIGH if exposed to untrusted networks
 
-2. **No Token-Based Control Socket Authentication**
-   - **Impact:** Control socket security relies on filesystem permissions only
-   - **Workaround:** Restrict socket directory permissions
-   - **Roadmap:** Task 0.13 (medium priority)
-   - **Risk:** MEDIUM in multi-user environments
+2. **Control Socket Authentication Disabled by Default**
+   - **Impact:** Control socket security relies on filesystem permissions unless tokens are enabled
+   - **Workaround:** Enable `control_auth` with role-based tokens for multi-user systems
+   - **Roadmap:** Task 0.13 (medium priority) resolved via optional control auth
+   - **Risk:** MEDIUM if multi-user access is required and auth remains disabled
 
 3. **No Rate Limiting Enforcement**
    - **Impact:** Configuration exists but not enforced per-domain

@@ -13,10 +13,10 @@ No active P1 items. See P2/P3/New Ideas for candidates.
 - [x] NEW-SEC-ARC-01: ARC seal handling. Validate incoming ARC seals, detect replayed seals, and add regression tests to ensure archived ARC chains keep passing through the delivery pipeline.
 - [x] NEW-SEC-DMARC-01: DMARC policy enforcement. Track SPF/DKIM/DMARC observability, surface enforcement decisions via metrics/logs, and provide control/debug tools for rejected/filtered messages.
 - [x] NEW-SEC-XX: Control socket roles. Add authenticated control sessions with roles (read-only, admin) so sensitive ops like TLS reloads, binding edits, or DR actions require dedicated ACLs.
-- [ ] NEW-19 dependency follow-ups: ensure control socket auth (0.13) decision once DR documented.
+- [x] NEW-19 dependency follow-ups: control socket auth decision recorded now that DR is documented.
 
 ## P3 — Deferred / Nice to Have
-- [ ] 0.13 Control socket auth (multi-user/ACL) — currently satisfied via Unix perms.
+- [x] 0.13 Control socket auth (multi-user/ACL) — covered by optional control_auth roles.
 - [ ] 0.14 DNSSEC validation/logging — backlog after 1.0.
 - [ ] 5.2/5.3 Config hot reload & TLS policy enforcement — post-Phase 4.
 - [ ] NEW-WASM-15+16 performance cleanup after macro/context changes (profiling).
