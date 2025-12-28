@@ -155,6 +155,7 @@ pub trait SmtpTransactionHandler: Send + Sync {
 ///     None,
 ///     SpfConfig::default(),
 ///     false,
+///     false,
 /// );
 /// // Use handler with session orchestrator
 /// # }
@@ -170,6 +171,8 @@ pub struct DefaultSmtpTransactionHandler {
     spf_config: crate::spf::SpfConfig,
     /// Whether to reject messages without a passing DKIM verification
     require_dkim: bool,
+    /// Whether to enforce DMARC policy on failure
+    dmarc_enforce: bool,
 }
 
 impl DefaultSmtpTransactionHandler {
@@ -182,6 +185,7 @@ impl DefaultSmtpTransactionHandler {
     /// * `spf_dns_resolver` - Optional SPF DNS resolver for sender validation
     /// * `spf_config` - SPF configuration
     /// * `require_dkim` - Whether to reject messages without DKIM pass
+    /// * `dmarc_enforce` - Whether to enforce DMARC policy on failure
     #[must_use]
     pub const fn new(
         spool: Option<Arc<dyn BackingStore>>,
@@ -189,6 +193,7 @@ impl DefaultSmtpTransactionHandler {
         spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
         spf_config: crate::spf::SpfConfig,
         require_dkim: bool,
+        dmarc_enforce: bool,
     ) -> Self {
         Self {
             spool,
@@ -196,6 +201,7 @@ impl DefaultSmtpTransactionHandler {
             spf_dns_resolver,
             spf_config,
             require_dkim,
+            dmarc_enforce,
         }
     }
 
@@ -485,6 +491,46 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         self.evaluate_dkim(ctx).await;
         self.evaluate_dmarc(ctx).await;
 
+        let dmarc_policy = ctx.transaction.get("dmarc_policy").cloned();
+        let dmarc_result = ctx
+            .transaction
+            .get("dmarc_result")
+            .cloned()
+            .unwrap_or_else(|| "none".to_string());
+
+        let dmarc_action = if self.dmarc_enforce {
+            dmarc_enforcement_action(dmarc_result.as_str(), dmarc_policy.as_deref())
+        } else {
+            None
+        };
+
+        ctx.transaction.insert(
+            Cow::Borrowed("dmarc_action"),
+            dmarc_action.unwrap_or("none").to_string(),
+        );
+
+        if let Some(action) = dmarc_action {
+            if let Some(metrics) = empath_metrics::try_metrics() {
+                metrics.smtp.record_dmarc_enforcement(
+                    action,
+                    dmarc_policy.as_deref(),
+                    dmarc_result.as_str(),
+                );
+            }
+            tracing::warn!(
+                dmarc_result = %dmarc_result,
+                dmarc_policy = dmarc_policy.as_deref().unwrap_or("none"),
+                dmarc_action = action,
+                "DMARC policy enforcement rejected message"
+            );
+            let response = match action {
+                "quarantine" => "DMARC policy quarantine (treated as reject)",
+                _ => "DMARC policy rejected message",
+            };
+            ctx.response = Some((Status::Error, Cow::Borrowed(response)));
+            return false;
+        }
+
         if self.require_dkim && !dkim_is_pass(ctx) {
             let result = ctx
                 .transaction
@@ -647,11 +693,19 @@ impl DefaultSmtpTransactionHandler {
         )
         .await;
 
+        Self::record_dmarc_evaluation(ctx, from_domain, &evaluation);
+    }
+
+    fn record_dmarc_evaluation(
+        ctx: &mut Context,
+        from_domain: String,
+        evaluation: &dmarc::DmarcEvaluation,
+    ) {
         ctx.transaction
             .insert(Cow::Borrowed("dmarc_domain"), from_domain);
         ctx.transaction
             .insert(Cow::Borrowed("dmarc_result"), evaluation.result.to_string());
-        if let Some(policy) = evaluation.policy {
+        if let Some(policy) = evaluation.policy.clone() {
             ctx.transaction
                 .insert(Cow::Borrowed("dmarc_policy"), policy);
         }
@@ -663,8 +717,44 @@ impl DefaultSmtpTransactionHandler {
             Cow::Borrowed("dmarc_dkim_aligned"),
             evaluation.dkim_aligned.to_string(),
         );
-        if let Some(error) = evaluation.error {
+        if let Some(error) = evaluation.error.clone() {
             ctx.transaction.insert(Cow::Borrowed("dmarc_error"), error);
+        }
+
+        if let Some(metrics) = empath_metrics::try_metrics() {
+            metrics.smtp.record_dmarc_evaluation(
+                evaluation.result.as_str(),
+                evaluation.policy.as_deref(),
+                evaluation.spf_aligned,
+                evaluation.dkim_aligned,
+            );
+        }
+
+        Self::log_dmarc_evaluation(ctx, evaluation);
+    }
+
+    fn log_dmarc_evaluation(ctx: &Context, evaluation: &dmarc::DmarcEvaluation) {
+        match evaluation.result {
+            dmarc::DmarcResult::Fail => {
+                tracing::warn!(
+                    dmarc_domain = %ctx.transaction.get("dmarc_domain").map_or("unknown", String::as_str),
+                    dmarc_policy = %ctx.transaction.get("dmarc_policy").map_or("none", String::as_str),
+                    dmarc_spf_aligned = %evaluation.spf_aligned,
+                    dmarc_dkim_aligned = %evaluation.dkim_aligned,
+                    "DMARC evaluation failed"
+                );
+            }
+            dmarc::DmarcResult::TempError | dmarc::DmarcResult::PermError => {
+                tracing::warn!(
+                    dmarc_domain = %ctx.transaction.get("dmarc_domain").map_or("unknown", String::as_str),
+                    dmarc_error = %ctx.transaction.get("dmarc_error").map_or("", String::as_str),
+                    "DMARC evaluation error"
+                );
+            }
+            dmarc::DmarcResult::None => {
+                tracing::debug!("DMARC evaluation skipped (no record)");
+            }
+            dmarc::DmarcResult::Pass => {}
         }
     }
 }
@@ -695,6 +785,18 @@ fn dkim_is_pass(ctx: &Context) -> bool {
     ctx.transaction
         .get("dkim_result")
         .is_some_and(|value| value.eq_ignore_ascii_case("pass"))
+}
+
+const fn dmarc_enforcement_action(result: &str, policy: Option<&str>) -> Option<&'static str> {
+    if !result.eq_ignore_ascii_case("fail") {
+        return None;
+    }
+
+    match policy {
+        Some(policy) if policy.eq_ignore_ascii_case("reject") => Some("reject"),
+        Some(policy) if policy.eq_ignore_ascii_case("quarantine") => Some("quarantine"),
+        _ => None,
+    }
 }
 
 /// Helper function to determine if state requires validation.
@@ -745,6 +847,7 @@ mod tests {
             None,
             crate::spf::SpfConfig::default(),
             false,
+            false,
         );
         assert!(handler.spool.is_none());
         assert_eq!(handler.peer.to_string(), "127.0.0.1:1234");
@@ -763,6 +866,7 @@ mod tests {
                 .map_err(|err| err.to_string())?,
             None,
             crate::spf::SpfConfig::default(),
+            false,
             false,
         );
         assert!(handler.spool.is_some());
@@ -799,6 +903,21 @@ mod tests {
     }
 
     #[test]
+    fn test_dmarc_enforcement_action() {
+        assert_eq!(
+            dmarc_enforcement_action("fail", Some("reject")),
+            Some("reject")
+        );
+        assert_eq!(
+            dmarc_enforcement_action("fail", Some("quarantine")),
+            Some("quarantine")
+        );
+        assert_eq!(dmarc_enforcement_action("fail", Some("none")), None);
+        assert_eq!(dmarc_enforcement_action("pass", Some("reject")), None);
+        assert_eq!(dmarc_enforcement_action("temperror", Some("reject")), None);
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)]
     fn received_header_is_inserted_before_body() -> TestResult {
         let handler = DefaultSmtpTransactionHandler::new(
@@ -808,6 +927,7 @@ mod tests {
                 .map_err(|err| err.to_string())?,
             None,
             crate::spf::SpfConfig::default(),
+            false,
             false,
         );
 
@@ -937,6 +1057,7 @@ mod tests {
                 .map_err(|err| err.to_string())?,
             Some(resolver),
             SpfConfig::default(),
+            false,
             false,
         );
 

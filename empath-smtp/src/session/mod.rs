@@ -631,6 +631,7 @@ pub struct SessionConfig {
     pub capabilities: Vec<Capability>,
     pub tls_context: Option<TlsContext>,
     pub require_dkim: bool,
+    pub dmarc_enforce: bool,
     pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
     pub banner: BannerHostname,
     pub init_context: AHashMap<Cow<'static, str>, String>,
@@ -647,6 +648,7 @@ impl std::fmt::Debug for SessionConfig {
             .field("capabilities", &self.capabilities)
             .field("tls_context", &self.tls_context)
             .field("require_dkim", &self.require_dkim)
+            .field("dmarc_enforce", &self.dmarc_enforce)
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("banner", &self.banner)
             .field("init_context", &self.init_context)
@@ -678,6 +680,7 @@ pub struct SessionConfigBuilder {
     capabilities: Vec<Capability>,
     tls_context: Option<TlsContext>,
     require_dkim: bool,
+    dmarc_enforce: bool,
     spool: Option<Arc<dyn empath_spool::BackingStore>>,
     banner: BannerHostname,
     init_context: AHashMap<Cow<'static, str>, String>,
@@ -694,6 +697,7 @@ impl std::fmt::Debug for SessionConfigBuilder {
             .field("capabilities", &self.capabilities)
             .field("tls_context", &self.tls_context)
             .field("require_dkim", &self.require_dkim)
+            .field("dmarc_enforce", &self.dmarc_enforce)
             .field("spool", &self.spool.as_ref().map(|_| "<spool>"))
             .field("banner", &self.banner)
             .field("init_context", &self.init_context)
@@ -718,6 +722,7 @@ impl Default for SessionConfigBuilder {
             capabilities: Vec::new(),
             tls_context: None,
             require_dkim: false,
+            dmarc_enforce: false,
             spool: None,
             banner: BannerHostname::new("localhost").unwrap_or_else(|_| {
                 // Fallback should always succeed; if validation changes, use empty hostname
@@ -759,6 +764,13 @@ impl SessionConfigBuilder {
     #[must_use]
     pub const fn with_require_dkim(mut self, require_dkim: bool) -> Self {
         self.require_dkim = require_dkim;
+        self
+    }
+
+    /// Enforce DMARC policy results when evaluation fails.
+    #[must_use]
+    pub const fn with_dmarc_enforce(mut self, dmarc_enforce: bool) -> Self {
+        self.dmarc_enforce = dmarc_enforce;
         self
     }
 
@@ -827,6 +839,7 @@ impl SessionConfigBuilder {
             capabilities: self.capabilities,
             tls_context: self.tls_context,
             require_dkim: self.require_dkim,
+            dmarc_enforce: self.dmarc_enforce,
             spool: self.spool,
             banner: self.banner,
             init_context: self.init_context,
@@ -918,6 +931,7 @@ impl Session {
                 config.spf_dns_resolver,
                 config.spf_config,
                 config.require_dkim,
+                config.dmarc_enforce,
             ))
         });
 

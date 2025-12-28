@@ -161,6 +161,9 @@ pub enum QueueCommand {
         /// Include a body preview (requires reading message data)
         #[serde(default = "default_true")]
         include_body_preview: bool,
+        /// Include transaction context (requires reading message metadata)
+        #[serde(default)]
+        include_transaction: bool,
     },
     /// Retry delivery of a message
     Retry {
@@ -204,6 +207,9 @@ pub enum SpoolCommand {
         /// Include a body preview (requires reading message data)
         #[serde(default = "default_true")]
         include_body_preview: bool,
+        /// Include transaction context (requires reading message metadata)
+        #[serde(default)]
+        include_transaction: bool,
     },
     /// Delete completed/failed messages from the spool
     CleanupCompleted,
@@ -300,7 +306,7 @@ pub enum ResponseData {
     /// Queue message list
     QueueList(QueueListPage),
     /// Queue message details
-    QueueMessageDetails(QueueMessageDetails),
+    QueueMessageDetails(Box<QueueMessageDetails>),
     /// Queue statistics
     QueueStats(QueueStats),
     /// Spool message list
@@ -504,6 +510,9 @@ pub struct QueueMessageDetails {
     /// Message body preview (first 1KB)
     #[serde(default)]
     pub body_preview: Option<String>,
+    /// Transaction context (spam scores, auth results, policy decisions)
+    #[serde(default)]
+    pub transaction: Option<HashMap<String, String>>,
 }
 
 impl Display for QueueMessageDetails {
@@ -543,10 +552,17 @@ impl Display for QueueMessageDetails {
 
         f.write_str("\n--- Body Preview ---\n")?;
         if let Some(body_preview) = &self.body_preview {
-            f.write_fmt(format_args!("{body_preview}\n"))
+            f.write_fmt(format_args!("{body_preview}\n"))?;
         } else {
-            f.write_str("[Body not requested]\n")
+            f.write_str("[Body not requested]\n")?;
         }
+        if let Some(transaction) = &self.transaction {
+            f.write_str("\n--- Transaction Context ---\n")?;
+            for (key, value) in transaction {
+                f.write_fmt(format_args!("{key}: {value}\n"))?;
+            }
+        }
+        Ok(())
     }
 }
 

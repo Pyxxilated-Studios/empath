@@ -18,6 +18,9 @@ Empath (
                 // Require DKIM verification to pass before accepting message data
                 // Default: false
                 "require_dkim": false,
+                // Enforce DMARC policy failures (reject/quarantine)
+                // Default: false
+                "dmarc_enforce": false,
                 "extensions": [
                     {
                         "size": 10000,

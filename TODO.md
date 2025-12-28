@@ -11,7 +11,7 @@ No active P1 items. See P2/P3/New Ideas for candidates.
 
 ## P2 — Next Up / Blocked
 - [ ] NEW-SEC-ARC-01: ARC seal handling. Validate incoming ARC seals, detect replayed seals, and add regression tests to ensure archived ARC chains keep passing through the delivery pipeline.
-- [ ] NEW-SEC-DMARC-01: DMARC policy enforcement. Track SPF/DKIM/DMARC observability, surface enforcement decisions via metrics/logs, and provide control/debug tools for rejected/filtered messages.
+- [x] NEW-SEC-DMARC-01: DMARC policy enforcement. Track SPF/DKIM/DMARC observability, surface enforcement decisions via metrics/logs, and provide control/debug tools for rejected/filtered messages.
 - [x] NEW-SEC-XX: Control socket roles. Add authenticated control sessions with roles (read-only, admin) so sensitive ops like TLS reloads, binding edits, or DR actions require dedicated ACLs.
 - [ ] NEW-19 dependency follow-ups: ensure control socket auth (0.13) decision once DR documented.
 

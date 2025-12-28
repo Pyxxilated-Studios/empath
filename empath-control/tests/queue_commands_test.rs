@@ -174,6 +174,7 @@ async fn test_queue_view_command() {
         message_id: "01JCXYZ123ABC".to_string(),
         include_headers: true,
         include_body_preview: false,
+        include_transaction: true,
     }));
 
     // Verify serialization/deserialization
@@ -186,10 +187,12 @@ async fn test_queue_view_command() {
             message_id,
             include_headers,
             include_body_preview,
+            include_transaction,
         }) => {
             assert_eq!(message_id, "01JCXYZ123ABC", "Expected correct message ID");
             assert!(include_headers);
             assert!(!include_body_preview);
+            assert!(include_transaction);
         }
         _ => panic!("Expected QueueCommand::View"),
     }

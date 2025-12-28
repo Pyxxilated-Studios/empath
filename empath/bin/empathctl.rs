@@ -204,6 +204,10 @@ enum QueueAction {
         /// Skip reading message body preview (faster, less I/O)
         #[arg(long)]
         no_body: bool,
+
+        /// Include transaction context (DMARC/SPF/DKIM results, module metadata)
+        #[arg(long)]
+        with_transaction: bool,
     },
     /// Retry delivery of a message
     Retry {
@@ -269,6 +273,10 @@ enum SpoolAction {
         /// Skip reading message body preview (faster, less I/O)
         #[arg(long)]
         no_body: bool,
+
+        /// Include transaction context (DMARC/SPF/DKIM results, module metadata)
+        #[arg(long)]
+        with_transaction: bool,
     },
     /// Clean up completed/failed messages from spool
     CleanupCompleted,
@@ -743,10 +751,12 @@ fn build_queue_request(action: &QueueAction) -> anyhow::Result<Request> {
             message_id,
             no_headers,
             no_body,
+            with_transaction,
         } => QueueCommand::View {
             message_id: message_id.clone(),
             include_headers: !no_headers,
             include_body_preview: !no_body,
+            include_transaction: *with_transaction,
         },
         QueueAction::Retry { message_id, force } => QueueCommand::Retry {
             message_id: message_id.clone(),
@@ -900,10 +910,12 @@ fn build_spool_request(action: &SpoolAction) -> Request {
             message_id,
             no_headers,
             no_body,
+            with_transaction,
         } => SpoolCommand::View {
             message_id: message_id.clone(),
             include_headers: !no_headers,
             include_body_preview: !no_body,
+            include_transaction: *with_transaction,
         },
         SpoolAction::CleanupCompleted => SpoolCommand::CleanupCompleted,
         SpoolAction::Stats => SpoolCommand::Stats,

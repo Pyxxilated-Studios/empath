@@ -46,6 +46,10 @@ pub struct SmtpMetrics {
     dkim_verifications_total: Counter<u64>,
     /// DKIM enforcement rejections
     dkim_rejections_total: Counter<u64>,
+    /// DMARC evaluation results
+    dmarc_evaluations_total: Counter<u64>,
+    /// DMARC enforcement actions
+    dmarc_enforcements_total: Counter<u64>,
 
     /// Total TLS contexts registered
     tls_cert_contexts_total: Gauge<u64>,
@@ -89,6 +93,8 @@ struct SmtpInstruments {
     tls_handshake_failures: Counter<u64>,
     dkim_verifications_total: Counter<u64>,
     dkim_rejections_total: Counter<u64>,
+    dmarc_evaluations_total: Counter<u64>,
+    dmarc_enforcements_total: Counter<u64>,
     tls_cert_contexts_total: Gauge<u64>,
     tls_cert_expiry_min_seconds: Gauge<u64>,
     tls_cert_expired_count: Gauge<u64>,
@@ -113,6 +119,8 @@ impl SmtpMetrics {
             tls_handshake_failures: instruments.tls_handshake_failures,
             dkim_verifications_total: instruments.dkim_verifications_total,
             dkim_rejections_total: instruments.dkim_rejections_total,
+            dmarc_evaluations_total: instruments.dmarc_evaluations_total,
+            dmarc_enforcements_total: instruments.dmarc_enforcements_total,
             tls_cert_contexts_total: instruments.tls_cert_contexts_total,
             tls_cert_expiry_min_seconds: instruments.tls_cert_expiry_min_seconds,
             tls_cert_expired_count: instruments.tls_cert_expired_count,
@@ -184,6 +192,33 @@ impl SmtpMetrics {
     pub fn record_dkim_rejection(&self, result: &str) {
         let attributes = [KeyValue::new("result", result.to_string())];
         self.dkim_rejections_total.add(1, &attributes);
+    }
+
+    /// Record DMARC evaluation result for a message.
+    pub fn record_dmarc_evaluation(
+        &self,
+        result: &str,
+        policy: Option<&str>,
+        spf_aligned: bool,
+        dkim_aligned: bool,
+    ) {
+        let attributes = [
+            KeyValue::new("result", result.to_string()),
+            KeyValue::new("policy", policy.unwrap_or("none").to_string()),
+            KeyValue::new("spf_aligned", spf_aligned.to_string()),
+            KeyValue::new("dkim_aligned", dkim_aligned.to_string()),
+        ];
+        self.dmarc_evaluations_total.add(1, &attributes);
+    }
+
+    /// Record DMARC enforcement action for a message.
+    pub fn record_dmarc_enforcement(&self, action: &str, policy: Option<&str>, result: &str) {
+        let attributes = [
+            KeyValue::new("action", action.to_string()),
+            KeyValue::new("policy", policy.unwrap_or("none").to_string()),
+            KeyValue::new("result", result.to_string()),
+        ];
+        self.dmarc_enforcements_total.add(1, &attributes);
     }
 
     /// Record TLS certificate watchdog metrics.
@@ -265,6 +300,16 @@ impl SmtpMetrics {
             .with_description("Total DKIM enforcement rejections for SMTP messages")
             .build();
 
+        let dmarc_evaluations_total = meter
+            .u64_counter("empath.smtp.dmarc.evaluations.total")
+            .with_description("Total DMARC evaluation results for SMTP messages")
+            .build();
+
+        let dmarc_enforcements_total = meter
+            .u64_counter("empath.smtp.dmarc.enforcements.total")
+            .with_description("Total DMARC enforcement actions for SMTP messages")
+            .build();
+
         let tls_cert_contexts_total = meter
             .u64_gauge("empath.smtp.tls.cert.contexts.total")
             .with_description("Number of TLS contexts registered for SMTP listeners")
@@ -296,6 +341,8 @@ impl SmtpMetrics {
             tls_handshake_failures,
             dkim_verifications_total,
             dkim_rejections_total,
+            dmarc_evaluations_total,
+            dmarc_enforcements_total,
             tls_cert_contexts_total,
             tls_cert_expiry_min_seconds,
             tls_cert_expired_count,

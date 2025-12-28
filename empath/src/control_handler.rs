@@ -419,6 +419,7 @@ struct MessageDetailsInput<'a> {
     size: usize,
     headers: Option<HashMap<String, String>>,
     body_preview: Option<String>,
+    transaction: Option<HashMap<String, String>>,
     queue_info: Option<empath_delivery::DeliveryInfo>,
 }
 
@@ -869,12 +870,14 @@ impl EmpathControlHandler {
                 message_id,
                 include_headers,
                 include_body_preview,
+                include_transaction,
             } => {
                 self.handle_view_command(
                     spool,
                     message_id.as_ref(),
                     include_headers,
                     include_body_preview,
+                    include_transaction,
                 )
                 .await
             }
@@ -992,6 +995,7 @@ impl EmpathControlHandler {
         message_id: &str,
         include_headers: bool,
         include_body_preview: bool,
+        include_transaction: bool,
     ) -> empath_control::Result<Response> {
         // Parse message ID
         let msg_id = parse_message_id(message_id)?;
@@ -1047,10 +1051,23 @@ impl EmpathControlHandler {
             size,
             headers,
             body_preview,
+            transaction: if include_transaction {
+                Some(
+                    context
+                        .transaction
+                        .iter()
+                        .map(|(key, value)| (key.to_string(), value.clone()))
+                        .collect(),
+                )
+            } else {
+                None
+            },
             queue_info: info,
         });
 
-        Ok(Response::data(ResponseData::QueueMessageDetails(details)))
+        Ok(Response::data(ResponseData::QueueMessageDetails(Box::new(
+            details,
+        ))))
     }
 
     /// Handle queue retry command
@@ -1263,6 +1280,7 @@ impl EmpathControlHandler {
                 message_id,
                 include_headers,
                 include_body_preview,
+                include_transaction,
             } => {
                 // Reuse queue view logic but directly from spool
                 self.handle_view_command(
@@ -1270,6 +1288,7 @@ impl EmpathControlHandler {
                     message_id.as_ref(),
                     include_headers,
                     include_body_preview,
+                    include_transaction,
                 )
                 .await
             }
@@ -1553,6 +1572,7 @@ impl EmpathControlHandler {
                 spooled_at,
                 headers: input.headers,
                 body_preview: input.body_preview,
+                transaction: input.transaction,
             };
         }
 
@@ -1578,6 +1598,7 @@ impl EmpathControlHandler {
                 spooled_at,
                 headers: input.headers,
                 body_preview: input.body_preview,
+                transaction: input.transaction,
             };
         }
 
@@ -1595,6 +1616,7 @@ impl EmpathControlHandler {
             spooled_at,
             headers: input.headers,
             body_preview: input.body_preview,
+            transaction: input.transaction,
         }
     }
 }

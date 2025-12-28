@@ -201,6 +201,7 @@ let handler = DefaultSmtpTransactionHandler::new(
     None,
     SpfConfig::default(),
     false,
+    false,
 );
 let valid = handler.validate_connect(&mut business_context).await;
 if valid {
