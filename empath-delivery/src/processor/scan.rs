@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use empath_common::tracing::warn;
+use empath_common::{
+    context::{Context, DeliveryPriorityTier, PRIORITY_TIER_CONTEXT_KEY},
+    tracing::warn,
+};
 use empath_spool::{SpoolError, SpoolScanMode};
 
 use crate::{
@@ -70,6 +73,7 @@ pub async fn scan_spool_internal(
                 recipient_domain: delivery_ctx.domain.clone(),
                 mail_servers: Arc::new(Vec::new()), // Will be resolved again if needed
                 current_server_index: delivery_ctx.current_server_index,
+                priority_tier: delivery_ctx.priority_tier,
                 binding: delivery_ctx.binding.clone(),
                 queued_at: delivery_ctx.queued_at,
                 next_retry_at: delivery_ctx.next_retry_at,
@@ -102,11 +106,22 @@ pub async fn scan_spool_internal(
         }
 
         // Enqueue for each unique domain
+        let priority_tier = resolve_priority_tier(&context);
         for (domain, _recipients) in domains {
-            processor.queue.enqueue(msg_id.clone(), domain);
+            processor
+                .queue
+                .enqueue_with_priority(msg_id.clone(), domain, priority_tier);
             added += 1;
         }
     }
 
     Ok(added)
+}
+
+fn resolve_priority_tier(context: &Context) -> DeliveryPriorityTier {
+    context
+        .transaction
+        .get(PRIORITY_TIER_CONTEXT_KEY)
+        .and_then(|value| DeliveryPriorityTier::parse(value))
+        .unwrap_or_default()
 }

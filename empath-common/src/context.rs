@@ -35,10 +35,92 @@ impl ModuleContext {
 
 /// Transaction context key used to request a specific outbound binding.
 pub const OUTBOUND_BINDING_CONTEXT_KEY: &str = "outbound_binding";
+/// Transaction context key used to set delivery priority tier.
+pub const PRIORITY_TIER_CONTEXT_KEY: &str = "priority_tier";
 /// Transaction context key used to persist OpenTelemetry trace IDs.
 pub const TRACE_ID_CONTEXT_KEY: &str = "trace_id";
 /// Transaction context key used to persist OpenTelemetry span IDs.
 pub const SPAN_ID_CONTEXT_KEY: &str = "span_id";
+
+/// Delivery priority tier for queue scheduling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DeliveryPriorityTier {
+    High,
+    #[default]
+    Normal,
+    Low,
+}
+
+impl DeliveryPriorityTier {
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::High => 0,
+            Self::Normal => 1,
+            Self::Low => 2,
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "high" | "0" => Some(Self::High),
+            "normal" | "1" => Some(Self::Normal),
+            "low" | "2" => Some(Self::Low),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Normal => "normal",
+            Self::Low => "low",
+        }
+    }
+}
+
+impl Display for DeliveryPriorityTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeliveryPriorityTier;
+
+    #[test]
+    fn parse_priority_tier() {
+        assert_eq!(
+            DeliveryPriorityTier::parse("high"),
+            Some(DeliveryPriorityTier::High)
+        );
+        assert_eq!(
+            DeliveryPriorityTier::parse("normal"),
+            Some(DeliveryPriorityTier::Normal)
+        );
+        assert_eq!(
+            DeliveryPriorityTier::parse("low"),
+            Some(DeliveryPriorityTier::Low)
+        );
+        assert_eq!(
+            DeliveryPriorityTier::parse("0"),
+            Some(DeliveryPriorityTier::High)
+        );
+        assert_eq!(
+            DeliveryPriorityTier::parse("1"),
+            Some(DeliveryPriorityTier::Normal)
+        );
+        assert_eq!(
+            DeliveryPriorityTier::parse("2"),
+            Some(DeliveryPriorityTier::Low)
+        );
+        assert_eq!(DeliveryPriorityTier::parse("other"), None);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Capability {
@@ -183,6 +265,9 @@ pub struct DeliveryContext {
     /// Index of the current mail server being tried (for MX fallback)
     #[serde(default)]
     pub current_server_index: usize,
+    /// Delivery priority tier for scheduling.
+    #[serde(default)]
+    pub priority_tier: DeliveryPriorityTier,
 }
 
 const fn default_system_time() -> SystemTime {
@@ -204,6 +289,7 @@ impl Default for DeliveryContext {
             queued_at: SystemTime::UNIX_EPOCH,
             next_retry_at: None,
             current_server_index: 0,
+            priority_tier: DeliveryPriorityTier::default(),
         }
     }
 }

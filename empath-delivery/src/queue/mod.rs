@@ -6,7 +6,7 @@ pub mod retry;
 use std::{sync::Arc, time::SystemTime};
 
 use dashmap::DashMap;
-use empath_common::DeliveryStatus;
+use empath_common::{DeliveryStatus, context::DeliveryPriorityTier};
 use empath_spool::SpooledMessageId;
 
 use crate::{dns::MailServer, types::DeliveryInfo};
@@ -35,9 +35,23 @@ impl DeliveryQueue {
 
     /// Add a message to the delivery queue
     pub fn enqueue(&self, message_id: SpooledMessageId, recipient_domain: String) {
+        self.enqueue_with_priority(
+            message_id,
+            recipient_domain,
+            DeliveryPriorityTier::default(),
+        );
+    }
+
+    /// Add a message to the delivery queue with a priority tier
+    pub fn enqueue_with_priority(
+        &self,
+        message_id: SpooledMessageId,
+        recipient_domain: String,
+        priority_tier: DeliveryPriorityTier,
+    ) {
         self.queue.insert(
             message_id.clone(),
-            DeliveryInfo::new(message_id, recipient_domain),
+            DeliveryInfo::new_with_priority(message_id, recipient_domain, priority_tier),
         );
     }
 

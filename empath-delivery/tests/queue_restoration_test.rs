@@ -14,7 +14,7 @@ use std::{
 use empath_common::{
     DeliveryAttempt, DeliveryStatus, SpooledMessageId,
     address::{Address, AddressList},
-    context::{Context, DeliveryContext},
+    context::{Context, DeliveryContext, DeliveryPriorityTier},
     email::ServerId,
     envelope::Envelope,
 };
@@ -76,6 +76,7 @@ fn create_test_context_with_delivery_state(
         queued_at: SystemTime::now() - Duration::from_secs(300),
         next_retry_at,
         current_server_index: 1, // Trying second MX server
+        priority_tier: DeliveryPriorityTier::default(),
     };
 
     Context {
@@ -159,6 +160,7 @@ async fn restore_queue(
                 recipient_domain: delivery_ctx.domain.clone(),
                 mail_servers: Arc::new(Vec::new()),
                 current_server_index: delivery_ctx.current_server_index,
+                priority_tier: delivery_ctx.priority_tier,
                 binding: delivery_ctx.binding.clone(),
                 queued_at: delivery_ctx.queued_at,
                 next_retry_at: delivery_ctx.next_retry_at,

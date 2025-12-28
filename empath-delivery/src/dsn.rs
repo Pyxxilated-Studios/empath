@@ -351,7 +351,8 @@ fn extract_original_headers(original_context: &Context) -> String {
 #[cfg(test)]
 mod tests {
     use empath_common::{
-        DeliveryAttempt, address_parser::Mailbox, domain::Domain, email::ServerId,
+        DeliveryAttempt, address_parser::Mailbox, context::DeliveryPriorityTier, domain::Domain,
+        email::ServerId,
     };
     use empath_spool::SpooledMessageId;
 
@@ -378,6 +379,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: None,
             current_server_index: 0,
+            priority_tier: DeliveryPriorityTier::default(),
             binding: None,
             mail_servers: Arc::new(vec![]),
         };
@@ -404,6 +406,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: None,
             current_server_index: 0,
+            priority_tier: DeliveryPriorityTier::default(),
             binding: None,
             mail_servers: Arc::new(vec![]),
         };
@@ -436,6 +439,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: Some(SystemTime::now()),
             current_server_index: 0,
+            priority_tier: DeliveryPriorityTier::default(),
             binding: None,
             mail_servers: Arc::new(vec![]),
         };
@@ -479,6 +483,7 @@ mod tests {
             queued_at: SystemTime::now(),
             next_retry_at: None,
             current_server_index: 0,
+            priority_tier: DeliveryPriorityTier::default(),
             binding: None,
             mail_servers: Arc::new(vec![]),
         };

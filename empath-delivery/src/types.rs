@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::SystemTime};
 
-use empath_common::DeliveryStatus;
+use empath_common::{DeliveryStatus, context::DeliveryPriorityTier};
 use empath_spool::SpooledMessageId;
 use serde::{Deserialize, Serialize};
 
@@ -178,6 +178,8 @@ pub struct DeliveryInfo {
     pub mail_servers: Arc<Vec<MailServer>>,
     /// Index of the current mail server being tried
     pub current_server_index: usize,
+    /// Delivery priority tier for scheduling.
+    pub priority_tier: DeliveryPriorityTier,
     /// Selected outbound binding name (if any)
     pub binding: Option<String>,
     /// When this message was first queued for delivery
@@ -197,9 +199,23 @@ impl DeliveryInfo {
             recipient_domain: empath_common::Domain::new(recipient_domain),
             mail_servers: Arc::new(Vec::new()),
             current_server_index: 0,
+            priority_tier: DeliveryPriorityTier::default(),
             binding: None,
             queued_at: SystemTime::now(),
             next_retry_at: None,
+        }
+    }
+
+    /// Create a new pending delivery info with a specific priority tier.
+    #[must_use]
+    pub fn new_with_priority(
+        message_id: SpooledMessageId,
+        recipient_domain: String,
+        priority_tier: DeliveryPriorityTier,
+    ) -> Self {
+        Self {
+            priority_tier,
+            ..Self::new(message_id, recipient_domain)
         }
     }
 

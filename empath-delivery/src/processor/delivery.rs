@@ -464,6 +464,7 @@ fn dispatch_delivery_event(
         queued_at: info.queued_at,
         next_retry_at: info.next_retry_at,
         current_server_index: info.current_server_index,
+        priority_tier: info.priority_tier,
     });
     let _ = modules::dispatch(Event::Event(event), context);
 }
@@ -889,6 +890,7 @@ fn dispatch_failure_event(
         queued_at: info.queued_at,
         next_retry_at: info.next_retry_at,
         current_server_index: info.current_server_index,
+        priority_tier: info.priority_tier,
     });
     let _ = modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
 }
@@ -1020,6 +1022,7 @@ pub async fn persist_delivery_state(
         queued_at: info.queued_at,
         next_retry_at: info.next_retry_at,
         current_server_index: info.current_server_index,
+        priority_tier: info.priority_tier,
     });
 
     // Atomically update spool

@@ -253,7 +253,7 @@ fn scan_queue(
     processor: &DeliveryProcessor,
     now: SystemTime,
 ) -> (Vec<SpooledMessageId>, Vec<SpooledMessageId>, u64) {
-    let mut pending_message_ids = Vec::new();
+    let mut pending_messages = Vec::new();
     let mut to_persist = Vec::new();
     let mut oldest_pending_age_secs = 0u64;
 
@@ -287,9 +287,24 @@ fn scan_queue(
         }
 
         if matches!(info.status, DeliveryStatus::Pending) {
-            pending_message_ids.push(info.message_id.clone());
+            let queued_at_secs = info
+                .queued_at
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            pending_messages.push((
+                info.priority_tier.rank(),
+                queued_at_secs,
+                info.message_id.clone(),
+            ));
         }
     }
+
+    pending_messages.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let pending_message_ids = pending_messages
+        .into_iter()
+        .map(|(_, _, message_id)| message_id)
+        .collect();
 
     (pending_message_ids, to_persist, oldest_pending_age_secs)
 }
@@ -413,4 +428,56 @@ fn spawn_delivery_task(
             Box::pin(process_single_message(processor_clone, spool_clone, info)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime};
+
+    use empath_common::context::DeliveryPriorityTier;
+    use empath_spool::SpooledMessageId;
+
+    use super::scan_queue;
+    use crate::{DeliveryInfo, processor::DeliveryProcessor};
+
+    #[test]
+    fn scan_queue_orders_by_priority_and_age() {
+        let processor = DeliveryProcessor::default();
+        let now = SystemTime::now();
+
+        let mut high_old = DeliveryInfo::new_with_priority(
+            SpooledMessageId::generate(),
+            "example.com".to_string(),
+            DeliveryPriorityTier::High,
+        );
+        high_old.queued_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+
+        let mut normal_new = DeliveryInfo::new_with_priority(
+            SpooledMessageId::generate(),
+            "example.com".to_string(),
+            DeliveryPriorityTier::Normal,
+        );
+        normal_new.queued_at = SystemTime::UNIX_EPOCH + Duration::from_secs(3);
+
+        let mut high_newer = DeliveryInfo::new_with_priority(
+            SpooledMessageId::generate(),
+            "example.com".to_string(),
+            DeliveryPriorityTier::High,
+        );
+        high_newer.queued_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+
+        let high_old_id = high_old.message_id.clone();
+        let normal_new_id = normal_new.message_id.clone();
+        let high_newer_id = high_newer.message_id.clone();
+
+        processor.queue.insert(high_old_id.clone(), high_old);
+        processor.queue.insert(normal_new_id.clone(), normal_new);
+        processor.queue.insert(high_newer_id.clone(), high_newer);
+
+        let (pending, _persist, _age) = scan_queue(&processor, now);
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[0], high_old_id);
+        assert_eq!(pending[1], high_newer_id);
+        assert_eq!(pending[2], normal_new_id);
+    }
 }
