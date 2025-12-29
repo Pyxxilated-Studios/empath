@@ -9,7 +9,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] SEC-02: Control endpoint auth defaults. Enable control socket auth in production configs and add docs/tests to prevent unauthenticated control in prod.
 
 ## P1 — Operations & Observability
-- [ ] OPS-01: Grafana panel for DMARC sampling. Add a dashboard panel for `empath.smtp.dmarc.samples.total` with sender/IP/policy filters.
+- [x] OPS-01: Grafana panel for DMARC sampling. Add a dashboard panel for `empath.smtp.dmarc.samples.total` with sender/IP/policy filters.
 - [ ] OPS-02: Config reload safety net. Add control command output that reports reloadable vs restart-required fields (single canonical list) and keep docs in sync.
 
 ## P2 — Delivery Improvements

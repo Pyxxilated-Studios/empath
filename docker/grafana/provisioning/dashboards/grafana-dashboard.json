@@ -1609,13 +1609,172 @@
       ],
       "title": "Network Connections",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(empath_smtp_dmarc_samples_total{sender=~\"$dmarc_sender\",client_ip=~\"$dmarc_client_ip\",policy=~\"$dmarc_policy\"}[5m])",
+          "refId": "A",
+          "legendFormat": "{{sender}} {{client_ip}} {{policy}}"
+        }
+      ],
+      "title": "DMARC Sampled Failures",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",
   "schemaVersion": 39,
   "tags": ["empath", "mta", "smtp"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(empath_smtp_dmarc_samples_total, sender)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "DMARC Sender",
+        "multi": true,
+        "name": "dmarc_sender",
+        "query": {
+          "query": "label_values(empath_smtp_dmarc_samples_total, sender)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(empath_smtp_dmarc_samples_total, client_ip)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "DMARC Client IP",
+        "multi": true,
+        "name": "dmarc_client_ip",
+        "query": {
+          "query": "label_values(empath_smtp_dmarc_samples_total, client_ip)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(empath_smtp_dmarc_samples_total, policy)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "DMARC Policy",
+        "multi": true,
+        "name": "dmarc_policy",
+        "query": {
+          "query": "label_values(empath_smtp_dmarc_samples_total, policy)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-1h",
