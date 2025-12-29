@@ -48,8 +48,8 @@ mod tests {
 
     use empath_common::DeliveryStatus;
     use empath_delivery::{
-        BindingHealthStatus, ConnectionStats, DeliveryInfo, DnsResolver, DomainConfigRegistry,
-        OutboundBindingRegistry, RateLimitConfig,
+        BindingHealthStatus, CircuitBreakerConfig, ConnectionStats, DeliveryInfo, DnsResolver,
+        DomainConfigRegistry, OutboundBindingRegistry, RateLimitConfig, RetryPolicy, SmtpTimeouts,
     };
     use empath_spool::{BackingStore, SpooledMessageId};
 
@@ -93,6 +93,9 @@ mod tests {
         spool: Option<Arc<dyn BackingStore>>,
         replaced_domains: Mutex<Option<DomainConfigRegistry>>,
         replaced_rate_limit: Mutex<Option<RateLimitConfig>>,
+        replaced_retry_policy: Mutex<Option<RetryPolicy>>,
+        replaced_smtp_timeouts: Mutex<Option<SmtpTimeouts>>,
+        replaced_circuit_breaker: Mutex<Option<CircuitBreakerConfig>>,
     }
 
     impl MockDelivery {
@@ -110,6 +113,30 @@ mod tests {
                 .expect("lock replaced_rate_limit")
                 .as_ref()
                 .map(|cfg| cfg.messages_per_second)
+        }
+
+        fn replaced_retry_policy_max_attempts(&self) -> Option<u32> {
+            self.replaced_retry_policy
+                .lock()
+                .expect("lock replaced_retry_policy")
+                .as_ref()
+                .map(|cfg| cfg.max_attempts)
+        }
+
+        fn replaced_smtp_timeouts_ehlo_secs(&self) -> Option<u64> {
+            self.replaced_smtp_timeouts
+                .lock()
+                .expect("lock replaced_smtp_timeouts")
+                .as_ref()
+                .map(|cfg| cfg.ehlo_secs)
+        }
+
+        fn replaced_circuit_breaker_threshold(&self) -> Option<u32> {
+            self.replaced_circuit_breaker
+                .lock()
+                .expect("lock replaced_circuit_breaker")
+                .as_ref()
+                .map(|cfg| cfg.failure_threshold)
         }
     }
 
@@ -205,6 +232,30 @@ mod tests {
             *guard = Some(config);
         }
 
+        fn replace_retry_policy(&self, policy: RetryPolicy) {
+            let mut guard = self
+                .replaced_retry_policy
+                .lock()
+                .expect("lock replaced_retry_policy");
+            *guard = Some(policy);
+        }
+
+        fn replace_smtp_timeouts(&self, timeouts: SmtpTimeouts) {
+            let mut guard = self
+                .replaced_smtp_timeouts
+                .lock()
+                .expect("lock replaced_smtp_timeouts");
+            *guard = Some(timeouts);
+        }
+
+        fn replace_circuit_breaker_config(&self, config: CircuitBreakerConfig) {
+            let mut guard = self
+                .replaced_circuit_breaker
+                .lock()
+                .expect("lock replaced_circuit_breaker");
+            *guard = Some(config);
+        }
+
         fn replace_domains(&self, registry: DomainConfigRegistry) {
             let mut guard = self.replaced_domains.lock().expect("lock replaced_domains");
             *guard = Some(registry);
@@ -223,6 +274,10 @@ Empath (
     listeners: [],
   ),
   delivery: {
+    max_attempts: 7,
+    "smtp_timeouts": (
+      ehlo_secs: 5,
+    ),
     "domains": {
       "example.com": (
         mx_override: "localhost:2525",
@@ -231,6 +286,9 @@ Empath (
     "rate_limit": (
       messages_per_second: 5.0,
       burst_size: 10,
+    ),
+    "circuit_breaker": (
+      failure_threshold: 7,
     ),
   },
 )
@@ -246,6 +304,9 @@ Empath (
         assert!(message.contains("Restart required"));
         assert_eq!(delivery.replaced_domains_len(), Some(1));
         assert_eq!(delivery.replaced_rate_limit_mps(), Some(5.0));
+        assert_eq!(delivery.replaced_retry_policy_max_attempts(), Some(7));
+        assert_eq!(delivery.replaced_smtp_timeouts_ehlo_secs(), Some(5));
+        assert_eq!(delivery.replaced_circuit_breaker_threshold(), Some(7));
     }
 }
 
@@ -304,20 +365,27 @@ fn reload_config_from_disk(delivery: &Arc<dyn DeliveryQueryService>) -> Result<S
         .from_str(&config_content)
         .map_err(|e| format!("Failed to parse config: {e}"))?;
 
-    let (domains, rate_limit) = empath.delivery_reload_settings();
+    let (domains, rate_limit, retry_policy, smtp_timeouts, circuit_breaker) =
+        empath.delivery_reload_settings();
 
     delivery.replace_domains(domains);
     delivery.replace_rate_limit_config(rate_limit);
+    delivery.replace_retry_policy(retry_policy);
+    delivery.replace_smtp_timeouts(smtp_timeouts);
+    delivery.replace_circuit_breaker_config(circuit_breaker);
 
     let report = ReloadReport::new(
-        vec!["delivery.domains", "delivery.rate_limit"],
+        vec![
+            "delivery.domains",
+            "delivery.rate_limit",
+            "delivery.retry_policy",
+            "delivery.smtp_timeouts",
+            "delivery.circuit_breaker",
+        ],
         vec![
             "smtp.listeners/timeouts",
             "controller socket/auth/rate limits",
-            "delivery.retry_policy",
-            "delivery.circuit_breaker",
             "delivery.dns",
-            "delivery.smtp_timeouts",
             "delivery.smtp_pool",
             "delivery.dsn",
             "delivery.outbound_bindings",

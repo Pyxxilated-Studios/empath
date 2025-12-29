@@ -94,8 +94,11 @@ fn init_processor(spool: Arc<dyn BackingStore>) -> DeliveryProcessor {
     let mut processor = DeliveryProcessor::default();
     processor.scan_interval_secs = 1;
     processor.process_interval_secs = 1;
-    processor.retry_policy.max_attempts = 5;
-    processor.retry_policy.base_retry_delay_secs = 60;
+    {
+        let mut retry_policy = processor.retry_policy.write();
+        retry_policy.max_attempts = 5;
+        retry_policy.base_retry_delay_secs = 60;
+    }
     processor
         .init(spool, None)
         .expect("Failed to init processor");

@@ -69,6 +69,8 @@ pub struct DeliveryMetrics {
     smtp_pool_hits_total: Counter<u64>,
     /// Total number of SMTP client pool misses
     smtp_pool_misses_total: Counter<u64>,
+    /// Total number of TLS handshake failures
+    tls_handshake_failures_total: Counter<u64>,
     /// Current SMTP client pool size per domain
     smtp_pool_sizes: Arc<DashMap<String, Arc<AtomicU64>>>,
 
@@ -174,6 +176,7 @@ struct DeliveryInstruments {
     binding_health_state: Gauge<u64>,
     smtp_pool_hits_total: Counter<u64>,
     smtp_pool_misses_total: Counter<u64>,
+    tls_handshake_failures_total: Counter<u64>,
     circuit_breaker_trips_total: Counter<u64>,
     circuit_breaker_recoveries_total: Counter<u64>,
     active_connections: UpDownCounter<i64>,
@@ -218,6 +221,7 @@ impl DeliveryMetrics {
             binding_health_state: instruments.binding_health_state,
             smtp_pool_hits_total: instruments.smtp_pool_hits_total,
             smtp_pool_misses_total: instruments.smtp_pool_misses_total,
+            tls_handshake_failures_total: instruments.tls_handshake_failures_total,
             smtp_pool_sizes: pools.smtp_pool_sizes,
             circuit_breaker_trips_total: instruments.circuit_breaker_trips_total,
             circuit_breaker_recoveries_total: instruments.circuit_breaker_recoveries_total,
@@ -298,6 +302,11 @@ impl DeliveryMetrics {
             .with_description("Total number of outbound SMTP pool misses by domain")
             .build();
 
+        let tls_handshake_failures_total = meter
+            .u64_counter("empath.delivery.tls.handshake_failures.total")
+            .with_description("Total number of TLS handshake failures by domain and policy")
+            .build();
+
         let circuit_breaker_trips_total = meter
             .u64_counter("empath.delivery.circuit_breaker.trips.total")
             .with_description(
@@ -330,6 +339,7 @@ impl DeliveryMetrics {
             binding_health_state,
             smtp_pool_hits_total,
             smtp_pool_misses_total,
+            tls_handshake_failures_total,
             circuit_breaker_trips_total,
             circuit_breaker_recoveries_total,
             active_connections,
@@ -685,6 +695,16 @@ impl DeliveryMetrics {
     /// Record a permanent failure
     pub fn record_permanent_failure(&self, domain: &str) {
         self.record_attempt("permanent_failure", domain);
+    }
+
+    /// Record a TLS handshake failure
+    pub fn record_tls_handshake_failure(&self, domain: &str, policy: &str) {
+        let bucketed_domain = self.bucket_domain(domain);
+        let attributes = [
+            KeyValue::new("domain", bucketed_domain),
+            KeyValue::new("policy", policy.to_string()),
+        ];
+        self.tls_handshake_failures_total.add(1, &attributes);
     }
 
     /// Update queue size for a specific status

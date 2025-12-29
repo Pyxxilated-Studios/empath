@@ -299,7 +299,7 @@ impl CircuitBreakerData {
 #[derive(Debug)]
 pub struct CircuitBreaker {
     /// Global configuration
-    config: CircuitBreakerConfig,
+    config: parking_lot::RwLock<CircuitBreakerConfig>,
     /// Per-domain circuit breaker state
     breakers: DashMap<Domain, Arc<parking_lot::Mutex<CircuitBreakerData>>>,
 }
@@ -309,7 +309,7 @@ impl CircuitBreaker {
     #[must_use]
     pub fn new(config: CircuitBreakerConfig) -> Self {
         Self {
-            config,
+            config: parking_lot::RwLock::new(config),
             breakers: DashMap::new(),
         }
     }
@@ -320,23 +320,31 @@ impl CircuitBreaker {
             .entry(domain.clone())
             .or_insert_with(|| {
                 // Check for domain-specific config override
-                let domain_config = self
-                    .config
-                    .domain_overrides
-                    .get(domain.as_str())
-                    .cloned()
-                    .unwrap_or(DomainCircuitBreakerConfig {
-                        failure_threshold: self.config.failure_threshold,
-                        failure_window_secs: self.config.failure_window_secs,
-                        timeout_secs: self.config.timeout_secs,
-                        success_threshold: self.config.success_threshold,
-                    });
+                let (default_config, override_config) = {
+                    let config = self.config.read();
+                    let default_config = DomainCircuitBreakerConfig {
+                        failure_threshold: config.failure_threshold,
+                        failure_window_secs: config.failure_window_secs,
+                        timeout_secs: config.timeout_secs,
+                        success_threshold: config.success_threshold,
+                    };
+                    let override_config = config.domain_overrides.get(domain.as_str()).cloned();
+                    drop(config);
+                    (default_config, override_config)
+                };
+                let domain_config = override_config.unwrap_or(default_config);
 
                 Arc::new(parking_lot::Mutex::new(CircuitBreakerData::new(
                     domain_config,
                 )))
             })
             .clone()
+    }
+
+    /// Replace global configuration and reset per-domain circuit breaker state.
+    pub fn replace_config(&self, config: CircuitBreakerConfig) {
+        *self.config.write() = config;
+        self.breakers.clear();
     }
 
     /// Check if delivery should be allowed for this domain

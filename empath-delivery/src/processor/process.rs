@@ -24,14 +24,15 @@ fn handle_circuit_breaker_gate(processor: &DeliveryProcessor, info: &DeliveryInf
     if let Some(circuit_breaker) = &processor.circuit_breaker_instance
         && !circuit_breaker.should_allow_delivery(&info.recipient_domain)
     {
+        let circuit_config = processor.circuit_breaker.read().clone();
         warn!(
             message_id = ?info.message_id,
             domain = %info.recipient_domain,
             "Circuit breaker is OPEN - rejecting delivery attempt to prevent retry storm"
         );
         // Update next retry time to check again after circuit timeout
-        let next_retry = SystemTime::now()
-            + std::time::Duration::from_secs(processor.circuit_breaker.timeout_secs);
+        let next_retry =
+            SystemTime::now() + std::time::Duration::from_secs(circuit_config.timeout_secs);
         processor.queue.update_status(
             &info.message_id,
             DeliveryStatus::Retry {
@@ -80,9 +81,8 @@ async fn handle_binding_disabled_gate(
         },
     );
 
-    let next_retry_at = processor
-        .retry_policy
-        .calculate_next_retry(info.attempt_count());
+    let retry_policy = processor.retry_policy.read().clone();
+    let next_retry_at = retry_policy.calculate_next_retry(info.attempt_count());
     processor
         .queue
         .set_next_retry_at(&info.message_id, next_retry_at);
@@ -140,9 +140,8 @@ async fn handle_binding_health_gate(
         },
     );
 
-    let next_retry_at = processor
-        .retry_policy
-        .calculate_next_retry(info.attempt_count());
+    let retry_policy = processor.retry_policy.read().clone();
+    let next_retry_at = retry_policy.calculate_next_retry(info.attempt_count());
     processor
         .queue
         .set_next_retry_at(&info.message_id, next_retry_at);

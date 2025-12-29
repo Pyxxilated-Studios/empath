@@ -11,6 +11,7 @@ use dashmap::DashSet;
 use empath_common::{Signal, internal};
 use empath_spool::SpoolScanCursor;
 use empath_tracing::traced;
+use parking_lot::RwLock;
 use serde::Deserialize;
 use tokio::{
     pin,
@@ -25,7 +26,7 @@ use crate::{
     domain_config::DomainConfigRegistry,
     dsn::DsnConfig,
     error::DeliveryError,
-    policy::RetryPolicy,
+    policy::{RetryPolicy, TlsPolicy},
     queue::DeliveryQueue,
     rate_limiter::{RateLimitConfig, RateLimiter},
     types::{SmtpPoolConfig, SmtpTimeouts},
@@ -70,7 +71,7 @@ pub struct DeliveryProcessor {
     /// and jitter. This is flattened into the config for backward compatibility.
     ///
     /// Default: 25 attempts, 300s base delay, 86400s max delay, 10% jitter
-    pub retry_policy: RetryPolicy,
+    pub retry_policy: RwLock<RetryPolicy>,
 
     /// Maximum number of concurrent delivery tasks
     ///
@@ -97,6 +98,9 @@ pub struct DeliveryProcessor {
     /// Default: `false` (secure)
     pub accept_invalid_certs: bool,
 
+    /// Global TLS policy for outbound delivery.
+    pub tls_policy: TlsPolicy,
+
     /// DNS configuration for resolver
     pub dns: DnsConfig,
 
@@ -110,7 +114,7 @@ pub struct DeliveryProcessor {
     pub outbound_bindings: OutboundBindingRegistry,
 
     /// SMTP operation timeout configuration
-    pub smtp_timeouts: SmtpTimeouts,
+    pub smtp_timeouts: RwLock<SmtpTimeouts>,
 
     /// SMTP client connection pool configuration
     pub smtp_pool: SmtpPoolConfig,
@@ -140,7 +144,7 @@ pub struct DeliveryProcessor {
     /// preserve resources.
     ///
     /// Default: 5 failures in 60 seconds triggers 5-minute circuit open
-    pub circuit_breaker: CircuitBreakerConfig,
+    pub circuit_breaker: RwLock<CircuitBreakerConfig>,
 
     /// How often to process the cleanup queue for failed deletions (in seconds)
     ///
@@ -216,6 +220,8 @@ struct DeliveryProcessorConfig {
     #[serde(default)]
     accept_invalid_certs: bool,
     #[serde(default)]
+    tls_policy: TlsPolicy,
+    #[serde(default)]
     dns: DnsConfig,
     #[serde(default)]
     mta_sts: crate::mta_sts::MtaStsConfig,
@@ -254,19 +260,20 @@ impl From<DeliveryProcessorConfig> for DeliveryProcessor {
         Self {
             scan_interval_secs: config.scan_interval_secs,
             process_interval_secs: config.process_interval_secs,
-            retry_policy: config.retry_policy,
+            retry_policy: RwLock::new(config.retry_policy),
             max_concurrent_deliveries: config.max_concurrent_deliveries,
             message_expiration_secs: config.message_expiration_secs,
             accept_invalid_certs: config.accept_invalid_certs,
+            tls_policy: config.tls_policy,
             dns: config.dns,
             mta_sts: config.mta_sts.clone(),
             domains: config.domains,
             outbound_bindings: config.outbound_bindings,
-            smtp_timeouts: config.smtp_timeouts,
+            smtp_timeouts: RwLock::new(config.smtp_timeouts),
             smtp_pool: config.smtp_pool.clone(),
             dsn: config.dsn,
             rate_limit: config.rate_limit,
-            circuit_breaker: config.circuit_breaker,
+            circuit_breaker: RwLock::new(config.circuit_breaker),
             cleanup_interval_secs: config.cleanup_interval_secs,
             max_cleanup_attempts: config.max_cleanup_attempts,
             mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::new(config.mta_sts),
@@ -281,19 +288,20 @@ impl Default for DeliveryProcessor {
         Self {
             scan_interval_secs: default_scan_interval(),
             process_interval_secs: default_process_interval(),
-            retry_policy: RetryPolicy::default(),
+            retry_policy: RwLock::new(RetryPolicy::default()),
             max_concurrent_deliveries: default_max_concurrent_deliveries(),
             message_expiration_secs: None,
             accept_invalid_certs: false,
+            tls_policy: TlsPolicy::default(),
             dns: DnsConfig::default(),
             mta_sts: crate::mta_sts::MtaStsConfig::default(),
             domains: DomainConfigRegistry::default(),
             outbound_bindings: OutboundBindingRegistry::default(),
-            smtp_timeouts: SmtpTimeouts::default(),
+            smtp_timeouts: RwLock::new(SmtpTimeouts::default()),
             smtp_pool: SmtpPoolConfig::default(),
             dsn: DsnConfig::default(),
             rate_limit: RateLimitConfig::default(),
-            circuit_breaker: CircuitBreakerConfig::default(),
+            circuit_breaker: RwLock::new(CircuitBreakerConfig::default()),
             cleanup_interval_secs: default_cleanup_interval(),
             max_cleanup_attempts: default_max_cleanup_attempts(),
             spool: None,
@@ -410,12 +418,13 @@ impl DeliveryProcessor {
         );
 
         // Initialize circuit breaker
-        self.circuit_breaker_instance = Some(CircuitBreaker::new(self.circuit_breaker.clone()));
+        let circuit_config = self.circuit_breaker.read().clone();
+        self.circuit_breaker_instance = Some(CircuitBreaker::new(circuit_config.clone()));
         internal!(
             "Circuit breaker initialized (threshold: {} failures in {}s, timeout: {}s)",
-            self.circuit_breaker.failure_threshold,
-            self.circuit_breaker.failure_window_secs,
-            self.circuit_breaker.timeout_secs
+            circuit_config.failure_threshold,
+            circuit_config.failure_window_secs,
+            circuit_config.timeout_secs
         );
 
         self.binding_health = Some(BindingHealthTracker::new());
@@ -425,6 +434,7 @@ impl DeliveryProcessor {
         self.domain_resolver = Some(crate::policy::DomainPolicyResolver::new(
             self.domains.clone(),
             self.accept_invalid_certs,
+            self.tls_policy,
         ));
         internal!(
             "Domain policy resolver initialized ({} domain configs, global accept_invalid_certs: {})",
@@ -880,6 +890,21 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
     fn replace_rate_limit_config(&self, config: crate::rate_limiter::RateLimitConfig) {
         if let Some(limiter) = &self.rate_limiter {
             limiter.replace_config(config);
+        }
+    }
+
+    fn replace_retry_policy(&self, policy: crate::policy::RetryPolicy) {
+        *self.retry_policy.write() = policy;
+    }
+
+    fn replace_smtp_timeouts(&self, timeouts: crate::types::SmtpTimeouts) {
+        *self.smtp_timeouts.write() = timeouts;
+    }
+
+    fn replace_circuit_breaker_config(&self, config: crate::circuit_breaker::CircuitBreakerConfig) {
+        *self.circuit_breaker.write() = config.clone();
+        if let Some(breaker) = &self.circuit_breaker_instance {
+            breaker.replace_config(config);
         }
     }
 

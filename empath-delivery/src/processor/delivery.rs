@@ -43,6 +43,7 @@ struct DeliverMessageArgs<'a> {
 }
 
 struct DeliveryTlsSettings {
+    policy: crate::policy::TlsPolicy,
     require_tls: bool,
     accept_invalid_certs: bool,
     tls_failure_is_temporary: bool,
@@ -316,6 +317,13 @@ pub async fn handle_delivery_error(
         is_temporary_failure,
         is_permanent_failure,
     );
+    if let DeliveryError::Temporary(TemporaryError::TlsHandshakeFailed(_)) = &error
+        && let Some(metrics) = &processor.metrics
+    {
+        let policy = resolve_tls_policy_for_metrics(processor, &updated_info, context)
+            .map_or("unknown", crate::policy::TlsPolicy::as_str);
+        metrics.record_tls_handshake_failure(&updated_info.recipient_domain, policy);
+    }
 
     if try_mx_fallback(processor, message_id, is_temporary_failure).await {
         return error;
@@ -611,18 +619,18 @@ fn resolve_tls_settings(
     server_address: &str,
     mta_sts_policy: Option<&crate::mta_sts::MtaStsPolicy>,
 ) -> Result<DeliveryTlsSettings, DeliveryError> {
-    let mut require_tls = domain_resolver.requires_tls(&delivery_info.recipient_domain);
+    let mut policy = domain_resolver.tls_policy(&delivery_info.recipient_domain);
     let mut accept_invalid_certs =
         domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain);
     let mut tls_failure_is_temporary = false;
 
-    if let Some(policy) = mta_sts_policy {
-        if policy.mode == crate::mta_sts::MtaStsMode::Enforce {
-            require_tls = true;
+    if let Some(sts_policy) = mta_sts_policy {
+        if sts_policy.mode == crate::mta_sts::MtaStsMode::Enforce {
+            policy = crate::policy::TlsPolicy::Required;
             accept_invalid_certs = false;
             tls_failure_is_temporary = true;
             let mx_host = extract_host(server_address);
-            if !crate::mta_sts::mx_matches(policy, &mx_host) {
+            if !crate::mta_sts::mx_matches(sts_policy, &mx_host) {
                 return Err(TemporaryError::PolicyViolation(format!(
                     "MTA-STS policy does not permit MX host '{mx_host}'"
                 ))
@@ -640,7 +648,10 @@ fn resolve_tls_settings(
         );
     }
 
+    let require_tls = policy.require_tls();
+
     Ok(DeliveryTlsSettings {
+        policy,
         require_tls,
         accept_invalid_certs,
         tls_failure_is_temporary,
@@ -666,12 +677,13 @@ fn resolve_binding_selection(
         None
     };
 
-    let attempt_tls = binding
+    let binding_allows_tls = binding
         .as_ref()
         .is_none_or(|binding| binding.tls.attempt_starttls);
-    if tls_settings.require_tls && !attempt_tls {
+    let attempt_tls = tls_settings.policy.attempt_tls() && binding_allows_tls;
+    if tls_settings.policy.attempt_tls() && !binding_allows_tls {
         return Err(SystemError::Configuration(
-            "Binding disables STARTTLS but recipient domain requires TLS".to_string(),
+            "Binding disables STARTTLS but TLS policy requires it".to_string(),
         )
         .into());
     }
@@ -695,7 +707,7 @@ fn resolve_binding_selection(
     let smtp_timeouts = binding
         .as_ref()
         .and_then(|binding| binding.smtp_timeouts.clone())
-        .unwrap_or_else(|| processor.smtp_timeouts.clone());
+        .unwrap_or_else(|| processor.smtp_timeouts.read().clone());
 
     Ok(BindingSelection {
         attempt_tls,
@@ -750,6 +762,24 @@ fn record_failure_metrics(
     }
 }
 
+fn resolve_tls_policy_for_metrics(
+    processor: &DeliveryProcessor,
+    info: &DeliveryInfo,
+    context: &Context,
+) -> Option<crate::policy::TlsPolicy> {
+    let resolver = processor.domain_resolver.as_ref()?;
+    let policy = if context
+        .transaction
+        .get("mta_sts_mode")
+        .is_some_and(|value| value.eq_ignore_ascii_case("enforce"))
+    {
+        crate::policy::TlsPolicy::Required
+    } else {
+        resolver.tls_policy(&info.recipient_domain)
+    };
+    Some(policy)
+}
+
 async fn try_mx_fallback(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
@@ -802,15 +832,16 @@ fn update_retry_state(
         .and_then(|name| processor.outbound_bindings.get(name));
     let binding_retry_policy = binding_config.and_then(|binding| binding.retry_policy.clone());
     let binding_allows_failover = binding_config.is_some_and(|binding| binding.allow_failover);
-    let mut retry_policy = binding_retry_policy.unwrap_or_else(|| processor.retry_policy.clone());
+    let global_retry_policy = processor.retry_policy.read().clone();
+    let mut retry_policy = binding_retry_policy.unwrap_or_else(|| global_retry_policy.clone());
 
     if binding_config.is_some()
         && info.attempt_count() >= retry_policy.max_attempts
         && binding_allows_failover
-        && processor.retry_policy.should_retry(info.attempt_count())
+        && global_retry_policy.should_retry(info.attempt_count())
     {
         processor.queue.set_binding(message_id, None);
-        retry_policy = processor.retry_policy.clone();
+        retry_policy = global_retry_policy;
         info!(
             message_id = %message_id,
             domain = %info.recipient_domain,

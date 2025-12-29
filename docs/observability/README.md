@@ -264,6 +264,7 @@ Warnings are inhibited when related critical alerts fire:
 | `empath.delivery.circuit_breaker.state{domain}` | Gauge | Circuit breaker state (0=Closed, 1=Open, 2=HalfOpen) | CircuitBreakerOpen |
 | `empath.delivery.rate_limited.total{domain}` | Counter | Rate limit delays per domain | RateLimitingExcessive |
 | `empath.delivery.bindings.selected.total{binding}` | Counter | Delivery attempts per outbound binding | - |
+| `empath.delivery.tls.handshake_failures.total{domain,policy}` | Counter | TLS handshake failures by domain/policy | TLSHandshakeFailuresSpike |
 
 ### SMTP Metrics
 

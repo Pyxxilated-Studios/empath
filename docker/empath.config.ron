@@ -91,6 +91,10 @@ Empath (
         // Default: false (secure). Only enable for testing with self-signed certificates.
         // accept_invalid_certs: false,
 
+        // TLS delivery policy for outbound connections.
+        // Options: "opportunistic" (default), "required", "disabled" (testing only).
+        // tls_policy: "opportunistic",
+
         // SMTP operation timeout configuration (all values in seconds)
         // These timeouts prevent hung connections and ensure timely failure detection
         "smtp_timeouts": (
@@ -181,6 +185,8 @@ Empath (
             // Example: Require TLS for a specific domain
             "secure.example.com": (
                 require_tls: true,
+                // Or use a policy override:
+                // tls_policy: "required",
                 max_connections: 5,
                 // Explicitly require valid certificates (overrides global setting)
                 accept_invalid_certs: false,

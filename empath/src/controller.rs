@@ -254,10 +254,16 @@ impl Empath {
     ) -> (
         empath_delivery::DomainConfigRegistry,
         empath_delivery::RateLimitConfig,
+        empath_delivery::RetryPolicy,
+        empath_delivery::SmtpTimeouts,
+        empath_delivery::CircuitBreakerConfig,
     ) {
         (
             self.delivery.domains.clone(),
             self.delivery.rate_limit.clone(),
+            self.delivery.retry_policy.read().clone(),
+            self.delivery.smtp_timeouts.read().clone(),
+            self.delivery.circuit_breaker.read().clone(),
         )
     }
 

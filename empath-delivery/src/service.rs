@@ -167,6 +167,15 @@ pub trait DeliveryQueryService: Send + Sync {
     /// Replace the full rate limit configuration (global + per-domain).
     fn replace_rate_limit_config(&self, config: crate::rate_limiter::RateLimitConfig);
 
+    /// Replace retry policy configuration.
+    fn replace_retry_policy(&self, policy: crate::policy::RetryPolicy);
+
+    /// Replace SMTP timeout configuration.
+    fn replace_smtp_timeouts(&self, timeouts: crate::types::SmtpTimeouts);
+
+    /// Replace circuit breaker configuration.
+    fn replace_circuit_breaker_config(&self, config: crate::circuit_breaker::CircuitBreakerConfig);
+
     /// Replace domain configuration registry contents.
     fn replace_domains(&self, registry: crate::DomainConfigRegistry);
 }

@@ -11,6 +11,8 @@ use std::{collections::HashMap, sync::Arc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
+use crate::policy::TlsPolicy;
+
 /// Configuration for a specific domain
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DomainConfig {
@@ -44,6 +46,10 @@ pub struct DomainConfig {
     /// - `None`: Use global configuration (default)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub accept_invalid_certs: Option<bool>,
+
+    /// TLS policy override for this domain.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tls_policy: Option<TlsPolicy>,
 
     /// Maximum concurrent connections to this domain
     ///
@@ -218,6 +224,7 @@ mod tests {
         assert!(!config.has_mx_override());
         assert!(!config.require_tls);
         assert!(config.accept_invalid_certs.is_none());
+        assert!(config.tls_policy.is_none());
         assert!(config.max_connections.is_none());
         assert!(config.rate_limit.is_none());
         assert!(config.binding.is_none());
@@ -271,6 +278,7 @@ mod tests {
                 rate_limit: Some(100),
                 require_tls: true,
                 accept_invalid_certs: None,
+                tls_policy: None,
                 mx_override: None,
                 binding: None,
                 mta_sts_enabled: None,

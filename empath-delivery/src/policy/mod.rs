@@ -18,7 +18,9 @@
 pub mod domain;
 pub mod pipeline;
 pub mod retry;
+pub mod tls;
 
 pub use domain::DomainPolicyResolver;
 pub use pipeline::{DeliveryPipeline, DnsResolution, RateLimitResult};
 pub use retry::RetryPolicy;
+pub use tls::TlsPolicy;

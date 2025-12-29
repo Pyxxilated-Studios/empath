@@ -18,7 +18,7 @@ No active P1 items. See P2/P3/New Ideas for candidates.
 ## P3 — Deferred / Nice to Have
 - [x] 0.13 Control socket auth (multi-user/ACL) — covered by optional control_auth roles.
 - [x] 0.14 DNSSEC validation/logging — backlog after 1.0.
-- [ ] 5.2/5.3 Config hot reload & TLS policy enforcement — post-Phase 4.
+- [x] 5.2/5.3 Config hot reload & TLS policy enforcement — post-Phase 4.
 - [x] NEW-WASM-15+16 performance cleanup after macro/context changes (profiling).
 - [x] NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, `empathctl backup/restore`, tested scenarios.
 

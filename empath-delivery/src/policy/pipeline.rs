@@ -250,6 +250,7 @@ mod tests {
         circuit_breaker::CircuitBreakerConfig,
         dns::MockDnsResolver,
         domain_config::{DomainConfig, DomainConfigRegistry},
+        policy::TlsPolicy,
         rate_limiter::{RateLimitConfig, RateLimiter},
     };
 
@@ -278,7 +279,7 @@ mod tests {
         );
 
         let dns_resolver = MockDnsResolver::new();
-        let domain_resolver = DomainPolicyResolver::new(registry, false);
+        let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
         let result = pipeline
@@ -297,7 +298,7 @@ mod tests {
     fn test_check_rate_limit_no_limiter() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
-        let domain_resolver = DomainPolicyResolver::new(registry, false);
+        let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
         let message_id = empath_spool::SpooledMessageId::new(ulid::Ulid::new());
@@ -311,7 +312,7 @@ mod tests {
     fn test_check_rate_limit_with_limiter_allowed() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
-        let domain_resolver = DomainPolicyResolver::new(registry, false);
+        let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
 
         // Create rate limiter with high limit
         let rate_limiter = RateLimiter::new(RateLimitConfig {
@@ -333,7 +334,7 @@ mod tests {
     fn test_record_success_no_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
-        let domain_resolver = DomainPolicyResolver::new(registry, false);
+        let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
         // Should not panic
@@ -344,7 +345,7 @@ mod tests {
     fn test_record_success_with_circuit_breaker() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
-        let domain_resolver = DomainPolicyResolver::new(registry, false);
+        let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
 
@@ -363,7 +364,7 @@ mod tests {
     fn test_record_failure_permanent_not_recorded() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
-        let domain_resolver = DomainPolicyResolver::new(registry, false);
+        let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
 
@@ -384,7 +385,7 @@ mod tests {
     fn test_record_failure_temporary_recorded() {
         let registry = DomainConfigRegistry::new();
         let dns_resolver = MockDnsResolver::new();
-        let domain_resolver = DomainPolicyResolver::new(registry, false);
+        let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
 
         let circuit_breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
 

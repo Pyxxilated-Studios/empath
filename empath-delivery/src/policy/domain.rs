@@ -6,7 +6,9 @@
 //! - TLS requirements (per-domain compliance)
 //! - Certificate validation policies (with security-conscious defaults)
 
-use crate::{dns::MailServer, domain_config::DomainConfigRegistry};
+use std::sync::{Arc, RwLock};
+
+use crate::{dns::MailServer, domain_config::DomainConfigRegistry, policy::TlsPolicy};
 
 /// Resolver for domain-specific delivery policies
 ///
@@ -23,11 +25,14 @@ pub struct DomainPolicyResolver {
     /// Registry of per-domain configurations
     domains: DomainConfigRegistry,
 
-    /// Global default for certificate validation
-    ///
-    /// Used when domain has no specific override.
-    /// Default: `false` (validate certificates)
-    global_accept_invalid_certs: bool,
+    /// Global defaults for policy resolution.
+    defaults: Arc<RwLock<DomainPolicyDefaults>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DomainPolicyDefaults {
+    accept_invalid_certs: bool,
+    tls_policy: TlsPolicy,
 }
 
 impl DomainPolicyResolver {
@@ -37,11 +42,26 @@ impl DomainPolicyResolver {
     ///
     /// * `domains` - Registry of per-domain configurations
     /// * `global_accept_invalid_certs` - Global default for certificate validation
+    /// * `global_tls_policy` - Global default for TLS policy
     #[must_use]
-    pub const fn new(domains: DomainConfigRegistry, global_accept_invalid_certs: bool) -> Self {
+    pub fn new(
+        domains: DomainConfigRegistry,
+        global_accept_invalid_certs: bool,
+        global_tls_policy: TlsPolicy,
+    ) -> Self {
         Self {
             domains,
-            global_accept_invalid_certs,
+            defaults: Arc::new(RwLock::new(DomainPolicyDefaults {
+                accept_invalid_certs: global_accept_invalid_certs,
+                tls_policy: global_tls_policy,
+            })),
+        }
+    }
+
+    pub fn update_defaults(&self, accept_invalid_certs: bool, tls_policy: TlsPolicy) {
+        if let Ok(mut guard) = self.defaults.write() {
+            guard.accept_invalid_certs = accept_invalid_certs;
+            guard.tls_policy = tls_policy;
         }
     }
 
@@ -106,7 +126,30 @@ impl DomainPolicyResolver {
         self.domains
             .get(domain)
             .and_then(|config| config.accept_invalid_certs)
-            .unwrap_or(self.global_accept_invalid_certs)
+            .unwrap_or_else(|| {
+                self.defaults
+                    .read()
+                    .map(|defaults| defaults.accept_invalid_certs)
+                    .unwrap_or(false)
+            })
+    }
+
+    /// Resolve the TLS policy for a domain.
+    #[must_use]
+    pub fn tls_policy(&self, domain: &str) -> TlsPolicy {
+        if let Some(config) = self.domains.get(domain) {
+            if let Some(policy) = config.tls_policy {
+                return policy;
+            }
+            if config.require_tls {
+                return TlsPolicy::Required;
+            }
+        }
+
+        self.defaults
+            .read()
+            .map(|defaults| defaults.tls_policy)
+            .unwrap_or_default()
     }
 
     /// Resolve outbound binding override for a domain.
@@ -186,7 +229,7 @@ mod tests {
             },
         );
 
-        let resolver = DomainPolicyResolver::new(registry, false);
+        let resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         let server = resolver.resolve_mx_override("test.example.com");
 
         assert!(server.is_some(), "Expected MX override to be configured");
@@ -199,7 +242,7 @@ mod tests {
     #[test]
     fn test_resolve_mx_override_not_configured() {
         let registry = DomainConfigRegistry::new();
-        let resolver = DomainPolicyResolver::new(registry, false);
+        let resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
 
         assert!(resolver.resolve_mx_override("example.com").is_none());
     }
@@ -215,7 +258,7 @@ mod tests {
             },
         );
 
-        let resolver = DomainPolicyResolver::new(registry, false);
+        let resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         assert!(resolver.requires_tls("secure.example.com"));
     }
 
@@ -230,14 +273,14 @@ mod tests {
             },
         );
 
-        let resolver = DomainPolicyResolver::new(registry, false);
+        let resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         assert!(!resolver.requires_tls("example.com"));
     }
 
     #[test]
     fn test_requires_tls_not_configured() {
         let registry = DomainConfigRegistry::new();
-        let resolver = DomainPolicyResolver::new(registry, false);
+        let resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
 
         // No domain config = default to false
         assert!(!resolver.requires_tls("example.com"));
@@ -254,7 +297,7 @@ mod tests {
             },
         );
 
-        let resolver = DomainPolicyResolver::new(registry, false);
+        let resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         assert!(resolver.accepts_invalid_certs("test.local"));
     }
 
@@ -270,7 +313,7 @@ mod tests {
         );
 
         // Global is true, but domain overrides to false
-        let resolver = DomainPolicyResolver::new(registry, true);
+        let resolver = DomainPolicyResolver::new(registry, true, TlsPolicy::default());
         assert!(!resolver.accepts_invalid_certs("secure.example.com"));
     }
 
@@ -286,10 +329,11 @@ mod tests {
         );
 
         // Should use global default
-        let resolver_false = DomainPolicyResolver::new(registry.clone(), false);
+        let resolver_false =
+            DomainPolicyResolver::new(registry.clone(), false, TlsPolicy::default());
         assert!(!resolver_false.accepts_invalid_certs("example.com"));
 
-        let resolver_true = DomainPolicyResolver::new(registry, true);
+        let resolver_true = DomainPolicyResolver::new(registry, true, TlsPolicy::default());
         assert!(resolver_true.accepts_invalid_certs("example.com"));
     }
 
@@ -298,10 +342,11 @@ mod tests {
         let registry = DomainConfigRegistry::new();
 
         // No domain config at all, use global
-        let resolver_false = DomainPolicyResolver::new(registry.clone(), false);
+        let resolver_false =
+            DomainPolicyResolver::new(registry.clone(), false, TlsPolicy::default());
         assert!(!resolver_false.accepts_invalid_certs("unconfigured.example.com"));
 
-        let resolver_true = DomainPolicyResolver::new(registry, true);
+        let resolver_true = DomainPolicyResolver::new(registry, true, TlsPolicy::default());
         assert!(resolver_true.accepts_invalid_certs("unconfigured.example.com"));
     }
 }

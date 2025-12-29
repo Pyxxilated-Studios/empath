@@ -198,7 +198,8 @@ mod tests {
         let registry = registry_with_default();
         let context = Context::default();
         let domains = DomainConfigRegistry::default();
-        let resolver = DomainPolicyResolver::new(domains, false);
+        let resolver =
+            DomainPolicyResolver::new(domains, false, crate::policy::TlsPolicy::default());
 
         let name =
             registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)?;
@@ -218,7 +219,8 @@ mod tests {
                 ..DomainConfig::default()
             },
         )]));
-        let resolver = DomainPolicyResolver::new(domains, false);
+        let resolver =
+            DomainPolicyResolver::new(domains, false, crate::policy::TlsPolicy::default());
 
         let name =
             registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)?;
@@ -241,7 +243,8 @@ mod tests {
                 ..DomainConfig::default()
             },
         )]));
-        let resolver = DomainPolicyResolver::new(domains, false);
+        let resolver =
+            DomainPolicyResolver::new(domains, false, crate::policy::TlsPolicy::default());
 
         let name =
             registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)?;
@@ -258,7 +261,8 @@ mod tests {
             .transaction
             .insert(OUTBOUND_BINDING_CONTEXT_KEY.into(), "unknown".to_string());
         let domains = DomainConfigRegistry::default();
-        let resolver = DomainPolicyResolver::new(domains, false);
+        let resolver =
+            DomainPolicyResolver::new(domains, false, crate::policy::TlsPolicy::default());
 
         let Err(err) =
             registry.resolve_binding_name(&context, &Domain::new("example.com"), &resolver)
