@@ -23,6 +23,7 @@ use crate::{
     error::{DeliveryError, SystemError, TemporaryError},
     processor::DeliveryProcessor,
     smtp_pool::{CertValidation, SmtpPoolKey, SmtpPoolRequest, TlsMode},
+    smtp_transaction::{SmtpTlsConfig, TlsFailurePolicy},
     types::DeliveryInfo,
 };
 
@@ -44,13 +45,11 @@ struct DeliverMessageArgs<'a> {
 
 struct DeliveryTlsSettings {
     policy: crate::policy::TlsPolicy,
-    require_tls: bool,
-    accept_invalid_certs: bool,
-    tls_failure_is_temporary: bool,
+    cert_validation: CertValidation,
+    failure_policy: TlsFailurePolicy,
 }
 
 struct BindingSelection {
-    attempt_tls: bool,
     tls_mode: TlsMode,
     cert_validation: CertValidation,
     connect_config: Option<ConnectConfig>,
@@ -620,15 +619,19 @@ fn resolve_tls_settings(
     mta_sts_policy: Option<&crate::mta_sts::MtaStsPolicy>,
 ) -> Result<DeliveryTlsSettings, DeliveryError> {
     let mut policy = domain_resolver.tls_policy(&delivery_info.recipient_domain);
-    let mut accept_invalid_certs =
-        domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain);
-    let mut tls_failure_is_temporary = false;
+    let mut cert_validation =
+        if domain_resolver.accepts_invalid_certs(&delivery_info.recipient_domain) {
+            CertValidation::AllowInvalid
+        } else {
+            CertValidation::Strict
+        };
+    let mut failure_policy = TlsFailurePolicy::Permanent;
 
     if let Some(sts_policy) = mta_sts_policy {
         if sts_policy.mode == crate::mta_sts::MtaStsMode::Enforce {
             policy = crate::policy::TlsPolicy::Required;
-            accept_invalid_certs = false;
-            tls_failure_is_temporary = true;
+            cert_validation = CertValidation::Strict;
+            failure_policy = TlsFailurePolicy::Temporary;
             let mx_host = extract_host(server_address);
             if !crate::mta_sts::mx_matches(sts_policy, &mx_host) {
                 return Err(TemporaryError::PolicyViolation(format!(
@@ -648,13 +651,10 @@ fn resolve_tls_settings(
         );
     }
 
-    let require_tls = policy.require_tls();
-
     Ok(DeliveryTlsSettings {
         policy,
-        require_tls,
-        accept_invalid_certs,
-        tls_failure_is_temporary,
+        cert_validation,
+        failure_policy,
     })
 }
 
@@ -709,10 +709,11 @@ fn resolve_binding_selection(
         .and_then(|binding| binding.smtp_timeouts.clone())
         .unwrap_or_else(|| processor.smtp_timeouts.read().clone());
 
+    let tls_mode = TlsMode::new(attempt_tls, tls_settings.policy.require_tls());
+
     Ok(BindingSelection {
-        attempt_tls,
-        tls_mode: TlsMode::new(attempt_tls, tls_settings.require_tls),
-        cert_validation: CertValidation::new(tls_settings.accept_invalid_certs),
+        tls_mode,
+        cert_validation: tls_settings.cert_validation,
         connect_config,
         pool_connect_config,
         helo_domain,
@@ -1112,17 +1113,16 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
         .await;
 
     // Create and execute the SMTP transaction
+    let tls_config = SmtpTlsConfig::new(binding.tls_mode, binding.cert_validation)
+        .with_failure_policy(tls_settings.failure_policy);
     let transaction = crate::smtp_transaction::SmtpTransaction::new(
         context,
         server_address.to_string(),
-        binding.attempt_tls,
-        tls_settings.require_tls,
-        tls_settings.accept_invalid_certs,
+        tls_config,
         &binding.smtp_timeouts,
     )
     .with_helo_domain(binding.helo_domain.clone())
     .with_connect_config(binding.connect_config.clone())
-    .with_tls_failure_is_temporary(tls_settings.tls_failure_is_temporary)
     .with_metrics(processor.metrics.as_ref(), delivery_info.binding.as_deref())
     .with_spool_body(spool, message_id);
 

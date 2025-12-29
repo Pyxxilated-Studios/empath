@@ -31,7 +31,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] ARCH-08: Create `ModuleRegistry` (builder) for `empath-ffi::modules` to replace free `init/dispatch` and outbound binding helpers.
 - [ ] ARCH-09: Move DSN/MTA-STS helper free functions onto types (`DsnGenerator`, `MtaStsPolicy`, `MtaStsPolicyCache`) with builders for config.
 - [x] ARCH-10: Move AUTH PLAIN parsing into `PlainCredentials::decode` and align auth parsing behind a common `AuthMechanism` trait.
-- [ ] ARCH-11: Replace boolean-heavy TLS params with enums/config structs (e.g., `TlsMode`, `CertValidation`, `TlsRequirement`) in `SmtpTransaction::new` and related call sites.
+- [x] ARCH-11: Replace boolean-heavy TLS params with enums/config structs (e.g., `TlsMode`, `CertValidation`, `TlsRequirement`) in `SmtpTransaction::new` and related call sites.
 - [ ] ARCH-12: Collapse long arg lists (`SmtpPoolKey::new`, `SmtpPoolRequest::new`, DSN generation) into request/config structs or builders.
 - [ ] ARCH-13: Review large structs (`Context`, `DeliveryInfo`, `SmtpPoolConfig`) for sub-struct grouping and builder ergonomics without breaking serde stability.
 

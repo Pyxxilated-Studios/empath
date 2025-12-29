@@ -51,12 +51,8 @@ pub enum CertValidation {
 
 impl CertValidation {
     #[must_use]
-    pub const fn new(accept_invalid_certs: bool) -> Self {
-        if accept_invalid_certs {
-            Self::AllowInvalid
-        } else {
-            Self::Strict
-        }
+    pub const fn accepts_invalid(self) -> bool {
+        matches!(self, Self::AllowInvalid)
     }
 }
 

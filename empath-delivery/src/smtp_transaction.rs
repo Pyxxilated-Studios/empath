@@ -23,6 +23,7 @@ use empath_tracing::traced;
 use crate::{
     SmtpTimeouts,
     error::{DeliveryError, PermanentError, SystemError, TemporaryError},
+    smtp_pool::{CertValidation, TlsMode},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -44,26 +45,43 @@ impl TlsRequirement {
             }
         )
     }
+}
 
-    const fn with_failure_temporary(self, temporary: bool) -> Self {
-        match self {
-            Self::Optional => Self::Optional,
-            Self::Required { .. } => Self::Required {
-                failure_is_temporary: temporary,
-            },
-        }
+/// TLS failure policy when TLS is required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsFailurePolicy {
+    Permanent,
+    Temporary,
+}
+
+impl TlsFailurePolicy {
+    const fn is_temporary(self) -> bool {
+        matches!(self, Self::Temporary)
     }
 }
 
+/// TLS configuration for outbound SMTP transactions.
 #[derive(Debug, Clone, Copy)]
-enum TlsValidation {
-    Strict,
-    AllowInvalid,
+pub struct SmtpTlsConfig {
+    pub mode: TlsMode,
+    pub validation: CertValidation,
+    pub failure_policy: TlsFailurePolicy,
 }
 
-impl TlsValidation {
-    const fn accepts_invalid(self) -> bool {
-        matches!(self, Self::AllowInvalid)
+impl SmtpTlsConfig {
+    #[must_use]
+    pub const fn new(mode: TlsMode, validation: CertValidation) -> Self {
+        Self {
+            mode,
+            validation,
+            failure_policy: TlsFailurePolicy::Permanent,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_failure_policy(mut self, failure_policy: TlsFailurePolicy) -> Self {
+        self.failure_policy = failure_policy;
+        self
     }
 }
 
@@ -110,7 +128,7 @@ pub struct SmtpTransaction<'a> {
     /// TLS requirement policy
     tls_requirement: TlsRequirement,
     /// TLS certificate validation policy
-    tls_validation: TlsValidation,
+    tls_validation: CertValidation,
     /// Timeout configuration for SMTP operations
     smtp_timeouts: &'a SmtpTimeouts,
     /// Optional HELO/EHLO override
@@ -159,39 +177,30 @@ impl<'a> SmtpTransaction<'a> {
     /// # Arguments
     /// * `context` - The message context containing envelope and data
     /// * `server_address` - The SMTP server address (host:port)
-    /// * `attempt_tls` - Whether to attempt STARTTLS negotiation when advertised
-    /// * `require_tls` - Whether TLS is required for this delivery
-    /// * `accept_invalid_certs` - Whether to accept invalid TLS certificates
+    /// * `tls_config` - TLS mode, validation, and failure policy
     /// * `smtp_timeouts` - Timeout configuration for SMTP operations
     #[must_use]
     pub const fn new(
         context: &'a Context,
         server_address: String,
-        attempt_tls: bool,
-        require_tls: bool,
-        accept_invalid_certs: bool,
+        tls_config: SmtpTlsConfig,
         smtp_timeouts: &'a SmtpTimeouts,
     ) -> Self {
-        let tls_requirement = if require_tls {
+        let tls_requirement = if tls_config.mode.require_tls() {
             TlsRequirement::Required {
-                failure_is_temporary: false,
+                failure_is_temporary: tls_config.failure_policy.is_temporary(),
             }
         } else {
             TlsRequirement::Optional
-        };
-        let tls_validation = if accept_invalid_certs {
-            TlsValidation::AllowInvalid
-        } else {
-            TlsValidation::Strict
         };
 
         Self {
             context,
             body_source: MessageBodySource::Context,
             server_address,
-            attempt_tls,
+            attempt_tls: tls_config.mode.attempt_tls(),
             tls_requirement,
-            tls_validation,
+            tls_validation: tls_config.validation,
             smtp_timeouts,
             helo_domain: None,
             connect_config: None,
@@ -213,12 +222,6 @@ impl<'a> SmtpTransaction<'a> {
     #[must_use]
     pub fn with_helo_domain(mut self, helo_domain: Option<String>) -> Self {
         self.helo_domain = helo_domain;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_tls_failure_is_temporary(mut self, temporary: bool) -> Self {
-        self.tls_requirement = self.tls_requirement.with_failure_temporary(temporary);
         self
     }
 
@@ -833,14 +836,9 @@ mod tests {
     async fn disabled_policy_skips_even_when_advertised() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
-        let transaction = SmtpTransaction::new(
-            &context,
-            "server:25".to_string(),
-            false,
-            false,
-            false,
-            &timeouts,
-        );
+        let tls_config = SmtpTlsConfig::new(TlsMode::Disabled, CertValidation::Strict);
+        let transaction =
+            SmtpTransaction::new(&context, "server:25".to_string(), tls_config, &timeouts);
 
         let mut client = MockStarttlsClient {
             ehlo_responses: vec![starttls_advertised_response()],
@@ -860,14 +858,9 @@ mod tests {
     async fn opportunistic_skips_when_server_lacks_starttls() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
-        let transaction = SmtpTransaction::new(
-            &context,
-            "server:25".to_string(),
-            true,
-            false,
-            false,
-            &timeouts,
-        );
+        let tls_config = SmtpTlsConfig::new(TlsMode::Opportunistic, CertValidation::Strict);
+        let transaction =
+            SmtpTransaction::new(&context, "server:25".to_string(), tls_config, &timeouts);
 
         let mut client = MockStarttlsClient {
             ehlo_responses: vec![starttls_not_supported_response()],
@@ -888,14 +881,9 @@ mod tests {
     async fn opportunistic_retries_without_tls_on_failure() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
-        let transaction = SmtpTransaction::new(
-            &context,
-            "server:25".to_string(),
-            true,
-            false,
-            false,
-            &timeouts,
-        );
+        let tls_config = SmtpTlsConfig::new(TlsMode::Opportunistic, CertValidation::Strict);
+        let transaction =
+            SmtpTransaction::new(&context, "server:25".to_string(), tls_config, &timeouts);
 
         let mut client = MockStarttlsClient {
             ehlo_responses: vec![starttls_advertised_response()],
@@ -915,14 +903,9 @@ mod tests {
     async fn require_tls_propagates_failure_as_permanent() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
-        let transaction = SmtpTransaction::new(
-            &context,
-            "secure:25".to_string(),
-            true,
-            true,
-            false,
-            &timeouts,
-        );
+        let tls_config = SmtpTlsConfig::new(TlsMode::Required, CertValidation::Strict);
+        let transaction =
+            SmtpTransaction::new(&context, "secure:25".to_string(), tls_config, &timeouts);
 
         let mut client = MockStarttlsClient {
             ehlo_responses: vec![starttls_advertised_response()],
@@ -961,14 +944,9 @@ mod tests {
     async fn require_tls_succeeds_when_starttls_succeeds() -> Result<(), DeliveryError> {
         let context = make_context();
         let timeouts = default_timeouts();
-        let transaction = SmtpTransaction::new(
-            &context,
-            "secure:25".to_string(),
-            true,
-            true,
-            false,
-            &timeouts,
-        );
+        let tls_config = SmtpTlsConfig::new(TlsMode::Required, CertValidation::Strict);
+        let transaction =
+            SmtpTransaction::new(&context, "secure:25".to_string(), tls_config, &timeouts);
 
         let mut client = MockStarttlsClient {
             ehlo_responses: vec![
