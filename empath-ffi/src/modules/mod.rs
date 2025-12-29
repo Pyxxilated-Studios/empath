@@ -1,14 +1,19 @@
 use std::borrow::Cow;
 use std::fmt::{self, Display};
 use std::sync::{Arc, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
 use empath_common::context::{Context, ModuleContext};
 use empath_common::internal;
 use empath_common::status::Status;
 use empath_metrics::is_enabled;
+#[cfg(feature = "metrics")]
+use empath_metrics::try_metrics;
 use empath_tracing::traced;
 use serde::Deserialize;
 use thiserror::Error;
+use tokio::task;
+use tokio::time::sleep;
 
 use super::string::StringVector;
 
@@ -24,13 +29,15 @@ pub mod wasm;
 
 #[derive(Debug)]
 pub struct ModuleRegistry {
-    modules: Arc<[Module]>,
+    modules: Arc<[Arc<Module>]>,
     outbound_bindings: Arc<RwLock<Vec<String>>>,
+    dispatch_config: ModuleDispatchConfig,
 }
 
 pub struct ModuleRegistryBuilder {
     modules: Vec<Module>,
     outbound_bindings: Vec<String>,
+    dispatch_config: ModuleDispatchConfig,
 }
 
 impl Default for ModuleRegistryBuilder {
@@ -41,10 +48,11 @@ impl Default for ModuleRegistryBuilder {
 
 impl ModuleRegistryBuilder {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             modules: Vec::new(),
             outbound_bindings: Vec::new(),
+            dispatch_config: ModuleDispatchConfig::default(),
         }
     }
 
@@ -57,6 +65,12 @@ impl ModuleRegistryBuilder {
     #[must_use]
     pub fn with_outbound_bindings(mut self, bindings: Vec<String>) -> Self {
         self.outbound_bindings = bindings;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_dispatch_config(mut self, dispatch_config: ModuleDispatchConfig) -> Self {
+        self.dispatch_config = dispatch_config;
         self
     }
 
@@ -96,10 +110,86 @@ impl ModuleRegistryBuilder {
 
         internal!(level = INFO, "Modules initialised");
 
+        let modules = all_modules.into_iter().map(Arc::new).collect::<Vec<_>>();
+
         Ok(ModuleRegistry {
-            modules: all_modules.into(),
+            modules: modules.into(),
             outbound_bindings: Arc::new(RwLock::new(self.outbound_bindings)),
+            dispatch_config: self.dispatch_config,
         })
+    }
+}
+
+/// Dispatch failure handling policy for module callbacks.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchFailureMode {
+    FailOpen,
+    FailClosed,
+}
+
+const fn default_validation_failure_mode() -> DispatchFailureMode {
+    DispatchFailureMode::FailClosed
+}
+
+const fn default_event_failure_mode() -> DispatchFailureMode {
+    DispatchFailureMode::FailOpen
+}
+
+/// Module dispatch isolation strategy.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModuleIsolation {
+    #[default]
+    None,
+    SpawnBlocking,
+}
+
+/// Configuration for module dispatch behavior.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ModuleDispatchConfig {
+    /// Timeout for validation callbacks (seconds).
+    #[serde(default)]
+    pub validation_timeout_secs: Option<u64>,
+    /// Timeout for event callbacks (seconds).
+    #[serde(default)]
+    pub event_timeout_secs: Option<u64>,
+    /// Failure policy for validation callbacks.
+    #[serde(default = "default_validation_failure_mode")]
+    pub validation_failure_mode: DispatchFailureMode,
+    /// Failure policy for event callbacks.
+    #[serde(default = "default_event_failure_mode")]
+    pub event_failure_mode: DispatchFailureMode,
+    /// Isolation strategy for module execution.
+    #[serde(default)]
+    pub isolation: ModuleIsolation,
+}
+
+impl Default for ModuleDispatchConfig {
+    fn default() -> Self {
+        Self {
+            validation_timeout_secs: None,
+            event_timeout_secs: None,
+            validation_failure_mode: default_validation_failure_mode(),
+            event_failure_mode: default_event_failure_mode(),
+            isolation: ModuleIsolation::None,
+        }
+    }
+}
+
+impl ModuleDispatchConfig {
+    fn timeout_for(&self, event: Event) -> Option<Duration> {
+        match event {
+            Event::Validate(_) => self.validation_timeout_secs.map(Duration::from_secs),
+            Event::Event(_) => self.event_timeout_secs.map(Duration::from_secs),
+        }
+    }
+
+    const fn failure_mode_for(&self, event: Event) -> DispatchFailureMode {
+        match event {
+            Event::Validate(_) => self.validation_failure_mode,
+            Event::Event(_) => self.event_failure_mode,
+        }
     }
 }
 
@@ -128,7 +218,7 @@ impl ModuleRegistry {
     }
 
     #[must_use]
-    pub fn modules(&self) -> &[Module] {
+    pub fn modules(&self) -> &[Arc<Module>] {
         &self.modules
     }
 
@@ -157,46 +247,85 @@ impl ModuleRegistry {
             .unwrap_or(false)
     }
 
-    /// Dispatch an event to all modules
+    /// Dispatch an event to all modules.
     ///
-    /// Validation events fail closed (non-zero results reject).
-    /// Event callbacks fail open (non-zero results are logged and ignored).
+    /// Failure handling is governed by `ModuleDispatchConfig`.
     ///
     /// # Errors
     /// The events being dispatched are handled with a panic handler, which should
     /// catch some possible errors. If these are caught, they are returned to the
     /// caller to handle.
-    pub fn dispatch(&self, event: Event, validate_context: &mut Context) -> DispatchResult {
+    pub async fn dispatch(&self, event: Event, validate_context: &mut Context) -> DispatchResult {
         internal!("Dispatching: {event:?}");
 
+        let failure_mode = self.dispatch_config.failure_mode_for(event);
+        let timeout = self.dispatch_config.timeout_for(event);
+        let callback_name = event.callback_name();
         let mut event_error: Option<DispatchResult> = None;
+
         for module in self
             .modules
             .iter()
-            .inspect(|m| internal!(level = DEBUG, "{m}"))
+            .inspect(|m| internal!(level = DEBUG, "{}", m.as_ref()))
         {
-            let previous = validate_context.module_context.take();
-            validate_context.module_context = Some(module.module_context());
-            let code = module.emit(event, validate_context);
-            validate_context.module_context = previous;
-            if code == 0 {
+            let module_context = module.as_ref().module_context();
+            let outcome = self
+                .emit_with_policy(
+                    Arc::clone(module),
+                    event,
+                    validate_context,
+                    module_context.clone(),
+                    failure_mode,
+                    timeout,
+                )
+                .await;
+
+            #[cfg(feature = "metrics")]
+            if let Some(metrics) = try_metrics() {
+                metrics.modules.record_execution(
+                    &module_context.module_type,
+                    callback_name,
+                    outcome.duration.as_secs_f64(),
+                );
+            }
+
+            if let Some(kind) = outcome.error_kind.as_ref() {
+                record_dispatch_error_metrics(&module_context, event, kind);
+            }
+
+            if outcome.error_kind.is_none() && outcome.code == 0 {
                 continue;
             }
 
             match event {
                 Event::Validate(_) => {
+                    if matches!(failure_mode, DispatchFailureMode::FailOpen) {
+                        log_dispatch_failure(event, module.as_ref(), &outcome);
+                        continue;
+                    }
+
+                    let code = outcome.code;
                     return rejection_from_code(code, validate_context);
                 }
                 Event::Event(_) => {
-                    let module_name = format!("{module}");
-                    internal!(
-                        level = WARN,
-                        "Event module {module_name} returned non-zero code {code}"
-                    );
+                    let module_name = format!("{}", module.as_ref());
+                    let kind = outcome
+                        .error_kind
+                        .clone()
+                        .unwrap_or(DispatchErrorKind::ModuleFailed { code: outcome.code });
+
+                    if matches!(failure_mode, DispatchFailureMode::FailClosed) {
+                        return DispatchResult::Error {
+                            module: module_name,
+                            kind,
+                        };
+                    }
+
+                    log_dispatch_failure(event, module.as_ref(), &outcome);
                     if event_error.is_none() {
                         event_error = Some(DispatchResult::Error {
                             module: module_name,
-                            kind: DispatchErrorKind::ModuleFailed { code },
+                            kind,
                         });
                     }
                 }
@@ -206,7 +335,7 @@ impl ModuleRegistry {
         event_error.unwrap_or(DispatchResult::Accept)
     }
 
-    pub fn dispatch_with_registry(
+    pub async fn dispatch_with_registry(
         registry: Option<&Self>,
         event: Event,
         validate_context: &mut Context,
@@ -228,7 +357,360 @@ impl ModuleRegistry {
             };
         };
 
-        registry.dispatch(event, validate_context)
+        registry.dispatch(event, validate_context).await
+    }
+
+    async fn emit_with_policy(
+        &self,
+        module: Arc<Module>,
+        event: Event,
+        validate_context: &mut Context,
+        module_context: ModuleContext,
+        failure_mode: DispatchFailureMode,
+        timeout_limit: Option<Duration>,
+    ) -> ModuleDispatchOutcome {
+        let use_isolation = matches!(
+            self.dispatch_config.isolation,
+            ModuleIsolation::SpawnBlocking
+        );
+        let use_clone = matches!(failure_mode, DispatchFailureMode::FailOpen) || use_isolation;
+
+        if use_clone {
+            let working_context = validate_context.clone();
+            let (outcome, updated_context) = if use_isolation {
+                emit_isolated(
+                    module,
+                    event,
+                    working_context,
+                    module_context,
+                    timeout_limit,
+                )
+                .await
+            } else {
+                let (outcome, updated_context) = emit_inline(
+                    module.as_ref(),
+                    event,
+                    working_context,
+                    &module_context,
+                    timeout_limit,
+                );
+                (outcome, Some(updated_context))
+            };
+
+            if outcome.error_kind.is_none()
+                && let Some(updated_context) = updated_context
+            {
+                apply_context_update(
+                    validate_context,
+                    updated_context,
+                    failure_mode,
+                    outcome.code,
+                    true,
+                );
+            }
+
+            return outcome;
+        }
+
+        emit_inline_in_place(
+            module.as_ref(),
+            event,
+            validate_context,
+            &module_context,
+            timeout_limit,
+        )
+    }
+}
+
+const MODULE_FAILURE_CODE: i32 = 451;
+
+struct ModuleDispatchOutcome {
+    code: i32,
+    duration: Duration,
+    error_kind: Option<DispatchErrorKind>,
+}
+
+fn emit_in_context(
+    module: &Module,
+    event: Event,
+    context: &mut Context,
+    module_context: &ModuleContext,
+) -> i32 {
+    let previous = context.module_context.take();
+    context.module_context = Some(module_context.clone());
+    let code = module.emit(event, context);
+    context.module_context = previous;
+    code
+}
+
+fn timeout_overrun(limit: Duration, elapsed: Duration) -> Option<Duration> {
+    if elapsed > limit { Some(limit) } else { None }
+}
+
+fn apply_context_update(
+    target: &mut Context,
+    updated: Context,
+    failure_mode: DispatchFailureMode,
+    code: i32,
+    completed: bool,
+) {
+    if !completed {
+        return;
+    }
+
+    let should_apply = matches!(failure_mode, DispatchFailureMode::FailClosed) || code == 0;
+    if should_apply {
+        *target = updated;
+    }
+}
+
+async fn emit_isolated(
+    module: Arc<Module>,
+    event: Event,
+    mut context: Context,
+    module_context: ModuleContext,
+    timeout_limit: Option<Duration>,
+) -> (ModuleDispatchOutcome, Option<Context>) {
+    let started_at = Instant::now();
+    let mut handle = task::spawn_blocking(move || {
+        let start = Instant::now();
+        let code = emit_in_context(module.as_ref(), event, &mut context, &module_context);
+        (code, start.elapsed(), context)
+    });
+
+    if let Some(timeout_limit) = timeout_limit {
+        let outcome = tokio::select! {
+            result = &mut handle => match result {
+                Ok((code, duration, updated_context)) => {
+                    return (
+                        ModuleDispatchOutcome {
+                            code,
+                            duration,
+                            error_kind: None,
+                        },
+                        Some(updated_context),
+                    );
+                }
+                Err(_) => ModuleDispatchOutcome {
+                    code: MODULE_FAILURE_CODE,
+                    duration: started_at.elapsed(),
+                    error_kind: Some(DispatchErrorKind::Panicked),
+                },
+            },
+            () = sleep(timeout_limit) => {
+                handle.abort();
+                ModuleDispatchOutcome {
+                    code: MODULE_FAILURE_CODE,
+                    duration: timeout_limit,
+                    error_kind: Some(DispatchErrorKind::Timeout {
+                        timeout: timeout_limit,
+                    }),
+                }
+            }
+        };
+
+        return (outcome, None);
+    }
+
+    match handle.await {
+        Ok((code, duration, updated_context)) => (
+            ModuleDispatchOutcome {
+                code,
+                duration,
+                error_kind: None,
+            },
+            Some(updated_context),
+        ),
+        Err(_) => (
+            ModuleDispatchOutcome {
+                code: MODULE_FAILURE_CODE,
+                duration: started_at.elapsed(),
+                error_kind: Some(DispatchErrorKind::Panicked),
+            },
+            None,
+        ),
+    }
+}
+
+fn emit_inline(
+    module: &Module,
+    event: Event,
+    mut context: Context,
+    module_context: &ModuleContext,
+    timeout_limit: Option<Duration>,
+) -> (ModuleDispatchOutcome, Context) {
+    let start = Instant::now();
+    let code = emit_in_context(module, event, &mut context, module_context);
+    let duration = start.elapsed();
+    let error_kind = timeout_limit.and_then(|limit| {
+        timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
+    });
+    let code = error_kind.as_ref().map_or(code, |_| MODULE_FAILURE_CODE);
+
+    (
+        ModuleDispatchOutcome {
+            code,
+            duration,
+            error_kind,
+        },
+        context,
+    )
+}
+
+fn emit_inline_in_place(
+    module: &Module,
+    event: Event,
+    context: &mut Context,
+    module_context: &ModuleContext,
+    timeout_limit: Option<Duration>,
+) -> ModuleDispatchOutcome {
+    let start = Instant::now();
+    let code = emit_in_context(module, event, context, module_context);
+    let duration = start.elapsed();
+    let error_kind = timeout_limit.and_then(|limit| {
+        timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
+    });
+    let code = error_kind.as_ref().map_or(code, |_| MODULE_FAILURE_CODE);
+
+    ModuleDispatchOutcome {
+        code,
+        duration,
+        error_kind,
+    }
+}
+
+#[cfg(feature = "metrics")]
+fn record_dispatch_error_metrics(
+    module_context: &ModuleContext,
+    event: Event,
+    error_kind: &DispatchErrorKind,
+) {
+    let Some(metrics) = try_metrics() else {
+        return;
+    };
+
+    let is_validation = matches!(event, Event::Validate(_));
+    let error_kind_label = match error_kind {
+        DispatchErrorKind::Timeout { .. } => {
+            if is_validation {
+                "validation_timeout"
+            } else {
+                "timeout"
+            }
+        }
+        DispatchErrorKind::Panicked => {
+            if is_validation {
+                "validation_panic"
+            } else {
+                "panic"
+            }
+        }
+        DispatchErrorKind::NotInitialized => "not_initialized",
+        DispatchErrorKind::ModuleFailed { .. } => {
+            if is_validation {
+                "validation_error"
+            } else {
+                "error"
+            }
+        }
+    };
+
+    metrics.modules.record_error_with_kind(
+        &module_context.module_type,
+        &module_context.module_name,
+        error_kind_label,
+    );
+
+    if matches!(error_kind, DispatchErrorKind::Timeout { .. }) {
+        metrics.modules.record_timeout(&module_context.module_name);
+    }
+}
+
+#[cfg(not(feature = "metrics"))]
+fn record_dispatch_error_metrics(
+    _module_context: &ModuleContext,
+    _event: Event,
+    _error_kind: &DispatchErrorKind,
+) {
+}
+
+fn log_dispatch_failure(event: Event, module: &Module, outcome: &ModuleDispatchOutcome) {
+    let module_name = format!("{module}");
+    let callback_name = event.callback_name();
+    let is_validation = matches!(event, Event::Validate(_));
+
+    if let Some(error_kind) = outcome.error_kind.as_ref() {
+        match error_kind {
+            DispatchErrorKind::Timeout { timeout } => {
+                if is_validation {
+                    internal!(
+                        level = ERROR,
+                        "Module {module_name} timed out in {callback_name} after {timeout:?}"
+                    );
+                } else {
+                    internal!(
+                        level = WARN,
+                        "Module {module_name} timed out in {callback_name} after {timeout:?}"
+                    );
+                }
+            }
+            DispatchErrorKind::Panicked => {
+                if is_validation {
+                    internal!(
+                        level = ERROR,
+                        "Module {module_name} panicked in {callback_name}"
+                    );
+                } else {
+                    internal!(
+                        level = WARN,
+                        "Module {module_name} panicked in {callback_name}"
+                    );
+                }
+            }
+            DispatchErrorKind::NotInitialized => {
+                if is_validation {
+                    internal!(
+                        level = ERROR,
+                        "Module {module_name} not initialized for {callback_name}"
+                    );
+                } else {
+                    internal!(
+                        level = WARN,
+                        "Module {module_name} not initialized for {callback_name}"
+                    );
+                }
+            }
+            DispatchErrorKind::ModuleFailed { code } => {
+                if is_validation {
+                    internal!(
+                        level = ERROR,
+                        "Module {module_name} returned non-zero code {code} in {callback_name}"
+                    );
+                } else {
+                    internal!(
+                        level = WARN,
+                        "Module {module_name} returned non-zero code {code} in {callback_name}"
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    if outcome.code != 0 {
+        if is_validation {
+            internal!(
+                level = ERROR,
+                "Module {module_name} returned non-zero code {} in {callback_name}",
+                outcome.code
+            );
+        } else {
+            internal!(
+                level = WARN,
+                "Module {module_name} returned non-zero code {} in {callback_name}",
+                outcome.code
+            );
+        }
     }
 }
 
@@ -383,6 +865,10 @@ pub enum DispatchErrorKind {
     NotInitialized,
     /// Module returned a non-zero code.
     ModuleFailed { code: i32 },
+    /// Module timed out.
+    Timeout { timeout: Duration },
+    /// Module panicked.
+    Panicked,
 }
 
 /// Result of dispatching an event to the module pipeline.

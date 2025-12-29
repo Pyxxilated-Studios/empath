@@ -206,7 +206,7 @@ pub async fn prepare_message(
     )
     .await;
 
-    dispatch_delivery_event(&mut context, message_id, &info, None, Ev::DeliveryAttempt);
+    dispatch_delivery_event(&mut context, message_id, &info, None, Ev::DeliveryAttempt).await;
 
     let pipeline = crate::policy::DeliveryPipeline::new(
         dns_resolver.as_ref(),
@@ -223,7 +223,8 @@ pub async fn prepare_message(
         &info,
         Some(mx_server_id.clone()),
         Ev::DeliveryAttempt,
-    );
+    )
+    .await;
 
     if handle_rate_limit(
         processor,
@@ -331,7 +332,7 @@ pub async fn handle_delivery_error(
         &retry_policy,
     );
     persist_after_error(processor, message_id).await;
-    dispatch_failure_event(context, message_id, &updated_info, &error, server);
+    dispatch_failure_event(context, message_id, &updated_info, &error, server).await;
     record_delivery_failure_audit(processor, message_id, &updated_info, &error, &new_status);
     record_circuit_breaker_failure(processor, &updated_info, is_temporary_failure);
     maybe_generate_dsn(processor, context, &updated_info, &error).await;
@@ -446,7 +447,7 @@ async fn record_mta_sts_policy(
     record_mta_sts(context, resolver, &processor.mta_sts_cache, domain, enabled).await
 }
 
-fn dispatch_delivery_event(
+async fn dispatch_delivery_event(
     context: &mut Context,
     message_id: &SpooledMessageId,
     info: &DeliveryInfo,
@@ -471,7 +472,8 @@ fn dispatch_delivery_event(
         ModuleRegistry::global(),
         Event::Event(event),
         context,
-    );
+    )
+    .await;
 }
 
 async fn resolve_primary_server(
@@ -581,7 +583,8 @@ async fn handle_delivery_success(
         info,
         Some(mx_server_id.clone()),
         Ev::DeliverySuccess,
-    );
+    )
+    .await;
 
     let duration_ms = info.queued_at.elapsed().map_or(0, |d| d.as_millis());
     processor.audit_logger.log_delivery_success(
@@ -901,7 +904,7 @@ async fn persist_after_error(processor: &DeliveryProcessor, message_id: &Spooled
     }
 }
 
-fn dispatch_failure_event(
+async fn dispatch_failure_event(
     context: &mut Context,
     message_id: &SpooledMessageId,
     info: &DeliveryInfo,
@@ -926,7 +929,8 @@ fn dispatch_failure_event(
         ModuleRegistry::global(),
         Event::Event(Ev::DeliveryFailure),
         context,
-    );
+    )
+    .await;
 }
 
 fn record_delivery_failure_audit(

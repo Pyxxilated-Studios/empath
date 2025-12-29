@@ -59,6 +59,15 @@ Empath (
             path: "/empath/modules/simple_validator.wasm",
         )
     ],
+    // Module dispatch configuration
+    // Timeout fields are in seconds; set to None to disable.
+    module_dispatch: (
+        validation_timeout_secs: 5,
+        event_timeout_secs: 2,
+        validation_failure_mode: "fail_closed",
+        event_failure_mode: "fail_open",
+        isolation: "none",
+    ),
     spool: (
         type: "File",
         path: "/tmp/spool/empath",

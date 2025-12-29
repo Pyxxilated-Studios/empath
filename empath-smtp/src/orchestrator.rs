@@ -159,7 +159,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             ModuleRegistry::global(),
             ModuleEvent::Event(Ev::ConnectionClosed),
             &mut validate_context,
-        );
+        )
+        .await;
 
         result
     }
@@ -283,7 +284,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
                 ModuleRegistry::global(),
                 ModuleEvent::Validate(ValidateEvent::StartTls),
                 validate_context,
-            ),
+            )
+            .await,
             DispatchResult::Accept
         ) {
             internal!(

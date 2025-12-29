@@ -26,7 +26,8 @@ impl Session {
                     ModuleRegistry::global(),
                     ModuleEvent::Event(Ev::SmtpError),
                     validate_context,
-                );
+                )
+                .await;
             }
         }
 

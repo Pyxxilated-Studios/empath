@@ -13,7 +13,7 @@ use empath_delivery::{
     CircuitBreakerConfig, DeliveryProcessor, DomainConfigRegistry, RateLimitConfig, RetryPolicy,
     SmtpTimeouts, SpfDnsAdapter,
 };
-use empath_ffi::modules::{self, Module};
+use empath_ffi::modules::{self, Module, ModuleDispatchConfig};
 use empath_health::{HealthChecker, HealthConfig, HealthServer};
 use empath_metrics::{Metrics, MetricsConfig, init_metrics, try_metrics};
 use empath_smtp::spf::SpfDnsResolver;
@@ -32,6 +32,7 @@ use crate::control_handler::EmpathControlHandler;
 pub struct Empath {
     smtp_controller: Controller<Smtp>,
     modules: Vec<Module>,
+    module_dispatch: ModuleDispatchConfig,
     spool: SpoolConfig,
     delivery: DeliveryProcessor,
     /// Path to the control socket (optional, defaults to /tmp/empath.sock)
@@ -57,6 +58,8 @@ struct EmpathConfig {
     smtp_controller: Controller<Smtp>,
     #[serde(alias = "module", default)]
     modules: Vec<Module>,
+    #[serde(default)]
+    module_dispatch: ModuleDispatchConfig,
     #[serde(alias = "spool", default)]
     spool: SpoolConfig,
     #[serde(alias = "delivery", default)]
@@ -95,6 +98,7 @@ impl From<EmpathConfig> for Empath {
         Self {
             smtp_controller: config.smtp_controller,
             modules: config.modules,
+            module_dispatch: config.module_dispatch,
             spool: config.spool,
             delivery: config.delivery,
             control_socket_path: config.control_socket_path,
@@ -193,9 +197,11 @@ impl Empath {
         self.delivery.set_audit_logger(Arc::clone(&audit_logger));
         self.init_delivery(backing_store.clone())?;
         let modules = std::mem::take(&mut self.modules);
+        let module_dispatch = std::mem::take(&mut self.module_dispatch);
         modules::ModuleRegistryBuilder::new()
             .with_modules(modules)
             .with_outbound_bindings(self.delivery.outbound_bindings.names())
+            .with_dispatch_config(module_dispatch)
             .build()?
             .install()?;
         health_checker.set_delivery_ready(true);

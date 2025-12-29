@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use empath_common::context::Context;
 use empath_common::internal;
@@ -72,15 +72,7 @@ impl Python {
         let callback_name = event.callback_name();
         let module_path = self.path.to_string_lossy();
 
-        let start = Instant::now();
         let result = module.execute_callback(callback_name, context);
-        let duration = start.elapsed();
-
-        if let Some(metrics) = try_metrics() {
-            metrics
-                .modules
-                .record_execution("python", callback_name, duration.as_secs_f64());
-        }
 
         match result {
             Ok(true) => 0,  // Accept

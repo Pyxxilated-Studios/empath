@@ -295,7 +295,8 @@ impl DefaultSmtpTransactionHandler {
             ModuleRegistry::global(),
             modules::Event::Event(modules::Ev::SmtpMessageReceived),
             ctx,
-        );
+        )
+        .await;
     }
 
     fn record_trace_context(ctx: &mut Context) {
@@ -391,7 +392,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
             ModuleRegistry::global(),
             modules::Event::Event(modules::Ev::ConnectionOpened),
             ctx,
-        );
+        )
+        .await;
 
         // Then validate
         matches!(
@@ -399,7 +401,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Connect),
                 ctx,
-            ),
+            )
+            .await,
             modules::DispatchResult::Accept
         )
     }
@@ -410,7 +413,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Ehlo),
                 ctx,
-            ),
+            )
+            .await,
             modules::DispatchResult::Accept
         )
     }
@@ -463,7 +467,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::MailFrom),
                 ctx,
-            ),
+            )
+            .await,
             modules::DispatchResult::Accept
         )
     }
@@ -474,7 +479,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::RcptTo),
                 ctx,
-            ),
+            )
+            .await,
             modules::DispatchResult::Accept
         )
     }
@@ -485,7 +491,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Auth),
                 ctx,
-            ),
+            )
+            .await,
             modules::DispatchResult::Accept
         );
 
@@ -571,7 +578,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Data),
                 ctx,
-            ),
+            )
+            .await,
             modules::DispatchResult::Accept
         );
         // Persist any header/body mutations performed by modules.

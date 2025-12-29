@@ -5,7 +5,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use empath_common::context::Context;
 use empath_common::internal;
@@ -154,19 +154,11 @@ impl Wasm {
 
         let module_path = self.path.to_string_lossy();
 
-        // Measure execution duration
-        let start = Instant::now();
-
         // Execute the callback
         let result = module.execute_callback(callback_name, context);
 
-        // Record execution duration and memory limit
-        let duration = start.elapsed();
+        // Record memory limit
         if let Some(metrics) = try_metrics() {
-            metrics
-                .modules
-                .record_execution("wasm", callback_name, duration.as_secs_f64());
-
             // Update memory limit tracking (configured max memory for this module)
             if let Ok(max_memory) = u64::try_from(module.max_memory_bytes()) {
                 metrics.modules.update_memory(&module_path, max_memory);

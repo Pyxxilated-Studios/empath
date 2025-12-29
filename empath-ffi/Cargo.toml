@@ -26,6 +26,7 @@ libc.workspace = true
 libloading.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 
 [features]

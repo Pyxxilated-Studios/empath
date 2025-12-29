@@ -1329,7 +1329,7 @@ mod test {
 
         let registry = ModuleRegistry::global().ok_or_else(|| "registry missing".to_string())?;
         for module in registry.modules() {
-            if let Module::TestModule(mute) = module {
+            if let Module::TestModule(mute) = module.as_ref() {
                 assert!(
                     mute.read()
                         .map_err(|_| "module lock poisoned".to_string())?

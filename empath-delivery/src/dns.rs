@@ -513,7 +513,8 @@ impl HickoryDnsResolver {
                     ModuleRegistry::global(),
                     modules::Event::Event(modules::Ev::DnsLookup),
                     &mut ctx,
-                );
+                )
+                .await;
 
                 if let Some(status) = cached.dnssec_status
                     && self.config.dnssec_strict
@@ -585,7 +586,8 @@ impl HickoryDnsResolver {
             ModuleRegistry::global(),
             modules::Event::Event(modules::Ev::DnsLookup),
             &mut ctx,
-        );
+        )
+        .await;
 
         if dnssec_failure && let Some(status) = dnssec_status {
             return Err(DnsError::DnssecValidationFailed {
