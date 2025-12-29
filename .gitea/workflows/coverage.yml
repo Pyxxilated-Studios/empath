@@ -28,7 +28,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
-          components: clippy
+          targets: wasm32-wasip2
 
       - uses: actions/setup-python@v6
         with:
@@ -44,9 +44,9 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install required cargo
+      - name: Install code coverage tool
         run: cargo install --force cargo-tarpaulin
 
       - name: Generate code coverage
         run: |
-          cargo +nightly tarpaulin --all-features --workspace --timeout 120
+          cargo +nightly tarpaulin --all-features --workspace --timeout 120 --engine llvm --exclude empath-python --exclude simple-validator

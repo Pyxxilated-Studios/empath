@@ -96,6 +96,7 @@ empath-health = { path = "empath-health", version = "0" }
 empath-metrics = { path = "empath-metrics", version = "0" }
 empath-python = { path = "empath-python", version = "0" }
 empath-smtp = { path = "empath-smtp", version = "0" }
+empath-smtp-client = { path = "empath-smtp-client", version = "0" }
 empath-spool = { path = "empath-spool", version = "0" }
 empath-tracing = { path = "empath-tracing", version = "0" }
 empath-wasm = { path = "empath-wasm", version = "0" }
@@ -180,7 +181,6 @@ wasmtime-wasi = { version = "40.0", default-features = false, features = [
 ] }
 wit-bindgen = "0"
 x509-parser = "0"
-empath-smtp-client = { path = "empath-smtp-client" }
 
 [profile.release]
 lto = "thin"
