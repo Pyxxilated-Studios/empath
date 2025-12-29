@@ -13,8 +13,8 @@
 - Docker stack: `just docker-up` / `just docker-down` to run the observability environment.
 
 ## Agent Runbook
-- Before reporting completion: run `cargo fmt --all` and `cargo clippy --all-targets --all-features`.
-- Do not ask before running `cargo fmt --all` or `cargo clippy --all-targets --all-features`; run them whenever you make changes. Ask before committing or running any other tests.
+- Before reporting completion: run `cargo fmt --all` and `cargo clippy --all-targets --all-features` when source files change; skip when only updating docs or configuration.
+- Do not ask before running `cargo fmt --all` or `cargo clippy --all-targets --all-features` after source changes; run them whenever you modify Rust source. Ask before committing or running any other tests.
 
 ## Coding Style & Naming Conventions
 - Rust nightly (see `rust-toolchain.toml`); format with `cargo fmt --all` (imports grouped per `rustfmt.toml`).
