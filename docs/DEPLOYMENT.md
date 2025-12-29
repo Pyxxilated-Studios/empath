@@ -1179,7 +1179,23 @@ sudo systemctl restart empath
 # Reload delivery domains/rate limits without restart
 empathctl system reload-config
 
-# Restart required for listener/timeouts, DNS, metrics/health/audit, and control socket settings
+# Reloadable settings:
+# - delivery.domains
+# - delivery.rate_limit
+# - delivery.retry_policy
+# - delivery.smtp_timeouts
+# - delivery.circuit_breaker
+#
+# Restart required for:
+# - smtp.listeners/timeouts
+# - controller socket/auth/rate limits
+# - delivery.dns
+# - delivery.smtp_pool
+# - delivery.dsn
+# - delivery.outbound_bindings
+# - metrics
+# - health
+# - audit
 # sudo systemctl restart empath
 
 # Check status

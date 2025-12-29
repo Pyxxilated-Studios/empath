@@ -380,29 +380,30 @@ fn reload_config_from_disk(delivery: &Arc<dyn DeliveryQueryService>) -> Result<S
     delivery.replace_smtp_timeouts(smtp_timeouts);
     delivery.replace_circuit_breaker_config(circuit_breaker);
 
-    let report = ReloadReport::new(
-        vec![
-            "delivery.domains",
-            "delivery.rate_limit",
-            "delivery.retry_policy",
-            "delivery.smtp_timeouts",
-            "delivery.circuit_breaker",
-        ],
-        vec![
-            "smtp.listeners/timeouts",
-            "controller socket/auth/rate limits",
-            "delivery.dns",
-            "delivery.smtp_pool",
-            "delivery.dsn",
-            "delivery.outbound_bindings",
-            "metrics",
-            "health",
-            "audit",
-        ],
-    );
+    let report = ReloadReport::new(RELOADABLE_FIELDS.to_vec(), RESTART_REQUIRED_FIELDS.to_vec());
 
     Ok(report.render(&config_path))
 }
+
+const RELOADABLE_FIELDS: &[&str] = &[
+    "delivery.domains",
+    "delivery.rate_limit",
+    "delivery.retry_policy",
+    "delivery.smtp_timeouts",
+    "delivery.circuit_breaker",
+];
+
+const RESTART_REQUIRED_FIELDS: &[&str] = &[
+    "smtp.listeners/timeouts",
+    "controller socket/auth/rate limits",
+    "delivery.dns",
+    "delivery.smtp_pool",
+    "delivery.dsn",
+    "delivery.outbound_bindings",
+    "metrics",
+    "health",
+    "audit",
+];
 
 fn find_config_file() -> anyhow::Result<PathBuf> {
     if let Ok(env_path) = std::env::var("EMPATH_CONFIG") {

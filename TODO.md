@@ -10,18 +10,14 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P1 — Operations & Observability
 - [x] OPS-01: Grafana panel for DMARC sampling. Add a dashboard panel for `empath.smtp.dmarc.samples.total` with sender/IP/policy filters.
-- [ ] OPS-02: Config reload safety net. Add control command output that reports reloadable vs restart-required fields (single canonical list) and keep docs in sync.
+- [x] OPS-02: Config reload safety net. Add control command output that reports reloadable vs restart-required fields (single canonical list) and keep docs in sync.
 
 ## P2 — Delivery Improvements
 - [x] DEL-01: Binding selection transparency. Add control endpoint to show resolved binding + TLS policy per domain (preview mode).
 - [x] DEL-02: TLS policy guardrails. Add warnings/logs when TLS is disabled at global or binding scope.
 
-## P3 — Post-1.0 Candidates (Shortlist)
-- [ ] 6.1 Message data streaming (see `docs/BACKLOG.md`).
-- [ ] 6.2 DKIM signing support (see `docs/BACKLOG.md`).
-- [ ] 6.3 Priority queuing (see `docs/BACKLOG.md`).
-- [ ] 6.4 SMTP pipelining (see `docs/BACKLOG.md`).
-- [ ] 6.7 Extended property-based testing (see `docs/BACKLOG.md`).
+## P3 — Post-1.0 Candidates
+Tracked in `docs/BACKLOG.md`.
 
 ## Notes
 - Prefer `just test-nextest` locally; `just ci` before PRs.
