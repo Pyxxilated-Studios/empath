@@ -168,7 +168,7 @@ impl Empath {
     /// to initialise.
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, err), timing(precision = "s"))]
     pub async fn run(mut self) -> anyhow::Result<()> {
-        self.init_logging_and_metrics()?;
+        let logging_handle = Arc::new(self.init_logging_and_metrics()?);
 
         internal!("Controller running");
 
@@ -220,6 +220,7 @@ impl Empath {
             delivery_service,
             Some(Arc::clone(&tls_registry)),
             Some(Arc::clone(&smtp_capabilities)),
+            Arc::clone(&logging_handle),
         ));
         let control_server = self.build_control_server(control_handler)?;
 
@@ -274,17 +275,19 @@ impl Empath {
         )
     }
 
-    fn init_logging_and_metrics(&self) -> anyhow::Result<()> {
+    fn init_logging_and_metrics(&self) -> anyhow::Result<logging::LoggingHandle> {
         // Initialize logging with configured OTLP endpoint for traces
         // This uses the same endpoint as metrics (just different path: /v1/traces vs /v1/metrics)
-        logging::init(Some(&self.metrics.endpoint))?;
+        let logging_handle = logging::LoggingConfigBuilder::new()
+            .with_otlp_endpoint(self.metrics.endpoint.clone())
+            .init()?;
 
         // Initialize metrics
         if let Err(e) = init_metrics(&self.metrics) {
             tracing::warn!(error = %e, "Failed to initialize metrics");
         }
 
-        Ok(())
+        Ok(logging_handle)
     }
 
     fn init_spool(spool_config: SpoolConfig) -> anyhow::Result<(Option<PathBuf>, SpoolType)> {

@@ -26,7 +26,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P2 — DX & API Cohesion
 - [x] ARCH-05: Introduce `AuditLogger` trait + builder; replace `audit::*` free functions with injected logger (avoid global config).
-- [ ] ARCH-06: Replace logging free functions with `LoggingConfigBuilder` + `LoggingHandle` (init + runtime level updates).
+- [x] ARCH-06: Replace logging free functions with `LoggingConfigBuilder` + `LoggingHandle` (init + runtime level updates).
 - [x] ARCH-07: Convert `record_spool_io` free function into a `SpoolObserver` trait injected via spool/backing store config.
 - [ ] ARCH-08: Create `ModuleRegistry` (builder) for `empath-ffi::modules` to replace free `init/dispatch` and outbound binding helpers.
 - [ ] ARCH-09: Move DSN/MTA-STS helper free functions onto types (`DsnGenerator`, `MtaStsPolicy`, `MtaStsPolicyCache`) with builders for config.

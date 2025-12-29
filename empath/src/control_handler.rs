@@ -11,7 +11,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use empath_common::context::{Capability, Context};
-use empath_common::{DeliveryStatus, Signal, logging};
+use empath_common::logging::LoggingHandle;
+use empath_common::{DeliveryStatus, Signal};
 use empath_control::protocol::{self as control_protocol, ResponseData};
 use empath_control::server::CommandHandler;
 use empath_control::{
@@ -36,6 +37,8 @@ pub struct EmpathControlHandler {
     tls_registry: Option<Arc<TlsContextRegistry>>,
     /// Optional SMTP capabilities state for runtime updates
     smtp_capabilities: Option<Arc<RwLock<Vec<Capability>>>>,
+    /// Logging handle for runtime log-level updates
+    log_handle: Arc<LoggingHandle>,
     /// Server start time for uptime calculation
     start_time: Instant,
 }
@@ -495,11 +498,13 @@ impl EmpathControlHandler {
         delivery: Arc<dyn DeliveryQueryService>,
         tls_registry: Option<Arc<TlsContextRegistry>>,
         smtp_capabilities: Option<Arc<RwLock<Vec<Capability>>>>,
+        log_handle: Arc<LoggingHandle>,
     ) -> Self {
         Self {
             delivery,
             tls_registry,
             smtp_capabilities,
+            log_handle,
             start_time: Instant::now(),
         }
     }
@@ -681,7 +686,7 @@ impl EmpathControlHandler {
         let result = match command {
             SystemCommand::Ping => Ok(Response::ok()),
             SystemCommand::Status => Ok(self.handle_system_status()),
-            SystemCommand::SetLogLevel { level } => Self::handle_system_set_log_level(level),
+            SystemCommand::SetLogLevel { level } => self.handle_system_set_log_level(level),
             SystemCommand::ReloadConfig => self.handle_system_reload_config(),
             SystemCommand::ReloadTls => self.handle_system_reload_tls(),
             SystemCommand::ListTls => self.handle_system_list_tls(),
@@ -772,10 +777,11 @@ impl EmpathControlHandler {
         Response::data(ResponseData::BindingPreview(preview))
     }
 
-    fn handle_system_set_log_level(level: &str) -> ControlResult<Response> {
+    fn handle_system_set_log_level(&self, level: &str) -> ControlResult<Response> {
         let parsed = LevelFilter::from_str(level)
             .map_err(|e| ControlError::ServerError(format!("Invalid log level '{level}': {e}")))?;
-        logging::set_log_level(parsed)
+        self.log_handle
+            .set_log_level(parsed)
             .map_err(|e| ControlError::ServerError(format!("Failed to set log level: {e}")))?;
         Ok(Response::data(ResponseData::Message(format!(
             "Log level set to {parsed}"
