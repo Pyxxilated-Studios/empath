@@ -38,11 +38,11 @@ Empath (
     modules: [
         (
             type: "Python",
-            path: "target/modules/simple.py",
+            path: "empath-examples/python/simple.py",
         ),
         (
             type: "Python",
-            path: "target/modules/spam_filter.py",
+            path: "empath-examples/python/spam_filter.py",
         ),
         (
             type: "SharedLibrary",
@@ -65,9 +65,9 @@ Empath (
     module_dispatch: (
         validation_timeout_secs: 5,
         event_timeout_secs: 2,
-        validation_failure_mode: "fail_closed",
-        event_failure_mode: "fail_open",
-        isolation: "none",
+        validation_failure_mode: fail_closed,
+        event_failure_mode: fail_open,
+        isolation: none,
     ),
     spool: (
         type: "File",
@@ -208,6 +208,9 @@ Empath (
             ),
         },
     },
+    // Control socket path (optional, defaults to /tmp/empath.sock)
+    // Use a workspace-relative socket to avoid sandboxed /tmp permissions.
+    control_socket: "target/empath.sock",
     // Control socket authentication (optional)
     // control_auth: (
     //     enabled: true,
@@ -275,26 +278,26 @@ Empath (
     ),
     // Audit logging configuration for compliance and security monitoring
     // Logs all message lifecycle events (received, delivery attempts, success, failure)
-    audit: (
+    audit: {
         // Enable/disable audit logging
         // When disabled, audit events will not be logged
         // Default: true
-        enabled: true,
+        "enabled": true,
 
         // Redact sender email addresses from audit logs (PII protection)
         // When enabled, sender addresses are redacted to [REDACTED]@domain.com
         // Useful for GDPR/HIPAA compliance
         // Default: false (full sender address logged)
-        redact_sender: false,
+        "redact_sender": false,
 
         // Redact recipient email addresses from audit logs (PII protection)
         // When enabled, recipient addresses are redacted to [REDACTED]@domain.com
         // Default: false (full recipient addresses logged)
-        redact_recipients: false,
+        "redact_recipients": false,
 
         // Redact message content from audit logs (PII protection)
         // When enabled, message content previews are not included in logs
         // Default: true (content is redacted)
-        redact_message_content: true,
-    ),
+        "redact_message_content": true,
+    },
 )
