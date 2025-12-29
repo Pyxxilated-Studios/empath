@@ -106,6 +106,56 @@ impl Default for SmtpPoolConfig {
     }
 }
 
+impl SmtpPoolConfig {
+    /// Create a builder for ergonomic SMTP pool configuration.
+    #[must_use]
+    pub fn builder() -> SmtpPoolConfigBuilder {
+        SmtpPoolConfigBuilder::default()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SmtpPoolConfigBuilder {
+    config: SmtpPoolConfig,
+}
+
+impl SmtpPoolConfigBuilder {
+    #[must_use]
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.config.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn max_per_domain(mut self, max_per_domain: usize) -> Self {
+        self.config.max_per_domain = max_per_domain;
+        self
+    }
+
+    #[must_use]
+    pub const fn idle_ttl_secs(mut self, idle_ttl_secs: u64) -> Self {
+        self.config.idle_ttl_secs = idle_ttl_secs;
+        self
+    }
+
+    #[must_use]
+    pub const fn health_check_on_acquire(mut self, health_check_on_acquire: bool) -> Self {
+        self.config.health_check_on_acquire = health_check_on_acquire;
+        self
+    }
+
+    #[must_use]
+    pub const fn cleanup_interval_secs(mut self, cleanup_interval_secs: u64) -> Self {
+        self.config.cleanup_interval_secs = cleanup_interval_secs;
+        self
+    }
+
+    #[must_use]
+    pub const fn build(self) -> SmtpPoolConfig {
+        self.config
+    }
+}
+
 const fn default_smtp_pool_enabled() -> bool {
     true
 }
@@ -219,6 +269,14 @@ impl DeliveryInfo {
         }
     }
 
+    /// Create a builder for ergonomic delivery info setup.
+    #[must_use]
+    pub fn builder(message_id: SpooledMessageId, recipient_domain: String) -> DeliveryInfoBuilder {
+        DeliveryInfoBuilder {
+            info: Self::new(message_id, recipient_domain),
+        }
+    }
+
     /// Record a delivery attempt
     pub fn record_attempt(&mut self, attempt: empath_common::DeliveryAttempt) {
         self.attempts.push(attempt);
@@ -251,5 +309,65 @@ impl DeliveryInfo {
     #[must_use]
     pub fn current_mail_server(&self) -> Option<&MailServer> {
         self.mail_servers.get(self.current_server_index)
+    }
+}
+
+#[derive(Debug)]
+pub struct DeliveryInfoBuilder {
+    info: DeliveryInfo,
+}
+
+impl DeliveryInfoBuilder {
+    #[must_use]
+    pub fn with_status(mut self, status: DeliveryStatus) -> Self {
+        self.info.status = status;
+        self
+    }
+
+    #[must_use]
+    pub fn with_attempts(mut self, attempts: Vec<empath_common::DeliveryAttempt>) -> Self {
+        self.info.attempts = attempts;
+        self
+    }
+
+    #[must_use]
+    pub fn with_mail_servers(mut self, mail_servers: Arc<Vec<MailServer>>) -> Self {
+        self.info.mail_servers = mail_servers;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_current_server_index(mut self, current_server_index: usize) -> Self {
+        self.info.current_server_index = current_server_index;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_priority_tier(mut self, priority_tier: DeliveryPriorityTier) -> Self {
+        self.info.priority_tier = priority_tier;
+        self
+    }
+
+    #[must_use]
+    pub fn with_binding(mut self, binding: Option<String>) -> Self {
+        self.info.binding = binding;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_queued_at(mut self, queued_at: SystemTime) -> Self {
+        self.info.queued_at = queued_at;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_next_retry_at(mut self, next_retry_at: Option<SystemTime>) -> Self {
+        self.info.next_retry_at = next_retry_at;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> DeliveryInfo {
+        self.info
     }
 }

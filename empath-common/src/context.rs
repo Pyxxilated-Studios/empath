@@ -383,6 +383,12 @@ impl Default for Context {
 }
 
 impl Context {
+    /// Create a builder for ergonomic `Context` construction.
+    #[must_use]
+    pub fn builder() -> ContextBuilder {
+        ContextBuilder::default()
+    }
+
     /// Build a lightweight metadata snapshot for spooling.
     #[must_use]
     pub fn to_metadata(&self) -> ContextMetadata {
@@ -576,5 +582,90 @@ impl Context {
             .message_parts
             .as_ref()
             .map(crate::message_api::MessageParts::body_view))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ContextBuilder {
+    context: Context,
+}
+
+impl ContextBuilder {
+    #[must_use]
+    pub fn with_envelope(mut self, envelope: Arc<Envelope>) -> Self {
+        self.context.envelope = envelope;
+        self
+    }
+
+    #[must_use]
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.context.id = id.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_data(mut self, data: Option<Arc<[u8]>>) -> Self {
+        self.context.data = data;
+        if self.context.data_len.is_none() {
+            self.context.data_len = self.context.data.as_ref().map(|d| d.len());
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn with_response(mut self, response: Option<(Status, Cow<'static, str>)>) -> Self {
+        self.context.response = response;
+        self
+    }
+
+    #[must_use]
+    pub fn with_session_value(mut self, key: Cow<'static, str>, value: impl Into<String>) -> Self {
+        self.context.session.insert(key, value.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_transaction_value(
+        mut self,
+        key: Cow<'static, str>,
+        value: impl Into<String>,
+    ) -> Self {
+        self.context.transaction.insert(key, value.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_banner(mut self, banner: impl Into<String>) -> Self {
+        self.context.banner = Arc::from(banner.into());
+        self
+    }
+
+    #[must_use]
+    pub const fn with_max_message_size(mut self, max_message_size: usize) -> Self {
+        self.context.max_message_size = max_message_size;
+        self
+    }
+
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Vec<Capability>) -> Self {
+        self.context.capabilities = capabilities;
+        self
+    }
+
+    #[must_use]
+    pub fn with_delivery(mut self, delivery: Option<DeliveryContext>) -> Self {
+        self.context.delivery = delivery;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_tracking_id(mut self, tracking_id: Option<SpooledMessageId>) -> Self {
+        self.context.tracking_id = tracking_id;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> Context {
+        self.context
     }
 }

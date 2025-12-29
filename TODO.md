@@ -33,7 +33,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] ARCH-10: Move AUTH PLAIN parsing into `PlainCredentials::decode` and align auth parsing behind a common `AuthMechanism` trait.
 - [x] ARCH-11: Replace boolean-heavy TLS params with enums/config structs (e.g., `TlsMode`, `CertValidation`, `TlsRequirement`) in `SmtpTransaction::new` and related call sites.
 - [x] ARCH-12: Collapse long arg lists (`SmtpPoolKey::new`, `SmtpPoolRequest::new`, DSN generation) into request/config structs or builders.
-- [ ] ARCH-13: Review large structs (`Context`, `DeliveryInfo`, `SmtpPoolConfig`) for sub-struct grouping and builder ergonomics without breaking serde stability.
+- [x] ARCH-13: Review large structs (`Context`, `DeliveryInfo`, `SmtpPoolConfig`) for sub-struct grouping and builder ergonomics without breaking serde stability.
 
 ## Refactor Plan (Concrete Steps)
 - [ ] PLAN-01: Inventory SMTP client usage in `empath-delivery` and define a minimal outbound client interface (traits + types) in a new crate (`empath-smtp-client` or `empath-mailer`).
