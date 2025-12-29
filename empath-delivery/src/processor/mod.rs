@@ -8,7 +8,11 @@ pub mod scan;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use dashmap::DashSet;
-use empath_common::{Signal, internal};
+use empath_common::{
+    Signal,
+    audit::{AuditLogger, AuditLoggerBuilder},
+    internal,
+};
 use empath_spool::SpoolScanCursor;
 use empath_tracing::traced;
 use parking_lot::RwLock;
@@ -192,6 +196,9 @@ pub struct DeliveryProcessor {
     /// Binding health tracker (initialized in `init()`)
     pub(crate) binding_health: Option<BindingHealthTracker>,
 
+    /// Audit logger for delivery lifecycle events.
+    pub(crate) audit_logger: Arc<dyn AuditLogger>,
+
     /// Runtime disabled outbound bindings
     pub(crate) disabled_bindings: DashSet<String>,
 
@@ -278,6 +285,7 @@ impl From<DeliveryProcessorConfig> for DeliveryProcessor {
             max_cleanup_attempts: config.max_cleanup_attempts,
             mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::new(config.mta_sts),
             smtp_pool_state: crate::smtp_pool::SmtpClientPool::new(config.smtp_pool),
+            audit_logger: AuditLoggerBuilder::default().build(),
             ..Default::default()
         }
     }
@@ -316,6 +324,7 @@ impl Default for DeliveryProcessor {
             rate_limiter: None,
             circuit_breaker_instance: None,
             binding_health: None,
+            audit_logger: AuditLoggerBuilder::default().build(),
             disabled_bindings: DashSet::new(),
             domain_resolver: None,
             process_now_notifier: Notify::new(),
@@ -325,6 +334,10 @@ impl Default for DeliveryProcessor {
 }
 
 impl DeliveryProcessor {
+    pub fn set_audit_logger(&mut self, audit_logger: Arc<dyn AuditLogger>) {
+        self.audit_logger = audit_logger;
+    }
+
     #[must_use]
     pub fn binding_enabled(&self, name: &str) -> bool {
         !self.disabled_bindings.contains(name)

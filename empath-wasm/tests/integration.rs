@@ -236,6 +236,7 @@ fn create_test_context() -> Context {
         message_parts: None,
         message_dirty: false,
         module_context: None,
+        audit_logger: None,
     }
 }
 

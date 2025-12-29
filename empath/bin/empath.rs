@@ -18,9 +18,6 @@ async fn main() -> anyhow::Result<()> {
         .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
         .from_str(&config_content)?;
 
-    // Initialize audit logging system
-    empath.init_audit();
-
     empath.run().await
 }
 

@@ -202,6 +202,7 @@ let handler = DefaultSmtpTransactionHandler::new(
     SpfConfig::default(),
     false,
     false,
+    empath_common::audit::AuditLoggerBuilder::default().build(),
 );
 let valid = handler.validate_connect(&mut business_context).await;
 if valid {

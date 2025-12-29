@@ -244,7 +244,7 @@ pub async fn prepare_message(
         return Ok(());
     }
 
-    empath_common::audit::log_delivery_attempt(
+    processor.audit_logger.log_delivery_attempt(
         &message_id.to_string(),
         &info.recipient_domain,
         &mx_server_id,
@@ -339,7 +339,7 @@ pub async fn handle_delivery_error(
     );
     persist_after_error(processor, message_id).await;
     dispatch_failure_event(context, message_id, &updated_info, &error, server);
-    record_delivery_failure_audit(message_id, &updated_info, &error, &new_status);
+    record_delivery_failure_audit(processor, message_id, &updated_info, &error, &new_status);
     record_circuit_breaker_failure(processor, &updated_info, is_temporary_failure);
     maybe_generate_dsn(processor, context, &updated_info, &error).await;
 
@@ -369,10 +369,11 @@ async fn load_context_and_info(
     message_id: &SpooledMessageId,
     spool: &Arc<dyn empath_spool::BackingStore>,
 ) -> Result<(Context, DeliveryInfo), DeliveryError> {
-    let context = spool
+    let mut context = spool
         .read_metadata(message_id)
         .await
         .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+    context.audit_logger = Some(Arc::clone(&processor.audit_logger));
     let info = processor.queue.get(message_id).ok_or_else(|| {
         SystemError::MessageNotFound(format!("Message {message_id:?} not in queue"))
     })?;
@@ -586,7 +587,7 @@ async fn handle_delivery_success(
     );
 
     let duration_ms = info.queued_at.elapsed().map_or(0, |d| d.as_millis());
-    empath_common::audit::log_delivery_success(
+    processor.audit_logger.log_delivery_success(
         &message_id.to_string(),
         &info.recipient_domain,
         mx_server_id,
@@ -928,12 +929,13 @@ fn dispatch_failure_event(
 }
 
 fn record_delivery_failure_audit(
+    processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
     info: &DeliveryInfo,
     error: &DeliveryError,
     new_status: &DeliveryStatus,
 ) {
-    empath_common::audit::log_delivery_failure(
+    processor.audit_logger.log_delivery_failure(
         &message_id.to_string(),
         &info.recipient_domain,
         &error.to_string(),

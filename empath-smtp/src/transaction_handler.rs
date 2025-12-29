@@ -157,6 +157,7 @@ pub trait SmtpTransactionHandler: Send + Sync {
 ///     SpfConfig::default(),
 ///     false,
 ///     false,
+///     empath_common::audit::AuditLoggerBuilder::default().build(),
 /// );
 /// // Use handler with session orchestrator
 /// # }
@@ -174,6 +175,8 @@ pub struct DefaultSmtpTransactionHandler {
     require_dkim: bool,
     /// Whether to enforce DMARC policy on failure
     dmarc_enforce: bool,
+    /// Audit logger for message lifecycle events
+    audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
 }
 
 impl DefaultSmtpTransactionHandler {
@@ -187,6 +190,7 @@ impl DefaultSmtpTransactionHandler {
     /// * `spf_config` - SPF configuration
     /// * `require_dkim` - Whether to reject messages without DKIM pass
     /// * `dmarc_enforce` - Whether to enforce DMARC policy on failure
+    /// * `audit_logger` - Audit logger for message lifecycle events
     #[must_use]
     pub const fn new(
         spool: Option<Arc<dyn BackingStore>>,
@@ -195,6 +199,7 @@ impl DefaultSmtpTransactionHandler {
         spf_config: crate::spf::SpfConfig,
         require_dkim: bool,
         dmarc_enforce: bool,
+        audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
     ) -> Self {
         Self {
             spool,
@@ -203,6 +208,7 @@ impl DefaultSmtpTransactionHandler {
             spf_config,
             require_dkim,
             dmarc_enforce,
+            audit_logger,
         }
     }
 
@@ -275,7 +281,7 @@ impl DefaultSmtpTransactionHandler {
             let size = ctx.data.as_ref().map_or(0, |d| d.len());
             let from_ip = self.client_socket(ctx).to_string();
 
-            empath_common::audit::log_message_received(
+            self.audit_logger.log_message_received(
                 &id.to_string(),
                 sender,
                 &recipients,
@@ -970,6 +976,7 @@ mod tests {
 
     #[test]
     fn test_default_handler_creation() -> TestResult {
+        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
         let handler = DefaultSmtpTransactionHandler::new(
             None,
             "127.0.0.1:1234"
@@ -979,6 +986,7 @@ mod tests {
             crate::spf::SpfConfig::default(),
             false,
             false,
+            audit_logger,
         );
         assert!(handler.spool.is_none());
         assert_eq!(handler.peer.to_string(), "127.0.0.1:1234");
@@ -990,6 +998,7 @@ mod tests {
         use empath_spool::MemoryBackingStore;
 
         let spool = Arc::new(MemoryBackingStore::default());
+        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
         let handler = DefaultSmtpTransactionHandler::new(
             Some(spool),
             "127.0.0.1:1234"
@@ -999,6 +1008,7 @@ mod tests {
             crate::spf::SpfConfig::default(),
             false,
             false,
+            audit_logger,
         );
         assert!(handler.spool.is_some());
         Ok(())
@@ -1051,6 +1061,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn received_header_is_inserted_before_body() -> TestResult {
+        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
         let handler = DefaultSmtpTransactionHandler::new(
             None,
             "203.0.113.5:2525"
@@ -1060,6 +1071,7 @@ mod tests {
             crate::spf::SpfConfig::default(),
             false,
             false,
+            audit_logger,
         );
 
         let message = b"Subject: hello\r\n\r\nhello world";
@@ -1181,6 +1193,7 @@ mod tests {
             .map_err(|err| err.to_string())?;
 
         // Create transaction handler with SPF resolver
+        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
         let mut handler = DefaultSmtpTransactionHandler::new(
             None,
             "192.0.2.100:1234"
@@ -1190,6 +1203,7 @@ mod tests {
             SpfConfig::default(),
             false,
             false,
+            audit_logger,
         );
 
         // Create context with sender from example.com

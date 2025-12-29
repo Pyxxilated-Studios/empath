@@ -357,6 +357,9 @@ pub struct Context {
     /// Active module identity for mutation audit/metrics.
     #[serde(skip)]
     pub module_context: Option<ModuleContext>,
+    /// Audit logger for message lifecycle events.
+    #[serde(skip)]
+    pub audit_logger: Option<Arc<dyn crate::audit::AuditLogger>>,
 }
 
 impl Default for Context {
@@ -378,6 +381,7 @@ impl Default for Context {
             tracking_id: None,
             message_dirty: false,
             module_context: None,
+            audit_logger: None,
         }
     }
 }
@@ -429,6 +433,7 @@ impl Context {
             tracking_id: metadata.tracking_id,
             message_dirty: false,
             module_context: None,
+            audit_logger: None,
         }
     }
 
@@ -661,6 +666,15 @@ impl ContextBuilder {
     #[must_use]
     pub const fn with_tracking_id(mut self, tracking_id: Option<SpooledMessageId>) -> Self {
         self.context.tracking_id = tracking_id;
+        self
+    }
+
+    #[must_use]
+    pub fn with_audit_logger(
+        mut self,
+        audit_logger: Option<Arc<dyn crate::audit::AuditLogger>>,
+    ) -> Self {
+        self.context.audit_logger = audit_logger;
         self
     }
 

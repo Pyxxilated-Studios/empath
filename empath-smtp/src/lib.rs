@@ -131,6 +131,8 @@ pub struct SmtpArgs {
     spf_dns_resolver: Option<Arc<dyn spf::SpfDnsResolver>>,
     #[serde(default)]
     pub spf_config: spf::SpfConfig,
+    #[serde(skip)]
+    audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
 }
 
 impl std::fmt::Debug for SmtpArgs {
@@ -151,6 +153,10 @@ impl std::fmt::Debug for SmtpArgs {
                 &self.spf_dns_resolver.as_ref().map(|_| "<resolver>"),
             )
             .field("spf_config", &self.spf_config)
+            .field(
+                "audit_logger",
+                &self.audit_logger.as_ref().map(|_| "<audit_logger>"),
+            )
             .finish()
     }
 }
@@ -187,6 +193,16 @@ impl SmtpArgs {
     #[must_use]
     pub const fn with_dmarc_enforce(mut self, dmarc_enforce: bool) -> Self {
         self.dmarc_enforce = dmarc_enforce;
+        self
+    }
+
+    /// Set the audit logger for SMTP sessions.
+    #[must_use]
+    pub fn with_audit_logger(
+        mut self,
+        audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
+    ) -> Self {
+        self.audit_logger = Some(audit_logger);
         self
     }
 
@@ -272,6 +288,7 @@ impl Protocol for Smtp {
                 .with_timeouts(args.timeouts)
                 .with_spf_dns_resolver(args.spf_dns_resolver)
                 .with_spf_config(args.spf_config)
+                .with_audit_logger(args.audit_logger)
                 .with_init_context(
                     init_context
                         .into_iter()

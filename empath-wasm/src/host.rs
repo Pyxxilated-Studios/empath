@@ -14,7 +14,6 @@ use std::{
 };
 
 use empath_common::{
-    audit,
     context::{Context, OUTBOUND_BINDING_CONTEXT_KEY},
     internal,
     message_api::{
@@ -797,7 +796,9 @@ fn record_mutation_records(
 ) {
     let (module_type, module_name) = module_context;
     for record in audit_log.records() {
-        audit::log_module_mutation(context.id(), module_type, module_name, record);
+        if let Some(logger) = context.audit_logger.as_ref() {
+            logger.log_module_mutation(context.id(), module_type, module_name, record);
+        }
         if let Some(metrics) = empath_metrics::try_metrics() {
             let mutation_kind = match record.kind {
                 MutationKind::Header { .. } => "header",

@@ -15,8 +15,6 @@
 //! Email addresses (sender, recipients) can be redacted based on the `AuditConfig`
 //! to comply with privacy regulations (GDPR, HIPAA, etc.).
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -76,21 +74,81 @@ const fn default_true() -> bool {
     true
 }
 
-/// Global audit configuration (thread-safe)
-static AUDIT_CONFIG: std::sync::OnceLock<Arc<AuditConfig>> = std::sync::OnceLock::new();
-
-/// Initialize audit logging with configuration
-pub fn init(config: AuditConfig) {
-    AUDIT_CONFIG.get_or_init(|| Arc::new(config));
+pub trait AuditLogger: Send + Sync + std::fmt::Debug {
+    fn log_message_received(
+        &self,
+        message_id: &str,
+        sender: Option<&EmailAddress>,
+        recipients: &[EmailAddress],
+        size: usize,
+        from_ip: &str,
+    );
+    fn log_module_mutation(
+        &self,
+        message_id: &str,
+        module_type: &str,
+        module_name: &str,
+        record: &MutationRecord,
+    );
+    fn log_delivery_attempt(
+        &self,
+        message_id: &str,
+        domain: &Domain,
+        server: &ServerId,
+        attempt: usize,
+    );
+    fn log_delivery_success(
+        &self,
+        message_id: &str,
+        domain: &Domain,
+        server: &ServerId,
+        attempt: usize,
+        duration_ms: u128,
+    );
+    fn log_delivery_failure(
+        &self,
+        message_id: &str,
+        domain: &Domain,
+        error: &str,
+        attempt: usize,
+        status: &str,
+    );
 }
 
-/// Get the current audit configuration
-#[must_use]
-pub fn config() -> Arc<AuditConfig> {
-    AUDIT_CONFIG
-        .get()
-        .cloned()
-        .unwrap_or_else(|| Arc::new(AuditConfig::default()))
+#[derive(Debug, Default)]
+pub struct AuditLoggerBuilder {
+    config: AuditConfig,
+}
+
+impl AuditLoggerBuilder {
+    #[must_use]
+    pub const fn new(config: AuditConfig) -> Self {
+        Self { config }
+    }
+
+    #[must_use]
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.config.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_redaction(mut self, redaction: AuditRedaction) -> Self {
+        self.config.redaction = redaction;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> std::sync::Arc<dyn AuditLogger> {
+        std::sync::Arc::new(ConfiguredAuditLogger {
+            config: self.config,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ConfiguredAuditLogger {
+    config: AuditConfig,
 }
 
 /// Redact email address if redaction is enabled
@@ -125,172 +183,180 @@ pub fn redact_emails(emails: &[EmailAddress], redact: bool) -> Vec<String> {
 /// - `recipient_count`: Number of recipients
 /// - `size`: Message size in bytes
 /// - `from_ip`: Client IP address
-pub fn log_message_received(
-    message_id: &str,
-    sender: Option<&EmailAddress>,
-    recipients: &[EmailAddress],
-    size: usize,
-    from_ip: &str,
-) {
-    let config = config();
-    if !config.enabled {
-        return;
+impl AuditLogger for ConfiguredAuditLogger {
+    fn log_message_received(
+        &self,
+        message_id: &str,
+        sender: Option<&EmailAddress>,
+        recipients: &[EmailAddress],
+        size: usize,
+        from_ip: &str,
+    ) {
+        if !self.config.enabled {
+            return;
+        }
+
+        let redacted_sender = sender.map_or_else(String::new, |s| {
+            redact_email(s, self.config.redaction.redact_sender)
+        });
+        let redacted_recipients =
+            redact_emails(recipients, self.config.redaction.redact_recipients);
+
+        tracing::event!(
+            tracing::Level::INFO,
+            event = "MessageReceived",
+            message_id = %message_id,
+            sender = %redacted_sender,
+            recipients = ?redacted_recipients,
+            recipient_count = recipients.len(),
+            size = size,
+            from_ip = %from_ip,
+            "Audit: Message received and spooled"
+        );
     }
 
-    let redacted_sender = sender.map_or_else(String::new, |s| {
-        redact_email(s, config.redaction.redact_sender)
-    });
-    let redacted_recipients = redact_emails(recipients, config.redaction.redact_recipients);
+    /// Log module mutation event
+    ///
+    /// Logged when a module mutates headers or body content.
+    ///
+    /// # Fields
+    /// - `message_id`: Unique message identifier
+    /// - `module_type`: Module runtime type (e.g., wasm, python, `shared_library`)
+    /// - `module_name`: Module name or path
+    /// - `mutation_kind`: Header or body mutation
+    /// - `action`: Mutation action (set/append/remove/etc.)
+    /// - `header_name`: Header name (header mutations only)
+    /// - `old_len`: Previous size (bytes)
+    /// - `new_len`: New size (bytes)
+    fn log_module_mutation(
+        &self,
+        message_id: &str,
+        module_type: &str,
+        module_name: &str,
+        record: &MutationRecord,
+    ) {
+        if !self.config.enabled {
+            return;
+        }
 
-    tracing::event!(
-        tracing::Level::INFO,
-        event = "MessageReceived",
-        message_id = %message_id,
-        sender = %redacted_sender,
-        recipients = ?redacted_recipients,
-        recipient_count = recipients.len(),
-        size = size,
-        from_ip = %from_ip,
-        "Audit: Message received and spooled"
-    );
-}
+        let (mutation_kind, header_name) = match &record.kind {
+            MutationKind::Header { name } => ("header", Some(name.as_str())),
+            MutationKind::Body => ("body", None),
+        };
 
-/// Log module mutation event
-///
-/// Logged when a module mutates headers or body content.
-///
-/// # Fields
-/// - `message_id`: Unique message identifier
-/// - `module_type`: Module runtime type (e.g., wasm, python, `shared_library`)
-/// - `module_name`: Module name or path
-/// - `mutation_kind`: Header or body mutation
-/// - `action`: Mutation action (set/append/remove/etc.)
-/// - `header_name`: Header name (header mutations only)
-/// - `old_len`: Previous size (bytes)
-/// - `new_len`: New size (bytes)
-pub fn log_module_mutation(
-    message_id: &str,
-    module_type: &str,
-    module_name: &str,
-    record: &MutationRecord,
-) {
-    let config = config();
-    if !config.enabled {
-        return;
+        tracing::event!(
+            tracing::Level::INFO,
+            event = "ModuleMutation",
+            message_id = %message_id,
+            module_type = %module_type,
+            module_name = %module_name,
+            mutation_kind = %mutation_kind,
+            action = %record.action,
+            header_name = ?header_name,
+            old_len = record.old_len,
+            new_len = record.new_len,
+            "Audit: Module mutation"
+        );
     }
 
-    let (mutation_kind, header_name) = match &record.kind {
-        MutationKind::Header { name } => ("header", Some(name.as_str())),
-        MutationKind::Body => ("body", None),
-    };
+    /// Log delivery attempt event
+    ///
+    /// Logged for each delivery attempt to a remote MX server.
+    ///
+    /// # Fields
+    /// - `message_id`: Unique message identifier
+    /// - `domain`: Recipient domain
+    /// - `server`: MX server address (host:port)
+    /// - `delivery_attempt`: Attempt number (1-based)
+    fn log_delivery_attempt(
+        &self,
+        message_id: &str,
+        domain: &Domain,
+        server: &ServerId,
+        attempt: usize,
+    ) {
+        if !self.config.enabled {
+            return;
+        }
 
-    tracing::event!(
-        tracing::Level::INFO,
-        event = "ModuleMutation",
-        message_id = %message_id,
-        module_type = %module_type,
-        module_name = %module_name,
-        mutation_kind = %mutation_kind,
-        action = %record.action,
-        header_name = ?header_name,
-        old_len = record.old_len,
-        new_len = record.new_len,
-        "Audit: Module mutation"
-    );
-}
-
-/// Log delivery attempt event
-///
-/// Logged for each delivery attempt to a remote MX server.
-///
-/// # Fields
-/// - `message_id`: Unique message identifier
-/// - `domain`: Recipient domain
-/// - `server`: MX server address (host:port)
-/// - `delivery_attempt`: Attempt number (1-based)
-pub fn log_delivery_attempt(message_id: &str, domain: &Domain, server: &ServerId, attempt: usize) {
-    let config = config();
-    if !config.enabled {
-        return;
+        tracing::event!(
+            tracing::Level::INFO,
+            event = "DeliveryAttempt",
+            message_id = %message_id,
+            domain = %domain,
+            server = %server,
+            delivery_attempt = attempt,
+            "Audit: Delivery attempt"
+        );
     }
 
-    tracing::event!(
-        tracing::Level::INFO,
-        event = "DeliveryAttempt",
-        message_id = %message_id,
-        domain = %domain,
-        server = %server,
-        delivery_attempt = attempt,
-        "Audit: Delivery attempt"
-    );
-}
+    /// Log delivery success event
+    ///
+    /// Logged when a message is successfully delivered to a remote MX server.
+    ///
+    /// # Fields
+    /// - `message_id`: Unique message identifier
+    /// - `domain`: Recipient domain
+    /// - `server`: MX server address (host:port)
+    /// - `delivery_attempt`: Final attempt number
+    /// - `duration_ms`: Total delivery duration in milliseconds
+    fn log_delivery_success(
+        &self,
+        message_id: &str,
+        domain: &Domain,
+        server: &ServerId,
+        attempt: usize,
+        duration_ms: u128,
+    ) {
+        if !self.config.enabled {
+            return;
+        }
 
-/// Log delivery success event
-///
-/// Logged when a message is successfully delivered to a remote MX server.
-///
-/// # Fields
-/// - `message_id`: Unique message identifier
-/// - `domain`: Recipient domain
-/// - `server`: MX server address (host:port)
-/// - `delivery_attempt`: Final attempt number
-/// - `duration_ms`: Total delivery duration in milliseconds
-pub fn log_delivery_success(
-    message_id: &str,
-    domain: &Domain,
-    server: &ServerId,
-    attempt: usize,
-    duration_ms: u128,
-) {
-    let config = config();
-    if !config.enabled {
-        return;
+        tracing::event!(
+            tracing::Level::INFO,
+            event = "DeliverySuccess",
+            message_id = %message_id,
+            domain = %domain,
+            server = %server,
+            delivery_attempt = attempt,
+            duration_ms = duration_ms,
+            "Audit: Delivery successful"
+        );
     }
 
-    tracing::event!(
-        tracing::Level::INFO,
-        event = "DeliverySuccess",
-        message_id = %message_id,
-        domain = %domain,
-        server = %server,
-        delivery_attempt = attempt,
-        duration_ms = duration_ms,
-        "Audit: Delivery successful"
-    );
-}
+    /// Log delivery failure event
+    ///
+    /// Logged when a message permanently fails after exhausting retry attempts.
+    ///
+    /// # Fields
+    /// - `message_id`: Unique message identifier
+    /// - `domain`: Recipient domain
+    /// - `error`: Error description
+    /// - `delivery_attempt`: Final attempt number
+    /// - `status`: Final delivery status (Failed/Retry)
+    fn log_delivery_failure(
+        &self,
+        message_id: &str,
+        domain: &Domain,
+        error: &str,
+        attempt: usize,
+        status: &str,
+    ) {
+        if !self.config.enabled {
+            return;
+        }
 
-/// Log delivery failure event
-///
-/// Logged when a message permanently fails after exhausting retry attempts.
-///
-/// # Fields
-/// - `message_id`: Unique message identifier
-/// - `domain`: Recipient domain
-/// - `error`: Error description
-/// - `delivery_attempt`: Final attempt number
-/// - `status`: Final delivery status (Failed/Retry)
-pub fn log_delivery_failure(
-    message_id: &str,
-    domain: &Domain,
-    error: &str,
-    attempt: usize,
-    status: &str,
-) {
-    let config = config();
-    if !config.enabled {
-        return;
+        tracing::event!(
+            tracing::Level::WARN,
+            event = "DeliveryFailure",
+            message_id = %message_id,
+            domain = %domain,
+            error = %error,
+            delivery_attempt = attempt,
+            status = %status,
+            "Audit: Delivery failed"
+        );
     }
-
-    tracing::event!(
-        tracing::Level::WARN,
-        event = "DeliveryFailure",
-        message_id = %message_id,
-        domain = %domain,
-        error = %error,
-        delivery_attempt = attempt,
-        status = %status,
-        "Audit: Delivery failed"
-    );
 }
 
 #[cfg(test)]
@@ -333,15 +399,15 @@ mod tests {
 
     #[test]
     fn test_audit_disabled() -> Result<(), EmailValidationError> {
-        // Initialize with disabled config
-        init(AuditConfig {
+        let logger = AuditLoggerBuilder::new(AuditConfig {
             enabled: false,
             redaction: AuditRedaction {
                 redact_sender: false,
                 redact_recipients: false,
                 redact_message_content: false,
             },
-        });
+        })
+        .build();
 
         let sender = EmailAddress::new("sender@example.com")?;
         let recipient = EmailAddress::new("rcpt@example.com")?;
@@ -350,10 +416,10 @@ mod tests {
         let server = ServerId::new("mx1.example.com:25")?;
 
         // These should not panic even when disabled
-        log_message_received("test-id", Some(&sender), &recipients, 1024, "192.168.1.1");
-        log_delivery_attempt("test-id", &domain, &server, 1);
-        log_delivery_success("test-id", &domain, &server, 1, 1000);
-        log_delivery_failure("test-id", &domain, "connection refused", 1, "Failed");
+        logger.log_message_received("test-id", Some(&sender), &recipients, 1024, "192.168.1.1");
+        logger.log_delivery_attempt("test-id", &domain, &server, 1);
+        logger.log_delivery_success("test-id", &domain, &server, 1, 1000);
+        logger.log_delivery_failure("test-id", &domain, "connection refused", 1, "Failed");
         Ok(())
     }
 }

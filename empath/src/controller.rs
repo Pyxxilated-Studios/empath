@@ -5,7 +5,8 @@ use std::{
 };
 
 use empath_common::{
-    Signal, context::Capability, controller::Controller, internal, logging, tracing,
+    Signal, audit::AuditLoggerBuilder, context::Capability, controller::Controller, internal,
+    logging, tracing,
 };
 use empath_control::{
     ControlAuthConfig, ControlRateLimitConfig, ControlServer, DEFAULT_CONTROL_SOCKET,
@@ -152,17 +153,6 @@ async fn shutdown() -> anyhow::Result<()> {
 }
 
 impl Empath {
-    /// Initialize the audit logging system with the configured settings
-    pub fn init_audit(&self) {
-        empath_common::audit::init(self.audit.clone());
-        tracing::info!(
-            enabled = self.audit.enabled,
-            redact_sender = self.audit.redaction.redact_sender,
-            redact_recipients = self.audit.redaction.redact_recipients,
-            "Audit logging initialized"
-        );
-    }
-
     /// Run this controller, and everything it controls
     ///
     /// # Errors
@@ -175,6 +165,14 @@ impl Empath {
 
         internal!("Controller running");
 
+        let audit_logger = AuditLoggerBuilder::new(self.audit.clone()).build();
+        tracing::info!(
+            enabled = self.audit.enabled,
+            redact_sender = self.audit.redaction.redact_sender,
+            redact_recipients = self.audit.redaction.redact_recipients,
+            "Audit logging initialized"
+        );
+
         // Initialize health checker
         let health_checker = Arc::new(HealthChecker::new(self.health.max_queue_size));
 
@@ -185,6 +183,7 @@ impl Empath {
         // Extract the backing store for SMTP and delivery
         let backing_store = spool.backing_store();
 
+        self.delivery.set_audit_logger(Arc::clone(&audit_logger));
         self.init_delivery(backing_store.clone())?;
         let modules = std::mem::take(&mut self.modules);
         modules::init(modules)?;
@@ -200,6 +199,7 @@ impl Empath {
             spf_dns_resolver.as_ref(),
             &tls_registry,
             &smtp_capabilities,
+            Arc::clone(&audit_logger),
         )?;
 
         // Mark SMTP as ready after successful initialization
@@ -314,6 +314,7 @@ impl Empath {
         spf_dns_resolver: Option<&Arc<dyn empath_smtp::spf::SpfDnsResolver>>,
         tls_registry: &Arc<TlsContextRegistry>,
         smtp_capabilities: &Arc<RwLock<Vec<Capability>>>,
+        audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
     ) -> anyhow::Result<()> {
         // Configure SMTP with spool and SPF DNS resolver
         let spf_resolver_clone = spf_dns_resolver.cloned();
@@ -332,6 +333,7 @@ impl Empath {
             }
             args = args.with_capabilities_state(Arc::clone(&capabilities_for_args));
             args.with_tls_context_registry(&registry_for_args)
+                .with_audit_logger(Arc::clone(&audit_logger))
         });
 
         smtp_controller.init()?;

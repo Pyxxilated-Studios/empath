@@ -2,7 +2,6 @@ use std::{borrow::Cow, ffi::CStr, sync::Arc};
 
 use empath_common::{
     address::Address,
-    audit,
     context::{Capability, Context, OUTBOUND_BINDING_CONTEXT_KEY},
     message_api::{
         BodyError, BodyLimits, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
@@ -39,7 +38,7 @@ mod api {
         Address, Arc, BodyError, BodyLimits, BodyOpts, CStr, Capability, Charset, Context, Cow,
         EmOutboundBindingKind, EmOutboundBindingSelection, HeaderError, HeaderLimits, HeaderName,
         HeaderValue, MutationAudit, MutationKind, NewlineStyle, OUTBOUND_BINDING_CONTEXT_KEY,
-        Status, audit,
+        Status,
     };
 
     /// Retrieve the id associated with this context
@@ -555,7 +554,9 @@ mod api {
     ) {
         let (module_type, module_name) = module_context;
         for record in audit_log.records() {
-            audit::log_module_mutation(validate_context.id(), module_type, module_name, record);
+            if let Some(logger) = validate_context.audit_logger.as_ref() {
+                logger.log_module_mutation(validate_context.id(), module_type, module_name, record);
+            }
             #[cfg(feature = "metrics")]
             if let Some(metrics) = empath_metrics::try_metrics() {
                 let mutation_kind = match record.kind {

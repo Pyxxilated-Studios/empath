@@ -639,6 +639,7 @@ pub struct SessionConfig {
     pub spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
     pub spf_config: crate::spf::SpfConfig,
     pub transaction_handler: Option<Box<dyn SmtpTransactionHandler>>,
+    pub audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -661,6 +662,10 @@ impl std::fmt::Debug for SessionConfig {
             .field(
                 "transaction_handler",
                 &self.transaction_handler.as_ref().map(|_| "<handler>"),
+            )
+            .field(
+                "audit_logger",
+                &self.audit_logger.as_ref().map(|_| "<audit_logger>"),
             )
             .finish()
     }
@@ -688,6 +693,7 @@ pub struct SessionConfigBuilder {
     spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
     spf_config: crate::spf::SpfConfig,
     transaction_handler: Option<Box<dyn SmtpTransactionHandler>>,
+    audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
 }
 
 impl std::fmt::Debug for SessionConfigBuilder {
@@ -710,6 +716,10 @@ impl std::fmt::Debug for SessionConfigBuilder {
             .field(
                 "transaction_handler",
                 &self.transaction_handler.as_ref().map(|_| "<handler>"),
+            )
+            .field(
+                "audit_logger",
+                &self.audit_logger.as_ref().map(|_| "<audit_logger>"),
             )
             .finish()
     }
@@ -734,6 +744,7 @@ impl Default for SessionConfigBuilder {
             spf_dns_resolver: None,
             spf_config: crate::spf::SpfConfig::default(),
             transaction_handler: None,
+            audit_logger: None,
         }
     }
 }
@@ -831,6 +842,15 @@ impl SessionConfigBuilder {
         self
     }
 
+    #[must_use]
+    pub fn with_audit_logger(
+        mut self,
+        audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
+    ) -> Self {
+        self.audit_logger = audit_logger;
+        self
+    }
+
     /// Build the final `SessionConfig`
     #[must_use]
     pub fn build(self) -> SessionConfig {
@@ -847,6 +867,7 @@ impl SessionConfigBuilder {
             spf_dns_resolver: self.spf_dns_resolver,
             spf_config: self.spf_config,
             transaction_handler: self.transaction_handler,
+            audit_logger: self.audit_logger,
         }
     }
 }
@@ -886,6 +907,9 @@ pub struct Session {
     /// When the limit is exceeded, the server rejects with SMTP status code 552
     /// (Exceeded Storage Allocation).
     pub(crate) max_message_size: usize,
+
+    /// Audit logger for message lifecycle events.
+    pub(crate) audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
 }
 
 impl Session {
@@ -923,6 +947,10 @@ impl Session {
             _ => None,
         });
 
+        let audit_logger = config
+            .audit_logger
+            .unwrap_or_else(|| empath_common::audit::AuditLoggerBuilder::default().build());
+
         // Use provided transaction handler or create default
         let transaction_handler = config.transaction_handler.unwrap_or_else(|| {
             Box::new(DefaultSmtpTransactionHandler::new(
@@ -932,6 +960,7 @@ impl Session {
                 config.spf_config,
                 config.require_dkim,
                 config.dmarc_enforce,
+                Arc::clone(&audit_logger),
             ))
         });
 
@@ -942,6 +971,7 @@ impl Session {
             banner: Arc::from(config.banner.as_str()),
             init_context: Arc::new(config.init_context),
             max_message_size,
+            audit_logger,
         };
 
         (session, transaction_handler, tls_context)
