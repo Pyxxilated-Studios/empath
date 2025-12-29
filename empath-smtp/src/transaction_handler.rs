@@ -146,6 +146,7 @@ pub trait SmtpTransactionHandler: Send + Sync {
 ///
 /// ```rust
 /// use std::sync::Arc;
+/// use empath_common::audit::AuditLoggerBuilder;
 /// use empath_smtp::{transaction_handler::DefaultSmtpTransactionHandler, spf::SpfConfig};
 /// use empath_spool::BackingStore;
 ///
