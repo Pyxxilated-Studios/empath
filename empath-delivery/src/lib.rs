@@ -48,7 +48,7 @@ pub use empath_common::{DeliveryAttempt, DeliveryStatus};
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 // Re-export policy types
 pub use policy::{
-    DeliveryPipeline, DnsResolution, DomainPolicyResolver, RateLimitResult, RetryPolicy,
+    DeliveryPipeline, DnsResolution, DomainPolicyResolver, RateLimitResult, RetryPolicy, TlsPolicy,
 };
 // Re-export core types
 pub use processor::DeliveryProcessor;

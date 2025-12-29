@@ -13,7 +13,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] OPS-02: Config reload safety net. Add control command output that reports reloadable vs restart-required fields (single canonical list) and keep docs in sync.
 
 ## P2 — Delivery Improvements
-- [ ] DEL-01: Binding selection transparency. Add control endpoint to show resolved binding + TLS policy per domain (preview mode).
+- [x] DEL-01: Binding selection transparency. Add control endpoint to show resolved binding + TLS policy per domain (preview mode).
 - [x] DEL-02: TLS policy guardrails. Add warnings/logs when TLS is disabled at global or binding scope.
 
 ## P3 — Post-1.0 Candidates (Shortlist)

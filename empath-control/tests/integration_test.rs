@@ -67,6 +67,7 @@ impl MockHandler {
 
 #[async_trait]
 impl CommandHandler for MockHandler {
+    #[allow(clippy::too_many_lines)]
     async fn handle_request(&self, request: Request) -> Result<Response> {
         match request.command {
             RequestCommand::Dns(cmd) => match cmd {
@@ -126,6 +127,15 @@ impl CommandHandler for MockHandler {
                 SystemCommand::ListBindings => {
                     Ok(Response::data(ResponseData::OutboundBindings(Vec::new())))
                 }
+                SystemCommand::PreviewBinding { domain } => Ok(Response::data(
+                    ResponseData::BindingPreview(empath_control::protocol::BindingPreview {
+                        domain,
+                        binding: None,
+                        binding_enabled: None,
+                        attempt_starttls: None,
+                        tls_policy: "opportunistic".to_string(),
+                    }),
+                )),
                 SystemCommand::SetBindingState { name, enabled } => {
                     let state = if enabled { "enabled" } else { "disabled" };
                     Ok(Response::data(ResponseData::Message(format!(

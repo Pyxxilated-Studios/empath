@@ -17,7 +17,7 @@ use empath_control::{
     ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SpoolCommand,
     SystemCommand, protocol::ResponseData, server::CommandHandler,
 };
-use empath_delivery::{BindingHealthState, DeliveryQueryService};
+use empath_delivery::{BindingHealthState, DeliveryQueryService, TlsPolicy};
 use empath_smtp::TlsContextRegistry;
 use empath_spool::BackingStore;
 use ron::Options;
@@ -50,6 +50,7 @@ mod tests {
     use empath_delivery::{
         BindingHealthStatus, CircuitBreakerConfig, ConnectionStats, DeliveryInfo, DnsResolver,
         DomainConfigRegistry, OutboundBindingRegistry, RateLimitConfig, RetryPolicy, SmtpTimeouts,
+        TlsPolicy,
     };
     use empath_spool::{BackingStore, SpooledMessageId};
 
@@ -96,6 +97,7 @@ mod tests {
         replaced_retry_policy: Mutex<Option<RetryPolicy>>,
         replaced_smtp_timeouts: Mutex<Option<SmtpTimeouts>>,
         replaced_circuit_breaker: Mutex<Option<CircuitBreakerConfig>>,
+        tls_policy: TlsPolicy,
     }
 
     impl MockDelivery {
@@ -259,6 +261,10 @@ mod tests {
         fn replace_domains(&self, registry: DomainConfigRegistry) {
             let mut guard = self.replaced_domains.lock().expect("lock replaced_domains");
             *guard = Some(registry);
+        }
+
+        fn tls_policy(&self) -> TlsPolicy {
+            self.tls_policy
         }
     }
 
@@ -461,6 +467,23 @@ fn format_reload_list(items: &[&'static str]) -> String {
     } else {
         items.join(", ")
     }
+}
+
+fn resolve_tls_policy_preview(
+    domains: &empath_delivery::DomainConfigRegistry,
+    domain: &str,
+    global_policy: TlsPolicy,
+) -> TlsPolicy {
+    if let Some(config) = domains.get(domain) {
+        if let Some(policy) = config.tls_policy {
+            return policy;
+        }
+        if config.require_tls {
+            return TlsPolicy::Required;
+        }
+    }
+
+    global_policy
 }
 
 impl EmpathControlHandler {
@@ -668,6 +691,9 @@ impl EmpathControlHandler {
             SystemCommand::DrainListener { socket } => Self::handle_system_drain_listener(socket),
             SystemCommand::ConnectionStats => Ok(self.handle_system_connection_stats()),
             SystemCommand::ListBindings => Ok(self.list_bindings_response()),
+            SystemCommand::PreviewBinding { domain } => {
+                Ok(self.handle_system_binding_preview(domain))
+            }
             SystemCommand::SetRateLimit {
                 domain,
                 messages_per_second,
@@ -715,6 +741,35 @@ impl EmpathControlHandler {
         };
 
         Response::data(ResponseData::SystemStatus(status))
+    }
+
+    fn handle_system_binding_preview(&self, domain: &str) -> Response {
+        let domains = self.delivery.domains();
+        let outbound_bindings = self.delivery.outbound_bindings();
+
+        let binding_name = domains
+            .get(domain)
+            .and_then(|config| config.binding.clone())
+            .or_else(|| outbound_bindings.default.clone());
+        let binding = binding_name
+            .as_deref()
+            .and_then(|name| outbound_bindings.get(name));
+        let binding_enabled = binding_name
+            .as_deref()
+            .map(|name| self.delivery.binding_enabled(name));
+        let attempt_starttls = binding.map(|binding| binding.tls.attempt_starttls);
+
+        let tls_policy = resolve_tls_policy_preview(domains, domain, self.delivery.tls_policy());
+
+        let preview = empath_control::protocol::BindingPreview {
+            domain: domain.to_string(),
+            binding: binding_name,
+            binding_enabled,
+            attempt_starttls,
+            tls_policy: tls_policy.to_string(),
+        };
+
+        Response::data(ResponseData::BindingPreview(preview))
     }
 
     fn handle_system_set_log_level(level: &str) -> empath_control::Result<Response> {

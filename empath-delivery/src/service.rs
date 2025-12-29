@@ -178,6 +178,9 @@ pub trait DeliveryQueryService: Send + Sync {
 
     /// Replace domain configuration registry contents.
     fn replace_domains(&self, registry: crate::DomainConfigRegistry);
+
+    /// Get global TLS policy for outbound delivery.
+    fn tls_policy(&self) -> crate::policy::TlsPolicy;
 }
 
 /// Lightweight view of queue statistics for control endpoints.

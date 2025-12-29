@@ -179,6 +179,11 @@ enum SystemAction {
     ConnectionStats,
     /// List configured outbound bindings
     Bindings,
+    /// Preview outbound binding and TLS policy for a recipient domain
+    BindingPreview {
+        /// Recipient domain to preview
+        domain: String,
+    },
     /// Enable an outbound binding
     EnableBinding {
         /// Binding name
@@ -551,6 +556,7 @@ async fn handle_dns_command(client: &ControlClient, action: DnsAction) -> anyhow
             ResponseData::SystemStatus(_)
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
+            | ResponseData::BindingPreview(_)
             | ResponseData::TlsContexts(_)
             | ResponseData::SmtpCapabilities(_)
             | ResponseData::QueueList(_)
@@ -610,6 +616,9 @@ fn handle_system_data(data: ResponseData) {
         }
         ResponseData::SmtpCapabilities(capabilities) => {
             print_smtp_capabilities(&capabilities);
+        }
+        ResponseData::BindingPreview(preview) => {
+            print_binding_preview(&preview);
         }
         ResponseData::Message(msg) => {
             print_message(&msg);
@@ -738,6 +747,22 @@ fn print_message(message: &str) {
     println!("✓ {message}");
 }
 
+fn print_binding_preview(preview: &empath_control::protocol::BindingPreview) {
+    println!("=== Binding Preview ===\n");
+    println!("Domain:          {}", preview.domain);
+    println!(
+        "Binding:         {}",
+        preview.binding.as_deref().unwrap_or("none")
+    );
+    if let Some(enabled) = preview.binding_enabled {
+        println!("Binding enabled: {enabled}");
+    }
+    if let Some(attempt_starttls) = preview.attempt_starttls {
+        println!("STARTTLS:        {attempt_starttls}");
+    }
+    println!("TLS policy:      {}", preview.tls_policy);
+}
+
 fn build_system_request(action: SystemAction) -> Request {
     let command = match action {
         SystemAction::Ping => SystemCommand::Ping,
@@ -752,6 +777,7 @@ fn build_system_request(action: SystemAction) -> Request {
         SystemAction::SetLogLevel { level } => SystemCommand::SetLogLevel { level },
         SystemAction::ConnectionStats => SystemCommand::ConnectionStats,
         SystemAction::Bindings => SystemCommand::ListBindings,
+        SystemAction::BindingPreview { domain } => SystemCommand::PreviewBinding { domain },
         SystemAction::EnableBinding { name } => SystemCommand::SetBindingState {
             name,
             enabled: true,
@@ -930,6 +956,7 @@ fn handle_queue_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::SystemStatus(_)
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
+            | ResponseData::BindingPreview(_)
             | ResponseData::TlsContexts(_)
             | ResponseData::SmtpCapabilities(_)
             | ResponseData::SpoolList(_)
@@ -1070,6 +1097,7 @@ fn handle_spool_response(payload: ResponsePayload) -> anyhow::Result<()> {
             | ResponseData::QueueStats(_)
             | ResponseData::ConnectionStats(_)
             | ResponseData::OutboundBindings(_)
+            | ResponseData::BindingPreview(_)
             | ResponseData::TlsContexts(_)
             | ResponseData::SmtpCapabilities(_) => {
                 println!("Unexpected response for spool command: {data:?}");

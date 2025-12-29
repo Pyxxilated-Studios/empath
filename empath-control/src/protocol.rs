@@ -104,6 +104,11 @@ pub enum SystemCommand {
     ConnectionStats,
     /// List configured outbound bindings
     ListBindings,
+    /// Preview outbound binding and TLS policy for a recipient domain
+    PreviewBinding {
+        /// Recipient domain to preview
+        domain: String,
+    },
     /// Enable or disable an outbound binding at runtime
     SetBindingState {
         /// Binding name
@@ -299,6 +304,8 @@ pub enum ResponseData {
     ConnectionStats(ConnectionStats),
     /// Outbound binding configuration listing
     OutboundBindings(Vec<OutboundBindingInfo>),
+    /// Outbound binding preview for a recipient domain
+    BindingPreview(BindingPreview),
     /// TLS contexts and certificate metadata
     TlsContexts(Vec<TlsContextInfo>),
     /// SMTP capabilities currently advertised
@@ -377,6 +384,21 @@ pub struct OutboundBindingInfo {
     /// Unix timestamp (seconds) when the binding is expected to reopen
     #[serde(default)]
     pub open_until: Option<u64>,
+}
+
+/// Outbound binding preview for a domain
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindingPreview {
+    /// Recipient domain
+    pub domain: String,
+    /// Resolved outbound binding name
+    pub binding: Option<String>,
+    /// Whether the resolved binding is enabled
+    pub binding_enabled: Option<bool>,
+    /// Whether STARTTLS is attempted for the resolved binding
+    pub attempt_starttls: Option<bool>,
+    /// Resolved TLS policy for the domain
+    pub tls_policy: String,
 }
 
 /// TLS certificate metadata for control responses

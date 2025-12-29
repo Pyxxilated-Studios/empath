@@ -927,4 +927,8 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
             self.domains.insert(domain, config);
         }
     }
+
+    fn tls_policy(&self) -> crate::policy::TlsPolicy {
+        self.tls_policy
+    }
 }
