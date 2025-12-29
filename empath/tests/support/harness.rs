@@ -407,7 +407,7 @@ impl E2ETestHarnessBuilder {
     fn start_spool_watcher(
         shutdown_tx: &broadcast::Sender<Signal>,
     ) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
-        let spool_config = empath_spool::SpoolConfig::Memory(MemoryConfig { capacity: None });
+        let spool_config = empath_spool::SpoolConfig::Memory(MemoryConfig::default());
         let spool = spool_config.into_spool()?;
 
         let shutdown_rx_spool = shutdown_tx.subscribe();

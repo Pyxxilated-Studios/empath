@@ -5,7 +5,10 @@ use dashmap::DashMap;
 use empath_common::context::Context;
 
 use crate::{
-    SpoolError, observability::record_spool_io, r#trait::BackingStore, types::SpooledMessageId,
+    SpoolError,
+    observability::{SpoolObserver, default_spool_observer},
+    r#trait::BackingStore,
+    types::SpooledMessageId,
 };
 
 /// In-memory backing store implementation
@@ -36,6 +39,7 @@ pub struct MemoryBackingStore {
     pub(crate) messages: Arc<DashMap<SpooledMessageId, Context>>,
     /// Maximum number of messages to store (None = unlimited)
     capacity: Option<usize>,
+    observer: Arc<dyn SpoolObserver>,
 }
 
 impl MemoryBackingStore {
@@ -45,6 +49,7 @@ impl MemoryBackingStore {
         Self {
             messages: Arc::new(DashMap::new()),
             capacity: None,
+            observer: default_spool_observer(),
         }
     }
 
@@ -60,6 +65,27 @@ impl MemoryBackingStore {
         Self {
             messages: Arc::new(DashMap::new()),
             capacity: Some(capacity),
+            observer: default_spool_observer(),
+        }
+    }
+
+    /// Create a new memory-backed store with a custom observer
+    #[must_use]
+    pub fn with_observer(observer: Arc<dyn SpoolObserver>) -> Self {
+        Self {
+            messages: Arc::new(DashMap::new()),
+            capacity: None,
+            observer,
+        }
+    }
+
+    /// Create a new memory-backed store with a capacity limit and custom observer
+    #[must_use]
+    pub fn with_capacity_and_observer(capacity: usize, observer: Arc<dyn SpoolObserver>) -> Self {
+        Self {
+            messages: Arc::new(DashMap::new()),
+            capacity: Some(capacity),
+            observer,
         }
     }
 
@@ -123,7 +149,7 @@ impl BackingStore for MemoryBackingStore {
         self.messages.insert(id.clone(), context_to_store);
 
         let data_len = context.data.as_ref().map_or(0, |data| data.len());
-        record_spool_io(
+        self.observer.record_io(
             "write",
             u64::try_from(data_len).unwrap_or(0),
             start.elapsed(),
@@ -155,7 +181,7 @@ impl BackingStore for MemoryBackingStore {
             .ok_or_else(|| SpoolError::NotFound(id.clone()))
             .inspect(|context| {
                 let data_len = context.data.as_ref().map_or(0, |data| data.len());
-                record_spool_io(
+                self.observer.record_io(
                     "read",
                     u64::try_from(data_len).unwrap_or(0),
                     start.elapsed(),
@@ -176,7 +202,8 @@ impl BackingStore for MemoryBackingStore {
             context.data_len = context.data.as_ref().map(|data| data.len());
         }
         context.data = None;
-        record_spool_io("read", 0, start.elapsed(), "memory", Some(id));
+        self.observer
+            .record_io("read", 0, start.elapsed(), "memory", Some(id));
         Ok(context)
     }
 
@@ -194,7 +221,8 @@ impl BackingStore for MemoryBackingStore {
                 .data_len
                 .or_else(|| context.data.as_ref().map(|data| data.len()));
             self.messages.insert(id.clone(), updated);
-            record_spool_io("update", 0, start.elapsed(), "memory", Some(id));
+            self.observer
+                .record_io("update", 0, start.elapsed(), "memory", Some(id));
             Ok(())
         } else {
             Err(SpoolError::NotFound(id.clone()))
@@ -215,7 +243,8 @@ impl BackingStore for MemoryBackingStore {
         self.messages
             .remove(id)
             .ok_or_else(|| SpoolError::NotFound(id.clone()))?;
-        record_spool_io("delete", 0, start.elapsed(), "memory", Some(id));
+        self.observer
+            .record_io("delete", 0, start.elapsed(), "memory", Some(id));
         Ok(())
     }
 }

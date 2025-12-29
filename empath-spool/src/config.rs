@@ -3,7 +3,11 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::{
-    backends::MemoryBackingStore, controller::FileBackingStore, spool::Spool, r#trait::BackingStore,
+    backends::MemoryBackingStore,
+    controller::FileBackingStore,
+    observability::{SpoolObserver, default_spool_observer},
+    spool::Spool,
+    r#trait::BackingStore,
 };
 
 /// Configuration for the spool backing store
@@ -49,11 +53,31 @@ pub enum SpoolConfig {
 }
 
 /// Configuration for memory-backed spool
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MemoryConfig {
     /// Maximum number of messages to store (omit for unlimited)
     #[serde(default)]
     pub capacity: Option<usize>,
+    #[serde(skip, default = "default_spool_observer")]
+    observer: Arc<dyn SpoolObserver>,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            capacity: None,
+            observer: default_spool_observer(),
+        }
+    }
+}
+
+impl MemoryConfig {
+    /// Set the spool observer for I/O events
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn SpoolObserver>) -> Self {
+        self.observer = observer;
+        self
+    }
 }
 
 impl Default for SpoolConfig {
@@ -98,8 +122,13 @@ impl SpoolConfig {
         match self {
             Self::File(store) => Arc::new(store),
             Self::Memory(config) => config.capacity.map_or_else(
-                || Arc::new(MemoryBackingStore::new()),
-                |capacity| Arc::new(MemoryBackingStore::with_capacity(capacity)),
+                || Arc::new(MemoryBackingStore::with_observer(config.observer.clone())),
+                |capacity| {
+                    Arc::new(MemoryBackingStore::with_capacity_and_observer(
+                        capacity,
+                        config.observer.clone(),
+                    ))
+                },
             ),
         }
     }
@@ -119,14 +148,30 @@ impl SpoolConfig {
                 Ok(SpoolType::File(spool))
             }
             Self::Memory(config) => {
-                let store = config
-                    .capacity
-                    .map_or_else(MemoryBackingStore::new, |capacity| {
-                        MemoryBackingStore::with_capacity(capacity)
-                    });
+                let store = config.capacity.map_or_else(
+                    || MemoryBackingStore::with_observer(config.observer.clone()),
+                    |capacity| {
+                        MemoryBackingStore::with_capacity_and_observer(
+                            capacity,
+                            config.observer.clone(),
+                        )
+                    },
+                );
                 Ok(SpoolType::Memory(Spool::new(store)))
             }
         }
+    }
+
+    /// Set the spool observer for I/O events
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn SpoolObserver>) -> Self {
+        match &mut self {
+            Self::File(store) => store.set_observer(observer),
+            Self::Memory(config) => {
+                config.observer = observer;
+            }
+        }
+        self
     }
 }
 

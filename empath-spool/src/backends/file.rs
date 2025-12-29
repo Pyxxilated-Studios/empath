@@ -20,7 +20,7 @@ use tokio::{
 
 use crate::{
     SpoolError, ValidationError,
-    observability::record_spool_io,
+    observability::{SpoolObserver, default_spool_observer},
     r#trait::{BackingStore, MessageMetadata, SpoolScanCursor, SpoolScanMode},
     types::SpooledMessageId,
 };
@@ -55,12 +55,14 @@ const MANIFEST_FILENAME: &str = ".spool_manifest";
 #[derive(Debug, Clone)]
 pub struct FileBackingStore {
     path: PathBuf,
+    observer: Arc<dyn SpoolObserver>,
 }
 
 impl Default for FileBackingStore {
     fn default() -> Self {
         Self {
             path: PathBuf::from("/var/spool/empath"),
+            observer: default_spool_observer(),
         }
     }
 }
@@ -79,7 +81,10 @@ impl<'de> Deserialize<'de> for FileBackingStore {
         let helper = FileBackingStoreHelper::deserialize(deserializer)?;
         Self::validate_path(&helper.path).map_err(serde::de::Error::custom)?;
 
-        Ok(Self { path: helper.path })
+        Ok(Self {
+            path: helper.path,
+            observer: default_spool_observer(),
+        })
     }
 }
 
@@ -165,6 +170,11 @@ impl FileBackingStore {
     #[must_use]
     pub fn path(&self) -> &std::path::Path {
         &self.path
+    }
+
+    /// Set the spool observer for I/O events
+    pub fn set_observer(&mut self, observer: Arc<dyn SpoolObserver>) {
+        self.observer = observer;
     }
 
     /// Create a new `FileBackingStore` builder
@@ -382,7 +392,8 @@ impl BackingStore for FileBackingStore {
 
         let data_len = context.data.as_ref().map_or(0, |data| data.len());
         let bytes = u64::try_from(data_len + metadata.len()).unwrap_or(0);
-        record_spool_io("write", bytes, start.elapsed(), "file", Some(&tracking_id));
+        self.observer
+            .record_io("write", bytes, start.elapsed(), "file", Some(&tracking_id));
 
         Ok(tracking_id)
     }
@@ -437,7 +448,7 @@ impl BackingStore for FileBackingStore {
         let start = Instant::now();
         let (context, meta_len) = self.read_metadata_internal(msg_id).await?;
 
-        record_spool_io(
+        self.observer.record_io(
             "read",
             u64::try_from(meta_len).unwrap_or(0),
             start.elapsed(),
@@ -481,7 +492,7 @@ impl BackingStore for FileBackingStore {
 
         internal!(level = DEBUG, "Read message {msg_id} from spool");
 
-        record_spool_io(
+        self.observer.record_io(
             "read",
             u64::try_from(context.data_len.unwrap_or(0) + meta_len).unwrap_or(0),
             start.elapsed(),
@@ -586,7 +597,7 @@ impl BackingStore for FileBackingStore {
 
         internal!(level = DEBUG, "Updated message {msg_id} metadata in spool");
 
-        record_spool_io(
+        self.observer.record_io(
             "update",
             u64::try_from(metadata.len()).unwrap_or(0),
             start.elapsed(),
@@ -705,16 +716,27 @@ impl BackingStore for FileBackingStore {
 
         internal!(level = DEBUG, "Deleted message {msg_id} from spool");
 
-        record_spool_io("delete", 0, start.elapsed(), "file", Some(msg_id));
+        self.observer
+            .record_io("delete", 0, start.elapsed(), "file", Some(msg_id));
 
         Ok(())
     }
 }
 
 /// Builder for `FileBackingStore`
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FileBackingStoreBuilder {
     path: PathBuf,
+    observer: Arc<dyn SpoolObserver>,
+}
+
+impl Default for FileBackingStoreBuilder {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::new(),
+            observer: default_spool_observer(),
+        }
+    }
 }
 
 impl FileBackingStoreBuilder {
@@ -725,12 +747,22 @@ impl FileBackingStoreBuilder {
         self
     }
 
+    /// Set the spool observer for I/O events
+    #[must_use]
+    pub fn observer(mut self, observer: Arc<dyn SpoolObserver>) -> Self {
+        self.observer = observer;
+        self
+    }
+
     /// Build the final `FileBackingStore`
     ///
     /// # Errors
     /// Returns an error if the path is invalid or potentially dangerous
     pub fn build(self) -> crate::Result<FileBackingStore> {
         FileBackingStore::validate_path(&self.path)?;
-        Ok(FileBackingStore { path: self.path })
+        Ok(FileBackingStore {
+            path: self.path,
+            observer: self.observer,
+        })
     }
 }
