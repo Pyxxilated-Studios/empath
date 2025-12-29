@@ -28,7 +28,7 @@ mkdir -p "$HOOKS_DIR"
 cat > "$HOOK_FILE" << 'EOF'
 #!/usr/bin/env bash
 # Pre-commit hook for empath MTA
-# Runs format check and clippy before allowing commit
+# Runs format check and clippy when Rust source files are staged
 
 set -e
 
@@ -40,6 +40,12 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Running pre-commit checks...${NC}"
 echo ""
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+if ! echo "${staged_files}" | grep -qE '\.rs$'; then
+    echo -e "${GREEN}No Rust source changes staged; skipping fmt/clippy.${NC}"
+    exit 0
+fi
 
 # Check 1: Format check
 echo -e "${YELLOW}[1/2] Checking code formatting...${NC}"
@@ -76,7 +82,7 @@ chmod +x "$HOOK_FILE"
 
 echo -e "${GREEN}✓ Pre-commit hook installed successfully!${NC}"
 echo ""
-echo "The following checks will run before each commit:"
+echo "The following checks will run before each commit when Rust source files are staged:"
 echo "  1. Code formatting (cargo fmt --check)"
 echo "  2. Linting (cargo clippy)"
 echo ""
