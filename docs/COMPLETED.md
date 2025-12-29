@@ -1,13 +1,37 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2025-12-27
-> **Total Completed**: 112 tasks
+> **Last Updated**: 2025-12-29
+> **Total Completed**: 127 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
 ---
 
 ## Recently Completed (Last 30 Days)
+
+### Week of 2025-12-29
+
+Archived from TODO.md items already marked complete.
+
+#### ✅ Batch archive from TODO.md
+**Completed**: 2025-12-29
+**Effort**: N/A (from TODO.md)
+**Priority**: P2/P3/New Ideas
+
+- NEW-SEC-ARC-01: ARC seal handling.
+- NEW-SEC-DMARC-01: DMARC policy enforcement.
+- NEW-SEC-XX: Control socket roles.
+- NEW-19 dependency follow-ups: control socket auth decision recorded now that DR is documented.
+- 0.13 Control socket auth (multi-user/ACL) — covered by optional control_auth roles.
+- 0.14 DNSSEC validation/logging — backlog after 1.0.
+- 5.2/5.3 Config hot reload & TLS policy enforcement — post-Phase 4.
+- NEW-WASM-15+16 performance cleanup after macro/context changes (profiling).
+- NEW-19: Disaster recovery procedures. Spool/queue/config backup-restore, RTO/RPO, empathctl backup/restore, tested scenarios.
+- NEW-EXPE-01: WASM module fuzz harness.
+- NEW-OBS-ARC-02: DMARC sampling dashboard.
+- NEW-QUEUE-01: Priority spool tiers.
+- NEW-SEC-ROT-01: Secret rotation helpers.
+- NEW-TEST-MX-01: E2E multi-MX coverage.
 
 ### Week of 2025-12-27
 
