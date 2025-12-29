@@ -7,6 +7,33 @@ pub struct PlainCredentials {
     pub password: String,
 }
 
+/// Trait for decoding SMTP auth responses into credential types.
+pub trait AuthMechanism {
+    /// The credentials produced by this mechanism.
+    type Credentials;
+    /// The SMTP mechanism name (e.g. "PLAIN").
+    const NAME: &'static str;
+
+    /// Decode an auth response payload for this mechanism.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the payload is invalid for the mechanism.
+    fn decode(response: &str) -> Result<Self::Credentials, AuthError>;
+}
+
+/// SMTP AUTH PLAIN mechanism implementation.
+pub struct PlainAuth;
+
+impl AuthMechanism for PlainAuth {
+    type Credentials = PlainCredentials;
+    const NAME: &'static str = "PLAIN";
+
+    fn decode(response: &str) -> Result<Self::Credentials, AuthError> {
+        PlainCredentials::decode(response)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthError {
     message: String,
@@ -26,41 +53,43 @@ impl AuthError {
     }
 }
 
-/// Decode an AUTH PLAIN response payload.
-///
-/// # Errors
-///
-/// Returns an error if the decoded payload is malformed or contains invalid
-/// UTF-8 for the username/password fields.
-pub fn decode_plain_auth(value: &str) -> Result<PlainCredentials, AuthError> {
-    let decoded = decode_base64(value)?;
-    let parts: Vec<&[u8]> = decoded.split(|b| *b == 0).collect();
-    if parts.len() != 3 {
-        return Err(AuthError::new("Invalid PLAIN auth payload"));
+impl PlainCredentials {
+    /// Decode an AUTH PLAIN response payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the decoded payload is malformed or contains invalid
+    /// UTF-8 for the username/password fields.
+    pub fn decode(value: &str) -> Result<Self, AuthError> {
+        let decoded = decode_base64(value)?;
+        let parts: Vec<&[u8]> = decoded.split(|b| *b == 0).collect();
+        if parts.len() != 3 {
+            return Err(AuthError::new("Invalid PLAIN auth payload"));
+        }
+
+        let authzid = if parts[0].is_empty() {
+            None
+        } else {
+            Some(
+                String::from_utf8(parts[0].to_vec())
+                    .map_err(|_| AuthError::new("Invalid authzid encoding"))?,
+            )
+        };
+        let auth_user = String::from_utf8(parts[1].to_vec())
+            .map_err(|_| AuthError::new("Invalid authcid encoding"))?;
+        let password = String::from_utf8(parts[2].to_vec())
+            .map_err(|_| AuthError::new("Invalid password encoding"))?;
+
+        if auth_user.is_empty() {
+            return Err(AuthError::new("Missing authcid in PLAIN auth payload"));
+        }
+
+        Ok(Self {
+            authzid,
+            authcid: auth_user,
+            password,
+        })
     }
-
-    let authzid = if parts[0].is_empty() {
-        None
-    } else {
-        Some(
-            String::from_utf8(parts[0].to_vec())
-                .map_err(|_| AuthError::new("Invalid authzid encoding"))?,
-        )
-    };
-    let auth_user = String::from_utf8(parts[1].to_vec())
-        .map_err(|_| AuthError::new("Invalid authcid encoding"))?;
-    let password = String::from_utf8(parts[2].to_vec())
-        .map_err(|_| AuthError::new("Invalid password encoding"))?;
-
-    if auth_user.is_empty() {
-        return Err(AuthError::new("Missing authcid in PLAIN auth payload"));
-    }
-
-    Ok(PlainCredentials {
-        authzid,
-        authcid: auth_user,
-        password,
-    })
 }
 
 /// Decode base64 into raw bytes.

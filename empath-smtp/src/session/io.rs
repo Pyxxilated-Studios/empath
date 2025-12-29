@@ -4,12 +4,32 @@ use empath_common::{context, incoming, status::Status, traits::fsm::FiniteStateM
 
 use crate::{
     State,
-    auth::decode_plain_auth,
+    auth::{AuthMechanism, PlainAuth, PlainCredentials},
     command::{Command, XclientParameters},
     session::{AuthPending, Context, Session},
     session_state::SessionState,
     state,
 };
+
+trait ApplyAuthCredentials {
+    fn apply_to_context(&self, validate_context: &mut context::Context);
+}
+
+impl ApplyAuthCredentials for PlainCredentials {
+    fn apply_to_context(&self, validate_context: &mut context::Context) {
+        if let Some(authzid) = self.authzid.as_ref() {
+            validate_context
+                .session
+                .insert(Cow::Borrowed("authzid"), authzid.clone());
+        }
+        validate_context
+            .session
+            .insert(Cow::Borrowed("auth_user"), self.authcid.clone());
+        validate_context
+            .session
+            .insert(Cow::Borrowed("auth_password"), self.password.clone());
+    }
+}
 
 impl Session {
     /// Handle reception of message data (during DATA state)
@@ -224,7 +244,7 @@ impl Session {
             return true;
         }
 
-        if !mechanism.eq_ignore_ascii_case("PLAIN") {
+        if !mechanism.eq_ignore_ascii_case(PlainAuth::NAME) {
             validate_context.response = Some((
                 Status::Unknown(504),
                 Cow::Borrowed("Unrecognized authentication type"),
@@ -245,7 +265,7 @@ impl Session {
         }
 
         if let Some(initial_response) = initial_response {
-            if let Err(err) = Self::apply_plain_auth(initial_response, validate_context) {
+            if let Err(err) = Self::apply_auth::<PlainAuth>(initial_response, validate_context) {
                 validate_context.response =
                     Some((Status::Unknown(535), Cow::Owned(err.to_string())));
                 return true;
@@ -292,7 +312,7 @@ impl Session {
             return;
         }
 
-        if let Err(err) = Self::apply_plain_auth(&response, validate_context) {
+        if let Err(err) = Self::apply_auth::<PlainAuth>(&response, validate_context) {
             validate_context.response = Some((Status::Unknown(535), Cow::Owned(err.to_string())));
             self.context.state = Self::ready_state(validate_context);
             self.context.sent = false;
@@ -306,25 +326,18 @@ impl Session {
         self.context.sent = false;
     }
 
-    fn apply_plain_auth(
+    fn apply_auth<M: AuthMechanism>(
         response: &str,
         validate_context: &mut context::Context,
-    ) -> Result<(), crate::auth::AuthError> {
-        let creds = decode_plain_auth(response)?;
+    ) -> Result<(), crate::auth::AuthError>
+    where
+        M::Credentials: ApplyAuthCredentials,
+    {
+        let creds = M::decode(response)?;
         validate_context
             .session
-            .insert(Cow::Borrowed("auth_mechanism"), "PLAIN".to_string());
-        if let Some(authzid) = creds.authzid {
-            validate_context
-                .session
-                .insert(Cow::Borrowed("authzid"), authzid);
-        }
-        validate_context
-            .session
-            .insert(Cow::Borrowed("auth_user"), creds.authcid);
-        validate_context
-            .session
-            .insert(Cow::Borrowed("auth_password"), creds.password);
+            .insert(Cow::Borrowed("auth_mechanism"), M::NAME.to_string());
+        creds.apply_to_context(validate_context);
         Ok(())
     }
 
