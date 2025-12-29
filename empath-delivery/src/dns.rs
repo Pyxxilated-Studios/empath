@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use empath_common::context::Context;
-use empath_ffi::modules;
+use empath_ffi::modules::{self, ModuleRegistry};
 use empath_smtp::spf::{DnsLookupError, MailServer as SpfMailServer, SpfDnsResolver};
 use empath_tracing::traced;
 use hickory_resolver::TokioResolver;
@@ -509,7 +509,11 @@ impl HickoryDnsResolver {
                     ctx.transaction
                         .insert(Cow::Borrowed("dnssec_status"), status.as_str().to_string());
                 }
-                let _ = modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
+                let _ = ModuleRegistry::dispatch_with_registry(
+                    ModuleRegistry::global(),
+                    modules::Event::Event(modules::Ev::DnsLookup),
+                    &mut ctx,
+                );
 
                 if let Some(status) = cached.dnssec_status
                     && self.config.dnssec_strict
@@ -577,7 +581,11 @@ impl HickoryDnsResolver {
             ctx.transaction
                 .insert(Cow::Borrowed("dnssec_status"), status.as_str().to_string());
         }
-        let _ = modules::dispatch(modules::Event::Event(modules::Ev::DnsLookup), &mut ctx);
+        let _ = ModuleRegistry::dispatch_with_registry(
+            ModuleRegistry::global(),
+            modules::Event::Event(modules::Ev::DnsLookup),
+            &mut ctx,
+        );
 
         if dnssec_failure && let Some(status) = dnssec_status {
             return Err(DnsError::DnssecValidationFailed {

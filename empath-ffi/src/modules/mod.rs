@@ -22,35 +22,214 @@ pub mod validate;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-static OUTBOUND_BINDINGS: OnceLock<RwLock<Vec<String>>> = OnceLock::new();
-
-fn outbound_bindings_store() -> &'static RwLock<Vec<String>> {
-    OUTBOUND_BINDINGS.get_or_init(|| RwLock::new(Vec::new()))
+#[derive(Debug)]
+pub struct ModuleRegistry {
+    modules: Arc<[Module]>,
+    outbound_bindings: Arc<RwLock<Vec<String>>>,
 }
 
-/// Replace the configured outbound bindings list for module helpers.
-pub fn set_outbound_bindings(bindings: Vec<String>) {
-    if let Ok(mut guard) = outbound_bindings_store().write() {
-        *guard = bindings;
+pub struct ModuleRegistryBuilder {
+    modules: Vec<Module>,
+    outbound_bindings: Vec<String>,
+}
+
+impl Default for ModuleRegistryBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-/// Fetch configured outbound bindings for module helpers.
-#[must_use]
-pub fn outbound_bindings() -> Vec<String> {
-    outbound_bindings_store()
-        .read()
-        .map(|guard| guard.clone())
-        .unwrap_or_default()
+impl ModuleRegistryBuilder {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            modules: Vec::new(),
+            outbound_bindings: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_modules(mut self, modules: Vec<Module>) -> Self {
+        self.modules = modules;
+        self
+    }
+
+    #[must_use]
+    pub fn with_outbound_bindings(mut self, bindings: Vec<String>) -> Self {
+        self.outbound_bindings = bindings;
+        self
+    }
+
+    /// Build and initialize the module registry.
+    ///
+    /// # Errors
+    /// Returns an error if any module fails to initialize.
+    #[traced(instrument(level = tracing::Level::TRACE, ret, skip(self)), timing)]
+    pub fn build(mut self) -> Result<ModuleRegistry, Error> {
+        internal!(level = INFO, "Initialising modules ...");
+
+        // Add core module first so it runs before other validation modules
+        let mut all_modules = vec![
+            Module::Core {
+                validators: Arc::new(core::CoreValidators::new()),
+            },
+            #[cfg(debug_assertions)]
+            Module::TestModule(RwLock::default()),
+        ];
+
+        // Add metrics module if enabled
+        #[cfg(feature = "metrics")]
+        if is_enabled() {
+            all_modules.push(Module::Metrics);
+        }
+
+        all_modules.append(&mut self.modules);
+
+        let init_context = ModuleInitContext {
+            outbound_bindings: self.outbound_bindings.clone(),
+        };
+
+        all_modules
+            .iter_mut()
+            .inspect(|module| internal!("Init: {module}"))
+            .try_for_each(|module| module.init_with(&init_context))?;
+
+        internal!(level = INFO, "Modules initialised");
+
+        Ok(ModuleRegistry {
+            modules: all_modules.into(),
+            outbound_bindings: Arc::new(RwLock::new(self.outbound_bindings)),
+        })
+    }
 }
 
-/// Validate that a binding name exists in configuration.
-#[must_use]
-pub fn outbound_binding_exists(name: &str) -> bool {
-    outbound_bindings_store()
-        .read()
-        .map(|guard| guard.iter().any(|binding| binding == name))
-        .unwrap_or(false)
+static MODULE_REGISTRY: OnceLock<ModuleRegistry> = OnceLock::new();
+
+impl ModuleRegistry {
+    #[must_use]
+    pub fn global() -> Option<&'static Self> {
+        MODULE_REGISTRY.get()
+    }
+
+    /// Install this registry as the global instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the global registry cannot be installed.
+    pub fn install(self) -> Result<&'static Self, Error> {
+        if let Some(existing) = MODULE_REGISTRY.get() {
+            return Ok(existing);
+        }
+
+        let _ = MODULE_REGISTRY.set(self);
+        MODULE_REGISTRY
+            .get()
+            .ok_or_else(|| Error::Init("Module registry missing after install".to_string()))
+    }
+
+    #[must_use]
+    pub fn modules(&self) -> &[Module] {
+        &self.modules
+    }
+
+    /// Replace the configured outbound bindings list for module helpers.
+    pub fn set_outbound_bindings(&self, bindings: Vec<String>) {
+        if let Ok(mut guard) = self.outbound_bindings.write() {
+            *guard = bindings;
+        }
+    }
+
+    /// Fetch configured outbound bindings for module helpers.
+    #[must_use]
+    pub fn outbound_bindings(&self) -> Vec<String> {
+        self.outbound_bindings
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// Validate that a binding name exists in configuration.
+    #[must_use]
+    pub fn outbound_binding_exists(&self, name: &str) -> bool {
+        self.outbound_bindings
+            .read()
+            .map(|guard| guard.iter().any(|binding| binding == name))
+            .unwrap_or(false)
+    }
+
+    /// Dispatch an event to all modules
+    ///
+    /// Validation events fail closed (non-zero results reject).
+    /// Event callbacks fail open (non-zero results are logged and ignored).
+    ///
+    /// # Errors
+    /// The events being dispatched are handled with a panic handler, which should
+    /// catch some possible errors. If these are caught, they are returned to the
+    /// caller to handle.
+    pub fn dispatch(&self, event: Event, validate_context: &mut Context) -> DispatchResult {
+        internal!("Dispatching: {event:?}");
+
+        let mut event_error: Option<DispatchResult> = None;
+        for module in self
+            .modules
+            .iter()
+            .inspect(|m| internal!(level = DEBUG, "{m}"))
+        {
+            let previous = validate_context.module_context.take();
+            validate_context.module_context = Some(module.module_context());
+            let code = module.emit(event, validate_context);
+            validate_context.module_context = previous;
+            if code == 0 {
+                continue;
+            }
+
+            match event {
+                Event::Validate(_) => {
+                    return rejection_from_code(code, validate_context);
+                }
+                Event::Event(_) => {
+                    let module_name = format!("{module}");
+                    internal!(
+                        level = WARN,
+                        "Event module {module_name} returned non-zero code {code}"
+                    );
+                    if event_error.is_none() {
+                        event_error = Some(DispatchResult::Error {
+                            module: module_name,
+                            kind: DispatchErrorKind::ModuleFailed { code },
+                        });
+                    }
+                }
+            }
+        }
+
+        event_error.unwrap_or(DispatchResult::Accept)
+    }
+
+    pub fn dispatch_with_registry(
+        registry: Option<&Self>,
+        event: Event,
+        validate_context: &mut Context,
+    ) -> DispatchResult {
+        let Some(registry) = registry else {
+            internal!(
+                level = ERROR,
+                "Module store not initialized. Treating as dispatch failure."
+            );
+            if matches!(event, Event::Validate(_)) {
+                validate_context.response = Some((
+                    Status::ActionUnavailable,
+                    Cow::Borrowed("Validation modules unavailable"),
+                ));
+            }
+            return DispatchResult::Error {
+                module: "module-store".to_string(),
+                kind: DispatchErrorKind::NotInitialized,
+            };
+        };
+
+        registry.dispatch(event, validate_context)
+    }
 }
 
 type Init = unsafe extern "C" fn(StringVector) -> i32;
@@ -173,7 +352,7 @@ pub struct Test {
     pub validators_called: Vec<validate::Event>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum Module {
     SharedLibrary(library::Shared),
@@ -196,9 +375,6 @@ pub enum Module {
     #[cfg(feature = "wasm")]
     Wasm(wasm::Wasm),
 }
-
-/// Module store using Arc for lock-free concurrent reads after initialization
-pub static MODULE_STORE: OnceLock<Arc<[Module]>> = OnceLock::new();
 
 /// Error category reported by module dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,54 +450,19 @@ impl Module {
             Self::Wasm(wasm) => wasm.emit(event, validate_context),
         }
     }
-}
 
-/// Initialise all modules
-///
-/// # Errors
-/// This can error in two scenarios:
-///   1. The module is invalid (e.g. the shared library cannot be found/has issues)
-///   2. The modules init has an issue
-#[traced(instrument(level = tracing::Level::TRACE, ret, skip(modules)), timing)]
-pub fn init(modules: Vec<Module>) -> Result<(), Error> {
-    internal!(level = INFO, "Initialising modules ...");
-
-    // Add core module first so it runs before other validation modules
-    let mut all_modules = vec![
-        Module::Core {
-            validators: Arc::new(core::CoreValidators::new()),
-        },
-        #[cfg(debug_assertions)]
-        Module::TestModule(RwLock::default()),
-    ];
-
-    // Add metrics module if enabled
-    #[cfg(feature = "metrics")]
-    if is_enabled() {
-        all_modules.push(Module::Metrics);
-    }
-
-    all_modules.extend(modules);
-
-    all_modules
-        .iter_mut()
-        .inspect(|module| internal!("Init: {module}"))
-        .try_for_each(|module| match module {
-            Module::SharedLibrary(lib) => lib.init(),
-            Module::TestModule { .. } | Module::Core { .. } => Ok(()),
+    fn init_with(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
+        match self {
+            Self::SharedLibrary(lib) => lib.init(),
+            Self::TestModule { .. } | Self::Core { .. } => Ok(()),
             #[cfg(feature = "metrics")]
-            Module::Metrics => Ok(()),
+            Self::Metrics => Ok(()),
             #[cfg(feature = "python")]
-            Module::Python(py) => py.init(),
+            Self::Python(py) => py.init(),
             #[cfg(feature = "wasm")]
-            Module::Wasm(wasm) => wasm.init(),
-        })?;
-
-    // Set module store (ignore if already initialized, which can happen in tests)
-    internal!(level = INFO, "Modules initialised");
-    let _ = MODULE_STORE.set(all_modules.into());
-
-    Ok(())
+            Self::Wasm(wasm) => wasm.init(&context.outbound_bindings),
+        }
+    }
 }
 
 fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
@@ -353,68 +494,8 @@ fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
     DispatchResult::Reject { status, message }
 }
 
-/// Dispatch an event to all modules
-///
-/// Validation events fail closed (non-zero results reject).
-/// Event callbacks fail open (non-zero results are logged and ignored).
-///
-/// # Errors
-/// The events being dispatched are handled with a panic handler, which should
-/// catch some possible errors. If these are caught, they are returned to the
-/// caller to handle.
-pub fn dispatch(event: Event, validate_context: &mut Context) -> DispatchResult {
-    let modules = if let Some(modules) = MODULE_STORE.get() {
-        Arc::clone(modules)
-    } else {
-        internal!(
-            level = ERROR,
-            "Module store not initialized. Treating as dispatch failure."
-        );
-        if matches!(event, Event::Validate(_)) {
-            validate_context.response = Some((
-                Status::ActionUnavailable,
-                Cow::Borrowed("Validation modules unavailable"),
-            ));
-        }
-        return DispatchResult::Error {
-            module: "module-store".to_string(),
-            kind: DispatchErrorKind::NotInitialized,
-        };
-    };
-
-    internal!("Dispatching: {event:?}");
-
-    let mut event_error: Option<DispatchResult> = None;
-    for module in modules.iter().inspect(|m| internal!(level = DEBUG, "{m}")) {
-        let previous = validate_context.module_context.take();
-        validate_context.module_context = Some(module.module_context());
-        let code = module.emit(event, validate_context);
-        validate_context.module_context = previous;
-        if code == 0 {
-            continue;
-        }
-
-        match event {
-            Event::Validate(_) => {
-                return rejection_from_code(code, validate_context);
-            }
-            Event::Event(_) => {
-                let module_name = format!("{module}");
-                internal!(
-                    level = WARN,
-                    "Event module {module_name} returned non-zero code {code}"
-                );
-                if event_error.is_none() {
-                    event_error = Some(DispatchResult::Error {
-                        module: module_name,
-                        kind: DispatchErrorKind::ModuleFailed { code },
-                    });
-                }
-            }
-        }
-    }
-
-    event_error.unwrap_or(DispatchResult::Accept)
+struct ModuleInitContext {
+    outbound_bindings: Vec<String>,
 }
 
 pub mod test {

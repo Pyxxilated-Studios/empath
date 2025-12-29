@@ -41,7 +41,7 @@ use empath_common::traits::protocol::{Protocol, SessionHandler};
 use empath_delivery::{
     DeliveryProcessor, DnsResolver, DomainConfig, DomainConfigRegistry, MailServer, MockDnsResolver,
 };
-use empath_ffi::modules;
+use empath_ffi::modules::ModuleRegistryBuilder;
 use empath_smtp::client::SmtpClientBuilder;
 use empath_smtp::extensions::Extension;
 use empath_smtp::{Smtp, SmtpArgs};
@@ -484,9 +484,9 @@ impl E2ETestHarnessBuilder {
     ///
     /// Returns an error if any component fails to start.
     pub async fn build(self) -> anyhow::Result<E2ETestHarness> {
-        // Initialize FFI modules (adds core module to MODULE_STORE)
+        // Initialize FFI modules (adds core module to registry)
         // This only needs to be done once per test process
-        let _ = modules::init(vec![]);
+        let _ = ModuleRegistryBuilder::new().build()?.install()?;
 
         let mock_server = self.start_mock_server().await?;
         let mock_addr = mock_server.addr();

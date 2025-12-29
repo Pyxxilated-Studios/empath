@@ -193,7 +193,11 @@ impl Empath {
         self.delivery.set_audit_logger(Arc::clone(&audit_logger));
         self.init_delivery(backing_store.clone())?;
         let modules = std::mem::take(&mut self.modules);
-        modules::init(modules)?;
+        modules::ModuleRegistryBuilder::new()
+            .with_modules(modules)
+            .with_outbound_bindings(self.delivery.outbound_bindings.names())
+            .build()?
+            .install()?;
         health_checker.set_delivery_ready(true);
         health_checker.set_dns_ready(true);
 
@@ -300,7 +304,6 @@ impl Empath {
         // Initialize delivery controller first to get the DNS resolver
         // Use default DNS resolver (None = HickoryDnsResolver)
         self.delivery.init(backing_store, None)?;
-        modules::set_outbound_bindings(self.delivery.outbound_bindings.names());
         Ok(())
     }
 

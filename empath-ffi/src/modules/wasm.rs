@@ -2,6 +2,7 @@
 //!
 //! This module provides integration between WASM modules and the Empath module system.
 
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -48,6 +49,19 @@ pub struct Wasm {
     module: WasmModuleLock,
 }
 
+impl fmt::Debug for Wasm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Wasm")
+            .field("path", &self.path)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("max_memory_bytes", &self.max_memory_bytes)
+            .field("enable_wasi", &self.enable_wasi)
+            .field("wasi_dirs", &self.wasi_dirs)
+            .field("wasi_inherit_env", &self.wasi_inherit_env)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Clone for Wasm {
     fn clone(&self) -> Self {
         Self {
@@ -82,14 +96,14 @@ impl Wasm {
     ///
     /// # Errors
     /// Returns error if the module cannot be loaded or initialized
-    pub fn init(&self) -> Result<(), Error> {
+    pub fn init(&self, outbound_bindings: &[String]) -> Result<(), Error> {
         let mut module = WasmModule::load(&self.path).map_err(|e| {
             Error::Init(format!(
                 "Failed to load WASM module {}: {e}",
                 self.path.display()
             ))
         })?;
-        module = module.with_outbound_bindings(super::outbound_bindings());
+        module = module.with_outbound_bindings(outbound_bindings.to_vec());
 
         if let Some(timeout_secs) = self.timeout_secs {
             module = module.with_timeout(Duration::from_secs(timeout_secs));

@@ -7,7 +7,7 @@ use empath_common::context::{Context, DeliveryContext, SPAN_ID_CONTEXT_KEY, TRAC
 use empath_common::email::ServerId;
 use empath_common::tracing::{error, info, warn};
 use empath_common::{DeliveryAttempt, DeliveryStatus, internal};
-use empath_ffi::modules::{self, Ev, Event};
+use empath_ffi::modules::{Ev, Event, ModuleRegistry};
 use empath_smtp::client::ConnectConfig;
 use empath_spool::{BackingStore, SpooledMessageId};
 use opentelemetry::Context as OtelContext;
@@ -468,7 +468,11 @@ fn dispatch_delivery_event(
         current_server_index: info.current_server_index,
         priority_tier: info.priority_tier,
     });
-    let _ = modules::dispatch(Event::Event(event), context);
+    let _ = ModuleRegistry::dispatch_with_registry(
+        ModuleRegistry::global(),
+        Event::Event(event),
+        context,
+    );
 }
 
 async fn resolve_primary_server(
@@ -919,7 +923,11 @@ fn dispatch_failure_event(
         current_server_index: info.current_server_index,
         priority_tier: info.priority_tier,
     });
-    let _ = modules::dispatch(Event::Event(Ev::DeliveryFailure), context);
+    let _ = ModuleRegistry::dispatch_with_registry(
+        ModuleRegistry::global(),
+        Event::Event(Ev::DeliveryFailure),
+        context,
+    );
 }
 
 fn record_delivery_failure_audit(

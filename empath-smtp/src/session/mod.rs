@@ -982,7 +982,7 @@ mod test {
     use empath_common::email::BannerHostname;
     use empath_common::status::Status;
     use empath_ffi::modules::validate::Event;
-    use empath_ffi::modules::{self, MODULE_STORE, Module};
+    use empath_ffi::modules::{Module, ModuleRegistry, ModuleRegistryBuilder};
     use empath_spool::{BackingStore, TestBackingStore};
     use opentelemetry::Context as OtelContext;
     use opentelemetry::trace::{
@@ -1003,7 +1003,11 @@ mod test {
     #[cfg_attr(miri, ignore)]
     async fn session() -> TestResult {
         // Initialize modules to add core module
-        modules::init(vec![]).map_err(|err| err.to_string())?;
+        ModuleRegistryBuilder::new()
+            .build()
+            .map_err(|err| err.to_string())?
+            .install()
+            .map_err(|err| err.to_string())?;
 
         let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
@@ -1033,7 +1037,11 @@ mod test {
     #[cfg_attr(miri, ignore)]
     async fn helo() -> TestResult {
         // Initialize modules to add core module
-        modules::init(vec![]).map_err(|err| err.to_string())?;
+        ModuleRegistryBuilder::new()
+            .build()
+            .map_err(|err| err.to_string())?
+            .install()
+            .map_err(|err| err.to_string())?;
 
         let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
@@ -1074,7 +1082,11 @@ mod test {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn supports_extended_commands() -> TestResult {
-        modules::init(vec![]).map_err(|err| err.to_string())?;
+        ModuleRegistryBuilder::new()
+            .build()
+            .map_err(|err| err.to_string())?
+            .install()
+            .map_err(|err| err.to_string())?;
 
         let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
@@ -1157,7 +1169,11 @@ mod test {
     #[cfg_attr(miri, ignore)]
     async fn spool_integration() -> TestResult {
         // Initialize modules to add core module
-        modules::init(vec![]).map_err(|err| err.to_string())?;
+        ModuleRegistryBuilder::new()
+            .build()
+            .map_err(|err| err.to_string())?
+            .install()
+            .map_err(|err| err.to_string())?;
 
         let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
@@ -1276,7 +1292,12 @@ mod test {
         };
 
         let module = Module::TestModule(RwLock::default());
-        modules::init(vec![module]).map_err(|err| err.to_string())?;
+        ModuleRegistryBuilder::new()
+            .with_modules(vec![module])
+            .build()
+            .map_err(|err| err.to_string())?
+            .install()
+            .map_err(|err| err.to_string())?;
 
         let (mut session, mut transaction_handler, _tls) = Session::create(
             "[::]:25"
@@ -1306,11 +1327,8 @@ mod test {
             .ok_or_else(|| "missing response".to_string())?;
         assert_eq!(line, &format!("{} Ok", Status::Ok));
 
-        let modules = MODULE_STORE
-            .get()
-            .cloned()
-            .ok_or_else(|| "MODULE_STORE missing".to_string())?;
-        for module in modules.iter() {
+        let registry = ModuleRegistry::global().ok_or_else(|| "registry missing".to_string())?;
+        for module in registry.modules() {
             if let Module::TestModule(mute) = module {
                 assert!(
                     mute.read()

@@ -16,7 +16,7 @@ use empath_common::status::Status;
 use empath_common::traits::protocol::SessionHandler;
 use empath_common::{Signal, context, internal, outgoing, tracing};
 use empath_ffi::modules::validate::Event as ValidateEvent;
-use empath_ffi::modules::{self, DispatchResult, Ev, Event as ModuleEvent};
+use empath_ffi::modules::{DispatchResult, Ev, Event as ModuleEvent, ModuleRegistry};
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -155,7 +155,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
 
         // Connection closed
         internal!("Connection closed");
-        let _ = modules::dispatch(
+        let _ = ModuleRegistry::dispatch_with_registry(
+            ModuleRegistry::global(),
             ModuleEvent::Event(Ev::ConnectionClosed),
             &mut validate_context,
         );
@@ -278,7 +279,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         };
 
         if matches!(
-            modules::dispatch(
+            ModuleRegistry::dispatch_with_registry(
+                ModuleRegistry::global(),
                 ModuleEvent::Validate(ValidateEvent::StartTls),
                 validate_context,
             ),

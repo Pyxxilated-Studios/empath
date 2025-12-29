@@ -1,6 +1,6 @@
 use empath_common::status::Status;
 use empath_common::{context, tracing};
-use empath_ffi::modules::{self, Ev, Event as ModuleEvent};
+use empath_ffi::modules::{Ev, Event as ModuleEvent, ModuleRegistry};
 use empath_tracing::traced;
 
 use crate::session::{Event, Response, Session};
@@ -22,7 +22,11 @@ impl Session {
         if let Some((status, _)) = &validate_context.response {
             // Dispatch error event for 4xx and 5xx responses
             if status.is_temporary() || status.is_permanent() {
-                let _ = modules::dispatch(ModuleEvent::Event(Ev::SmtpError), validate_context);
+                let _ = ModuleRegistry::dispatch_with_registry(
+                    ModuleRegistry::global(),
+                    ModuleEvent::Event(Ev::SmtpError),
+                    validate_context,
+                );
             }
         }
 

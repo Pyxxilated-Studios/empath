@@ -467,7 +467,9 @@ mod api {
     /// List configured outbound bindings.
     #[unsafe(no_mangle)]
     pub extern "C" fn em_outbound_bindings_list() -> crate::string::StringVector {
-        crate::modules::outbound_bindings().into()
+        crate::modules::ModuleRegistry::global()
+            .map_or_else(Vec::new, crate::modules::ModuleRegistry::outbound_bindings)
+            .into()
     }
 
     /// Validate an outbound binding name against configuration.
@@ -482,9 +484,10 @@ mod api {
         }
 
         unsafe {
-            CStr::from_ptr(name)
-                .to_str()
-                .is_ok_and(crate::modules::outbound_binding_exists)
+            CStr::from_ptr(name).to_str().is_ok_and(|binding| {
+                crate::modules::ModuleRegistry::global()
+                    .is_some_and(|registry| registry.outbound_binding_exists(binding))
+            })
         }
     }
 
@@ -514,7 +517,9 @@ mod api {
                     let Ok(name) = CStr::from_ptr(selection.name).to_str() else {
                         return false;
                     };
-                    if !crate::modules::outbound_binding_exists(name) {
+                    if !crate::modules::ModuleRegistry::global()
+                        .is_some_and(|registry| registry.outbound_binding_exists(name))
+                    {
                         return false;
                     }
                     validate_context.transaction.insert(
@@ -1471,7 +1476,12 @@ mod test {
 
     #[test]
     fn test_outbound_binding_helpers() -> TestResult {
-        crate::modules::set_outbound_bindings(vec!["primary".to_string(), "backup".to_string()]);
+        crate::modules::ModuleRegistryBuilder::new()
+            .with_outbound_bindings(vec!["primary".to_string(), "backup".to_string()])
+            .build()
+            .map_err(|err| err.to_string())?
+            .install()
+            .map_err(|err| err.to_string())?;
 
         let mut validate_context = Context::default();
 

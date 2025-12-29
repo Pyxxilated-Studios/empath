@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use empath_common::traits::protocol::{Protocol, SessionHandler};
-use empath_ffi::modules;
+use empath_ffi::modules::ModuleRegistryBuilder;
 use empath_smtp::client::{MessageBuilder, QuitAfter, SmtpClientBuilder};
 use empath_smtp::extensions::Extension;
 use empath_smtp::{Smtp, SmtpArgs};
@@ -18,9 +18,13 @@ use tokio::time::timeout;
 
 /// Helper function to start a test SMTP server on a random port.
 async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
-    // Initialize modules (adds core module to MODULE_STORE)
+    // Initialize modules (adds core module to registry)
     // This only needs to be done once, subsequent calls will just add to the store
-    let _ = modules::init(vec![]);
+    let _ = ModuleRegistryBuilder::new()
+        .build()
+        .unwrap()
+        .install()
+        .unwrap();
 
     // Bind to port 0 to get a random available port
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

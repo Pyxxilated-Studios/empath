@@ -15,7 +15,7 @@ use empath_common::audit::AuditLogger;
 use empath_common::audit::AuditLoggerBuilder;
 use empath_common::context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY};
 use empath_common::status::Status;
-use empath_ffi::modules;
+use empath_ffi::modules::{self, ModuleRegistry};
 use empath_metrics::try_metrics;
 use empath_spool::BackingStore;
 use opentelemetry::trace::TraceContextExt as _;
@@ -291,7 +291,11 @@ impl DefaultSmtpTransactionHandler {
         }
 
         // Dispatch message received event (fail open).
-        let _ = modules::dispatch(modules::Event::Event(modules::Ev::SmtpMessageReceived), ctx);
+        let _ = ModuleRegistry::dispatch_with_registry(
+            ModuleRegistry::global(),
+            modules::Event::Event(modules::Ev::SmtpMessageReceived),
+            ctx,
+        );
     }
 
     fn record_trace_context(ctx: &mut Context) {
@@ -383,11 +387,16 @@ impl DefaultSmtpTransactionHandler {
 impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
     async fn validate_connect(&mut self, ctx: &mut Context) -> bool {
         // Dispatch connection opened event first (fail open).
-        let _ = modules::dispatch(modules::Event::Event(modules::Ev::ConnectionOpened), ctx);
+        let _ = ModuleRegistry::dispatch_with_registry(
+            ModuleRegistry::global(),
+            modules::Event::Event(modules::Ev::ConnectionOpened),
+            ctx,
+        );
 
         // Then validate
         matches!(
-            modules::dispatch(
+            ModuleRegistry::dispatch_with_registry(
+                ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Connect),
                 ctx,
             ),
@@ -397,7 +406,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
 
     async fn validate_ehlo(&mut self, ctx: &mut Context) -> bool {
         matches!(
-            modules::dispatch(
+            ModuleRegistry::dispatch_with_registry(
+                ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Ehlo),
                 ctx,
             ),
@@ -449,7 +459,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
 
         // Dispatch to modules for additional validation
         matches!(
-            modules::dispatch(
+            ModuleRegistry::dispatch_with_registry(
+                ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::MailFrom),
                 ctx,
             ),
@@ -459,7 +470,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
 
     async fn validate_rcpt_to(&mut self, ctx: &mut Context) -> bool {
         matches!(
-            modules::dispatch(
+            ModuleRegistry::dispatch_with_registry(
+                ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::RcptTo),
                 ctx,
             ),
@@ -469,7 +481,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
 
     async fn validate_auth(&mut self, ctx: &mut Context) -> bool {
         let accepted = matches!(
-            modules::dispatch(
+            ModuleRegistry::dispatch_with_registry(
+                ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Auth),
                 ctx,
             ),
@@ -554,7 +567,8 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
 
         // Dispatch validation
         let valid = matches!(
-            modules::dispatch(
+            ModuleRegistry::dispatch_with_registry(
+                ModuleRegistry::global(),
                 modules::Event::Validate(modules::validate::Event::Data),
                 ctx,
             ),
@@ -1224,7 +1238,7 @@ mod tests {
         let _result = handler.validate_mail_from(&mut ctx).await;
 
         // Check that SPF result was stored in transaction context
-        // (Note: modules::dispatch may return a non-accept result when no modules loaded,
+        // (Note: module dispatch may return a non-accept result when no modules loaded,
         // but SPF evaluation should still have occurred)
         assert!(ctx.transaction.contains_key("spf_result"));
         let spf_result = ctx
