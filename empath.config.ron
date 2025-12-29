@@ -239,6 +239,9 @@ Empath (
         // Default: http://localhost:4318/v1/metrics
         // NOTE: When running in Docker Compose, use the service name (otel-collector)
         endpoint: "http://otel-collector:4318/v1/metrics",
+
+        // Optional API key for OTLP collector auth
+        // api_key: "replace-with-token",
     ),
     // Health check endpoints configuration
     // Provides /health/live and /health/ready endpoints for Kubernetes probes

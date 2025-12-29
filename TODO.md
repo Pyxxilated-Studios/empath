@@ -5,7 +5,7 @@ Last updated: 2025-12-29. See `docs/COMPLETED.md` for history and `docs/BACKLOG.
 Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] done.
 
 ## P0 — Security Before Production
-- [ ] SEC-01: Metrics endpoint auth. Add token or mTLS auth for metrics ingestion, update configs, and document deployment guidance.
+- [x] SEC-01: Metrics endpoint auth. Add token or mTLS auth for metrics ingestion, update configs, and document deployment guidance.
 - [ ] SEC-02: Control endpoint auth defaults. Enable control socket auth in production configs and add docs/tests to prevent unauthenticated control in prod.
 
 ## P1 — Operations & Observability

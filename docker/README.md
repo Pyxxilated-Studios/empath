@@ -250,7 +250,7 @@ For production deployments:
 3. Configure proper TLS certificates
 4. Set appropriate resource limits in compose file
 5. Use secrets management for sensitive configuration
-6. Enable authentication on metrics endpoints (see TODO.md tasks 0.27, 0.28)
+6. Enable OTLP API key auth in `metrics.api_key` for collector deployments
 
 See the main repository `CLAUDE.md` for detailed deployment guidance.
 

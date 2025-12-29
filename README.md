@@ -213,7 +213,8 @@ cargo bench
 - ✅ SMTP operation timeouts (RFC 5321 compliant)
 - ✅ Path traversal prevention in spool
 - ✅ Audit logging for control commands
-- ⚠️ Authentication for metrics/control endpoints (TODO before production)
+- ✅ Metrics export supports API key auth for OTLP collectors
+- ✅ Control socket authentication with roles (recommended for production)
 
 See `CLAUDE.md` for detailed security considerations.
 
