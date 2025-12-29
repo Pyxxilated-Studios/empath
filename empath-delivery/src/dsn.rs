@@ -46,6 +46,30 @@ impl Default for DsnConfig {
     }
 }
 
+pub struct DsnRequest<'a> {
+    pub original_context: &'a Context,
+    pub delivery_info: &'a DeliveryInfo,
+    pub error: &'a DeliveryError,
+    pub config: &'a DsnConfig,
+}
+
+impl<'a> DsnRequest<'a> {
+    #[must_use]
+    pub const fn new(
+        original_context: &'a Context,
+        delivery_info: &'a DeliveryInfo,
+        error: &'a DeliveryError,
+        config: &'a DsnConfig,
+    ) -> Self {
+        Self {
+            original_context,
+            delivery_info,
+            error,
+            config,
+        }
+    }
+}
+
 /// Check if a DSN should be generated for this delivery failure
 ///
 /// DSNs are generated for:
@@ -91,47 +115,51 @@ pub fn should_generate_dsn(
 /// that will be sent back to the original sender.
 ///
 /// # Arguments
-/// * `original_context` - The original message that failed delivery
-/// * `delivery_info` - Information about the delivery attempt
-/// * `error` - The error that caused delivery failure
-/// * `config` - DSN configuration (reporting MTA, postmaster, etc.)
+/// * `request` - DSN generation inputs (message, delivery info, error, config)
 ///
 /// # Returns
 /// A `Context` object ready to be spooled and delivered as a bounce message
 ///
 /// # Errors
 /// Returns an error if the DSN message cannot be constructed
-pub fn generate_dsn(
-    original_context: &Context,
-    delivery_info: &DeliveryInfo,
-    error: &DeliveryError,
-    config: &DsnConfig,
-) -> Result<Context, PermanentError> {
+pub fn generate_dsn(request: &DsnRequest<'_>) -> Result<Context, PermanentError> {
     info!(
-        message_id = %delivery_info.message_id,
-        domain = %delivery_info.recipient_domain,
-        error = %error,
+        message_id = %request.delivery_info.message_id,
+        domain = %request.delivery_info.recipient_domain,
+        error = %request.error,
         "Generating DSN for failed delivery"
     );
 
     // Extract sender from original message (this will be the DSN recipient)
-    let original_sender = original_context.envelope.sender().ok_or_else(|| {
+    let original_sender = request.original_context.envelope.sender().ok_or_else(|| {
         PermanentError::InvalidRecipient("No sender in original message".to_string())
     })?;
 
     // Extract recipient from original message (for DSN body)
-    let original_recipients = original_context.envelope.recipients().ok_or_else(|| {
-        PermanentError::InvalidRecipient("No recipients in original message".to_string())
-    })?;
+    let original_recipients = request
+        .original_context
+        .envelope
+        .recipients()
+        .ok_or_else(|| {
+            PermanentError::InvalidRecipient("No recipients in original message".to_string())
+        })?;
 
     // Build the three parts of the DSN
-    let human_readable =
-        build_human_readable_part(original_sender, original_recipients, delivery_info, error);
+    let human_readable = build_human_readable_part(
+        original_sender,
+        original_recipients,
+        request.delivery_info,
+        request.error,
+    );
 
-    let machine_readable =
-        build_machine_readable_part(config, original_recipients, delivery_info, error);
+    let machine_readable = build_machine_readable_part(
+        request.config,
+        original_recipients,
+        request.delivery_info,
+        request.error,
+    );
 
-    let original_headers = extract_original_headers(original_context);
+    let original_headers = extract_original_headers(request.original_context);
 
     // Generate unique boundary for multipart message
     let boundary = format!(
@@ -171,7 +199,7 @@ pub fn generate_dsn(
         {original_headers}\r\n\
         --{boundary}--\r\n",
         boundary = boundary,
-        postmaster = config.postmaster,
+        postmaster = request.config.postmaster,
         sender = original_sender,
         human_readable = human_readable,
         machine_readable = machine_readable,
@@ -183,16 +211,16 @@ pub fn generate_dsn(
         envelope: Arc::new(Envelope::default()),
         id: ulid::Ulid::new().to_string(),
         data: Some(Arc::from(dsn_body.as_bytes())),
-        banner: Arc::from(config.reporting_mta.as_str()),
+        banner: Arc::from(request.config.reporting_mta.as_str()),
         ..Context::default()
     };
 
     // Set envelope: FROM postmaster, TO original sender
     // Parse postmaster address - add brackets if not present
-    let postmaster_with_brackets = if config.postmaster.starts_with('<') {
-        config.postmaster.clone()
+    let postmaster_with_brackets = if request.config.postmaster.starts_with('<') {
+        request.config.postmaster.clone()
     } else {
-        format!("<{}>", config.postmaster)
+        format!("<{}>", request.config.postmaster)
     };
     let postmaster_mailbox = empath_common::address_parser::parse_forward_path(
         &postmaster_with_brackets,
@@ -200,7 +228,7 @@ pub fn generate_dsn(
     .map_err(|_| {
         PermanentError::InvalidRecipient(format!(
             "Invalid postmaster address: {}",
-            config.postmaster
+            request.config.postmaster
         ))
     })?;
 
@@ -494,7 +522,8 @@ mod tests {
 
         let config = DsnConfig::default();
 
-        let dsn = generate_dsn(&context, &info, &error, &config).map_err(|err| err.to_string())?;
+        let request = DsnRequest::new(&context, &info, &error, &config);
+        let dsn = generate_dsn(&request).map_err(|err| err.to_string())?;
 
         // Verify DSN envelope
         assert!(dsn.envelope.sender().is_some());

@@ -56,6 +56,15 @@ impl CertValidation {
     }
 }
 
+pub struct SmtpPoolKeyInput<'a> {
+    pub domain: &'a str,
+    pub server_address: &'a str,
+    pub connect_config: Option<&'a ConnectConfig>,
+    pub tls_mode: TlsMode,
+    pub cert_validation: CertValidation,
+    pub tls_active: bool,
+}
+
 #[derive(Debug, Clone, Eq)]
 pub struct SmtpPoolKey {
     pub domain: String,
@@ -93,26 +102,19 @@ impl Hash for SmtpPoolKey {
 
 impl SmtpPoolKey {
     #[must_use]
-    pub fn new(
-        domain: String,
-        server_address: String,
-        connect_config: Option<&ConnectConfig>,
-        tls_mode: TlsMode,
-        cert_validation: CertValidation,
-        tls_active: bool,
-    ) -> Self {
-        let (local_ip, local_interface) = connect_config.map_or((None, None), |config| {
+    pub fn from_input(input: &SmtpPoolKeyInput<'_>) -> Self {
+        let (local_ip, local_interface) = input.connect_config.map_or((None, None), |config| {
             (config.local_ip, config.local_interface.clone())
         });
 
         Self {
-            domain,
-            server_address,
+            domain: input.domain.to_string(),
+            server_address: input.server_address.to_string(),
             local_ip,
             local_interface,
-            tls_mode,
-            cert_validation,
-            tls_active,
+            tls_mode: input.tls_mode,
+            cert_validation: input.cert_validation,
+            tls_active: input.tls_active,
         }
     }
 }
@@ -123,25 +125,6 @@ pub struct SmtpPoolRequest<'a> {
     pub connect_config: Option<&'a ConnectConfig>,
     pub tls_mode: TlsMode,
     pub cert_validation: CertValidation,
-}
-
-impl<'a> SmtpPoolRequest<'a> {
-    #[must_use]
-    pub const fn new(
-        domain: &'a str,
-        server_address: &'a str,
-        connect_config: Option<&'a ConnectConfig>,
-        tls_mode: TlsMode,
-        cert_validation: CertValidation,
-    ) -> Self {
-        Self {
-            domain,
-            server_address,
-            connect_config,
-            tls_mode,
-            cert_validation,
-        }
-    }
 }
 
 struct PoolEntry {
@@ -194,22 +177,22 @@ impl SmtpClientPool {
             return None;
         }
 
-        let key_tls = SmtpPoolKey::new(
-            request.domain.to_string(),
-            request.server_address.to_string(),
-            request.connect_config,
-            request.tls_mode,
-            request.cert_validation,
-            true,
-        );
-        let key_plain = SmtpPoolKey::new(
-            request.domain.to_string(),
-            request.server_address.to_string(),
-            request.connect_config,
-            request.tls_mode,
-            request.cert_validation,
-            false,
-        );
+        let key_tls = SmtpPoolKey::from_input(&SmtpPoolKeyInput {
+            domain: request.domain,
+            server_address: request.server_address,
+            connect_config: request.connect_config,
+            tls_mode: request.tls_mode,
+            cert_validation: request.cert_validation,
+            tls_active: true,
+        });
+        let key_plain = SmtpPoolKey::from_input(&SmtpPoolKeyInput {
+            domain: request.domain,
+            server_address: request.server_address,
+            connect_config: request.connect_config,
+            tls_mode: request.tls_mode,
+            cert_validation: request.cert_validation,
+            tls_active: false,
+        });
 
         let preferred_keys = if request.tls_mode.attempt_tls() {
             if request.tls_mode.require_tls() {

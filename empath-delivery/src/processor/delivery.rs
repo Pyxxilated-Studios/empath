@@ -970,7 +970,8 @@ async fn maybe_generate_dsn(
         return;
     }
 
-    match crate::dsn::generate_dsn(context, info, error, &processor.dsn) {
+    let request = crate::dsn::DsnRequest::new(context, info, error, &processor.dsn);
+    match crate::dsn::generate_dsn(&request) {
         Ok(dsn_context) => {
             if let Some(spool) = &processor.spool {
                 let mut dsn_context_mut = dsn_context;
@@ -1100,13 +1101,13 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     )?;
     let binding = resolve_binding_selection(processor, delivery_info, &tls_settings)?;
 
-    let pool_request = SmtpPoolRequest::new(
-        delivery_info.recipient_domain.as_str(),
+    let pool_request = SmtpPoolRequest {
+        domain: delivery_info.recipient_domain.as_str(),
         server_address,
-        binding.pool_connect_config.as_ref(),
-        binding.tls_mode,
-        binding.cert_validation,
-    );
+        connect_config: binding.pool_connect_config.as_ref(),
+        tls_mode: binding.tls_mode,
+        cert_validation: binding.cert_validation,
+    };
     let pooled_client = processor
         .smtp_pool_state
         .acquire(pool_request, processor.metrics.as_ref())
@@ -1129,14 +1130,14 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     if let Some(client) = pooled_client {
         match Box::pin(transaction.execute_with_client(client)).await {
             Ok(Some(client)) => {
-                let key = SmtpPoolKey::new(
-                    delivery_info.recipient_domain.as_str().to_string(),
-                    server_address.to_string(),
-                    binding.pool_connect_config.as_ref(),
-                    binding.tls_mode,
-                    binding.cert_validation,
-                    client.is_tls(),
-                );
+                let key = SmtpPoolKey::from_input(&crate::smtp_pool::SmtpPoolKeyInput {
+                    domain: delivery_info.recipient_domain.as_str(),
+                    server_address,
+                    connect_config: binding.pool_connect_config.as_ref(),
+                    tls_mode: binding.tls_mode,
+                    cert_validation: binding.cert_validation,
+                    tls_active: client.is_tls(),
+                });
                 processor
                     .smtp_pool_state
                     .release(key, client, processor.metrics.as_ref());
