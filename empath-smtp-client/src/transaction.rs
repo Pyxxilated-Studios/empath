@@ -1,12 +1,6 @@
-//! SMTP transaction execution module
+//! SMTP transaction execution module for outbound delivery.
 //!
 //! This module handles the execution of SMTP transactions for message delivery.
-//! It encapsulates all SMTP protocol operations including:
-//! - TLS negotiation via STARTTLS
-//! - MAIL FROM command
-//! - RCPT TO commands for all recipients
-//! - DATA command and message content transmission
-//! - QUIT command for connection cleanup
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,740 +14,14 @@ use empath_smtp::client::{ClientError, ConnectConfig, Response as ClientResponse
 use empath_spool::{BackingStore, SpooledMessageId};
 use empath_tracing::traced;
 
-use crate::SmtpTimeouts;
 use crate::error::{DeliveryError, PermanentError, SystemError, TemporaryError};
-use crate::smtp_pool::{CertValidation, TlsMode};
+use crate::timeouts::SmtpTimeouts;
+use crate::tls::{CertValidation, TlsMode};
 
 #[derive(Debug, Clone, Copy)]
 enum TlsRequirement {
     Optional,
     Required { failure_is_temporary: bool },
-}
-
-impl TlsRequirement {
-    const fn is_required(self) -> bool {
-        matches!(self, Self::Required { .. })
-    }
-
-    const fn failure_is_temporary(self) -> bool {
-        matches!(
-            self,
-            Self::Required {
-                failure_is_temporary: true
-            }
-        )
-    }
-}
-
-/// TLS failure policy when TLS is required.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TlsFailurePolicy {
-    Permanent,
-    Temporary,
-}
-
-impl TlsFailurePolicy {
-    const fn is_temporary(self) -> bool {
-        matches!(self, Self::Temporary)
-    }
-}
-
-/// TLS configuration for outbound SMTP transactions.
-#[derive(Debug, Clone, Copy)]
-pub struct SmtpTlsConfig {
-    pub mode: TlsMode,
-    pub validation: CertValidation,
-    pub failure_policy: TlsFailurePolicy,
-}
-
-impl SmtpTlsConfig {
-    #[must_use]
-    pub const fn new(mode: TlsMode, validation: CertValidation) -> Self {
-        Self {
-            mode,
-            validation,
-            failure_policy: TlsFailurePolicy::Permanent,
-        }
-    }
-
-    #[must_use]
-    pub const fn with_failure_policy(mut self, failure_policy: TlsFailurePolicy) -> Self {
-        self.failure_policy = failure_policy;
-        self
-    }
-}
-
-/// Outcome of TLS negotiation attempt
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TlsNegotiationOutcome {
-    /// TLS was successfully negotiated via STARTTLS
-    Success,
-    /// TLS was not attempted (server doesn't advertise STARTTLS and not required)
-    Skipped,
-    /// TLS negotiation failed but was opportunistic - should retry without TLS per RFC 3207
-    RetryWithoutTls,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum EhloStage {
-    Initial,
-    AfterStarttls,
-}
-
-/// Extracts the email address string from an Address (for SMTP commands)
-///
-/// Since Address now wraps Mailbox which is always a simple email address,
-/// this function uses the Display impl to format the address.
-///
-/// Returns a formatted email address (`local_part@domain`).
-fn extract_email_address(address: &Address) -> String {
-    address.to_string()
-}
-
-/// Represents a single SMTP transaction for delivering a message
-///
-/// This struct encapsulates all the logic for performing a complete SMTP
-/// transaction, from connection establishment to message delivery.
-pub struct SmtpTransaction<'a> {
-    /// The message context containing envelope and data
-    context: &'a Context,
-    /// The body source used for DATA transmission
-    body_source: MessageBodySource<'a>,
-    /// The SMTP server address (host:port)
-    server_address: String,
-    /// Whether TLS should be attempted at all (disabled policy skips STARTTLS)
-    attempt_tls: bool,
-    /// TLS requirement policy
-    tls_requirement: TlsRequirement,
-    /// TLS certificate validation policy
-    tls_validation: CertValidation,
-    /// Timeout configuration for SMTP operations
-    smtp_timeouts: &'a SmtpTimeouts,
-    /// Optional HELO/EHLO override
-    helo_domain: Option<String>,
-    /// Optional local bind configuration
-    connect_config: Option<ConnectConfig>,
-    /// Optional metrics collector for binding observability
-    metrics: Option<&'a DeliveryMetrics>,
-    /// Optional binding name for metrics labeling
-    binding_name: Option<&'a str>,
-}
-
-enum MessageBodySource<'a> {
-    Context,
-    Spool {
-        spool: &'a Arc<dyn BackingStore>,
-        message_id: &'a SpooledMessageId,
-    },
-}
-
-#[async_trait]
-trait StarttlsClient {
-    async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError>;
-    async fn starttls(&mut self) -> Result<ClientResponse, ClientError>;
-    fn is_tls(&self) -> bool;
-}
-
-#[async_trait]
-impl StarttlsClient for SmtpClient {
-    async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError> {
-        self.ehlo(domain).await
-    }
-
-    async fn starttls(&mut self) -> Result<ClientResponse, ClientError> {
-        self.starttls().await
-    }
-
-    fn is_tls(&self) -> bool {
-        self.is_tls()
-    }
-}
-
-impl<'a> SmtpTransaction<'a> {
-    /// Create a new SMTP transaction
-    ///
-    /// # Arguments
-    /// * `context` - The message context containing envelope and data
-    /// * `server_address` - The SMTP server address (host:port)
-    /// * `tls_config` - TLS mode, validation, and failure policy
-    /// * `smtp_timeouts` - Timeout configuration for SMTP operations
-    #[must_use]
-    pub const fn new(
-        context: &'a Context,
-        server_address: String,
-        tls_config: SmtpTlsConfig,
-        smtp_timeouts: &'a SmtpTimeouts,
-    ) -> Self {
-        let tls_requirement = if tls_config.mode.require_tls() {
-            TlsRequirement::Required {
-                failure_is_temporary: tls_config.failure_policy.is_temporary(),
-            }
-        } else {
-            TlsRequirement::Optional
-        };
-
-        Self {
-            context,
-            body_source: MessageBodySource::Context,
-            server_address,
-            attempt_tls: tls_config.mode.attempt_tls(),
-            tls_requirement,
-            tls_validation: tls_config.validation,
-            smtp_timeouts,
-            helo_domain: None,
-            connect_config: None,
-            metrics: None,
-            binding_name: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_spool_body(
-        mut self,
-        spool: &'a Arc<dyn BackingStore>,
-        message_id: &'a SpooledMessageId,
-    ) -> Self {
-        self.body_source = MessageBodySource::Spool { spool, message_id };
-        self
-    }
-
-    #[must_use]
-    pub fn with_helo_domain(mut self, helo_domain: Option<String>) -> Self {
-        self.helo_domain = helo_domain;
-        self
-    }
-
-    #[must_use]
-    pub fn with_connect_config(mut self, connect_config: Option<ConnectConfig>) -> Self {
-        self.connect_config = connect_config;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_metrics(
-        mut self,
-        metrics: Option<&'a DeliveryMetrics>,
-        binding_name: Option<&'a str>,
-    ) -> Self {
-        self.metrics = metrics;
-        self.binding_name = binding_name;
-        self
-    }
-
-    fn helo_domain(&self) -> &str {
-        self.helo_domain.as_deref().unwrap_or(&self.context.id)
-    }
-
-    fn require_tls_error(&self, message: String) -> DeliveryError {
-        if self.tls_requirement.failure_is_temporary() {
-            TemporaryError::TlsHandshakeFailed(message).into()
-        } else {
-            PermanentError::TlsRequired(message).into()
-        }
-    }
-
-    fn record_connect_duration(&self, start: Instant) {
-        if let Some(metrics) = self.metrics {
-            metrics.record_binding_connect_duration(self.binding_name, start.elapsed());
-        }
-    }
-
-    fn record_ehlo_duration(&self, start: Instant) {
-        if let Some(metrics) = self.metrics {
-            metrics.record_binding_ehlo_duration(self.binding_name, start.elapsed());
-        }
-    }
-
-    /// Connect to SMTP server and read greeting
-    ///
-    /// # Errors
-    /// Returns an error if connection or greeting fails
-    async fn connect_and_greet(&self) -> Result<SmtpClient, DeliveryError> {
-        let start = Instant::now();
-        // Connect to the SMTP server
-        // Automatic From<ClientError> conversion handles connection errors
-        let mut client = match &self.connect_config {
-            Some(config) => {
-                SmtpClient::connect_with_config(
-                    &self.server_address,
-                    self.server_address.clone(),
-                    config,
-                )
-                .await
-            }
-            None => SmtpClient::connect(&self.server_address, self.server_address.clone()).await,
-        }
-        .map_err(|e| {
-            // Add context about which server we tried to connect to
-            TemporaryError::ConnectionFailed(format!(
-                "Failed to connect to {}: {e}",
-                self.server_address
-            ))
-        })?
-        .accept_invalid_certs(self.tls_validation.accepts_invalid());
-
-        // Read greeting
-        let greeting = client.read_greeting().await?;
-
-        if !greeting.is_success() {
-            return Err(TemporaryError::ServerBusy(format!(
-                "Server rejected connection: {}",
-                greeting.message()
-            ))
-            .into());
-        }
-
-        self.record_connect_duration(start);
-
-        Ok(client)
-    }
-
-    /// Execute the complete SMTP transaction
-    ///
-    /// This method performs the full SMTP transaction:
-    /// 1. Connects to the SMTP server
-    /// 2. Reads the server greeting
-    /// 3. Optionally upgrades to TLS via STARTTLS if required or available
-    /// 4. If STARTTLS fails for opportunistic TLS, reconnects without TLS (RFC 3207)
-    /// 5. Performs EHLO/HELO handshake
-    /// 6. Sends MAIL FROM and RCPT TO commands
-    /// 7. Sends DATA command and the actual message content
-    /// 8. Sends QUIT to cleanly close the connection
-    ///
-    /// # Errors
-    /// Returns an error if any part of the SMTP transaction fails
-    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(server = %self.server_address, message_id = %self.context.id)), timing(precision = "ms"))]
-    pub async fn execute(self) -> Result<(), DeliveryError> {
-        let client = self.connect_and_greet().await?;
-        self.execute_with_client_internal(client, false)
-            .await
-            .map(|_| ())
-    }
-
-    /// Execute the SMTP transaction using a pre-connected client (from a pool).
-    ///
-    /// Returns the client if it is still reusable after the transaction completes.
-    ///
-    /// # Errors
-    /// Returns an error if any part of the SMTP transaction fails
-    pub async fn execute_with_client(
-        self,
-        client: SmtpClient,
-    ) -> Result<Option<SmtpClient>, DeliveryError> {
-        self.execute_with_client_internal(client, true).await
-    }
-
-    async fn execute_with_client_internal(
-        self,
-        mut client: SmtpClient,
-        pooled: bool,
-    ) -> Result<Option<SmtpClient>, DeliveryError> {
-        // Log security warning if certificate validation is disabled
-        if self.tls_validation.accepts_invalid() {
-            tracing::warn!(
-                server = %self.server_address,
-                "SECURITY WARNING: TLS certificate validation is disabled for this connection"
-            );
-        }
-
-        // Perform TLS negotiation if required or available
-        let tls_outcome = self.negotiate_tls(&mut client).await?;
-
-        // RFC 3207: If STARTTLS fails for opportunistic TLS, reconnect without attempting TLS
-        if tls_outcome == TlsNegotiationOutcome::RetryWithoutTls {
-            tracing::info!(
-                server = %self.server_address,
-                "Reconnecting without STARTTLS per RFC 3207 Section 4.1"
-            );
-
-            // Drop the old connection and reconnect
-            drop(client);
-            client = self.connect_and_greet().await?;
-
-            // Perform EHLO without attempting TLS
-            let helo_domain = self.helo_domain();
-            let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
-            let ehlo_start = Instant::now();
-            let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-                .await
-                .map_err(|_| {
-                    TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
-                })??;
-            self.record_ehlo_duration(ehlo_start);
-
-            if !ehlo_response.is_success() {
-                return Err(TemporaryError::SmtpTemporary(format!(
-                    "Server rejected EHLO: {}",
-                    ehlo_response.message()
-                ))
-                .into());
-            }
-
-            tracing::info!(
-                server = %self.server_address,
-                "Successfully reconnected without TLS, proceeding with plaintext delivery"
-            );
-        }
-
-        // Send MAIL FROM
-        self.send_mail_from(&mut client).await?;
-
-        // Send RCPT TO for all recipients
-        self.send_rcpt_to(&mut client).await?;
-
-        // Send DATA command and message content
-        Box::pin(self.send_message_data(&mut client)).await?;
-
-        if pooled {
-            let rset_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
-            match tokio::time::timeout(rset_timeout, client.rset()).await {
-                Ok(Ok(response)) if response.is_success() => Ok(Some(client)),
-                Ok(Ok(response)) => {
-                    tracing::warn!(
-                        server = %self.server_address,
-                        response = %response.message(),
-                        "RSET failed after delivery; dropping pooled connection"
-                    );
-                    Ok(None)
-                }
-                Ok(Err(err)) => {
-                    tracing::warn!(
-                        server = %self.server_address,
-                        error = %err,
-                        "RSET failed after delivery; dropping pooled connection"
-                    );
-                    Ok(None)
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        server = %self.server_address,
-                        timeout = ?rset_timeout,
-                        "RSET timed out after delivery; dropping pooled connection: {err}"
-                    );
-                    Ok(None)
-                }
-            }
-        } else {
-            // Send QUIT to cleanly close the connection
-            // Note: We don't fail the delivery if QUIT fails since the message was already delivered
-            let quit_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
-            if let Err(e) = tokio::time::timeout(quit_timeout, client.quit()).await {
-                tracing::warn!(
-                    server = %self.server_address,
-                    timeout = ?quit_timeout,
-                    "QUIT command timed out after successful delivery: {e}"
-                );
-            }
-
-            Ok(None)
-        }
-    }
-
-    /// Negotiate TLS upgrade via STARTTLS if required or available
-    ///
-    /// Returns an outcome indicating whether TLS was successfully negotiated, skipped,
-    /// or failed in a way that requires reconnection without TLS (per RFC 3207).
-    ///
-    /// # Errors
-    /// Returns an error if TLS is required but fails
-    async fn negotiate_tls(
-        &self,
-        client: &mut (impl StarttlsClient + Send),
-    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
-        let helo_domain = self.helo_domain();
-
-        if client.is_tls() {
-            return self
-                .negotiate_tls_for_existing_session(client, helo_domain)
-                .await;
-        }
-
-        if !self.attempt_tls {
-            tracing::debug!(
-                domain = %self.context.id,
-                "TLS negotiation skipped due to disabled policy"
-            );
-            return Ok(TlsNegotiationOutcome::Skipped);
-        }
-
-        let ehlo_response = self
-            .send_ehlo(client, helo_domain, EhloStage::Initial)
-            .await?;
-        if !ehlo_response.is_success() {
-            return Err(TemporaryError::SmtpTemporary(format!(
-                "Server rejected EHLO: {}",
-                ehlo_response.message()
-            ))
-            .into());
-        }
-
-        let supports_starttls = Self::supports_starttls(&ehlo_response);
-        if !supports_starttls && !self.tls_requirement.is_required() {
-            return Ok(TlsNegotiationOutcome::Skipped);
-        }
-
-        if self.tls_requirement.is_required() || supports_starttls {
-            return self.negotiate_starttls(client, helo_domain).await;
-        }
-
-        Ok(TlsNegotiationOutcome::Skipped)
-    }
-
-    async fn negotiate_tls_for_existing_session(
-        &self,
-        client: &mut (impl StarttlsClient + Send),
-        helo_domain: &str,
-    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
-        let ehlo_response = self
-            .send_ehlo(client, helo_domain, EhloStage::Initial)
-            .await?;
-        if !ehlo_response.is_success() {
-            return Err(TemporaryError::SmtpTemporary(format!(
-                "Server rejected EHLO: {}",
-                ehlo_response.message()
-            ))
-            .into());
-        }
-        Ok(TlsNegotiationOutcome::Success)
-    }
-
-    async fn send_ehlo(
-        &self,
-        client: &mut (impl StarttlsClient + Send),
-        helo_domain: &str,
-        stage: EhloStage,
-    ) -> Result<ClientResponse, DeliveryError> {
-        let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
-        let ehlo_start = Instant::now();
-        let ehlo_response: ClientResponse =
-            tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
-                .await
-                .map_err(|_| {
-                    let message = match stage {
-                        EhloStage::Initial => {
-                            format!("EHLO timed out after {ehlo_timeout:?}")
-                        }
-                        EhloStage::AfterStarttls => {
-                            format!("EHLO after STARTTLS timed out after {ehlo_timeout:?}")
-                        }
-                    };
-                    TemporaryError::Timeout(message)
-                })??;
-        self.record_ehlo_duration(ehlo_start);
-        Ok(ehlo_response)
-    }
-
-    fn supports_starttls(response: &ClientResponse) -> bool {
-        response
-            .message()
-            .lines()
-            .any(|line: &str| line.to_uppercase().contains("STARTTLS"))
-    }
-
-    async fn negotiate_starttls(
-        &self,
-        client: &mut (impl StarttlsClient + Send),
-        helo_domain: &str,
-    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
-        let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
-        let starttls_result: Result<ClientResponse, String> =
-            tokio::time::timeout(starttls_timeout, client.starttls())
-                .await
-                .map_err(|_| format!("STARTTLS timed out after {starttls_timeout:?}"))
-                .and_then(|r| r.map_err(|e| format!("STARTTLS failed: {e}")));
-
-        let starttls_response: ClientResponse = match starttls_result {
-            Ok(response) => response,
-            Err(error_msg) => {
-                if self.tls_requirement.is_required() {
-                    return Err(self.require_tls_error(error_msg));
-                }
-                // Opportunistic TLS failed - should retry without TLS per RFC 3207
-                tracing::info!(
-                    domain = helo_domain,
-                    error = %error_msg,
-                    "STARTTLS failed for opportunistic TLS, will retry without TLS per RFC 3207"
-                );
-                return Ok(TlsNegotiationOutcome::RetryWithoutTls);
-            }
-        };
-
-        if !starttls_response.is_success() {
-            let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
-            if self.tls_requirement.is_required() {
-                return Err(self.require_tls_error(message));
-            }
-            // Opportunistic TLS rejected - should retry without TLS per RFC 3207
-            tracing::info!(
-                domain = helo_domain,
-                response = %starttls_response.message(),
-                "Server rejected STARTTLS for opportunistic TLS, will retry without TLS per RFC 3207"
-            );
-            return Ok(TlsNegotiationOutcome::RetryWithoutTls);
-        }
-
-        let ehlo_response = self
-            .send_ehlo(client, helo_domain, EhloStage::AfterStarttls)
-            .await?;
-        if !ehlo_response.is_success() {
-            return Err(TemporaryError::SmtpTemporary(format!(
-                "Server rejected EHLO after STARTTLS: {}",
-                ehlo_response.message()
-            ))
-            .into());
-        }
-
-        tracing::debug!(
-            domain = helo_domain,
-            "TLS successfully negotiated via STARTTLS"
-        );
-        Ok(TlsNegotiationOutcome::Success)
-    }
-
-    /// Send MAIL FROM command
-    ///
-    /// # Errors
-    /// Returns an error if the MAIL FROM command fails
-    async fn send_mail_from(&self, client: &mut SmtpClient) -> Result<(), DeliveryError> {
-        let sender = self
-            .context
-            .envelope
-            .sender()
-            // RFC-compliant null reverse-path when absent
-            .map_or_else(|| "<>".to_string(), extract_email_address);
-
-        let mail_from_timeout = Duration::from_secs(self.smtp_timeouts.mail_from_secs);
-        let mail_response =
-            tokio::time::timeout(mail_from_timeout, client.mail_from(&sender, None))
-                .await
-                .map_err(|_| {
-                    TemporaryError::Timeout(format!(
-                        "MAIL FROM timed out after {mail_from_timeout:?}"
-                    ))
-                })??;
-
-        if !mail_response.is_success() {
-            let code = mail_response.code;
-            let message = format!("Server rejected MAIL FROM: {}", mail_response.message());
-            return if (500..600).contains(&code) {
-                Err(PermanentError::MessageRejected(message).into())
-            } else {
-                Err(TemporaryError::SmtpTemporary(message).into())
-            };
-        }
-
-        Ok(())
-    }
-
-    /// Send RCPT TO commands for all recipients
-    ///
-    /// # Errors
-    /// Returns an error if any RCPT TO command fails
-    async fn send_rcpt_to(&self, client: &mut SmtpClient) -> Result<(), DeliveryError> {
-        let Some(recipients) = self.context.envelope.recipients() else {
-            return Err(SystemError::Internal("No recipients in message".to_string()).into());
-        };
-
-        let rcpt_to_timeout = Duration::from_secs(self.smtp_timeouts.rcpt_to_secs);
-        for recipient in recipients.iter() {
-            let recipient_addr = extract_email_address(recipient);
-
-            let rcpt_response =
-                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(&recipient_addr))
-                    .await
-                    .map_err(|_| {
-                        TemporaryError::Timeout(format!(
-                            "RCPT TO timed out after {rcpt_to_timeout:?}"
-                        ))
-                    })??;
-
-            if !rcpt_response.is_success() {
-                let code = rcpt_response.code;
-                let message = format!(
-                    "Server rejected RCPT TO {recipient_addr}: {}",
-                    rcpt_response.message()
-                );
-                return if (500..600).contains(&code) {
-                    Err(PermanentError::InvalidRecipient(message).into())
-                } else {
-                    Err(TemporaryError::SmtpTemporary(message).into())
-                };
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send DATA command and message content
-    ///
-    /// # Errors
-    /// Returns an error if the DATA command or message sending fails
-    async fn send_message_data(&self, client: &mut SmtpClient) -> Result<(), DeliveryError> {
-        let data_timeout = Duration::from_secs(self.smtp_timeouts.data_secs);
-
-        // Send DATA command
-        let data_response = tokio::time::timeout(data_timeout, client.data())
-            .await
-            .map_err(|_| {
-                TemporaryError::Timeout(format!("DATA command timed out after {data_timeout:?}"))
-            })??;
-
-        if !(300..400).contains(&data_response.code) {
-            let code = data_response.code;
-            let message = format!("Server rejected DATA: {}", data_response.message());
-            return if (500..600).contains(&code) {
-                Err(PermanentError::MessageRejected(message).into())
-            } else {
-                Err(TemporaryError::SmtpTemporary(message).into())
-            };
-        }
-
-        let send_response = match self.body_source {
-            MessageBodySource::Context => {
-                let message_data =
-                    self.context.data.as_ref().ok_or_else(|| {
-                        SystemError::Internal("No message data to send".to_string())
-                    })?;
-
-                tokio::time::timeout(data_timeout, client.send_data_bytes(message_data.as_ref()))
-                    .await
-                    .map_err(|_| {
-                        TemporaryError::Timeout(format!(
-                            "Sending message data timed out after {data_timeout:?}"
-                        ))
-                    })??
-            }
-            MessageBodySource::Spool { spool, message_id } => {
-                let body_stream = spool
-                    .open_message_stream(message_id)
-                    .await
-                    .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
-
-                Box::pin(tokio::time::timeout(
-                    data_timeout,
-                    client.send_data_stream(body_stream),
-                ))
-                .await
-                .map_err(|_| {
-                    TemporaryError::Timeout(format!(
-                        "Sending message data timed out after {data_timeout:?}"
-                    ))
-                })??
-            }
-        };
-
-        if !send_response.is_success() {
-            let code = send_response.code;
-            let message = format!("Server rejected message data: {}", send_response.message());
-            return if (500..600).contains(&code) {
-                Err(PermanentError::MessageRejected(message).into())
-            } else {
-                Err(TemporaryError::SmtpTemporary(message).into())
-            };
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -962,6 +230,658 @@ mod tests {
 
         assert_eq!(outcome, TlsNegotiationOutcome::Success);
         assert_eq!(client.starttls_calls, 1);
+        Ok(())
+    }
+}
+
+impl TlsRequirement {
+    const fn is_required(self) -> bool {
+        matches!(self, Self::Required { .. })
+    }
+
+    const fn failure_is_temporary(self) -> bool {
+        matches!(
+            self,
+            Self::Required {
+                failure_is_temporary: true
+            }
+        )
+    }
+}
+
+/// TLS failure policy when TLS is required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsFailurePolicy {
+    Permanent,
+    Temporary,
+}
+
+impl TlsFailurePolicy {
+    const fn is_temporary(self) -> bool {
+        matches!(self, Self::Temporary)
+    }
+}
+
+/// TLS configuration for outbound SMTP transactions.
+#[derive(Debug, Clone, Copy)]
+pub struct SmtpTlsConfig {
+    pub mode: TlsMode,
+    pub validation: CertValidation,
+    pub failure_policy: TlsFailurePolicy,
+}
+
+impl SmtpTlsConfig {
+    #[must_use]
+    pub const fn new(mode: TlsMode, validation: CertValidation) -> Self {
+        Self {
+            mode,
+            validation,
+            failure_policy: TlsFailurePolicy::Permanent,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_failure_policy(mut self, failure_policy: TlsFailurePolicy) -> Self {
+        self.failure_policy = failure_policy;
+        self
+    }
+}
+
+/// Outcome of TLS negotiation attempt
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TlsNegotiationOutcome {
+    /// TLS was successfully negotiated via STARTTLS
+    Success,
+    /// TLS was not attempted (server doesn't advertise STARTTLS and not required)
+    Skipped,
+    /// TLS negotiation failed but was opportunistic - should retry without TLS per RFC 3207
+    RetryWithoutTls,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum EhloStage {
+    Initial,
+    AfterStarttls,
+}
+
+/// Extracts the email address string from an Address (for SMTP commands)
+fn extract_email_address(address: &Address) -> String {
+    address.to_string()
+}
+
+/// Represents a single SMTP transaction for delivering a message.
+pub struct SmtpTransaction<'a> {
+    /// The message context containing envelope and data
+    context: &'a Context,
+    /// The body source used for DATA transmission
+    body_source: MessageBodySource<'a>,
+    /// The SMTP server address (host:port)
+    server_address: String,
+    /// Whether TLS should be attempted at all (disabled policy skips STARTTLS)
+    attempt_tls: bool,
+    /// TLS requirement policy
+    tls_requirement: TlsRequirement,
+    /// TLS certificate validation policy
+    tls_validation: CertValidation,
+    /// Timeout configuration for SMTP operations
+    smtp_timeouts: &'a SmtpTimeouts,
+    /// Optional HELO/EHLO override
+    helo_domain: Option<String>,
+    /// Optional local bind configuration
+    connect_config: Option<ConnectConfig>,
+    /// Optional metrics collector for binding observability
+    metrics: Option<&'a DeliveryMetrics>,
+    /// Optional binding name for metrics labeling
+    binding_name: Option<&'a str>,
+}
+
+enum MessageBodySource<'a> {
+    Context,
+    Spool {
+        spool: &'a Arc<dyn BackingStore>,
+        message_id: &'a SpooledMessageId,
+    },
+}
+
+#[async_trait]
+trait StarttlsClient {
+    async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError>;
+    async fn starttls(&mut self) -> Result<ClientResponse, ClientError>;
+    fn is_tls(&self) -> bool;
+}
+
+#[async_trait]
+impl StarttlsClient for SmtpClient {
+    async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError> {
+        self.ehlo(domain).await
+    }
+
+    async fn starttls(&mut self) -> Result<ClientResponse, ClientError> {
+        self.starttls().await
+    }
+
+    fn is_tls(&self) -> bool {
+        self.is_tls()
+    }
+}
+
+impl<'a> SmtpTransaction<'a> {
+    /// Create a new SMTP transaction.
+    #[must_use]
+    pub const fn new(
+        context: &'a Context,
+        server_address: String,
+        tls_config: SmtpTlsConfig,
+        smtp_timeouts: &'a SmtpTimeouts,
+    ) -> Self {
+        let tls_requirement = if tls_config.mode.require_tls() {
+            TlsRequirement::Required {
+                failure_is_temporary: tls_config.failure_policy.is_temporary(),
+            }
+        } else {
+            TlsRequirement::Optional
+        };
+
+        Self {
+            context,
+            body_source: MessageBodySource::Context,
+            server_address,
+            attempt_tls: tls_config.mode.attempt_tls(),
+            tls_requirement,
+            tls_validation: tls_config.validation,
+            smtp_timeouts,
+            helo_domain: None,
+            connect_config: None,
+            metrics: None,
+            binding_name: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_spool_body(
+        mut self,
+        spool: &'a Arc<dyn BackingStore>,
+        message_id: &'a SpooledMessageId,
+    ) -> Self {
+        self.body_source = MessageBodySource::Spool { spool, message_id };
+        self
+    }
+
+    #[must_use]
+    pub fn with_helo_domain(mut self, helo_domain: Option<String>) -> Self {
+        self.helo_domain = helo_domain;
+        self
+    }
+
+    #[must_use]
+    pub fn with_connect_config(mut self, connect_config: Option<ConnectConfig>) -> Self {
+        self.connect_config = connect_config;
+        self
+    }
+
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Option<&'a DeliveryMetrics>) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
+    #[must_use]
+    pub fn with_binding_name(mut self, binding_name: Option<&'a str>) -> Self {
+        self.binding_name = binding_name;
+        self
+    }
+
+    fn helo_domain(&self) -> &str {
+        self.helo_domain.as_deref().unwrap_or(&self.context.id)
+    }
+
+    fn require_tls_error(&self, message: String) -> DeliveryError {
+        if self.tls_requirement.failure_is_temporary() {
+            TemporaryError::TlsHandshakeFailed(message).into()
+        } else {
+            PermanentError::TlsRequired(message).into()
+        }
+    }
+
+    fn record_connect_duration(&self, start: Instant) {
+        if let Some(metrics) = self.metrics {
+            metrics.record_binding_connect_duration(self.binding_name, start.elapsed());
+        }
+    }
+
+    fn record_ehlo_duration(&self, start: Instant) {
+        if let Some(metrics) = self.metrics {
+            metrics.record_binding_ehlo_duration(self.binding_name, start.elapsed());
+        }
+    }
+
+    async fn connect_and_greet(&self) -> Result<SmtpClient, DeliveryError> {
+        let start = Instant::now();
+        let mut client = match &self.connect_config {
+            Some(config) => {
+                SmtpClient::connect_with_config(
+                    &self.server_address,
+                    self.server_address.clone(),
+                    config,
+                )
+                .await
+            }
+            None => SmtpClient::connect(&self.server_address, self.server_address.clone()).await,
+        }
+        .map_err(|e| {
+            TemporaryError::ConnectionFailed(format!(
+                "Failed to connect to {}: {e}",
+                self.server_address
+            ))
+        })?
+        .accept_invalid_certs(self.tls_validation.accepts_invalid());
+
+        let greeting = client.read_greeting().await?;
+
+        if !greeting.is_success() {
+            return Err(TemporaryError::ServerBusy(format!(
+                "Server rejected connection: {}",
+                greeting.message()
+            ))
+            .into());
+        }
+
+        self.record_connect_duration(start);
+
+        Ok(client)
+    }
+
+    /// Execute the complete SMTP transaction.
+    #[traced(instrument(level = tracing::Level::INFO, skip(self), fields(server = %self.server_address, message_id = %self.context.id)), timing(precision = "ms"))]
+    pub async fn execute(self) -> Result<(), DeliveryError> {
+        let client = self.connect_and_greet().await?;
+        self.execute_with_client_internal(client, false)
+            .await
+            .map(|_| ())
+    }
+
+    /// Execute the SMTP transaction using a pre-connected client (from a pool).
+    pub async fn execute_with_client(
+        self,
+        client: SmtpClient,
+    ) -> Result<Option<SmtpClient>, DeliveryError> {
+        self.execute_with_client_internal(client, true).await
+    }
+
+    async fn execute_with_client_internal(
+        self,
+        mut client: SmtpClient,
+        pooled: bool,
+    ) -> Result<Option<SmtpClient>, DeliveryError> {
+        if self.tls_validation.accepts_invalid() {
+            tracing::warn!(
+                server = %self.server_address,
+                "SECURITY WARNING: TLS certificate validation is disabled for this connection"
+            );
+        }
+
+        let tls_outcome = self.negotiate_tls(&mut client).await?;
+
+        if tls_outcome == TlsNegotiationOutcome::RetryWithoutTls {
+            tracing::info!(
+                server = %self.server_address,
+                "Reconnecting without STARTTLS per RFC 3207 Section 4.1"
+            );
+
+            drop(client);
+            client = self.connect_and_greet().await?;
+
+            let helo_domain = self.helo_domain();
+            let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+            let ehlo_start = Instant::now();
+            let ehlo_response = tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!("EHLO timed out after {ehlo_timeout:?}"))
+                })??;
+            self.record_ehlo_duration(ehlo_start);
+
+            if !ehlo_response.is_success() {
+                return Err(TemporaryError::SmtpTemporary(format!(
+                    "Server rejected EHLO: {}",
+                    ehlo_response.message()
+                ))
+                .into());
+            }
+
+            tracing::info!(
+                server = %self.server_address,
+                "Successfully reconnected without TLS, proceeding with plaintext delivery"
+            );
+        }
+
+        self.send_mail_from(&mut client).await?;
+        self.send_rcpt_to(&mut client).await?;
+        Box::pin(self.send_message_data(&mut client)).await?;
+
+        if pooled {
+            let rset_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
+            match tokio::time::timeout(rset_timeout, client.rset()).await {
+                Ok(Ok(response)) if response.is_success() => Ok(Some(client)),
+                Ok(Ok(response)) => {
+                    tracing::warn!(
+                        server = %self.server_address,
+                        response = %response.message(),
+                        "RSET failed after delivery; dropping pooled connection"
+                    );
+                    Ok(None)
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        server = %self.server_address,
+                        error = %err,
+                        "RSET failed after delivery; dropping pooled connection"
+                    );
+                    Ok(None)
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        server = %self.server_address,
+                        timeout = ?rset_timeout,
+                        "RSET timed out after delivery; dropping pooled connection: {err}"
+                    );
+                    Ok(None)
+                }
+            }
+        } else {
+            let quit_timeout = Duration::from_secs(self.smtp_timeouts.quit_secs);
+            if let Err(e) = tokio::time::timeout(quit_timeout, client.quit()).await {
+                tracing::warn!(
+                    server = %self.server_address,
+                    timeout = ?quit_timeout,
+                    "QUIT command timed out after successful delivery: {e}"
+                );
+            }
+
+            Ok(None)
+        }
+    }
+
+    async fn negotiate_tls(
+        &self,
+        client: &mut (impl StarttlsClient + Send),
+    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        let helo_domain = self.helo_domain();
+
+        if client.is_tls() {
+            return self
+                .negotiate_tls_for_existing_session(client, helo_domain)
+                .await;
+        }
+
+        if !self.attempt_tls {
+            tracing::debug!(
+                domain = %self.context.id,
+                "TLS negotiation skipped due to disabled policy"
+            );
+            return Ok(TlsNegotiationOutcome::Skipped);
+        }
+
+        let ehlo_response = self
+            .send_ehlo(client, helo_domain, EhloStage::Initial)
+            .await?;
+        if !ehlo_response.is_success() {
+            return Err(TemporaryError::SmtpTemporary(format!(
+                "Server rejected EHLO: {}",
+                ehlo_response.message()
+            ))
+            .into());
+        }
+
+        let supports_starttls = Self::supports_starttls(&ehlo_response);
+        if !supports_starttls && !self.tls_requirement.is_required() {
+            return Ok(TlsNegotiationOutcome::Skipped);
+        }
+
+        if self.tls_requirement.is_required() || supports_starttls {
+            return self.negotiate_starttls(client, helo_domain).await;
+        }
+
+        Ok(TlsNegotiationOutcome::Skipped)
+    }
+
+    async fn negotiate_tls_for_existing_session(
+        &self,
+        client: &mut (impl StarttlsClient + Send),
+        helo_domain: &str,
+    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        let ehlo_response = self
+            .send_ehlo(client, helo_domain, EhloStage::Initial)
+            .await?;
+        if !ehlo_response.is_success() {
+            return Err(TemporaryError::SmtpTemporary(format!(
+                "Server rejected EHLO: {}",
+                ehlo_response.message()
+            ))
+            .into());
+        }
+        Ok(TlsNegotiationOutcome::Success)
+    }
+
+    async fn send_ehlo(
+        &self,
+        client: &mut (impl StarttlsClient + Send),
+        helo_domain: &str,
+        stage: EhloStage,
+    ) -> Result<ClientResponse, DeliveryError> {
+        let ehlo_timeout = Duration::from_secs(self.smtp_timeouts.ehlo_secs);
+        let ehlo_start = Instant::now();
+        let ehlo_response: ClientResponse =
+            tokio::time::timeout(ehlo_timeout, client.ehlo(helo_domain))
+                .await
+                .map_err(|_| {
+                    let message = match stage {
+                        EhloStage::Initial => {
+                            format!("EHLO timed out after {ehlo_timeout:?}")
+                        }
+                        EhloStage::AfterStarttls => {
+                            format!("EHLO after STARTTLS timed out after {ehlo_timeout:?}")
+                        }
+                    };
+                    TemporaryError::Timeout(message)
+                })??;
+        self.record_ehlo_duration(ehlo_start);
+        Ok(ehlo_response)
+    }
+
+    fn supports_starttls(response: &ClientResponse) -> bool {
+        response
+            .message()
+            .lines()
+            .any(|line: &str| line.to_uppercase().contains("STARTTLS"))
+    }
+
+    async fn negotiate_starttls(
+        &self,
+        client: &mut (impl StarttlsClient + Send),
+        helo_domain: &str,
+    ) -> Result<TlsNegotiationOutcome, DeliveryError> {
+        let starttls_timeout = Duration::from_secs(self.smtp_timeouts.starttls_secs);
+        let starttls_result: Result<ClientResponse, String> =
+            tokio::time::timeout(starttls_timeout, client.starttls())
+                .await
+                .map_err(|_| format!("STARTTLS timed out after {starttls_timeout:?}"))
+                .and_then(|r| r.map_err(|e| format!("STARTTLS failed: {e}")));
+
+        let starttls_response: ClientResponse = match starttls_result {
+            Ok(response) => response,
+            Err(error_msg) => {
+                if self.tls_requirement.is_required() {
+                    return Err(self.require_tls_error(error_msg));
+                }
+                tracing::info!(
+                    domain = helo_domain,
+                    error = %error_msg,
+                    "STARTTLS failed for opportunistic TLS, will retry without TLS per RFC 3207"
+                );
+                return Ok(TlsNegotiationOutcome::RetryWithoutTls);
+            }
+        };
+
+        if !starttls_response.is_success() {
+            let message = format!("Server rejected STARTTLS: {}", starttls_response.message());
+            if self.tls_requirement.is_required() {
+                return Err(self.require_tls_error(message));
+            }
+            tracing::info!(
+                domain = helo_domain,
+                response = %starttls_response.message(),
+                "Server rejected STARTTLS for opportunistic TLS, will retry without TLS per RFC 3207"
+            );
+            return Ok(TlsNegotiationOutcome::RetryWithoutTls);
+        }
+
+        let ehlo_response = self
+            .send_ehlo(client, helo_domain, EhloStage::AfterStarttls)
+            .await?;
+        if !ehlo_response.is_success() {
+            return Err(TemporaryError::SmtpTemporary(format!(
+                "Server rejected EHLO after STARTTLS: {}",
+                ehlo_response.message()
+            ))
+            .into());
+        }
+
+        tracing::debug!(
+            domain = helo_domain,
+            "TLS successfully negotiated via STARTTLS"
+        );
+        Ok(TlsNegotiationOutcome::Success)
+    }
+
+    async fn send_mail_from(&self, client: &mut SmtpClient) -> Result<(), DeliveryError> {
+        let sender = self
+            .context
+            .envelope
+            .sender()
+            .map_or_else(|| "<>".to_string(), extract_email_address);
+
+        let mail_from_timeout = Duration::from_secs(self.smtp_timeouts.mail_from_secs);
+        let mail_response =
+            tokio::time::timeout(mail_from_timeout, client.mail_from(&sender, None))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!(
+                        "MAIL FROM timed out after {mail_from_timeout:?}"
+                    ))
+                })??;
+
+        if !mail_response.is_success() {
+            let code = mail_response.code;
+            let message = format!("Server rejected MAIL FROM: {}", mail_response.message());
+            return if (500..600).contains(&code) {
+                Err(PermanentError::MessageRejected(message).into())
+            } else {
+                Err(TemporaryError::SmtpTemporary(message).into())
+            };
+        }
+
+        Ok(())
+    }
+
+    async fn send_rcpt_to(&self, client: &mut SmtpClient) -> Result<(), DeliveryError> {
+        let Some(recipients) = self.context.envelope.recipients() else {
+            return Err(SystemError::Internal("No recipients in message".to_string()).into());
+        };
+
+        let rcpt_to_timeout = Duration::from_secs(self.smtp_timeouts.rcpt_to_secs);
+        for recipient in recipients.iter() {
+            let recipient_addr = extract_email_address(recipient);
+
+            let rcpt_response =
+                tokio::time::timeout(rcpt_to_timeout, client.rcpt_to(&recipient_addr))
+                    .await
+                    .map_err(|_| {
+                        TemporaryError::Timeout(format!(
+                            "RCPT TO timed out after {rcpt_to_timeout:?}"
+                        ))
+                    })??;
+
+            if !rcpt_response.is_success() {
+                let code = rcpt_response.code;
+                let message = format!(
+                    "Server rejected RCPT TO {recipient_addr}: {}",
+                    rcpt_response.message()
+                );
+                return if (500..600).contains(&code) {
+                    Err(PermanentError::InvalidRecipient(message).into())
+                } else {
+                    Err(TemporaryError::SmtpTemporary(message).into())
+                };
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_message_data(&self, client: &mut SmtpClient) -> Result<(), DeliveryError> {
+        let data_timeout = Duration::from_secs(self.smtp_timeouts.data_secs);
+
+        let data_response = tokio::time::timeout(data_timeout, client.data())
+            .await
+            .map_err(|_| {
+                TemporaryError::Timeout(format!("DATA command timed out after {data_timeout:?}"))
+            })??;
+
+        if !(300..400).contains(&data_response.code) {
+            let code = data_response.code;
+            let message = format!("Server rejected DATA: {}", data_response.message());
+            return if (500..600).contains(&code) {
+                Err(PermanentError::MessageRejected(message).into())
+            } else {
+                Err(TemporaryError::SmtpTemporary(message).into())
+            };
+        }
+
+        let send_response = match self.body_source {
+            MessageBodySource::Context => {
+                let message_data =
+                    self.context.data.as_ref().ok_or_else(|| {
+                        SystemError::Internal("No message data to send".to_string())
+                    })?;
+
+                tokio::time::timeout(data_timeout, client.send_data_bytes(message_data.as_ref()))
+                    .await
+                    .map_err(|_| {
+                        TemporaryError::Timeout(format!(
+                            "Sending message data timed out after {data_timeout:?}"
+                        ))
+                    })??
+            }
+            MessageBodySource::Spool { spool, message_id } => {
+                let body_stream = spool
+                    .open_message_stream(message_id)
+                    .await
+                    .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+
+                Box::pin(tokio::time::timeout(
+                    data_timeout,
+                    client.send_data_stream(body_stream),
+                ))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!(
+                        "Sending message data timed out after {data_timeout:?}"
+                    ))
+                })??
+            }
+        };
+
+        if !send_response.is_success() {
+            let code = send_response.code;
+            let message = format!("Server rejected message data: {}", send_response.message());
+            return if (500..600).contains(&code) {
+                Err(PermanentError::MessageRejected(message).into())
+            } else {
+                Err(TemporaryError::SmtpTemporary(message).into())
+            };
+        }
+
         Ok(())
     }
 }

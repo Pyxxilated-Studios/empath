@@ -14,12 +14,11 @@ use opentelemetry::Context as OtelContext;
 use opentelemetry::trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
-use crate::OutboundBinding;
 use crate::error::{DeliveryError, SystemError, TemporaryError};
 use crate::processor::DeliveryProcessor;
 use crate::smtp_pool::{CertValidation, SmtpPoolKey, SmtpPoolRequest, TlsMode};
-use crate::smtp_transaction::{SmtpTlsConfig, TlsFailurePolicy};
 use crate::types::DeliveryInfo;
+use crate::{OutboundBinding, SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy};
 
 pub(super) fn server_id_from(address: &str) -> Result<ServerId, DeliveryError> {
     ServerId::new(address.to_owned()).map_err(|e| {
@@ -1125,7 +1124,7 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     // Create and execute the SMTP transaction
     let tls_config = SmtpTlsConfig::new(binding.tls_mode, binding.cert_validation)
         .with_failure_policy(tls_settings.failure_policy);
-    let transaction = crate::smtp_transaction::SmtpTransaction::new(
+    let transaction = SmtpTransaction::new(
         context,
         server_address.to_string(),
         tls_config,
@@ -1133,7 +1132,8 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     )
     .with_helo_domain(binding.helo_domain.clone())
     .with_connect_config(binding.connect_config.clone())
-    .with_metrics(processor.metrics.as_ref(), delivery_info.binding.as_deref())
+    .with_metrics(processor.metrics.as_ref())
+    .with_binding_name(delivery_info.binding.as_deref())
     .with_spool_body(spool, message_id);
 
     if let Some(client) = pooled_client {

@@ -37,7 +37,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## Refactor Plan (Concrete Steps)
 - [x] PLAN-01: Inventory SMTP client usage in `empath-delivery` and define a minimal outbound client interface (traits + types) in a new crate (`empath-smtp-client` or `empath-mailer`).
-- [ ] PLAN-02: Move outbound SMTP transaction code to the new crate; update `empath-delivery` to depend on it; ensure `empath-smtp` only depends on shared types, not delivery.
+- [x] PLAN-02: Move outbound SMTP transaction code to the new crate; update `empath-delivery` to depend on it; ensure `empath-smtp` only depends on shared types, not delivery.
 - [ ] PLAN-03: Add module dispatch timeouts and cancellation behavior; capture per-event timing metrics and add explicit failure policy (fail-open/fail-closed per event).
 - [ ] PLAN-04: Introduce typed context keys (newtypes + getters/setters) in `empath-common`; migrate core crates to use them; keep raw map only for module extensions.
 - [ ] PLAN-05: Split `empath-common` into domain vs infra crates; update workspace dependencies; document feature flags and migration guide.

@@ -5,6 +5,13 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
-async-trait = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-util"] }
+async-trait.workspace = true
+empath-common.workspace = true
+empath-metrics.workspace = true
+empath-smtp.workspace = true
+empath-spool.workspace = true
+empath-tracing.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "time"] }
+tracing.workspace = true

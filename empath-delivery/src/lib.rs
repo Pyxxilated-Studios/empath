@@ -23,7 +23,6 @@ pub mod queue;
 mod rate_limiter;
 mod service;
 mod smtp_pool;
-mod smtp_transaction;
 mod types;
 
 // Re-export circuit breaker types
@@ -44,6 +43,7 @@ pub use domain_config::{DomainConfig, DomainConfigRegistry};
 pub use dsn::DsnConfig;
 // Re-export common types
 pub use empath_common::{DeliveryAttempt, DeliveryStatus};
+pub use empath_smtp_client::{SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy};
 // Re-export error types
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 // Re-export policy types

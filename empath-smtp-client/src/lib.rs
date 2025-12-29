@@ -1,13 +1,22 @@
-//! Outbound SMTP client interface for delivery.
+//! Outbound SMTP client interface and transaction helpers for delivery.
 //!
 //! This crate defines the minimal outbound SMTP surface used by `empath-delivery`,
-//! decoupling delivery from the inbound SMTP server implementation.
+//! plus the shared transaction logic for outbound deliveries.
+
+mod error;
+mod timeouts;
+mod tls;
+mod transaction;
 
 use std::net::IpAddr;
 
 use async_trait::async_trait;
+pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 use thiserror::Error;
+pub use timeouts::SmtpTimeouts;
+pub use tls::{CertValidation, TlsMode};
 use tokio::io::AsyncRead;
+pub use transaction::{SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy};
 
 /// SMTP client response payload.
 #[derive(Debug, Clone, PartialEq, Eq)]

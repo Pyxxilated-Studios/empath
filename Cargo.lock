@@ -1031,6 +1031,7 @@ dependencies = [
  "empath-ffi",
  "empath-metrics",
  "empath-smtp",
+ "empath-smtp-client",
  "empath-spool",
  "empath-tracing",
  "hickory-resolver 0.25.2",
@@ -1158,8 +1159,15 @@ name = "empath-smtp-client"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "empath-common",
+ "empath-metrics",
+ "empath-smtp",
+ "empath-spool",
+ "empath-tracing",
+ "serde",
  "thiserror 2.0.17",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
