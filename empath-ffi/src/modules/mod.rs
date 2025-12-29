@@ -1,14 +1,11 @@
-use std::{
-    borrow::Cow,
-    fmt::{self, Display},
-    sync::{Arc, OnceLock, RwLock},
-};
+use std::borrow::Cow;
+use std::fmt::{self, Display};
+use std::sync::{Arc, OnceLock, RwLock};
 
-use empath_common::{
-    context::{Context, ModuleContext},
-    internal,
-    status::Status,
-};
+use empath_common::context::{Context, ModuleContext};
+use empath_common::internal;
+use empath_common::status::Status;
+use empath_metrics::is_enabled;
 use empath_tracing::traced;
 use serde::Deserialize;
 use thiserror::Error;
@@ -151,10 +148,8 @@ impl Mod {
     }
 }
 
-///
 /// This solely exists in order to have the `ModuleValidation` be parsed
 /// by cbindgen. Perhaps in future it will be done in a better way.
-///
 #[unsafe(no_mangle)]
 pub const extern "C" fn __cbindgen_hack_please_remove() -> *mut Mod {
     std::ptr::null_mut()
@@ -287,7 +282,6 @@ impl Module {
 /// This can error in two scenarios:
 ///   1. The module is invalid (e.g. the shared library cannot be found/has issues)
 ///   2. The modules init has an issue
-///
 #[traced(instrument(level = tracing::Level::TRACE, ret, skip(modules)), timing)]
 pub fn init(modules: Vec<Module>) -> Result<(), Error> {
     internal!(level = INFO, "Initialising modules ...");
@@ -303,7 +297,7 @@ pub fn init(modules: Vec<Module>) -> Result<(), Error> {
 
     // Add metrics module if enabled
     #[cfg(feature = "metrics")]
-    if empath_metrics::is_enabled() {
+    if is_enabled() {
         all_modules.push(Module::Metrics);
     }
 
@@ -368,7 +362,6 @@ fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
 /// The events being dispatched are handled with a panic handler, which should
 /// catch some possible errors. If these are caught, they are returned to the
 /// caller to handle.
-///
 pub fn dispatch(event: Event, validate_context: &mut Context) -> DispatchResult {
     let modules = if let Some(modules) = MODULE_STORE.get() {
         Arc::clone(modules)

@@ -5,6 +5,7 @@
 //! - Temporary failures (4xx SMTP codes) - retry with backoff
 //! - System errors - internal errors
 
+use empath_smtp::client::ClientError;
 use thiserror::Error;
 
 use crate::DnsError;
@@ -212,10 +213,8 @@ impl From<DnsError> for DeliveryError {
 /// // After (automatic conversion):
 /// client.connect().await?;
 /// ```
-impl From<empath_smtp::client::ClientError> for DeliveryError {
-    fn from(error: empath_smtp::client::ClientError) -> Self {
-        use empath_smtp::client::ClientError;
-
+impl From<ClientError> for DeliveryError {
+    fn from(error: ClientError) -> Self {
         match error {
             // 4xx SMTP codes are temporary failures - retry with backoff
             ClientError::SmtpError { code, message } if (400..500).contains(&code) => {
@@ -351,8 +350,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_4xx() {
-        use empath_smtp::client::ClientError;
-
         // 4xx SMTP codes should be temporary
         let client_err = ClientError::SmtpError {
             code: 421,
@@ -370,8 +367,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_5xx() {
-        use empath_smtp::client::ClientError;
-
         // 5xx SMTP codes should be permanent
         let client_err = ClientError::SmtpError {
             code: 550,
@@ -389,8 +384,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_io() {
-        use empath_smtp::client::ClientError;
-
         // I/O errors should be temporary
         let client_err = ClientError::Io(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
@@ -404,8 +397,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_connection_closed() {
-        use empath_smtp::client::ClientError;
-
         // Connection closed should be temporary
         let client_err = ClientError::ConnectionClosed;
         let delivery_err: DeliveryError = client_err.into();
@@ -418,8 +409,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_tls() {
-        use empath_smtp::client::ClientError;
-
         // TLS errors should be temporary
         let client_err = ClientError::TlsError("Handshake failed".to_string());
         let delivery_err: DeliveryError = client_err.into();
@@ -432,8 +421,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_parse() {
-        use empath_smtp::client::ClientError;
-
         // Parse errors should be system errors
         let client_err = ClientError::ParseError("Invalid response".to_string());
         let delivery_err: DeliveryError = client_err.into();
@@ -444,8 +431,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_builder() {
-        use empath_smtp::client::ClientError;
-
         // Builder errors should be system errors
         let client_err = ClientError::BuilderError("Invalid config".to_string());
         let delivery_err: DeliveryError = client_err.into();
@@ -454,8 +439,6 @@ mod tests {
 
     #[test]
     fn test_client_error_conversion_unexpected_code() {
-        use empath_smtp::client::ClientError;
-
         // Unexpected response codes (outside 4xx/5xx) should be system errors
         let client_err = ClientError::UnexpectedResponse {
             code: 999,

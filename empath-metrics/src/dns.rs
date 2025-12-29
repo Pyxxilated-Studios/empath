@@ -5,15 +5,11 @@
 //! - Cache hit/miss rates
 //! - DNS errors
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use opentelemetry::{
-    KeyValue,
-    metrics::{Counter, Histogram, Meter},
-};
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Histogram, Meter};
 
 /// DNS metrics collector
 #[derive(Debug)]

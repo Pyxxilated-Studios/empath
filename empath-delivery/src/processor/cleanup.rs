@@ -2,16 +2,15 @@
 //!
 //! Processes the cleanup queue with exponential backoff retry logic.
 
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use empath_spool::BackingStore;
 use empath_tracing::traced;
 use tracing::{error, info, warn};
 
-use crate::{error::DeliveryError, processor::DeliveryProcessor};
+use crate::error::DeliveryError;
+use crate::processor::DeliveryProcessor;
 
 /// Process the cleanup queue and retry failed deletions
 ///

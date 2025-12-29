@@ -1,11 +1,10 @@
-use std::{
-    fmt::{self, Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{self, Debug, Display};
+use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{address_parser::Mailbox, email::EmailAddress};
+use crate::address_parser::Mailbox;
+use crate::email::EmailAddress;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "Mailbox", into = "Mailbox")]

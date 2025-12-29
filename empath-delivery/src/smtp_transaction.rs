@@ -8,23 +8,21 @@
 //! - DATA command and message content transmission
 //! - QUIT command for connection cleanup
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use empath_common::{context::Context, tracing};
+use empath_common::address::Address;
+use empath_common::context::Context;
+use empath_common::tracing;
 use empath_metrics::DeliveryMetrics;
 use empath_smtp::client::{ClientError, ConnectConfig, Response as ClientResponse, SmtpClient};
 use empath_spool::{BackingStore, SpooledMessageId};
 use empath_tracing::traced;
 
-use crate::{
-    SmtpTimeouts,
-    error::{DeliveryError, PermanentError, SystemError, TemporaryError},
-    smtp_pool::{CertValidation, TlsMode},
-};
+use crate::SmtpTimeouts;
+use crate::error::{DeliveryError, PermanentError, SystemError, TemporaryError};
+use crate::smtp_pool::{CertValidation, TlsMode};
 
 #[derive(Debug, Clone, Copy)]
 enum TlsRequirement {
@@ -108,7 +106,7 @@ enum EhloStage {
 /// this function uses the Display impl to format the address.
 ///
 /// Returns a formatted email address (`local_part@domain`).
-fn extract_email_address(address: &empath_common::address::Address) -> String {
+fn extract_email_address(address: &Address) -> String {
     address.to_string()
 }
 

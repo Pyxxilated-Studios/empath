@@ -6,20 +6,14 @@
 //! - Queue sizes by status
 //! - Active SMTP client connections
 
-use std::{
-    collections::HashSet,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
-};
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use dashmap::DashMap;
-use opentelemetry::{
-    KeyValue,
-    metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter},
-};
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter};
 
 use crate::util::u64_to_f64;
 

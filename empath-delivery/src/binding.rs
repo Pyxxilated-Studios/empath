@@ -1,19 +1,16 @@
 //! Outbound binding configuration and selection logic.
 
-use std::{collections::HashMap, net::IpAddr};
+use std::collections::HashMap;
+use std::net::IpAddr;
 
-use empath_common::{
-    Domain,
-    context::{Context, OUTBOUND_BINDING_CONTEXT_KEY},
-};
+use empath_common::Domain;
+use empath_common::context::{Context, OUTBOUND_BINDING_CONTEXT_KEY};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    binding_health::BindingHealthConfig,
-    error::{DeliveryError, SystemError},
-    policy::{DomainPolicyResolver, RetryPolicy},
-    types::SmtpTimeouts,
-};
+use crate::binding_health::BindingHealthConfig;
+use crate::error::{DeliveryError, SystemError};
+use crate::policy::{DomainPolicyResolver, RetryPolicy};
+use crate::types::SmtpTimeouts;
 
 /// Outbound binding definition.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

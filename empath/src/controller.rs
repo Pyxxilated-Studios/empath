@@ -1,23 +1,30 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, LazyLock, RwLock},
-    time::{Duration, SystemTime},
-};
+use std::path::PathBuf;
+use std::sync::{Arc, LazyLock, RwLock};
+use std::time::{Duration, SystemTime};
 
-use empath_common::{
-    Signal, audit::AuditLoggerBuilder, context::Capability, controller::Controller, internal,
-    logging, tracing,
-};
+use empath_common::audit::{AuditConfig, AuditLogger, AuditLoggerBuilder};
+use empath_common::context::Capability;
+use empath_common::controller::Controller;
+use empath_common::{Signal, internal, logging, tracing};
 use empath_control::{
     ControlAuthConfig, ControlRateLimitConfig, ControlServer, DEFAULT_CONTROL_SOCKET,
 };
+use empath_delivery::{
+    CircuitBreakerConfig, DeliveryProcessor, DomainConfigRegistry, RateLimitConfig, RetryPolicy,
+    SmtpTimeouts, SpfDnsAdapter,
+};
 use empath_ffi::modules::{self, Module};
 use empath_health::{HealthChecker, HealthConfig, HealthServer};
+use empath_metrics::{Metrics, MetricsConfig, init_metrics, try_metrics};
+use empath_smtp::spf::SpfDnsResolver;
 use empath_smtp::{Smtp, TlsContextRegistry};
 use empath_spool::config::SpoolType;
+use empath_spool::{BackingStore, SpoolConfig};
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::{sync::broadcast, task::JoinSet, time};
+use tokio::sync::broadcast;
+use tokio::task::JoinSet;
+use tokio::time;
 
 use crate::control_handler::EmpathControlHandler;
 
@@ -25,8 +32,8 @@ use crate::control_handler::EmpathControlHandler;
 pub struct Empath {
     smtp_controller: Controller<Smtp>,
     modules: Vec<Module>,
-    spool: empath_spool::SpoolConfig,
-    delivery: empath_delivery::DeliveryProcessor,
+    spool: SpoolConfig,
+    delivery: DeliveryProcessor,
     /// Path to the control socket (optional, defaults to /tmp/empath.sock)
     control_socket_path: String,
     /// Control socket authentication configuration (optional)
@@ -34,11 +41,11 @@ pub struct Empath {
     /// Control socket command rate limiting configuration (optional)
     control_rate_limit: Option<ControlRateLimitConfig>,
     /// Metrics configuration
-    metrics: empath_metrics::MetricsConfig,
+    metrics: MetricsConfig,
     /// Health check configuration
     health: HealthConfig,
     /// Audit logging configuration
-    audit: empath_common::audit::AuditConfig,
+    audit: AuditConfig,
     /// Shutdown drain timeout in seconds.
     shutdown_timeout_secs: u64,
 }
@@ -51,9 +58,9 @@ struct EmpathConfig {
     #[serde(alias = "module", default)]
     modules: Vec<Module>,
     #[serde(alias = "spool", default)]
-    spool: empath_spool::SpoolConfig,
+    spool: SpoolConfig,
     #[serde(alias = "delivery", default)]
-    delivery: empath_delivery::DeliveryProcessor,
+    delivery: DeliveryProcessor,
     #[serde(alias = "control_socket", default = "default_control_socket")]
     control_socket_path: String,
     #[serde(alias = "control_auth", default)]
@@ -61,11 +68,11 @@ struct EmpathConfig {
     #[serde(alias = "control_rate_limit", default)]
     control_rate_limit: Option<ControlRateLimitConfig>,
     #[serde(alias = "metrics", default)]
-    metrics: empath_metrics::MetricsConfig,
+    metrics: MetricsConfig,
     #[serde(alias = "health", default)]
     health: HealthConfig,
     #[serde(alias = "audit", default)]
-    audit: empath_common::audit::AuditConfig,
+    audit: AuditConfig,
     #[serde(
         alias = "shutdown_timeout_secs",
         default = "default_shutdown_timeout_secs"
@@ -252,11 +259,11 @@ impl Empath {
     pub fn delivery_reload_settings(
         &self,
     ) -> (
-        empath_delivery::DomainConfigRegistry,
-        empath_delivery::RateLimitConfig,
-        empath_delivery::RetryPolicy,
-        empath_delivery::SmtpTimeouts,
-        empath_delivery::CircuitBreakerConfig,
+        DomainConfigRegistry,
+        RateLimitConfig,
+        RetryPolicy,
+        SmtpTimeouts,
+        CircuitBreakerConfig,
     ) {
         (
             self.delivery.domains.clone(),
@@ -273,25 +280,20 @@ impl Empath {
         logging::init(Some(&self.metrics.endpoint))?;
 
         // Initialize metrics
-        if let Err(e) = empath_metrics::init_metrics(&self.metrics) {
+        if let Err(e) = init_metrics(&self.metrics) {
             tracing::warn!(error = %e, "Failed to initialize metrics");
         }
 
         Ok(())
     }
 
-    fn init_spool(
-        spool_config: empath_spool::SpoolConfig,
-    ) -> anyhow::Result<(Option<PathBuf>, SpoolType)> {
+    fn init_spool(spool_config: SpoolConfig) -> anyhow::Result<(Option<PathBuf>, SpoolType)> {
         let spool_path: Option<PathBuf> = spool_config.path().map(std::path::Path::to_path_buf);
         let spool = spool_config.into_spool()?;
         Ok((spool_path, spool))
     }
 
-    fn init_delivery(
-        &mut self,
-        backing_store: Arc<dyn empath_spool::BackingStore>,
-    ) -> anyhow::Result<()> {
+    fn init_delivery(&mut self, backing_store: Arc<dyn BackingStore>) -> anyhow::Result<()> {
         // Initialize delivery controller first to get the DNS resolver
         // Use default DNS resolver (None = HickoryDnsResolver)
         self.delivery.init(backing_store, None)?;
@@ -299,22 +301,19 @@ impl Empath {
         Ok(())
     }
 
-    fn spf_dns_resolver(
-        delivery: &empath_delivery::DeliveryProcessor,
-    ) -> Option<Arc<dyn empath_smtp::spf::SpfDnsResolver>> {
+    fn spf_dns_resolver(delivery: &DeliveryProcessor) -> Option<Arc<dyn SpfDnsResolver>> {
         delivery.dns_resolver().as_ref().map(|resolver| {
-            Arc::new(empath_delivery::SpfDnsAdapter::new(Arc::clone(resolver)))
-                as Arc<dyn empath_smtp::spf::SpfDnsResolver>
+            Arc::new(SpfDnsAdapter::new(Arc::clone(resolver))) as Arc<dyn SpfDnsResolver>
         })
     }
 
     fn init_smtp_controller(
         smtp_controller: &mut Controller<Smtp>,
-        backing_store: Arc<dyn empath_spool::BackingStore>,
-        spf_dns_resolver: Option<&Arc<dyn empath_smtp::spf::SpfDnsResolver>>,
+        backing_store: Arc<dyn BackingStore>,
+        spf_dns_resolver: Option<&Arc<dyn SpfDnsResolver>>,
         tls_registry: &Arc<TlsContextRegistry>,
         smtp_capabilities: &Arc<RwLock<Vec<Capability>>>,
-        audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
+        audit_logger: Arc<dyn AuditLogger>,
     ) -> anyhow::Result<()> {
         // Configure SMTP with spool and SPF DNS resolver
         let spf_resolver_clone = spf_dns_resolver.cloned();
@@ -379,7 +378,7 @@ impl Empath {
         tls_registry: Arc<TlsContextRegistry>,
         spool_path: Option<PathBuf>,
     ) {
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             let mut shutdown_rx = SHUTDOWN_BROADCAST.subscribe();
             join_set.spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(15));
@@ -408,7 +407,7 @@ impl Empath {
         join_set: &mut JoinSet<(&'static str, anyhow::Result<()>)>,
         smtp_controller: Controller<Smtp>,
         spool: SpoolType,
-        delivery_arc: &Arc<empath_delivery::DeliveryProcessor>,
+        delivery_arc: &Arc<DeliveryProcessor>,
         control_server: ControlServer,
         health_server: Option<HealthServer>,
     ) {
@@ -532,7 +531,7 @@ impl Empath {
     }
 }
 
-fn record_tls_watchdog_metrics(metrics: &empath_metrics::Metrics, registry: &TlsContextRegistry) {
+fn record_tls_watchdog_metrics(metrics: &Metrics, registry: &TlsContextRegistry) {
     let now_secs = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())

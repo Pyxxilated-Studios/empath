@@ -1,7 +1,10 @@
 use core::fmt::{self, Display};
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
+use std::time::Instant;
 
-use empath_common::{context::Context, internal};
+use empath_common::context::Context;
+use empath_common::internal;
+use empath_metrics::try_metrics;
 use empath_tracing::traced;
 use libloading::Library;
 use serde::Deserialize;
@@ -71,7 +74,7 @@ impl Shared {
         let start = Instant::now();
         let result = module.emit(event, validate_context);
 
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             metrics.modules.record_execution(
                 "shared_library",
                 callback_name,

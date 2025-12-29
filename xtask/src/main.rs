@@ -1,8 +1,6 @@
-use std::{
-    env,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type Result<T> = anyhow::Result<T>;
 

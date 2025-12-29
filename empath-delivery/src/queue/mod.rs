@@ -3,13 +3,16 @@
 pub mod cleanup;
 pub mod retry;
 
-use std::{sync::Arc, time::SystemTime};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use dashmap::DashMap;
-use empath_common::{DeliveryStatus, context::DeliveryPriorityTier};
+use empath_common::context::DeliveryPriorityTier;
+use empath_common::{DeliveryAttempt, DeliveryStatus};
 use empath_spool::SpooledMessageId;
 
-use crate::{dns::MailServer, types::DeliveryInfo};
+use crate::dns::MailServer;
+use crate::types::DeliveryInfo;
 
 /// Manages the delivery queue for outbound messages
 #[derive(Debug, Clone)]
@@ -75,11 +78,7 @@ impl DeliveryQueue {
     }
 
     /// Record a delivery attempt
-    pub fn record_attempt(
-        &self,
-        message_id: &SpooledMessageId,
-        attempt: empath_common::DeliveryAttempt,
-    ) {
+    pub fn record_attempt(&self, message_id: &SpooledMessageId, attempt: DeliveryAttempt) {
         if let Some(mut entry) = self.queue.get_mut(message_id) {
             entry.value_mut().record_attempt(attempt);
         }

@@ -6,7 +6,8 @@
 
 mod support;
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
 use empath_delivery::{DnsError, DnsResolver, MockDnsResolver};
 use support::{E2ETestHarness, SmtpCommand};

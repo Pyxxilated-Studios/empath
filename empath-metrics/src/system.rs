@@ -9,16 +9,12 @@
 //! - **Spool Disk Metrics**: Disk usage, inodes, I/O operations
 //! - **Network Metrics**: Connections, bandwidth usage
 
-use std::{
-    path::Path,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
-use opentelemetry::{
-    KeyValue,
-    metrics::{Gauge, Histogram, Meter},
-};
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Gauge, Histogram, Meter};
 use sysinfo::{Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::sync::Mutex;
 

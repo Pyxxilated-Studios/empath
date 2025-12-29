@@ -2,14 +2,12 @@ use std::net::SocketAddr;
 
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::net::TcpListener;
+use tokio::task::JoinSet;
 
-use crate::{
-    Signal,
-    error::{ListenerError, ProtocolError},
-    internal,
-    traits::protocol::{Protocol, SessionHandler},
-};
+use crate::error::{ListenerError, ProtocolError};
+use crate::traits::protocol::{Protocol, SessionHandler};
+use crate::{Signal, internal};
 
 pub struct Listener<Proto: Protocol> {
     handler: Proto,
@@ -55,19 +53,15 @@ impl<Proto: Protocol> Listener<Proto> {
         self.args = f(self.args.clone());
     }
 
-    ///
     /// # Errors
     /// Any error during initialisation of the listener may propogate here
-    ///
     #[traced(instrument(skip(self)), timing(precision = "ns"))]
     pub fn init(&mut self) -> Result<(), ProtocolError> {
         self.handler.validate(&mut self.args)
     }
 
-    ///
     /// # Errors
     /// This may fail to bind to the given socket
-    ///
     #[traced(instrument(level = tracing::Level::TRACE, skip(self, shutdown)), timing(precision = "s"))]
     pub async fn serve(
         &self,

@@ -1,14 +1,13 @@
 //! Health check HTTP server
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
-use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::get,
-};
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::{Json, Router};
 use empath_common::Signal;
 use tokio::net::TcpListener;
 use tower_http::timeout::TimeoutLayer;

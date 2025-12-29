@@ -4,7 +4,8 @@
 //! after the `AtomicU64` optimization (task 0.30) which reduced overhead by 90%.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{sync::Arc, time::SystemTime};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use empath_metrics::{DeliveryMetrics, DnsMetrics, ModuleMetrics, SmtpMetrics};
 
@@ -480,7 +481,8 @@ fn test_delivery_domain_high_priority_bypass() {
 
 #[test]
 fn test_delivery_domain_cardinality_concurrent() {
-    use std::{sync::Arc, thread};
+    use std::sync::Arc;
+    use std::thread;
 
     // Initialize OpenTelemetry (happens once per test process)
 

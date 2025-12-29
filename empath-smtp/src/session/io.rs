@@ -1,15 +1,14 @@
 use std::borrow::Cow;
 
-use empath_common::{context, incoming, status::Status, traits::fsm::FiniteStateMachine};
+use empath_common::status::Status;
+use empath_common::traits::fsm::FiniteStateMachine;
+use empath_common::{context, incoming};
 
-use crate::{
-    State,
-    auth::{AuthMechanism, PlainAuth, PlainCredentials},
-    command::{Command, XclientParameters},
-    session::{AuthPending, Context, Session},
-    session_state::SessionState,
-    state,
-};
+use crate::auth::{AuthMechanism, PlainAuth, PlainCredentials};
+use crate::command::{Command, XclientParameters};
+use crate::session::{AuthPending, Context, Session};
+use crate::session_state::SessionState;
+use crate::{State, state};
 
 trait ApplyAuthCredentials {
     fn apply_to_context(&self, validate_context: &mut context::Context);

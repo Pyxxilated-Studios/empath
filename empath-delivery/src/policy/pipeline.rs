@@ -17,25 +17,21 @@
 //! - **Testability**: Each stage can be tested independently
 //! - **Clarity**: Explicit pipeline stages with clear responsibilities
 
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
-use empath_common::{
-    domain::Domain,
-    tracing::{self, info, warn},
-};
+use empath_common::domain::Domain;
+use empath_common::internal;
+use empath_common::tracing::{self, info, warn};
+use empath_metrics::try_metrics;
 use empath_spool::SpooledMessageId;
 use empath_tracing::traced;
 
-use crate::{
-    circuit_breaker::CircuitBreaker,
-    dns::{DnsResolver, MailServer},
-    error::{DeliveryError, PermanentError},
-    policy::DomainPolicyResolver,
-    rate_limiter::RateLimiter,
-};
+use crate::circuit_breaker::CircuitBreaker;
+use crate::dns::{DnsResolver, MailServer};
+use crate::error::{DeliveryError, PermanentError};
+use crate::policy::DomainPolicyResolver;
+use crate::rate_limiter::RateLimiter;
 
 /// Result of DNS resolution stage
 pub struct DnsResolution {
@@ -108,7 +104,7 @@ impl<'a> DeliveryPipeline<'a> {
         // Check for domain-specific MX override first
         let mail_servers = if let Some(mx_server) = self.domain_resolver.resolve_mx_override(domain)
         {
-            empath_common::internal!(
+            internal!(
                 "Using MX override for {}: {}:{}",
                 domain,
                 mx_server.host,
@@ -161,7 +157,7 @@ impl<'a> DeliveryPipeline<'a> {
             Ok(()) => RateLimitResult::Allowed,
             Err(wait_time) => {
                 // Record rate limiting metrics
-                if let Some(metrics) = empath_metrics::try_metrics() {
+                if let Some(metrics) = try_metrics() {
                     metrics
                         .delivery
                         .record_rate_limit(domain, wait_time.as_secs_f64());
@@ -246,13 +242,11 @@ impl<'a> DeliveryPipeline<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        circuit_breaker::CircuitBreakerConfig,
-        dns::MockDnsResolver,
-        domain_config::{DomainConfig, DomainConfigRegistry},
-        policy::TlsPolicy,
-        rate_limiter::{RateLimitConfig, RateLimiter},
-    };
+    use crate::circuit_breaker::CircuitBreakerConfig;
+    use crate::dns::MockDnsResolver;
+    use crate::domain_config::{DomainConfig, DomainConfigRegistry};
+    use crate::policy::TlsPolicy;
+    use crate::rate_limiter::{RateLimitConfig, RateLimiter};
 
     type TestResult = std::result::Result<(), String>;
 
@@ -301,7 +295,7 @@ mod tests {
         let domain_resolver = DomainPolicyResolver::new(registry, false, TlsPolicy::default());
         let pipeline = create_test_pipeline(&dns_resolver, &domain_resolver);
 
-        let message_id = empath_spool::SpooledMessageId::new(ulid::Ulid::new());
+        let message_id = SpooledMessageId::new(ulid::Ulid::new());
         let result = pipeline.check_rate_limit(&message_id, "example.com");
 
         assert!(matches!(result, RateLimitResult::Allowed));
@@ -324,7 +318,7 @@ mod tests {
         let pipeline =
             DeliveryPipeline::new(&dns_resolver, &domain_resolver, Some(&rate_limiter), None);
 
-        let message_id = empath_spool::SpooledMessageId::new(ulid::Ulid::new());
+        let message_id = SpooledMessageId::new(ulid::Ulid::new());
         let result = pipeline.check_rate_limit(&message_id, "example.com");
 
         assert!(matches!(result, RateLimitResult::Allowed));

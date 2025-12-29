@@ -8,7 +8,9 @@
 
 use std::sync::{Arc, RwLock};
 
-use crate::{dns::MailServer, domain_config::DomainConfigRegistry, policy::TlsPolicy};
+use crate::dns::MailServer;
+use crate::domain_config::DomainConfigRegistry;
+use crate::policy::TlsPolicy;
 
 /// Resolver for domain-specific delivery policies
 ///

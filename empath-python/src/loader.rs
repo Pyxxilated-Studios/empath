@@ -3,19 +3,16 @@
 //! This module handles loading Python modules from .py files and executing
 //! their callbacks in response to SMTP events.
 
-use std::{path::Path, time::Duration};
+use std::path::Path;
+use std::time::Duration;
 
 use empath_common::context::Context;
-use pyo3::{
-    prelude::*,
-    types::{PyDict, PyTuple},
-};
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 
-use crate::{
-    context::PyContext,
-    error::{PythonError, Result},
-    safety::call_callback,
-};
+use crate::context::PyContext;
+use crate::error::{PythonError, Result};
+use crate::safety::call_callback;
 
 /// Default timeout for Python callbacks (5 seconds)
 const DEFAULT_TIMEOUT_SECS: u64 = 5;

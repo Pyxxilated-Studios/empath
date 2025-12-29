@@ -1,26 +1,20 @@
 //! SMTP client implementation with support for TLS and STARTTLS.
 
-use std::{
-    io,
-    net::{IpAddr, SocketAddr},
-    sync::{Arc, LazyLock},
-};
+use std::io;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, LazyLock};
 
-use empath_common::{message::END_OF_BODY, outgoing, tracing};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    net::{TcpSocket, TcpStream},
-};
-use tokio_rustls::{
-    TlsConnector,
-    client::TlsStream,
-    rustls::{ClientConfig, RootCertStore, pki_types::ServerName},
-};
+use empath_common::message::END_OF_BODY;
+use empath_common::{outgoing, tracing};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpSocket, TcpStream};
+use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 
-use super::{
-    error::{ClientError, Result},
-    response::Response,
-};
+use super::error::{ClientError, Result};
+use super::response::Response;
 
 /// Initial size of the read buffer for SMTP responses.
 const BUFFER_SIZE: usize = 8192;

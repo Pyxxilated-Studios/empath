@@ -2,10 +2,8 @@ use core::fmt::{self, Display, Formatter};
 use std::borrow::Cow;
 
 use ahash::AHashMap;
-use empath_common::{
-    address::{Address, AddressList},
-    address_parser,
-};
+use empath_common::address::{Address, AddressList};
+use empath_common::address_parser;
 use phf::phf_map;
 
 /// ESMTP parameters for MAIL FROM command (RFC 5321 Section 3.3).
@@ -625,10 +623,8 @@ impl TryFrom<String> for Command {
 
 #[cfg(test)]
 mod test {
-    use empath_common::{
-        address::{Address, AddressList},
-        address_parser,
-    };
+    use empath_common::address::{Address, AddressList};
+    use empath_common::address_parser;
 
     use crate::command::{Command, HeloVariant, MailParameters, XclientParameters};
 

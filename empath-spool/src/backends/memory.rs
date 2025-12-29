@@ -1,15 +1,15 @@
-use std::{io::Cursor, sync::Arc, time::Instant};
+use std::io::Cursor;
+use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
 use empath_common::context::Context;
 
-use crate::{
-    SpoolError,
-    observability::{SpoolObserver, default_spool_observer},
-    r#trait::BackingStore,
-    types::SpooledMessageId,
-};
+use crate::SpoolError;
+use crate::observability::{SpoolObserver, default_spool_observer};
+use crate::r#trait::BackingStore;
+use crate::types::SpooledMessageId;
 
 /// In-memory backing store implementation
 ///

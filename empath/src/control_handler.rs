@@ -3,23 +3,26 @@
 //! This module implements the `CommandHandler` trait to process control requests
 //! for managing the running MTA instance.
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::{Arc, RwLock},
-    time::{Duration, Instant, SystemTime},
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use empath_common::context::{Capability, Context};
+use empath_common::{DeliveryStatus, Signal, logging};
+use empath_control::protocol::{self as control_protocol, ResponseData};
+use empath_control::server::CommandHandler;
 use empath_control::{
-    ControlError, DnsCommand, QueueCommand, Request, RequestCommand, Response, SpoolCommand,
-    SystemCommand, protocol::ResponseData, server::CommandHandler,
+    ControlError, DnsCommand, PROTOCOL_VERSION, QueueCommand, Request, RequestCommand, Response,
+    Result as ControlResult, SpoolCommand, SystemCommand,
 };
-use empath_delivery::{BindingHealthState, DeliveryQueryService, TlsPolicy};
+use empath_delivery::{
+    BindingHealthState, DeliveryInfo, DeliveryQueryService, DomainConfigRegistry, TlsPolicy,
+};
 use empath_smtp::TlsContextRegistry;
-use empath_spool::BackingStore;
+use empath_spool::{BackingStore, SpooledMessageId};
 use ron::Options;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -41,16 +44,14 @@ pub struct EmpathControlHandler {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use std::{
-        sync::{Arc, Mutex},
-        time::SystemTime,
-    };
+    use std::sync::{Arc, Mutex};
+    use std::time::SystemTime;
 
     use empath_common::DeliveryStatus;
     use empath_delivery::{
-        BindingHealthStatus, CircuitBreakerConfig, ConnectionStats, DeliveryInfo, DnsResolver,
-        DomainConfigRegistry, OutboundBindingRegistry, RateLimitConfig, RetryPolicy, SmtpTimeouts,
-        TlsPolicy,
+        BindingHealthStatus, CircuitBreakerConfig, ConnectionStats, DeliveryInfo,
+        DeliveryQueryService, DnsResolver, DomainConfigRegistry, OutboundBindingRegistry,
+        QueueSnapshot, RateLimitConfig, RetryPolicy, SmtpTimeouts, TlsPolicy,
     };
     use empath_spool::{BackingStore, SpooledMessageId};
 
@@ -142,7 +143,7 @@ mod tests {
         }
     }
 
-    impl empath_delivery::DeliveryQueryService for MockDelivery {
+    impl DeliveryQueryService for MockDelivery {
         fn queue_len(&self) -> usize {
             0
         }
@@ -166,8 +167,8 @@ mod tests {
             Vec::new()
         }
 
-        fn queue_stats_snapshot(&self) -> empath_delivery::QueueSnapshot {
-            empath_delivery::QueueSnapshot::default()
+        fn queue_stats_snapshot(&self) -> QueueSnapshot {
+            QueueSnapshot::default()
         }
 
         fn update_status(&self, _message_id: &SpooledMessageId, _status: DeliveryStatus) {}
@@ -280,7 +281,7 @@ Empath (
     listeners: [],
   ),
   delivery: {
-    max_attempts: 7,
+    "max_attempts": 7,
     "smtp_timeouts": (
       ehlo_secs: 5,
     ),
@@ -303,7 +304,7 @@ Empath (
         let _env = EnvVarGuard::set("EMPATH_CONFIG", &config_path);
 
         let delivery = Arc::new(MockDelivery::default());
-        let delivery_service: Arc<dyn empath_delivery::DeliveryQueryService> = delivery.clone();
+        let delivery_service: Arc<dyn DeliveryQueryService> = delivery.clone();
         let message = reload_config_from_disk(&delivery_service).expect("reload config");
 
         assert!(message.contains("Applied:"));
@@ -353,11 +354,11 @@ impl AuditIdentity {
     }
 }
 
-fn parse_message_id(message_id: &str) -> empath_control::Result<empath_spool::SpooledMessageId> {
+fn parse_message_id(message_id: &str) -> ControlResult<SpooledMessageId> {
     let mut filename = String::with_capacity(message_id.len() + 4);
     filename.push_str(message_id);
     filename.push_str(".bin");
-    empath_spool::SpooledMessageId::from_filename(&filename)
+    SpooledMessageId::from_filename(&filename)
         .ok_or_else(|| ControlError::ServerError(format!("Invalid message ID: {message_id}")))
 }
 
@@ -471,7 +472,7 @@ fn format_reload_list(items: &[&'static str]) -> String {
 }
 
 fn resolve_tls_policy_preview(
-    domains: &empath_delivery::DomainConfigRegistry,
+    domains: &DomainConfigRegistry,
     domain: &str,
     global_policy: TlsPolicy,
 ) -> TlsPolicy {
@@ -506,24 +507,23 @@ impl EmpathControlHandler {
 
 struct MessageDetailsInput<'a> {
     message_id: String,
-    msg_id: &'a empath_spool::SpooledMessageId,
+    msg_id: &'a SpooledMessageId,
     context: &'a Context,
     size: usize,
     headers: Option<HashMap<String, String>>,
     body_preview: Option<String>,
     transaction: Option<HashMap<String, String>>,
-    queue_info: Option<empath_delivery::DeliveryInfo>,
+    queue_info: Option<DeliveryInfo>,
 }
 
 #[async_trait]
 impl CommandHandler for EmpathControlHandler {
-    async fn handle_request(&self, request: Request) -> empath_control::Result<Response> {
+    async fn handle_request(&self, request: Request) -> ControlResult<Response> {
         // Validate protocol version
         if !request.is_version_compatible() {
             return Err(ControlError::ServerError(format!(
                 "Incompatible protocol version: client={}, server={}",
-                request.version,
-                empath_control::PROTOCOL_VERSION
+                request.version, PROTOCOL_VERSION
             )));
         }
 
@@ -538,7 +538,7 @@ impl CommandHandler for EmpathControlHandler {
 
 impl EmpathControlHandler {
     /// Handle DNS cache management commands
-    async fn handle_dns_command(&self, command: DnsCommand) -> empath_control::Result<Response> {
+    async fn handle_dns_command(&self, command: DnsCommand) -> ControlResult<Response> {
         // Audit log: Record who executed this command
         audit!(INFO, "Control command: DNS", command = ?command);
 
@@ -558,22 +558,21 @@ impl EmpathControlHandler {
                 let cache = resolver.list_cache();
 
                 // Convert to control protocol types
-                let cache_data: HashMap<String, Vec<empath_control::protocol::CachedMailServer>> =
-                    cache
-                        .into_iter()
-                        .map(|(domain, servers)| {
-                            let servers = servers
-                                .into_iter()
-                                .map(|(server, ttl)| empath_control::protocol::CachedMailServer {
-                                    host: server.host,
-                                    priority: server.priority,
-                                    port: server.port,
-                                    ttl_remaining_secs: ttl.as_secs(),
-                                })
-                                .collect();
-                            (domain, servers)
-                        })
-                        .collect();
+                let cache_data: HashMap<String, Vec<control_protocol::CachedMailServer>> = cache
+                    .into_iter()
+                    .map(|(domain, servers)| {
+                        let servers = servers
+                            .into_iter()
+                            .map(|(server, ttl)| control_protocol::CachedMailServer {
+                                host: server.host,
+                                priority: server.priority,
+                                port: server.port,
+                                ttl_remaining_secs: ttl.as_secs(),
+                            })
+                            .collect();
+                        (domain, servers)
+                    })
+                    .collect();
 
                 Ok(Response::data(ResponseData::DnsCache(cache_data)))
             }
@@ -632,7 +631,7 @@ impl EmpathControlHandler {
 
     fn list_bindings_response(&self) -> Response {
         let registry = self.delivery.outbound_bindings();
-        let mut bindings: Vec<empath_control::protocol::OutboundBindingInfo> = registry
+        let mut bindings: Vec<control_protocol::OutboundBindingInfo> = registry
             .bindings
             .into_iter()
             .map(|(name, binding)| {
@@ -656,7 +655,7 @@ impl EmpathControlHandler {
                         )
                     });
 
-                empath_control::protocol::OutboundBindingInfo {
+                control_protocol::OutboundBindingInfo {
                     name,
                     source_ip: binding.source_ip.map(|ip| ip.to_string()),
                     source_interface: binding.source_interface,
@@ -675,7 +674,7 @@ impl EmpathControlHandler {
     }
 
     /// Handle system management commands
-    fn handle_system_command(&self, command: &SystemCommand) -> empath_control::Result<Response> {
+    fn handle_system_command(&self, command: &SystemCommand) -> ControlResult<Response> {
         // Audit log: Record who executed this command
         audit!(INFO, "Control command: System", command = ?command);
 
@@ -734,7 +733,7 @@ impl EmpathControlHandler {
 
         let queue_size = self.delivery.queue_len();
 
-        let status = empath_control::protocol::SystemStatus {
+        let status = control_protocol::SystemStatus {
             version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_secs,
             queue_size,
@@ -762,7 +761,7 @@ impl EmpathControlHandler {
 
         let tls_policy = resolve_tls_policy_preview(domains, domain, self.delivery.tls_policy());
 
-        let preview = empath_control::protocol::BindingPreview {
+        let preview = control_protocol::BindingPreview {
             domain: domain.to_string(),
             binding: binding_name,
             binding_enabled,
@@ -773,24 +772,24 @@ impl EmpathControlHandler {
         Response::data(ResponseData::BindingPreview(preview))
     }
 
-    fn handle_system_set_log_level(level: &str) -> empath_control::Result<Response> {
+    fn handle_system_set_log_level(level: &str) -> ControlResult<Response> {
         let parsed = LevelFilter::from_str(level)
             .map_err(|e| ControlError::ServerError(format!("Invalid log level '{level}': {e}")))?;
-        empath_common::logging::set_log_level(parsed)
+        logging::set_log_level(parsed)
             .map_err(|e| ControlError::ServerError(format!("Failed to set log level: {e}")))?;
         Ok(Response::data(ResponseData::Message(format!(
             "Log level set to {parsed}"
         ))))
     }
 
-    fn handle_system_reload_config(&self) -> empath_control::Result<Response> {
+    fn handle_system_reload_config(&self) -> ControlResult<Response> {
         match reload_config_from_disk(&self.delivery) {
             Ok(message) => Ok(Response::data(ResponseData::Message(message))),
             Err(e) => Err(ControlError::ServerError(e)),
         }
     }
 
-    fn handle_system_reload_tls(&self) -> empath_control::Result<Response> {
+    fn handle_system_reload_tls(&self) -> ControlResult<Response> {
         let registry = self.tls_registry.as_ref().ok_or_else(|| {
             ControlError::ServerError("TLS is not configured for this instance".to_string())
         })?;
@@ -808,7 +807,7 @@ impl EmpathControlHandler {
         }
     }
 
-    fn handle_system_list_tls(&self) -> empath_control::Result<Response> {
+    fn handle_system_list_tls(&self) -> ControlResult<Response> {
         let registry = self.tls_registry.as_ref().ok_or_else(|| {
             ControlError::ServerError("TLS is not configured for this instance".to_string())
         })?;
@@ -816,7 +815,7 @@ impl EmpathControlHandler {
         let contexts = registry
             .list_profiles()
             .into_iter()
-            .map(|profile| empath_control::protocol::TlsContextInfo {
+            .map(|profile| control_protocol::TlsContextInfo {
                 set_id: profile.set_id,
                 profile: Some(profile.profile),
                 active: profile.active,
@@ -839,7 +838,7 @@ impl EmpathControlHandler {
         &self,
         set_id: &str,
         profile: &str,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         let registry = self.tls_registry.as_ref().ok_or_else(|| {
             ControlError::ServerError("TLS is not configured for this instance".to_string())
         })?;
@@ -855,13 +854,13 @@ impl EmpathControlHandler {
         ))))
     }
 
-    fn handle_system_drain_listener(socket: &str) -> empath_control::Result<Response> {
+    fn handle_system_drain_listener(socket: &str) -> ControlResult<Response> {
         let target = socket.parse().map_err(|err| {
             ControlError::ServerError(format!("Invalid socket '{socket}': {err}"))
         })?;
 
         if crate::controller::SHUTDOWN_BROADCAST
-            .send(empath_common::Signal::Drain(target))
+            .send(Signal::Drain(target))
             .is_err()
         {
             return Err(ControlError::ServerError(
@@ -877,7 +876,7 @@ impl EmpathControlHandler {
     fn handle_system_connection_stats(&self) -> Response {
         let stats = self.delivery.connection_stats();
         Response::data(ResponseData::ConnectionStats(
-            empath_control::protocol::ConnectionStats {
+            control_protocol::ConnectionStats {
                 queue_size: stats.queue_size,
                 rate_limit_domains: stats.rate_limit_domains,
             },
@@ -889,7 +888,7 @@ impl EmpathControlHandler {
         domain: Option<&String>,
         messages_per_second: f64,
         burst: u32,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         let domain = domain.map(ToString::to_string);
         self.delivery
             .update_rate_limit(domain.clone(), messages_per_second, burst)
@@ -903,7 +902,7 @@ impl EmpathControlHandler {
         &self,
         name: &str,
         enabled: bool,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         self.delivery
             .set_binding_enabled(name, enabled)
             .map_err(ControlError::ServerError)?;
@@ -913,7 +912,7 @@ impl EmpathControlHandler {
         ))))
     }
 
-    fn handle_system_list_capabilities(&self) -> empath_control::Result<Response> {
+    fn handle_system_list_capabilities(&self) -> ControlResult<Response> {
         let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
             ControlError::ServerError(
                 "SMTP capabilities are not configured for this instance".to_string(),
@@ -935,7 +934,7 @@ impl EmpathControlHandler {
         &self,
         capability: &str,
         enabled: bool,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         let state = self.smtp_capabilities.as_ref().ok_or_else(|| {
             ControlError::ServerError(
                 "SMTP capabilities are not configured for this instance".to_string(),
@@ -963,10 +962,7 @@ impl EmpathControlHandler {
     }
 
     /// Handle queue management commands
-    async fn handle_queue_command(
-        &self,
-        command: QueueCommand,
-    ) -> empath_control::Result<Response> {
+    async fn handle_queue_command(&self, command: QueueCommand) -> ControlResult<Response> {
         // Audit log: Record who executed this command
         audit!(INFO, "Control command: Queue", command = ?command);
 
@@ -1041,7 +1037,7 @@ impl EmpathControlHandler {
         status_filter: Option<&str>,
         page: Option<usize>,
         page_size: Option<usize>,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         // Fetch sorted identifiers filtered by status without cloning the full entries
         let ids = self.delivery.list_message_ids(status_filter);
         let total = ids.len();
@@ -1072,7 +1068,7 @@ impl EmpathControlHandler {
 
             let size = size.unwrap_or(0);
 
-            let message = empath_control::protocol::QueueMessage {
+            let message = control_protocol::QueueMessage {
                 id: info.message_id.to_string(),
                 from: context
                     .envelope
@@ -1097,7 +1093,7 @@ impl EmpathControlHandler {
         }
 
         let returned = messages.len();
-        let queue_page = empath_control::protocol::QueueListPage {
+        let queue_page = control_protocol::QueueListPage {
             messages,
             total,
             page,
@@ -1120,7 +1116,7 @@ impl EmpathControlHandler {
         include_headers: bool,
         include_body_preview: bool,
         include_transaction: bool,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         // Parse message ID
         let msg_id = parse_message_id(message_id)?;
 
@@ -1195,11 +1191,7 @@ impl EmpathControlHandler {
     }
 
     /// Handle queue retry command
-    fn handle_retry_command(
-        &self,
-        message_id: &str,
-        force: bool,
-    ) -> empath_control::Result<Response> {
+    fn handle_retry_command(&self, message_id: &str, force: bool) -> ControlResult<Response> {
         // Parse message ID
         let msg_id = parse_message_id(message_id)?;
 
@@ -1209,7 +1201,7 @@ impl EmpathControlHandler {
         })?;
 
         // Check if message can be retried
-        if !force && !matches!(info.status, empath_common::DeliveryStatus::Failed(_)) {
+        if !force && !matches!(info.status, DeliveryStatus::Failed(_)) {
             return Err(ControlError::ServerError(format!(
                 "Message is not in failed status (current: {:?}). Use --force to retry anyway.",
                 info.status
@@ -1218,7 +1210,7 @@ impl EmpathControlHandler {
 
         // Reset status to pending
         self.delivery
-            .update_status(&msg_id, empath_common::DeliveryStatus::Pending);
+            .update_status(&msg_id, DeliveryStatus::Pending);
         self.delivery.reset_server_index(&msg_id);
         // Set next_retry to now for immediate retry
         self.delivery
@@ -1234,7 +1226,7 @@ impl EmpathControlHandler {
         &self,
         spool: &Arc<dyn BackingStore>,
         message_id: &str,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         // Parse message ID
         let msg_id = parse_message_id(message_id)?;
 
@@ -1263,7 +1255,7 @@ impl EmpathControlHandler {
             .map(|(status, count)| (status.to_string(), *count))
             .collect();
 
-        let stats = empath_control::protocol::QueueStats {
+        let stats = control_protocol::QueueStats {
             total: snapshot.total,
             by_status,
             by_domain: snapshot.by_domain,
@@ -1373,10 +1365,7 @@ impl EmpathControlHandler {
     }
 
     /// Handle spool management commands
-    async fn handle_spool_command(
-        &self,
-        command: SpoolCommand,
-    ) -> empath_control::Result<Response> {
+    async fn handle_spool_command(&self, command: SpoolCommand) -> ControlResult<Response> {
         // Audit log: Record who executed this command
         audit!(INFO, "Control command: Spool", command = ?command);
 
@@ -1440,7 +1429,7 @@ impl EmpathControlHandler {
         status_filter: Option<&str>,
         page: Option<usize>,
         page_size: Option<usize>,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         // List all messages in spool
         let message_ids = spool
             .list()
@@ -1493,7 +1482,7 @@ impl EmpathControlHandler {
             }
 
             if matched >= offset && messages.len() < page_size {
-                messages.push(empath_control::protocol::SpoolMessage {
+                messages.push(control_protocol::SpoolMessage {
                     id: msg_id.to_string(),
                     from: context
                         .envelope
@@ -1513,7 +1502,7 @@ impl EmpathControlHandler {
         }
 
         let returned = messages.len();
-        let spool_page = empath_control::protocol::SpoolListPage {
+        let spool_page = control_protocol::SpoolListPage {
             messages,
             total: matched,
             page,
@@ -1528,7 +1517,7 @@ impl EmpathControlHandler {
     async fn handle_spool_stats_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         // List all messages in spool
         let message_ids = spool
             .list()
@@ -1572,7 +1561,7 @@ impl EmpathControlHandler {
             oldest_age = Some(oldest_age.map_or(age_secs, |current| current.max(age_secs)));
         }
 
-        let stats = empath_control::protocol::SpoolStats {
+        let stats = control_protocol::SpoolStats {
             total,
             by_status,
             total_size,
@@ -1586,7 +1575,7 @@ impl EmpathControlHandler {
     async fn handle_spool_cleanup_command(
         &self,
         spool: &Arc<dyn BackingStore>,
-    ) -> empath_control::Result<Response> {
+    ) -> ControlResult<Response> {
         // List all messages in spool
         let message_ids = spool
             .list()
@@ -1615,8 +1604,7 @@ impl EmpathControlHandler {
             if let Some(ref delivery) = context.delivery
                 && matches!(
                     delivery.status,
-                    empath_common::DeliveryStatus::Completed
-                        | empath_common::DeliveryStatus::Failed(_)
+                    DeliveryStatus::Completed | DeliveryStatus::Failed(_)
                 )
             {
                 match spool.delete(&msg_id).await {
@@ -1662,7 +1650,7 @@ impl EmpathControlHandler {
 
     fn build_message_details(
         input: MessageDetailsInput<'_>,
-    ) -> empath_control::protocol::QueueMessageDetails {
+    ) -> control_protocol::QueueMessageDetails {
         let from = input
             .context
             .envelope
@@ -1678,7 +1666,7 @@ impl EmpathControlHandler {
         let spooled_at = input.msg_id.timestamp_ms() / 1000;
 
         if let Some(queue_info) = input.queue_info {
-            return empath_control::protocol::QueueMessageDetails {
+            return control_protocol::QueueMessageDetails {
                 id: input.message_id,
                 from,
                 to,
@@ -1701,7 +1689,7 @@ impl EmpathControlHandler {
         }
 
         if let Some(ref delivery_ctx) = input.context.delivery {
-            return empath_control::protocol::QueueMessageDetails {
+            return control_protocol::QueueMessageDetails {
                 id: input.message_id,
                 from,
                 to,
@@ -1726,7 +1714,7 @@ impl EmpathControlHandler {
             };
         }
 
-        empath_control::protocol::QueueMessageDetails {
+        control_protocol::QueueMessageDetails {
             id: input.message_id,
             from,
             to,

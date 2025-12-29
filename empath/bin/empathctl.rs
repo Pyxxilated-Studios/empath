@@ -6,20 +6,19 @@
 //! - System status and health checks
 //! - Viewing statistics
 
-use std::{
-    fs,
-    io::{Write, stdin, stdout},
-    path::{Path, PathBuf},
-};
+use std::fs;
+use std::io::{Write, stdin, stdout};
+use std::path::{Path, PathBuf};
 
 use chrono::{TimeZone, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use empath_common::context::{
     COMPLETED_STR, EXPIRED_STR, FAILED_STR, IN_PROGRESS_STR, PENDING_STR, RETRY_STR,
 };
+use empath_control::protocol::{self as control_protocol, ResponseData};
 use empath_control::{
     ControlClient, DEFAULT_CONTROL_SOCKET, DnsCommand, QueueCommand, Request, RequestCommand,
-    ResponsePayload, SpoolCommand, SystemCommand, protocol::ResponseData,
+    ResponsePayload, SpoolCommand, SystemCommand,
 };
 
 /// Command-line utility for managing the Empath MTA
@@ -635,7 +634,7 @@ fn handle_system_data(data: ResponseData) {
     }
 }
 
-fn print_system_status(status: &empath_control::protocol::SystemStatus) {
+fn print_system_status(status: &control_protocol::SystemStatus) {
     println!("=== Empath MTA Status ===\n");
     println!("Version:            {}", status.version);
     println!(
@@ -646,13 +645,13 @@ fn print_system_status(status: &empath_control::protocol::SystemStatus) {
     println!("DNS cache entries:  {}", status.dns_cache_entries);
 }
 
-fn print_connection_stats(stats: &empath_control::protocol::ConnectionStats) {
+fn print_connection_stats(stats: &control_protocol::ConnectionStats) {
     println!("=== Connection Stats ===\n");
     println!("Queue size:             {}", stats.queue_size);
     println!("Rate limit buckets:     {}", stats.rate_limit_domains);
 }
 
-fn print_outbound_bindings(bindings: &[empath_control::protocol::OutboundBindingInfo]) {
+fn print_outbound_bindings(bindings: &[control_protocol::OutboundBindingInfo]) {
     println!("=== Outbound Bindings ===\n");
     if bindings.is_empty() {
         println!("No outbound bindings configured");
@@ -683,7 +682,7 @@ fn print_outbound_bindings(bindings: &[empath_control::protocol::OutboundBinding
     }
 }
 
-fn print_tls_contexts(contexts: &[empath_control::protocol::TlsContextInfo]) {
+fn print_tls_contexts(contexts: &[control_protocol::TlsContextInfo]) {
     println!("=== TLS Contexts ===\n");
     if contexts.is_empty() {
         println!("No TLS contexts configured");
@@ -747,7 +746,7 @@ fn print_message(message: &str) {
     println!("✓ {message}");
 }
 
-fn print_binding_preview(preview: &empath_control::protocol::BindingPreview) {
+fn print_binding_preview(preview: &control_protocol::BindingPreview) {
     println!("=== Binding Preview ===\n");
     println!("Domain:          {}", preview.domain);
     println!(
@@ -807,7 +806,7 @@ fn build_system_request(action: SystemAction) -> Request {
 
 /// Handle queue stats watch mode
 async fn handle_queue_stats_watch(client: &ControlClient, interval: u64) -> anyhow::Result<()> {
-    use empath_control::protocol::ResponseData;
+    use control_protocol::ResponseData;
 
     loop {
         // Clear screen
@@ -906,7 +905,7 @@ fn build_queue_request(action: &QueueAction) -> anyhow::Result<Request> {
 
 /// Handle queue command response
 fn handle_queue_response(payload: ResponsePayload) -> anyhow::Result<()> {
-    use empath_control::protocol::ResponseData;
+    use control_protocol::ResponseData;
 
     match payload {
         ResponsePayload::Ok => {
@@ -1044,7 +1043,7 @@ fn build_spool_request(action: &SpoolAction) -> Request {
 
 /// Handle spool command response
 fn handle_spool_response(payload: ResponsePayload) -> anyhow::Result<()> {
-    use empath_control::protocol::ResponseData;
+    use control_protocol::ResponseData;
 
     match payload {
         ResponsePayload::Ok => {
@@ -1119,7 +1118,7 @@ async fn handle_spool_command(client: &ControlClient, action: SpoolAction) -> an
 }
 
 /// Display spool statistics
-fn display_spool_stats(stats: &empath_control::protocol::SpoolStats) {
+fn display_spool_stats(stats: &control_protocol::SpoolStats) {
     println!("=== Spool Statistics ===\n");
     println!("Total messages: {}", stats.total);
     println!(
@@ -1301,7 +1300,7 @@ fn copy_recursively(src: &Path, dest: &Path) -> anyhow::Result<()> {
 }
 
 /// Display queue statistics
-fn display_queue_stats(stats: &empath_control::protocol::QueueStats) {
+fn display_queue_stats(stats: &control_protocol::QueueStats) {
     println!("=== Queue Statistics ===\n");
     println!("Total messages: {}", stats.total);
 

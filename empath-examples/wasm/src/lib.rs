@@ -2,7 +2,9 @@
 
 extern crate alloc;
 
-empath_wasm_guest::bindings!();
+use empath_wasm_guest::bindings;
+
+bindings!();
 
 struct Validator;
 

@@ -6,7 +6,8 @@
 //! - Connection limits for performance tuning
 //! - Rate limiting to avoid blacklisting
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,8 @@
-use std::{ffi::CString, ptr::null, rc::Rc, str::Utf8Error, sync::Arc};
+use std::ffi::CString;
+use std::ptr::null;
+use std::rc::Rc;
+use std::str::Utf8Error;
+use std::sync::Arc;
 
 /// Sanitize bytes by filtering out null bytes (\0).
 /// This prevents `CString` creation from panicking on malicious FFI module input.
@@ -157,7 +161,8 @@ pub extern "C" fn em_free_string_vector(ffi_vector: StringVector) {
 
 #[cfg(test)]
 mod test {
-    use std::{ptr::null, sync::Arc};
+    use std::ptr::null;
+    use std::sync::Arc;
 
     use crate::ffi_string::{String, StringVector, em_free_string, em_free_string_vector};
 

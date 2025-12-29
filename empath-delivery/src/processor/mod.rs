@@ -5,36 +5,32 @@ pub mod delivery;
 pub mod process;
 pub mod scan;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use dashmap::DashSet;
-use empath_common::{
-    Signal,
-    audit::{AuditLogger, AuditLoggerBuilder},
-    internal,
-};
-use empath_spool::SpoolScanCursor;
+use empath_common::audit::{AuditLogger, AuditLoggerBuilder};
+use empath_common::{DeliveryStatus, Signal, internal, tracing};
+use empath_metrics::DeliveryMetrics;
+use empath_spool::{BackingStore, SpoolScanCursor, SpoolScanMode, SpooledMessageId};
 use empath_tracing::traced;
 use parking_lot::RwLock;
 use serde::Deserialize;
-use tokio::{
-    pin,
-    sync::{Mutex, Notify},
-};
+use tokio::pin;
+use tokio::sync::{Mutex, Notify};
 
-use crate::{
-    binding::OutboundBindingRegistry,
-    binding_health::{BindingHealthConfig, BindingHealthStatus, BindingHealthTracker},
-    circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
-    dns::{DnsConfig, DnsResolver, HickoryDnsResolver},
-    domain_config::DomainConfigRegistry,
-    dsn::DsnConfig,
-    error::DeliveryError,
-    policy::{RetryPolicy, TlsPolicy},
-    queue::DeliveryQueue,
-    rate_limiter::{RateLimitConfig, RateLimiter},
-    types::{SmtpPoolConfig, SmtpTimeouts},
-};
+use crate::binding::OutboundBindingRegistry;
+use crate::binding_health::{BindingHealthConfig, BindingHealthStatus, BindingHealthTracker};
+use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use crate::dns::{DnsConfig, DnsResolver, HickoryDnsResolver};
+use crate::domain_config::DomainConfigRegistry;
+use crate::dsn::DsnConfig;
+use crate::error::DeliveryError;
+use crate::policy::{RetryPolicy, TlsPolicy};
+use crate::queue::DeliveryQueue;
+use crate::rate_limiter::{RateLimitConfig, RateLimiter};
+use crate::types::{SmtpPoolConfig, SmtpTimeouts};
 
 const fn default_scan_interval() -> u64 {
     30
@@ -167,7 +163,7 @@ pub struct DeliveryProcessor {
     pub max_cleanup_attempts: u32,
 
     /// The spool backing store to read messages from (initialized in `init()`)
-    pub(crate) spool: Option<Arc<dyn empath_spool::BackingStore>>,
+    pub(crate) spool: Option<Arc<dyn BackingStore>>,
 
     /// The delivery queue (initialized in `init()`)
     pub(crate) queue: DeliveryQueue,
@@ -182,7 +178,7 @@ pub struct DeliveryProcessor {
     pub cleanup_queue: crate::queue::cleanup::CleanupQueue,
 
     /// Delivery metrics collector (initialized in `init()`)
-    pub(crate) metrics: Option<empath_metrics::DeliveryMetrics>,
+    pub(crate) metrics: Option<DeliveryMetrics>,
 
     /// SMTP client pool (initialized in `init()`)
     pub(crate) smtp_pool_state: crate::smtp_pool::SmtpClientPool,
@@ -373,6 +369,7 @@ impl DeliveryProcessor {
             .as_ref()
             .map(|health| health.status(name, self.binding_health_config_for(name)))
     }
+
     /// Initialize the delivery processor
     ///
     /// # Errors
@@ -380,7 +377,7 @@ impl DeliveryProcessor {
     /// Returns an error if the processor cannot be initialized
     pub fn init(
         &mut self,
-        spool: Arc<dyn empath_spool::BackingStore>,
+        spool: Arc<dyn BackingStore>,
         dns_resolver: Option<Arc<dyn crate::DnsResolver>>,
     ) -> Result<(), DeliveryError> {
         internal!("Initialising Delivery Processor ...");
@@ -409,7 +406,7 @@ impl DeliveryProcessor {
         self.mta_sts_cache = crate::mta_sts::MtaStsPolicyCache::new(self.mta_sts.clone());
 
         // Initialize delivery metrics
-        let metrics = empath_metrics::DeliveryMetrics::new(10, Vec::default());
+        let metrics = DeliveryMetrics::new(10, Vec::default());
         metrics.register_bindings(self.outbound_bindings.names());
         self.metrics = Some(metrics);
         internal!("Delivery metrics initialized");
@@ -484,7 +481,7 @@ impl DeliveryProcessor {
 
     /// Get a reference to the spool backing store (for control interface)
     #[must_use]
-    pub const fn spool(&self) -> &Option<Arc<dyn empath_spool::BackingStore>> {
+    pub const fn spool(&self) -> &Option<Arc<dyn BackingStore>> {
         &self.spool
     }
 
@@ -512,7 +509,7 @@ impl DeliveryProcessor {
     /// # Errors
     ///
     /// Returns an error if the delivery processor encounters a fatal error
-    #[traced(instrument(level = empath_common::tracing::Level::TRACE, skip_all))]
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all))]
     pub async fn serve(
         self: Arc<Self>,
         mut shutdown: tokio::sync::broadcast::Receiver<Signal>,
@@ -567,7 +564,7 @@ impl DeliveryProcessor {
                         }
                         Ok(Signal::Drain(_)) => {}
                         Err(e) => {
-                            empath_common::tracing::error!("Delivery processor shutdown channel error: {e}");
+                            tracing::error!("Delivery processor shutdown channel error: {e}");
                             break;
                         }
                     }
@@ -578,7 +575,7 @@ impl DeliveryProcessor {
         Ok(())
     }
 
-    fn require_spool(&self) -> Result<&Arc<dyn empath_spool::BackingStore>, DeliveryError> {
+    fn require_spool(&self) -> Result<&Arc<dyn BackingStore>, DeliveryError> {
         self.spool.as_ref().ok_or_else(|| {
             crate::error::SystemError::NotInitialized(
                 "Delivery processor not initialized. Call init() first.".to_string(),
@@ -608,8 +605,8 @@ impl DeliveryProcessor {
         )
     }
 
-    async fn initial_spool_scan(&self, spool: &Arc<dyn empath_spool::BackingStore>) {
-        match scan::scan_spool_internal(self, spool, empath_spool::SpoolScanMode::Full).await {
+    async fn initial_spool_scan(&self, spool: &Arc<dyn BackingStore>) {
+        match scan::scan_spool_internal(self, spool, SpoolScanMode::Full).await {
             Ok(count) if count > 0 => {
                 internal!("Initial spool scan found {count} messages");
             }
@@ -617,65 +614,61 @@ impl DeliveryProcessor {
                 internal!("Initial spool scan found no messages");
             }
             Err(e) => {
-                empath_common::tracing::error!("Error during initial spool scan: {e}");
+                tracing::error!("Error during initial spool scan: {e}");
             }
         }
     }
 
     async fn handle_manual_process(
         self: &Arc<Self>,
-        spool: &Arc<dyn empath_spool::BackingStore>,
+        spool: &Arc<dyn BackingStore>,
         processing: &std::sync::atomic::AtomicBool,
     ) {
         processing.store(true, std::sync::atomic::Ordering::SeqCst);
 
-        if let Err(e) =
-            scan::scan_spool_internal(self, spool, empath_spool::SpoolScanMode::Delta).await
-        {
-            empath_common::tracing::error!("Error scanning spool: {e}");
+        if let Err(e) = scan::scan_spool_internal(self, spool, SpoolScanMode::Delta).await {
+            tracing::error!("Error scanning spool: {e}");
         }
 
         match process::process_queue_internal(Arc::clone(self), Arc::clone(spool)).await {
             Ok(()) => {
-                empath_common::tracing::info!("Processed delivery queue on manual trigger");
+                tracing::info!("Processed delivery queue on manual trigger");
             }
             Err(e) => {
-                empath_common::tracing::error!(
-                    "Error processing delivery queue on manual trigger: {e}"
-                );
+                tracing::error!("Error processing delivery queue on manual trigger: {e}");
             }
         }
 
         processing.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
-    async fn handle_scan_tick(&self, spool: &Arc<dyn empath_spool::BackingStore>) {
-        match scan::scan_spool_internal(self, spool, empath_spool::SpoolScanMode::Delta).await {
+    async fn handle_scan_tick(&self, spool: &Arc<dyn BackingStore>) {
+        match scan::scan_spool_internal(self, spool, SpoolScanMode::Delta).await {
             Ok(count) if count > 0 => {
-                empath_common::tracing::info!("Scanned spool, found {count} new messages");
+                tracing::info!("Scanned spool, found {count} new messages");
             }
             Ok(_) => {
-                empath_common::tracing::debug!("Scanned spool, no new messages");
+                tracing::debug!("Scanned spool, no new messages");
             }
             Err(e) => {
-                empath_common::tracing::error!("Error scanning spool: {e}");
+                tracing::error!("Error scanning spool: {e}");
             }
         }
     }
 
     async fn handle_process_tick(
         self: &Arc<Self>,
-        spool: &Arc<dyn empath_spool::BackingStore>,
+        spool: &Arc<dyn BackingStore>,
         processing: &std::sync::atomic::AtomicBool,
     ) {
         processing.store(true, std::sync::atomic::Ordering::SeqCst);
 
         match process::process_queue_internal(Arc::clone(self), Arc::clone(spool)).await {
             Ok(()) => {
-                empath_common::tracing::debug!("Processed delivery queue");
+                tracing::debug!("Processed delivery queue");
             }
             Err(e) => {
-                empath_common::tracing::error!("Error processing delivery queue: {e}");
+                tracing::error!("Error processing delivery queue: {e}");
             }
         }
 
@@ -686,7 +679,7 @@ impl DeliveryProcessor {
         if self.smtp_pool_state.enabled() {
             let removed = self.smtp_pool_state.cleanup_idle(self.metrics.as_ref());
             if removed > 0 {
-                empath_common::tracing::debug!(
+                tracing::debug!(
                     removed = removed,
                     "Cleaned up idle SMTP client pool connections"
                 );
@@ -694,20 +687,16 @@ impl DeliveryProcessor {
         }
     }
 
-    async fn handle_cleanup_tick(&self, spool: &Arc<dyn empath_spool::BackingStore>) {
+    async fn handle_cleanup_tick(&self, spool: &Arc<dyn BackingStore>) {
         match cleanup::process_cleanup_queue(self, spool).await {
             Ok(count) if count > 0 => {
-                empath_common::tracing::info!(
-                    "Cleanup queue processed, {count} messages cleaned up"
-                );
+                tracing::info!("Cleanup queue processed, {count} messages cleaned up");
             }
             Ok(_) => {
-                empath_common::tracing::debug!(
-                    "Cleanup queue processed, no messages ready for retry"
-                );
+                tracing::debug!("Cleanup queue processed, no messages ready for retry");
             }
             Err(e) => {
-                empath_common::tracing::error!("Error processing cleanup queue: {e}");
+                tracing::error!("Error processing cleanup queue: {e}");
             }
         }
     }
@@ -718,7 +707,7 @@ impl DeliveryProcessor {
 
         while processing.load(std::sync::atomic::Ordering::SeqCst) {
             if start.elapsed() >= shutdown_timeout {
-                empath_common::tracing::warn!(
+                tracing::warn!(
                     "Shutdown timeout exceeded, {} remaining in-flight delivery will be retried on restart",
                     if processing.load(std::sync::atomic::Ordering::SeqCst) {
                         "1"
@@ -729,7 +718,7 @@ impl DeliveryProcessor {
                 break;
             }
 
-            empath_common::tracing::debug!(
+            tracing::debug!(
                 "Waiting for in-flight delivery to complete ({:.1}s elapsed)...",
                 start.elapsed().as_secs_f64()
             );
@@ -753,14 +742,11 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         self.queue.len()
     }
 
-    fn get_message(&self, id: &empath_spool::SpooledMessageId) -> Option<crate::DeliveryInfo> {
+    fn get_message(&self, id: &SpooledMessageId) -> Option<crate::DeliveryInfo> {
         self.queue.get(id)
     }
 
-    fn list_messages(
-        &self,
-        status: Option<empath_common::DeliveryStatus>,
-    ) -> Vec<crate::DeliveryInfo> {
+    fn list_messages(&self, status: Option<DeliveryStatus>) -> Vec<crate::DeliveryInfo> {
         self.queue
             .queue
             .iter()
@@ -775,7 +761,7 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
 
     fn list_messages_iter(
         &self,
-        status: Option<empath_common::DeliveryStatus>,
+        status: Option<DeliveryStatus>,
     ) -> Box<dyn Iterator<Item = crate::DeliveryInfo> + '_> {
         let iter = self.queue.queue.iter().filter(move |entry| {
             status
@@ -785,7 +771,7 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         Box::new(iter.map(|entry| entry.value().clone()))
     }
 
-    fn list_message_ids(&self, status_filter: Option<&str>) -> Vec<empath_spool::SpooledMessageId> {
+    fn list_message_ids(&self, status_filter: Option<&str>) -> Vec<SpooledMessageId> {
         let mut ids: Vec<_> = self
             .queue
             .queue
@@ -833,27 +819,23 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         snapshot
     }
 
-    fn update_status(
-        &self,
-        message_id: &empath_spool::SpooledMessageId,
-        status: empath_common::DeliveryStatus,
-    ) {
+    fn update_status(&self, message_id: &SpooledMessageId, status: DeliveryStatus) {
         self.queue.update_status(message_id, status);
     }
 
     fn set_next_retry_at(
         &self,
-        message_id: &empath_spool::SpooledMessageId,
+        message_id: &SpooledMessageId,
         next_retry_at: std::time::SystemTime,
     ) {
         self.queue.set_next_retry_at(message_id, next_retry_at);
     }
 
-    fn reset_server_index(&self, message_id: &empath_spool::SpooledMessageId) {
+    fn reset_server_index(&self, message_id: &SpooledMessageId) {
         self.queue.reset_server_index(message_id);
     }
 
-    fn remove(&self, message_id: &empath_spool::SpooledMessageId) -> Option<crate::DeliveryInfo> {
+    fn remove(&self, message_id: &SpooledMessageId) -> Option<crate::DeliveryInfo> {
         self.queue.remove(message_id)
     }
 
@@ -861,7 +843,7 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         &self.dns_resolver
     }
 
-    fn spool(&self) -> &Option<std::sync::Arc<dyn empath_spool::BackingStore>> {
+    fn spool(&self) -> &Option<std::sync::Arc<dyn BackingStore>> {
         &self.spool
     }
 

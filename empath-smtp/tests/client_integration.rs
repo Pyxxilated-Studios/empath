@@ -3,21 +3,24 @@
 //! These tests verify that the client can interact with a real SMTP server.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
-use empath_common::traits::protocol::Protocol;
-use empath_smtp::{
-    Smtp, SmtpArgs,
-    client::{MessageBuilder, QuitAfter, SmtpClientBuilder},
-    extensions::Extension,
-};
-use tokio::{net::TcpListener, time::timeout};
+use empath_common::traits::protocol::{Protocol, SessionHandler};
+use empath_ffi::modules;
+use empath_smtp::client::{MessageBuilder, QuitAfter, SmtpClientBuilder};
+use empath_smtp::extensions::Extension;
+use empath_smtp::{Smtp, SmtpArgs};
+use empath_spool::MemoryBackingStore;
+use tokio::net::TcpListener;
+use tokio::time::timeout;
 
 /// Helper function to start a test SMTP server on a random port.
 async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
     // Initialize modules (adds core module to MODULE_STORE)
     // This only needs to be done once, subsequent calls will just add to the store
-    let _ = empath_ffi::modules::init(vec![]);
+    let _ = modules::init(vec![]);
 
     // Bind to port 0 to get a random available port
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -31,7 +34,7 @@ async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
         let smtp = Smtp;
         let args = SmtpArgs::builder()
             .with_extensions(vec![Extension::Size(10_000_000)])
-            .with_spool(Arc::new(empath_spool::MemoryBackingStore::new()));
+            .with_spool(Arc::new(MemoryBackingStore::new()));
 
         while let Ok((stream, peer)) = listener.accept().await {
             let shutdown_rx = shutdown_tx.subscribe();
@@ -39,7 +42,7 @@ async fn start_test_server() -> (u16, tokio::task::JoinHandle<()>) {
 
             tokio::spawn(async move {
                 let _ = timeout(Duration::from_secs(30), async {
-                    empath_common::traits::protocol::SessionHandler::run(session, shutdown_rx).await
+                    SessionHandler::run(session, shutdown_rx).await
                 })
                 .await;
             });

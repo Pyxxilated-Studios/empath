@@ -1,21 +1,17 @@
-use std::{
-    borrow::Cow,
-    fmt::{self, Debug, Display},
-    sync::Arc,
-    time::SystemTime,
-};
+use std::borrow::Cow;
+use std::fmt::{self, Debug, Display};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use ahash::AHashMap;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::{
-    email::{EmailAddress, ServerId},
-    envelope::Envelope,
-    message_api::MessageParts,
-    message_id::SpooledMessageId,
-    status::Status,
-};
+use crate::email::{EmailAddress, ServerId};
+use crate::envelope::Envelope;
+use crate::message_api::MessageParts;
+use crate::message_id::SpooledMessageId;
+use crate::status::Status;
 
 #[derive(Debug, Clone)]
 pub struct ModuleContext {

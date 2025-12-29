@@ -1,14 +1,16 @@
-use std::{borrow::Cow, ffi::CStr, sync::Arc};
+use std::borrow::Cow;
+use std::ffi::CStr;
+use std::sync::Arc;
 
-use empath_common::{
-    address::Address,
-    context::{Capability, Context, OUTBOUND_BINDING_CONTEXT_KEY},
-    message_api::{
-        BodyError, BodyLimits, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
-        HeaderValue, MutationAudit, MutationKind, NewlineStyle,
-    },
-    status::Status,
+use empath_common::address::Address;
+use empath_common::address_parser;
+use empath_common::context::{Capability, Context, OUTBOUND_BINDING_CONTEXT_KEY};
+use empath_common::message_api::{
+    BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
+    HeaderValue, MutationAudit, MutationKind, NewlineStyle,
 };
+use empath_common::status::Status;
+use empath_metrics::try_metrics;
 
 pub mod ffi_string;
 pub mod modules;
@@ -35,10 +37,10 @@ pub struct EmOutboundBindingSelection {
 
 mod api {
     use super::{
-        Address, Arc, BodyError, BodyLimits, BodyOpts, CStr, Capability, Charset, Context, Cow,
-        EmOutboundBindingKind, EmOutboundBindingSelection, HeaderError, HeaderLimits, HeaderName,
-        HeaderValue, MutationAudit, MutationKind, NewlineStyle, OUTBOUND_BINDING_CONTEXT_KEY,
-        Status,
+        Address, Arc, BodyError, BodyLimits, BodyMut, BodyOpts, CStr, Capability, Charset, Context,
+        Cow, EmOutboundBindingKind, EmOutboundBindingSelection, HeaderError, HeaderLimits,
+        HeaderName, HeaderValue, MutationAudit, MutationKind, NewlineStyle,
+        OUTBOUND_BINDING_CONTEXT_KEY, Status, address_parser, try_metrics,
     };
 
     /// Retrieve the id associated with this context
@@ -46,7 +48,6 @@ mod api {
     /// This is the only way to retrieve the id for the context in an
     /// ffi-compatible way. Any other way should be retrieved by
     /// accessing the id member directly.
-    ///
     #[unsafe(no_mangle)]
     pub extern "C" fn em_context_get_id(validate_context: &Context) -> crate::string::String {
         validate_context.id().into()
@@ -64,7 +65,6 @@ mod api {
         validate_context.sender().into()
     }
 
-    ///
     /// Set the sender for the message. A special value of NULL will set the
     /// sender to the NULL Sender.
     ///
@@ -72,7 +72,6 @@ mod api {
     ///
     /// This should be able to be passed any valid pointer, and a valid `validate_context`, to
     /// set the sender
-    ///
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn em_context_set_sender(
         validate_context: &mut Context,
@@ -86,7 +85,7 @@ mod api {
         let sender = unsafe { CStr::from_ptr(sender) };
 
         match sender.to_str() {
-            Ok(sender) => match empath_common::address_parser::parse_forward_path(sender) {
+            Ok(sender) => match address_parser::parse_forward_path(sender) {
                 Ok(mailbox) => {
                     *Arc::make_mut(&mut validate_context.envelope).sender_mut() =
                         Some(Address::from(mailbox));
@@ -108,11 +107,9 @@ mod api {
             })
     }
 
-    ///
     /// # Safety
     ///
     /// Even if provided with a null pointer, that would simply set the response to `None`
-    ///
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn em_context_set_response(
         validate_context: &mut Context,
@@ -236,11 +233,9 @@ mod api {
             .is_some_and(|capability| validate_context.capabilities.contains(&capability))
     }
 
-    ///
     /// # Safety
     ///
     /// Provided with a null pointer, simply return false
-    ///
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn em_context_exists(
         validate_context: &Context,
@@ -258,11 +253,9 @@ mod api {
         }
     }
 
-    ///
     /// # Safety
     ///
     /// Provided with a null pointer, simply return false
-    ///
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn em_context_set(
         validate_context: &mut Context,
@@ -288,11 +281,9 @@ mod api {
         }
     }
 
-    ///
     /// # Safety
     ///
     /// Provided with a null pointer, simply return a default value
-    ///
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn em_context_get(
         validate_context: &Context,
@@ -558,7 +549,7 @@ mod api {
                 logger.log_module_mutation(validate_context.id(), module_type, module_name, record);
             }
             #[cfg(feature = "metrics")]
-            if let Some(metrics) = empath_metrics::try_metrics() {
+            if let Some(metrics) = try_metrics() {
                 let mutation_kind = match record.kind {
                     MutationKind::Header { .. } => "header",
                     MutationKind::Body => "body",
@@ -585,7 +576,7 @@ mod api {
             return;
         };
         #[cfg(feature = "metrics")]
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             metrics.modules.record_mutation(
                 module_type,
                 module_name,
@@ -1081,9 +1072,7 @@ mod api {
 
     fn mutate_body<F>(validate_context: &mut Context, action: &str, f: F) -> bool
     where
-        F: FnMut(
-            &mut empath_common::message_api::BodyMut<'_>,
-        ) -> Result<(), empath_common::message_api::BodyError>,
+        F: FnMut(&mut BodyMut<'_>) -> Result<(), BodyError>,
     {
         let mut op = f;
         let module_context = module_context_snapshot(validate_context);
@@ -1400,19 +1389,16 @@ pub use api::*;
 
 #[cfg(test)]
 mod test {
-    use std::{
-        borrow::Cow,
-        ffi::{CStr, CString},
-        ptr::null,
-        sync::Arc,
-    };
+    use std::borrow::Cow;
+    use std::ffi::{CStr, CString};
+    use std::ptr::null;
+    use std::sync::Arc;
 
-    use empath_common::{
-        address::{Address, AddressList},
-        context::{Context, OUTBOUND_BINDING_CONTEXT_KEY},
-        envelope::Envelope,
-        status::Status,
-    };
+    use empath_common::address::{Address, AddressList};
+    use empath_common::address_parser;
+    use empath_common::context::{Context, OUTBOUND_BINDING_CONTEXT_KEY};
+    use empath_common::envelope::Envelope;
+    use empath_common::status::Status;
 
     use super::{
         EmOutboundBindingKind, EmOutboundBindingSelection, em_context_exists, em_context_get,
@@ -1451,10 +1437,10 @@ mod test {
     fn test_recipients() -> TestResult {
         let mut validate_context = Context::default();
 
-        let recipient1 = empath_common::address_parser::parse_forward_path("<test@gmail.com>")
+        let recipient1 = address_parser::parse_forward_path("<test@gmail.com>")
             .map_err(|err| err.to_string())?;
-        let recipient2 = empath_common::address_parser::parse_forward_path("<test@test.com>")
-            .map_err(|err| err.to_string())?;
+        let recipient2 =
+            address_parser::parse_forward_path("<test@test.com>").map_err(|err| err.to_string())?;
         *Arc::make_mut(&mut validate_context.envelope).recipients_mut() = Some(AddressList(vec![
             Address::from(recipient1),
             Address::from(recipient2),
@@ -1543,9 +1529,8 @@ mod test {
                 &mut validate_context,
                 cstr!("<test@test.com>")
             ));
-            let expected_mailbox =
-                empath_common::address_parser::parse_forward_path("<test@test.com>")
-                    .map_err(|err| err.to_string())?;
+            let expected_mailbox = address_parser::parse_forward_path("<test@test.com>")
+                .map_err(|err| err.to_string())?;
             assert_eq!(
                 validate_context.envelope.sender(),
                 Some(&Address::from(expected_mailbox))
@@ -1557,8 +1542,8 @@ mod test {
     #[test]
     fn test_null_sender() -> TestResult {
         let mut envelope = Envelope::default();
-        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>")
-            .map_err(|err| err.to_string())?;
+        let mailbox =
+            address_parser::parse_forward_path("<test@test.com>").map_err(|err| err.to_string())?;
         *envelope.sender_mut() = Some(Address::from(mailbox));
 
         let mut validate_context = Context {
@@ -1576,8 +1561,8 @@ mod test {
 
     #[test]
     fn test_invalid_sender() -> TestResult {
-        let mailbox = empath_common::address_parser::parse_forward_path("<test@test.com>")
-            .map_err(|err| err.to_string())?;
+        let mailbox =
+            address_parser::parse_forward_path("<test@test.com>").map_err(|err| err.to_string())?;
         let original_sender = Address::from(mailbox);
         let mut envelope = Envelope::default();
         *envelope.sender_mut() = Some(original_sender.clone());

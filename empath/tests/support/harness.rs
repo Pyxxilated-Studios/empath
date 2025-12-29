@@ -31,13 +31,25 @@
 //! }
 //! ```
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
-use empath_common::{Signal, traits::protocol::Protocol};
-use empath_delivery::{DeliveryProcessor, DomainConfig, DomainConfigRegistry};
-use empath_smtp::{Smtp, SmtpArgs, client::SmtpClientBuilder, extensions::Extension};
-use empath_spool::{BackingStore, MemoryBackingStore, MemoryConfig};
-use tokio::{net::TcpListener, sync::broadcast, task::JoinHandle, time::timeout};
+use empath_common::Signal;
+use empath_common::traits::protocol::{Protocol, SessionHandler};
+use empath_delivery::{
+    DeliveryProcessor, DnsResolver, DomainConfig, DomainConfigRegistry, MailServer, MockDnsResolver,
+};
+use empath_ffi::modules;
+use empath_smtp::client::SmtpClientBuilder;
+use empath_smtp::extensions::Extension;
+use empath_smtp::{Smtp, SmtpArgs};
+use empath_spool::{BackingStore, MemoryBackingStore, MemoryConfig, SpoolConfig};
+use tokio::net::TcpListener;
+use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
 
 use super::mock_server::{MockSmtpServer, SmtpCommand};
 
@@ -262,7 +274,7 @@ pub struct E2ETestHarnessBuilder {
 
     /// Optional DNS resolver (for testing DNS failure scenarios)
     /// If None, a `MockDnsResolver` will be created that points to the mock server
-    dns_resolver: Option<Arc<dyn empath_delivery::DnsResolver>>,
+    dns_resolver: Option<Arc<dyn DnsResolver>>,
 }
 
 impl E2ETestHarnessBuilder {
@@ -336,7 +348,7 @@ impl E2ETestHarnessBuilder {
     /// If not provided, a `MockDnsResolver` will be created automatically
     /// that points to the mock server.
     #[must_use]
-    pub fn with_dns_resolver(mut self, resolver: Arc<dyn empath_delivery::DnsResolver>) -> Self {
+    pub fn with_dns_resolver(mut self, resolver: Arc<dyn DnsResolver>) -> Self {
         self.dns_resolver = Some(resolver);
         self
     }
@@ -354,12 +366,12 @@ impl E2ETestHarnessBuilder {
             .map_err(Into::into)
     }
 
-    fn build_dns_resolver(&self, mock_addr: SocketAddr) -> Arc<dyn empath_delivery::DnsResolver> {
+    fn build_dns_resolver(&self, mock_addr: SocketAddr) -> Arc<dyn DnsResolver> {
         self.dns_resolver.clone().unwrap_or_else(|| {
-            let mock_dns = empath_delivery::MockDnsResolver::new();
+            let mock_dns = MockDnsResolver::new();
             mock_dns.add_response(
                 &self.test_domain,
-                Ok(vec![empath_delivery::MailServer::new(
+                Ok(vec![MailServer::new(
                     "localhost".to_string(),
                     0,
                     mock_addr.port(),
@@ -391,8 +403,7 @@ impl E2ETestHarnessBuilder {
 
                 tokio::spawn(async move {
                     let _ = timeout(Duration::from_secs(30), async {
-                        empath_common::traits::protocol::SessionHandler::run(session, shutdown_rx)
-                            .await
+                        SessionHandler::run(session, shutdown_rx).await
                     })
                     .await;
                 });
@@ -407,7 +418,7 @@ impl E2ETestHarnessBuilder {
     fn start_spool_watcher(
         shutdown_tx: &broadcast::Sender<Signal>,
     ) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
-        let spool_config = empath_spool::SpoolConfig::Memory(MemoryConfig::default());
+        let spool_config = SpoolConfig::Memory(MemoryConfig::default());
         let spool = spool_config.into_spool()?;
 
         let shutdown_rx_spool = shutdown_tx.subscribe();
@@ -424,7 +435,7 @@ impl E2ETestHarnessBuilder {
     fn build_delivery_processor(
         &self,
         backing_store: Arc<dyn BackingStore>,
-        dns_resolver: Arc<dyn empath_delivery::DnsResolver>,
+        dns_resolver: Arc<dyn DnsResolver>,
     ) -> anyhow::Result<DeliveryProcessor> {
         let domains = DomainConfigRegistry::new();
         domains.insert(
@@ -475,7 +486,7 @@ impl E2ETestHarnessBuilder {
     pub async fn build(self) -> anyhow::Result<E2ETestHarness> {
         // Initialize FFI modules (adds core module to MODULE_STORE)
         // This only needs to be done once per test process
-        let _ = empath_ffi::modules::init(vec![]);
+        let _ = modules::init(vec![]);
 
         let mock_server = self.start_mock_server().await?;
         let mock_addr = mock_server.addr();

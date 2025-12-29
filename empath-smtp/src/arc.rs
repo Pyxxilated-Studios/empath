@@ -3,11 +3,9 @@
 //! Uses the `mail-auth` crate to verify ARC seals, summarize results,
 //! and detect replayed chains for observability.
 
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::{Arc, OnceLock},
-    time::{Duration, Instant},
-};
+use std::collections::{HashSet, VecDeque};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use mail_auth::{ArcOutput, AuthenticatedMessage, DkimResult, MessageAuthenticator};
 use parking_lot::Mutex;

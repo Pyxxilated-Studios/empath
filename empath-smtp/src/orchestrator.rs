@@ -6,22 +6,24 @@
 //! - Protocol state machine (FSM transitions)
 //! - Business logic (transaction handler)
 
-use std::{borrow::Cow, net::SocketAddr, sync::Arc};
+use std::borrow::Cow;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use ahash::AHashMap;
-use empath_common::{
-    Signal, context, error::SessionError, internal, outgoing, status::Status, tracing,
-};
+use empath_common::error::SessionError;
+use empath_common::status::Status;
+use empath_common::traits::protocol::SessionHandler;
+use empath_common::{Signal, context, internal, outgoing, tracing};
+use empath_ffi::modules::validate::Event as ValidateEvent;
+use empath_ffi::modules::{self, DispatchResult, Ev, Event as ModuleEvent};
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{
-    State,
-    connection::Connection,
-    session::{Context, Event, Session, TlsContext},
-    state,
-    transaction_handler::SmtpTransactionHandler,
-};
+use crate::connection::Connection;
+use crate::session::{Context, Event, Session, TlsContext};
+use crate::transaction_handler::SmtpTransactionHandler;
+use crate::{State, state};
 
 /// SMTP Session Orchestrator
 ///
@@ -153,8 +155,8 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
 
         // Connection closed
         internal!("Connection closed");
-        let _ = empath_ffi::modules::dispatch(
-            empath_ffi::modules::Event::Event(empath_ffi::modules::Ev::ConnectionClosed),
+        let _ = modules::dispatch(
+            ModuleEvent::Event(Ev::ConnectionClosed),
             &mut validate_context,
         );
 
@@ -276,13 +278,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         };
 
         if matches!(
-            empath_ffi::modules::dispatch(
-                empath_ffi::modules::Event::Validate(
-                    empath_ffi::modules::validate::Event::StartTls
-                ),
+            modules::dispatch(
+                ModuleEvent::Validate(ValidateEvent::StartTls),
                 validate_context,
             ),
-            empath_ffi::modules::DispatchResult::Accept
+            DispatchResult::Accept
         ) {
             internal!(
                 level = DEBUG,
@@ -467,12 +467,12 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
 }
 
 // Implement SessionHandler trait so orchestrator can be used with Protocol trait
-impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync>
-    empath_common::traits::protocol::SessionHandler for SmtpSessionOrchestrator<Stream>
+impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SessionHandler
+    for SmtpSessionOrchestrator<Stream>
 {
     fn run(
         self,
-        signal: tokio::sync::broadcast::Receiver<empath_common::Signal>,
+        signal: tokio::sync::broadcast::Receiver<Signal>,
     ) -> impl std::future::Future<Output = Result<(), SessionError>> + Send {
         self.run(signal)
     }

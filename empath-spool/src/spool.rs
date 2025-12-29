@@ -1,10 +1,9 @@
-use empath_common::{Signal, context::Context};
+use empath_common::Signal;
+use empath_common::context::Context;
 
-use crate::{
-    backends::{FileBackingStore, MemoryBackingStore, TestBackingStore},
-    r#trait::BackingStore,
-    types::SpooledMessageId,
-};
+use crate::backends::{FileBackingStore, MemoryBackingStore, TestBackingStore};
+use crate::r#trait::BackingStore;
+use crate::types::SpooledMessageId;
 
 /// Main Spool struct - generic over backing store
 ///

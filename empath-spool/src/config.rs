@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
+use empath_common::Signal;
 use serde::Deserialize;
 
-use crate::{
-    backends::MemoryBackingStore,
-    controller::FileBackingStore,
-    observability::{SpoolObserver, default_spool_observer},
-    spool::Spool,
-    r#trait::BackingStore,
-};
+use crate::backends::MemoryBackingStore;
+use crate::controller::FileBackingStore;
+use crate::observability::{SpoolObserver, default_spool_observer};
+use crate::spool::Spool;
+use crate::r#trait::BackingStore;
 
 /// Configuration for the spool backing store
 ///
@@ -208,7 +207,7 @@ impl SpoolType {
     /// Returns an error if the spool cannot be served
     pub async fn serve(
         &self,
-        shutdown: tokio::sync::broadcast::Receiver<empath_common::Signal>,
+        shutdown: tokio::sync::broadcast::Receiver<Signal>,
     ) -> crate::Result<()> {
         match self {
             Self::File(spool) => spool.serve(shutdown).await,

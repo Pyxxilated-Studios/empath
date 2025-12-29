@@ -3,7 +3,8 @@
 //! This module provides foundational error types used across all protocols
 //! and session handlers in the Empath MTA.
 
-use std::{io, num::NonZeroUsize};
+use std::io;
+use std::num::NonZeroUsize;
 
 use thiserror::Error;
 

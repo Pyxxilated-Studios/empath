@@ -2,22 +2,22 @@
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use empath_common::Signal;
 use hex::encode;
 use sha2::{Digest, Sha256};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{UnixListener, UnixStream},
-    sync::broadcast,
-};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::{
-    ControlAuthConfig, ControlError, ControlRateLimitConfig, Request, Response, Result,
-    auth::ControlRole, rate_limit::ControlRateLimiter,
-};
+use crate::auth::ControlRole;
+use crate::rate_limit::ControlRateLimiter;
+use crate::{ControlAuthConfig, ControlError, ControlRateLimitConfig, Request, Response, Result};
 
 /// Handler trait for processing control requests
 ///
@@ -127,10 +127,7 @@ impl ControlServer {
     /// Returns an error if:
     /// - The socket cannot be bound
     /// - A fatal I/O error occurs
-    pub async fn serve(
-        &self,
-        mut shutdown: broadcast::Receiver<empath_common::Signal>,
-    ) -> Result<()> {
+    pub async fn serve(&self, mut shutdown: broadcast::Receiver<Signal>) -> Result<()> {
         // Check for existing socket file
         let socket_path = Path::new(&self.socket_path);
         if socket_path.exists() {
@@ -198,11 +195,11 @@ impl ControlServer {
                 }
                 sig = shutdown.recv() => {
                     match sig {
-                        Ok(empath_common::Signal::Shutdown | empath_common::Signal::Finalised) => {
+                        Ok(Signal::Shutdown | Signal::Finalised) => {
                             info!("Control server shutting down");
                             break;
                         }
-                        Ok(empath_common::Signal::Drain(_)) => {}
+                        Ok(Signal::Drain(_)) => {}
                         Err(e) => {
                             error!("Control server shutdown channel error: {e}");
                             break;

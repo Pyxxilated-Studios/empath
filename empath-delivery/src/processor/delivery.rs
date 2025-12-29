@@ -1,31 +1,25 @@
 //! Message delivery logic and error handling
 
-use std::{borrow::Cow, sync::Arc};
+use std::borrow::Cow;
+use std::sync::Arc;
 
-use empath_common::{
-    DeliveryStatus,
-    context::{Context, DeliveryContext, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY},
-    email::ServerId,
-    internal,
-    tracing::{error, info, warn},
-};
+use empath_common::context::{Context, DeliveryContext, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY};
+use empath_common::email::ServerId;
+use empath_common::tracing::{error, info, warn};
+use empath_common::{DeliveryAttempt, DeliveryStatus, internal};
 use empath_ffi::modules::{self, Ev, Event};
 use empath_smtp::client::ConnectConfig;
-use empath_spool::SpooledMessageId;
-use opentelemetry::{
-    Context as OtelContext,
-    trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState},
-};
+use empath_spool::{BackingStore, SpooledMessageId};
+use opentelemetry::Context as OtelContext;
+use opentelemetry::trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
-use crate::{
-    OutboundBinding,
-    error::{DeliveryError, SystemError, TemporaryError},
-    processor::DeliveryProcessor,
-    smtp_pool::{CertValidation, SmtpPoolKey, SmtpPoolRequest, TlsMode},
-    smtp_transaction::{SmtpTlsConfig, TlsFailurePolicy},
-    types::DeliveryInfo,
-};
+use crate::OutboundBinding;
+use crate::error::{DeliveryError, SystemError, TemporaryError};
+use crate::processor::DeliveryProcessor;
+use crate::smtp_pool::{CertValidation, SmtpPoolKey, SmtpPoolRequest, TlsMode};
+use crate::smtp_transaction::{SmtpTlsConfig, TlsFailurePolicy};
+use crate::types::DeliveryInfo;
 
 pub(super) fn server_id_from(address: &str) -> Result<ServerId, DeliveryError> {
     ServerId::new(address.to_owned()).map_err(|e| {
@@ -35,7 +29,7 @@ pub(super) fn server_id_from(address: &str) -> Result<ServerId, DeliveryError> {
 
 struct DeliverMessageArgs<'a> {
     processor: &'a DeliveryProcessor,
-    spool: &'a Arc<dyn empath_spool::BackingStore>,
+    spool: &'a Arc<dyn BackingStore>,
     message_id: &'a SpooledMessageId,
     server_address: &'a str,
     context: &'a Context,
@@ -184,7 +178,7 @@ async fn record_mta_sts(
 pub async fn prepare_message(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
 ) -> Result<(), DeliveryError> {
     mark_in_progress(processor, message_id, spool).await;
     let (mut context, mut info) = load_context_and_info(processor, message_id, spool).await?;
@@ -349,7 +343,7 @@ pub async fn handle_delivery_error(
 async fn mark_in_progress(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
 ) {
     processor
         .queue
@@ -367,7 +361,7 @@ async fn mark_in_progress(
 async fn load_context_and_info(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
 ) -> Result<(Context, DeliveryInfo), DeliveryError> {
     let mut context = spool
         .read_metadata(message_id)
@@ -403,7 +397,7 @@ fn resolve_resolvers(
 async fn maybe_select_binding(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     context: &Context,
     info: &mut DeliveryInfo,
     domain_resolver: &crate::policy::DomainPolicyResolver,
@@ -521,7 +515,7 @@ async fn handle_rate_limit(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
     domain: &str,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     pipeline: &crate::policy::DeliveryPipeline<'_>,
 ) -> Result<bool, DeliveryError> {
     match pipeline.check_rate_limit(message_id, domain) {
@@ -548,7 +542,7 @@ async fn handle_rate_limit(
 async fn handle_delivery_success(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     context: &mut Context,
     info: &DeliveryInfo,
     mx_server_id: &ServerId,
@@ -728,7 +722,7 @@ fn record_attempt(
     error: &DeliveryError,
     server: &ServerId,
 ) {
-    let attempt = empath_common::DeliveryAttempt {
+    let attempt = DeliveryAttempt {
         timestamp: std::time::SystemTime::now(),
         error: Some(error.to_string()),
         server: server.clone(),
@@ -1021,7 +1015,7 @@ async fn maybe_generate_dsn(
 pub async fn persist_delivery_state(
     processor: &DeliveryProcessor,
     message_id: &SpooledMessageId,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
 ) -> Result<(), DeliveryError> {
     // Get current queue info
     let info = processor.queue.get(message_id).ok_or_else(|| {

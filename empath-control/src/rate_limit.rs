@@ -1,9 +1,7 @@
 //! Control socket command rate limiting
 
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use tokio::sync::Mutex;

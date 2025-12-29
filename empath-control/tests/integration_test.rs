@@ -9,18 +9,19 @@
     clippy::unreachable
 )]
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
-use empath_control::{
-    ControlAuthConfig, ControlClient, ControlError, ControlServer, Result,
-    auth::{ControlRole, ControlToken},
-    protocol::{
-        CachedMailServer, ConnectionStats, DnsCommand, QueueCommand, Request, RequestCommand,
-        Response, ResponseData, ResponsePayload, SystemCommand, SystemStatus,
-    },
-    server::CommandHandler,
+use empath_common::Signal;
+use empath_control::auth::{ControlRole, ControlToken};
+use empath_control::protocol::{
+    BindingPreview, CachedMailServer, ConnectionStats, DnsCommand, QueueCommand, Request,
+    RequestCommand, Response, ResponseData, ResponsePayload, SystemCommand, SystemStatus,
 };
+use empath_control::server::CommandHandler;
+use empath_control::{ControlAuthConfig, ControlClient, ControlError, ControlServer, Result};
 use hex::encode;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -128,7 +129,7 @@ impl CommandHandler for MockHandler {
                     Ok(Response::data(ResponseData::OutboundBindings(Vec::new())))
                 }
                 SystemCommand::PreviewBinding { domain } => Ok(Response::data(
-                    ResponseData::BindingPreview(empath_control::protocol::BindingPreview {
+                    ResponseData::BindingPreview(BindingPreview {
                         domain,
                         binding: None,
                         binding_enabled: None,
@@ -189,10 +190,7 @@ fn hash_token(token: &str) -> String {
 async fn start_test_server(
     socket_path: &str,
     handler: Arc<dyn CommandHandler>,
-) -> (
-    tokio::task::JoinHandle<()>,
-    broadcast::Sender<empath_common::Signal>,
-) {
+) -> (tokio::task::JoinHandle<()>, broadcast::Sender<Signal>) {
     let server = ControlServer::new(socket_path, handler).expect("Failed to create server");
     let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
@@ -213,10 +211,7 @@ async fn start_test_server_with_auth(
     socket_path: &str,
     handler: Arc<dyn CommandHandler>,
     auth_config: ControlAuthConfig,
-) -> (
-    tokio::task::JoinHandle<()>,
-    broadcast::Sender<empath_common::Signal>,
-) {
+) -> (tokio::task::JoinHandle<()>, broadcast::Sender<Signal>) {
     let server = ControlServer::with_auth(socket_path, handler, Some(auth_config))
         .expect("Failed to create server");
     let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
@@ -631,7 +626,7 @@ async fn test_graceful_shutdown() {
     assert!(matches!(response.payload, ResponsePayload::Ok));
 
     // Send shutdown signal
-    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+    shutdown_tx.send(Signal::Shutdown).unwrap();
 
     // Wait for server to shut down
     tokio::time::timeout(Duration::from_secs(5), server_handle)
@@ -750,7 +745,7 @@ async fn test_persistent_connection_reconnect() {
     assert!(matches!(response.payload, ResponsePayload::Ok));
 
     // Shutdown server to simulate connection loss
-    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+    shutdown_tx.send(Signal::Shutdown).unwrap();
     tokio::time::timeout(Duration::from_secs(5), server_handle)
         .await
         .expect("Server did not shut down within timeout")

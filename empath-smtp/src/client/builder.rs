@@ -1,12 +1,10 @@
 //! Builder pattern for constructing SMTP client sessions.
 
-use super::{
-    error::{ClientError, Result},
-    message::MessageBuilder,
-    quit_after::QuitAfter,
-    response::Response,
-    smtp_client::SmtpClient,
-};
+use super::error::{ClientError, Result};
+use super::message::MessageBuilder;
+use super::quit_after::QuitAfter;
+use super::response::Response;
+use super::smtp_client::SmtpClient;
 
 /// A step in the SMTP conversation.
 #[derive(Debug, Clone)]

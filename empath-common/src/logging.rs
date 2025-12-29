@@ -1,18 +1,15 @@
-use std::{str::FromStr, sync::OnceLock};
+use std::str::FromStr;
+use std::sync::OnceLock;
 
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{
-    Resource,
-    trace::{RandomIdGenerator, SdkTracerProvider},
-};
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::trace::{RandomIdGenerator, SdkTracerProvider};
 use tracing::metadata::LevelFilter;
-use tracing_subscriber::{
-    filter::{EnvFilter, LevelFilter as SubscriberLevelFilter},
-    prelude::__tracing_subscriber_SubscriberExt,
-    reload,
-    util::SubscriberInitExt,
-};
+use tracing_subscriber::filter::{EnvFilter, LevelFilter as SubscriberLevelFilter};
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::reload;
+use tracing_subscriber::util::SubscriberInitExt;
 
 static LOG_FILTER_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
     OnceLock::new();

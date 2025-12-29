@@ -5,7 +5,9 @@ use empath_common::context::Context;
 use tokio::sync::Notify;
 
 use super::memory::MemoryBackingStore;
-use crate::{SpoolError, r#trait::BackingStore, types::SpooledMessageId};
+use crate::SpoolError;
+use crate::r#trait::BackingStore;
+use crate::types::SpooledMessageId;
 
 /// Testing utilities for memory-backed spool
 ///

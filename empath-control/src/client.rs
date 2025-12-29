@@ -1,12 +1,12 @@
 //! Client for connecting to the control socket
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
-    sync::Mutex,
-};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
 
 use crate::{ControlError, Request, Response, Result};

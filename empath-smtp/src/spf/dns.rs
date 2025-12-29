@@ -3,7 +3,8 @@
 //! Defines a minimal DNS resolver trait that SPF evaluation needs.
 //! This is implemented by `empath_delivery::DnsResolver`.
 
-use std::{net::IpAddr, sync::Arc};
+use std::net::IpAddr;
+use std::sync::Arc;
 
 /// DNS lookup errors
 #[derive(Debug, Clone)]

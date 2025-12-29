@@ -1,6 +1,9 @@
-use std::{fmt::Debug, num::NonZeroUsize, ops::Deref};
+use std::fmt::Debug;
+use std::num::NonZeroUsize;
+use std::ops::Deref;
 
-use crate::{error::MessageParseError, mime::Mime};
+use crate::error::MessageParseError;
+use crate::mime::Mime;
 
 struct Parser<'buf> {
     buf: &'buf [u8],
@@ -85,7 +88,6 @@ pub enum Body<'a> {
 }
 
 impl<'a> Body<'a> {
-    ///
     /// Parse the message body into it's constituent parts, if it is a Mime
     /// message, otherwise just a basic plain body.
     ///
@@ -119,9 +121,7 @@ impl<'a> Body<'a> {
     ///         "smuggle".as_bytes()
     ///     )
     /// );
-    ///
     /// ```
-    ///
     pub fn parse(bytes: &'a [u8]) -> Result<(Self, &'a [u8]), MessageParseError> {
         let mut parser = Parser::new(bytes);
 
@@ -187,14 +187,12 @@ impl<'a> Deref for Headers<'a> {
 }
 
 impl<'a> Headers<'a> {
-    ///
     /// Parse the message headers.
     ///
     /// # Errors
     ///
     /// Should we be unable to determine the end of the headers, a resulting
     /// error will be returned.
-    ///
     pub fn parse(bytes: &'a [u8]) -> Result<(Self, &'a [u8]), MessageParseError> {
         let mut headers = Vec::default();
         let mut parser = Parser::new(bytes);
@@ -241,14 +239,12 @@ pub struct Message<'buf> {
 }
 
 impl<'buf> Message<'buf> {
-    ///
     /// Parse a message into its headers and body
     ///
     /// # Errors
     ///
     /// If provided a message that's invalid, i.e. does not have a body,
     /// or does not contain the end of the body marker
-    ///
     pub fn parse(message: &'buf [u8]) -> Result<Self, MessageParseError> {
         let (headers, remaining) = Headers::parse(message)?;
         let (body, remaining) = Body::parse(remaining)?;

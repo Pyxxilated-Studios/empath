@@ -3,22 +3,20 @@
 
 mod support;
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
-use empath_common::{
-    DeliveryStatus,
-    address::{Address, AddressList},
-    context::Context,
-    envelope::Envelope,
-};
+use empath_common::address::{Address, AddressList};
+use empath_common::context::Context;
+use empath_common::envelope::Envelope;
+use empath_common::{DeliveryStatus, Signal, address_parser};
 use empath_delivery::{
-    DeliveryInfo, DeliveryProcessor, DomainConfig, DomainConfigRegistry, SmtpTimeouts,
+    DeliveryError, DeliveryInfo, DeliveryProcessor, DomainConfig, DomainConfigRegistry, MailServer,
+    MockDnsResolver, SmtpTimeouts,
 };
 use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
-use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    sync::broadcast,
-};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::sync::broadcast;
 
 fn create_test_context(from: &str, to: &str) -> Context {
     let mut envelope = Envelope::default();
@@ -29,9 +27,7 @@ fn create_test_context(from: &str, to: &str) -> Context {
     } else {
         format!("<{from}>")
     };
-    if let Ok(sender_mailbox) =
-        empath_common::address_parser::parse_forward_path(&from_with_brackets)
-    {
+    if let Ok(sender_mailbox) = address_parser::parse_forward_path(&from_with_brackets) {
         *envelope.sender_mut() = Some(Address::from(sender_mailbox));
     }
 
@@ -41,8 +37,7 @@ fn create_test_context(from: &str, to: &str) -> Context {
     } else {
         format!("<{to}>")
     };
-    if let Ok(recip_mailbox) = empath_common::address_parser::parse_forward_path(&to_with_brackets)
-    {
+    if let Ok(recip_mailbox) = address_parser::parse_forward_path(&to_with_brackets) {
         *envelope.recipients_mut() = Some(AddressList(vec![Address::from(recip_mailbox)]));
     }
 
@@ -103,14 +98,10 @@ async fn test_delivery_with_mock_dns_resolver_integration() {
     let _msg_id = spool.write(&mut context).await.unwrap();
 
     // Use MockDnsResolver instead of MX override workaround
-    let mock_dns = empath_delivery::MockDnsResolver::new();
+    let mock_dns = MockDnsResolver::new();
     mock_dns.add_response(
         "test.example.com",
-        Ok(vec![empath_delivery::MailServer::new(
-            "localhost".to_string(),
-            0,
-            1025,
-        )]),
+        Ok(vec![MailServer::new("localhost".to_string(), 0, 1025)]),
     );
 
     let mut processor = DeliveryProcessor::default();
@@ -175,14 +166,10 @@ async fn test_delivery_queue_domain_grouping() {
 
     // Add more recipients to different domains
     if let Some(recipients) = Arc::make_mut(&mut context.envelope).recipients_mut() {
-        if let Ok(mailbox2) =
-            empath_common::address_parser::parse_forward_path("<user2@domain2.com>")
-        {
+        if let Ok(mailbox2) = address_parser::parse_forward_path("<user2@domain2.com>") {
             recipients.push(Address::from(mailbox2));
         }
-        if let Ok(mailbox3) =
-            empath_common::address_parser::parse_forward_path("<user3@domain1.com>")
-        {
+        if let Ok(mailbox3) = address_parser::parse_forward_path("<user3@domain1.com>") {
             recipients.push(Address::from(mailbox3));
         }
     }
@@ -227,7 +214,7 @@ async fn test_graceful_shutdown() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Send shutdown signal
-    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+    shutdown_tx.send(Signal::Shutdown).unwrap();
 
     // Wait for graceful shutdown to complete (with timeout)
     let result = tokio::time::timeout(
@@ -273,11 +260,11 @@ async fn test_graceful_shutdown_respects_timeout() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Send shutdown signal
-    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+    shutdown_tx.send(Signal::Shutdown).unwrap();
 
     // Wait for graceful shutdown to complete
     let result: Result<
-        Result<Result<_, empath_delivery::DeliveryError>, tokio::task::JoinError>,
+        Result<Result<_, DeliveryError>, tokio::task::JoinError>,
         tokio::time::error::Elapsed,
     > = tokio::time::timeout(Duration::from_secs(35), processor_handle).await;
 
@@ -373,7 +360,7 @@ async fn test_multi_mx_priority_fallback() {
     let primary = MockSmtpServer::builder()
         .with_greeting(220, "Primary MX")
         .with_ehlo_response(250, vec!["primary.test".to_string()])
-        .with_network_error_after_commands(1)
+        .with_rcpt_to_response(451, "Temporary failure")
         .build()
         .await
         .expect("Failed to start primary MX");
@@ -384,12 +371,12 @@ async fn test_multi_mx_priority_fallback() {
         .await
         .expect("Failed to start secondary MX");
 
-    let mock_dns = empath_delivery::MockDnsResolver::new();
+    let mock_dns = MockDnsResolver::new();
     mock_dns.add_response(
         "test.example.com",
         Ok(vec![
-            empath_delivery::MailServer::new("127.0.0.1".to_string(), 10, primary.addr().port()),
-            empath_delivery::MailServer::new("127.0.0.1".to_string(), 20, secondary.addr().port()),
+            MailServer::new("127.0.0.1".to_string(), 10, primary.addr().port()),
+            MailServer::new("127.0.0.1".to_string(), 20, secondary.addr().port()),
         ]),
     );
 
@@ -424,7 +411,7 @@ async fn test_multi_mx_priority_fallback() {
         "Secondary MX should be attempted after failure"
     );
 
-    shutdown_tx.send(empath_common::Signal::Shutdown).unwrap();
+    shutdown_tx.send(Signal::Shutdown).unwrap();
     let result = tokio::time::timeout(Duration::from_secs(35), processor_handle).await;
     assert!(result.is_ok(), "Processor should shutdown within timeout");
 
@@ -698,10 +685,8 @@ async fn test_mock_smtp_server_builder_options() {
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_mock_smtp_server_with_errors() {
     use support::mock_server::MockSmtpServer;
-    use tokio::{
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::TcpStream,
-    };
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpStream;
 
     // Create a mock server that rejects RCPT TO
     let server = MockSmtpServer::builder()
@@ -771,10 +756,8 @@ async fn test_mock_smtp_server_with_errors() {
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
 async fn test_mock_smtp_server_connection_drop() {
     use support::mock_server::MockSmtpServer;
-    use tokio::{
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::TcpStream,
-    };
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpStream;
 
     // Create a mock server that drops connection after 3 commands
     let server = MockSmtpServer::builder()

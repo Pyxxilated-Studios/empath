@@ -3,7 +3,5 @@
 //! This module re-exports the file-based backing store for backwards compatibility.
 //! The actual implementation is in `crate::backends::file`.
 
-pub use crate::{
-    backends::file::{FileBackingStore, FileBackingStoreBuilder},
-    spool::FileSpool,
-};
+pub use crate::backends::file::{FileBackingStore, FileBackingStoreBuilder};
+pub use crate::spool::FileSpool;

@@ -6,18 +6,14 @@
 //! 3. All delivery state fields are preserved (status, attempts, `current_server_index`)
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
-use empath_common::{
-    DeliveryAttempt, DeliveryStatus, SpooledMessageId,
-    address::{Address, AddressList},
-    context::{Context, DeliveryContext, DeliveryPriorityTier},
-    email::ServerId,
-    envelope::Envelope,
-};
+use empath_common::address::{Address, AddressList};
+use empath_common::context::{Context, DeliveryContext, DeliveryPriorityTier};
+use empath_common::email::ServerId;
+use empath_common::envelope::Envelope;
+use empath_common::{DeliveryAttempt, DeliveryStatus, Domain, SpooledMessageId, address_parser};
 use empath_delivery::{DeliveryInfo, DeliveryProcessor};
 use empath_spool::{BackingStore, MemoryBackingStore};
 
@@ -36,9 +32,7 @@ fn create_test_context_with_delivery_state(
     } else {
         format!("<{from}>")
     };
-    if let Ok(sender_mailbox) =
-        empath_common::address_parser::parse_forward_path(&from_with_brackets)
-    {
+    if let Ok(sender_mailbox) = address_parser::parse_forward_path(&from_with_brackets) {
         *envelope.sender_mut() = Some(Address::from(sender_mailbox));
     }
 
@@ -49,8 +43,7 @@ fn create_test_context_with_delivery_state(
         format!("<{to}>")
     };
     let domain = to.split('@').nth(1).unwrap_or("example.com").to_string();
-    if let Ok(recip_mailbox) = empath_common::address_parser::parse_forward_path(&to_with_brackets)
-    {
+    if let Ok(recip_mailbox) = address_parser::parse_forward_path(&to_with_brackets) {
         *envelope.recipients_mut() = Some(AddressList(vec![Address::from(recip_mailbox)]));
     }
 
@@ -66,7 +59,7 @@ fn create_test_context_with_delivery_state(
 
     let delivery = DeliveryContext {
         message_id: SpooledMessageId::generate(),
-        domain: empath_common::Domain::new(domain),
+        domain: Domain::new(domain),
         server: Some(ServerId::new("mx.example.com:25").unwrap()),
         error: Some("Connection refused".to_string()),
         attempts: Some(attempts),

@@ -2,17 +2,14 @@
 
 use std::sync::Arc;
 
-use empath_common::{
-    context::{Context, DeliveryPriorityTier, PRIORITY_TIER_CONTEXT_KEY},
-    tracing::warn,
-};
-use empath_spool::{SpoolError, SpoolScanMode};
+use empath_common::DeliveryStatus;
+use empath_common::context::{Context, DeliveryPriorityTier, PRIORITY_TIER_CONTEXT_KEY};
+use empath_common::tracing::warn;
+use empath_spool::{BackingStore, SpoolError, SpoolScanMode};
 
-use crate::{
-    error::{DeliveryError, SystemError},
-    processor::DeliveryProcessor,
-    types::DeliveryInfo,
-};
+use crate::error::{DeliveryError, SystemError};
+use crate::processor::DeliveryProcessor;
+use crate::types::DeliveryInfo;
 
 /// Scan the spool for new messages and add them to the queue
 ///
@@ -20,7 +17,7 @@ use crate::{
 /// Returns an error if the spool cannot be read
 pub async fn scan_spool_internal(
     processor: &DeliveryProcessor,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     mode: SpoolScanMode,
 ) -> Result<usize, DeliveryError> {
     let message_ids = {
@@ -59,7 +56,7 @@ pub async fn scan_spool_internal(
             // be re-added to the active delivery queue
             if matches!(
                 delivery_ctx.status,
-                empath_common::DeliveryStatus::Completed | empath_common::DeliveryStatus::Failed(_)
+                DeliveryStatus::Completed | DeliveryStatus::Failed(_)
             ) {
                 continue;
             }

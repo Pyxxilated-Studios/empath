@@ -4,15 +4,17 @@
 
 #![allow(clippy::too_many_lines)]
 
-use std::{net::IpAddr, sync::Arc, time::Instant};
+use std::net::IpAddr;
+use std::sync::Arc;
+use std::time::Instant;
 
 use empath_common::email::EmailAddress;
 use ipnetwork::{Ipv4Network, Ipv6Network};
 use tracing::{debug, warn};
 
+use super::dns::SpfDnsResolver;
 use super::{
     Mechanism, Modifier, Qualifier, SpfConfig, SpfError, SpfEvaluation, SpfRecord, SpfResult,
-    dns::SpfDnsResolver,
 };
 
 /// SPF evaluator

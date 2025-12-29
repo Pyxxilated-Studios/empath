@@ -3,17 +3,18 @@
 //! This module provides a `#[pyclass]` wrapper around `empath_common::Context`
 //! that exposes a natural Python API with properties and methods.
 
-use std::{borrow::Cow, sync::Arc};
+use std::borrow::Cow;
+use std::sync::Arc;
 
-use empath_common::{
-    context::{Capability, Context},
-    error::MessageParseError,
-    message_api::{
-        BodyError, BodyLimits, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
-        HeaderValue, MutationAudit, MutationKind, NewlineStyle,
-    },
+use empath_common::context::{Capability, Context};
+use empath_common::error::MessageParseError;
+use empath_common::message_api::{
+    BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
+    HeaderValue, HeadersMut, MutationAudit, MutationKind, NewlineStyle,
 };
-use pyo3::{exceptions::PyValueError, prelude::*};
+use empath_metrics::try_metrics;
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 
 /// Python wrapper for Context
 ///
@@ -53,13 +54,9 @@ impl PyContext {
         value: &str,
         action: &str,
         mut f: F,
-    ) -> PyResult<Option<Result<R, empath_common::message_api::HeaderError>>>
+    ) -> PyResult<Option<Result<R, HeaderError>>>
     where
-        F: FnMut(
-            &mut empath_common::message_api::HeadersMut<'_>,
-            &HeaderName,
-            &HeaderValue,
-        ) -> Result<R, empath_common::message_api::HeaderError>,
+        F: FnMut(&mut HeadersMut<'_>, &HeaderName, &HeaderValue) -> Result<R, HeaderError>,
     {
         let hname = HeaderName::new(name).map_err(Self::map_header_error)?;
         let hval = HeaderValue::new(value.as_bytes()).map_err(Self::map_header_error)?;
@@ -105,15 +102,9 @@ impl PyContext {
         outcome
     }
 
-    fn with_body_mut<F, R>(
-        &self,
-        action: &str,
-        mut f: F,
-    ) -> PyResult<Option<Result<R, empath_common::message_api::BodyError>>>
+    fn with_body_mut<F, R>(&self, action: &str, mut f: F) -> PyResult<Option<Result<R, BodyError>>>
     where
-        F: FnMut(
-            &mut empath_common::message_api::BodyMut<'_>,
-        ) -> Result<R, empath_common::message_api::BodyError>,
+        F: FnMut(&mut BodyMut<'_>) -> Result<R, BodyError>,
     {
         let mut ctx = self.inner.write();
         let module_context = module_context_snapshot(&ctx);
@@ -161,32 +152,26 @@ impl PyContext {
         PyValueError::new_err(format!("Failed to parse message for mutation: {err}"))
     }
 
-    fn map_header_error(err: empath_common::message_api::HeaderError) -> PyErr {
+    fn map_header_error(err: HeaderError) -> PyErr {
         let reason = match err {
-            empath_common::message_api::HeaderError::TooMany => "too many headers",
-            empath_common::message_api::HeaderError::NameTooLong => "header name too long",
-            empath_common::message_api::HeaderError::ValueTooLong => "header value too long",
-            empath_common::message_api::HeaderError::TotalSizeExceeded => {
-                "headers exceed total size limit"
-            }
-            empath_common::message_api::HeaderError::InvalidName => "invalid header name",
-            empath_common::message_api::HeaderError::InvalidValue => "invalid header value",
-            empath_common::message_api::HeaderError::SignatureProtected => {
-                "header protected by signature"
-            }
+            HeaderError::TooMany => "too many headers",
+            HeaderError::NameTooLong => "header name too long",
+            HeaderError::ValueTooLong => "header value too long",
+            HeaderError::TotalSizeExceeded => "headers exceed total size limit",
+            HeaderError::InvalidName => "invalid header name",
+            HeaderError::InvalidValue => "invalid header value",
+            HeaderError::SignatureProtected => "header protected by signature",
         };
         PyValueError::new_err(reason)
     }
 
-    fn map_body_error(err: empath_common::message_api::BodyError) -> PyErr {
+    fn map_body_error(err: BodyError) -> PyErr {
         let reason = match err {
-            empath_common::message_api::BodyError::TooLarge => "body exceeds maximum length",
-            empath_common::message_api::BodyError::GrowthExceeded => "body growth exceeds limit",
-            empath_common::message_api::BodyError::InvalidCharset => "invalid charset",
-            empath_common::message_api::BodyError::InvalidTransferEncoding => {
-                "invalid transfer encoding"
-            }
-            empath_common::message_api::BodyError::MultipartError => "invalid multipart body",
+            BodyError::TooLarge => "body exceeds maximum length",
+            BodyError::GrowthExceeded => "body growth exceeds limit",
+            BodyError::InvalidCharset => "invalid charset",
+            BodyError::InvalidTransferEncoding => "invalid transfer encoding",
+            BodyError::MultipartError => "invalid multipart body",
         };
         PyValueError::new_err(reason)
     }
@@ -223,7 +208,7 @@ fn record_mutation_records(
         if let Some(logger) = context.audit_logger.as_ref() {
             logger.log_module_mutation(context.id(), module_type, module_name, record);
         }
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             let mutation_kind = match record.kind {
                 MutationKind::Header { .. } => "header",
                 MutationKind::Body => "body",
@@ -249,7 +234,7 @@ fn record_mutation_failure(
     let Some((module_type, module_name)) = module_context else {
         return;
     };
-    if let Some(metrics) = empath_metrics::try_metrics() {
+    if let Some(metrics) = try_metrics() {
         metrics.modules.record_mutation(
             module_type,
             module_name,

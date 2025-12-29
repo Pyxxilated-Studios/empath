@@ -12,18 +12,19 @@
 //! └── Part 3: text/rfc822-headers (original message headers)
 //! ```
 
-use std::{fmt::Write as _, sync::Arc, time::SystemTime};
+use std::fmt::Write as _;
+use std::sync::Arc;
+use std::time::SystemTime;
 
-use empath_common::{
-    DeliveryStatus,
-    address::{Address, AddressList},
-    context::Context,
-    envelope::Envelope,
-    tracing::info,
-};
+use empath_common::address::{Address, AddressList};
+use empath_common::context::Context;
+use empath_common::envelope::Envelope;
+use empath_common::tracing::info;
+use empath_common::{DeliveryStatus, address_parser};
 use serde::{Deserialize, Serialize};
 
-use crate::{DeliveryError, DeliveryInfo, error::PermanentError};
+use crate::error::PermanentError;
+use crate::{DeliveryError, DeliveryInfo};
 
 /// Configuration for DSN generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,15 +223,13 @@ pub fn generate_dsn(request: &DsnRequest<'_>) -> Result<Context, PermanentError>
     } else {
         format!("<{}>", request.config.postmaster)
     };
-    let postmaster_mailbox = empath_common::address_parser::parse_forward_path(
-        &postmaster_with_brackets,
-    )
-    .map_err(|_| {
-        PermanentError::InvalidRecipient(format!(
-            "Invalid postmaster address: {}",
-            request.config.postmaster
-        ))
-    })?;
+    let postmaster_mailbox = address_parser::parse_forward_path(&postmaster_with_brackets)
+        .map_err(|_| {
+            PermanentError::InvalidRecipient(format!(
+                "Invalid postmaster address: {}",
+                request.config.postmaster
+            ))
+        })?;
 
     *Arc::make_mut(&mut dsn_context.envelope).sender_mut() =
         Some(Address::from(postmaster_mailbox));
@@ -378,14 +377,16 @@ fn extract_original_headers(original_context: &Context) -> String {
 
 #[cfg(test)]
 mod tests {
-    use empath_common::{
-        DeliveryAttempt, address_parser::Mailbox, context::DeliveryPriorityTier, domain::Domain,
-        email::ServerId,
-    };
+    use empath_common::DeliveryAttempt;
+    use empath_common::address_parser::Mailbox;
+    use empath_common::context::DeliveryPriorityTier;
+    use empath_common::domain::Domain;
+    use empath_common::email::ServerId;
     use empath_spool::SpooledMessageId;
 
     use super::*;
-    use crate::{TemporaryError, types::DeliveryInfo};
+    use crate::TemporaryError;
+    use crate::types::DeliveryInfo;
 
     type TestResult = std::result::Result<(), String>;
 

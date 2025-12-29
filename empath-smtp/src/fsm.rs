@@ -6,7 +6,9 @@
 
 use empath_common::traits::fsm::FiniteStateMachine;
 
-use crate::{command::Command, session_state::SessionState, state::State};
+use crate::command::Command;
+use crate::session_state::SessionState;
+use crate::state::State;
 
 /// Implementation of the `FiniteStateMachine` trait for SMTP protocol states.
 ///
@@ -47,14 +49,13 @@ use crate::{command::Command, session_state::SessionState, state::State};
 /// assert!(session_state.is_extended());
 /// ```
 impl FiniteStateMachine for State {
-    /// SMTP commands are the input to the FSM
-    type Input = Command;
-
     /// Session state contains only FSM state (id, extended, envelope)
     ///
     /// This is intentionally separate from the business `Context` to ensure
     /// pure state transitions without business logic side effects.
     type Context = SessionState;
+    /// SMTP commands are the input to the FSM
+    type Input = Command;
 
     /// Performs a pure state transition based on the input command.
     ///
@@ -85,10 +86,13 @@ impl FiniteStateMachine for State {
 
 #[cfg(test)]
 mod tests {
-    use empath_common::{address::Address, address_parser, traits::fsm::FiniteStateMachine};
+    use empath_common::address::Address;
+    use empath_common::address_parser;
+    use empath_common::traits::fsm::FiniteStateMachine;
 
     use super::*;
-    use crate::{MailParameters, command::HeloVariant};
+    use crate::MailParameters;
+    use crate::command::HeloVariant;
 
     type TestResult = std::result::Result<(), String>;
 

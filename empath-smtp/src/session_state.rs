@@ -7,7 +7,8 @@
 
 use std::sync::Arc;
 
-use empath_common::{context::Context, envelope::Envelope};
+use empath_common::context::Context;
+use empath_common::envelope::Envelope;
 use serde::{Deserialize, Serialize};
 
 /// SMTP session state for the finite state machine.
@@ -133,7 +134,8 @@ impl SessionState {
 
 #[cfg(test)]
 mod tests {
-    use empath_common::{address::Address, address_parser};
+    use empath_common::address::Address;
+    use empath_common::address_parser;
 
     use super::*;
 

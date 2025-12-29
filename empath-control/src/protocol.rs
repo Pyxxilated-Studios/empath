@@ -1,11 +1,10 @@
 //! Control protocol types and serialization
 
-use std::{
-    collections::HashMap,
-    fmt::{Display, Formatter},
-};
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 
-use chrono::{TimeZone, Utc, offset::LocalResult};
+use chrono::offset::LocalResult;
+use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Current protocol version

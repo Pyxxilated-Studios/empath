@@ -29,22 +29,16 @@
 //! # }
 //! ```
 
-use std::{
-    fmt::Write,
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::fmt::Write;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
-use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
-    sync::RwLock,
-    time::timeout,
-};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::RwLock;
+use tokio::time::timeout;
 
 /// SMTP command received by the mock server
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,13 +1,12 @@
 use core::fmt::{self, Display, Formatter};
 use std::sync::Arc;
 
-use empath_common::{address::Address, context::Context};
+use empath_common::address::Address;
+use empath_common::context::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    command::{Command, HeloVariant},
-    session_state::SessionState,
-};
+use crate::command::{Command, HeloVariant};
+use crate::session_state::SessionState;
 
 /// Sealed trait to prevent external state implementations
 mod sealed {
@@ -403,10 +402,8 @@ impl State {
 
 #[cfg(test)]
 mod test {
-    use empath_common::{
-        address::{Address, AddressList},
-        address_parser,
-    };
+    use empath_common::address::{Address, AddressList};
+    use empath_common::address_parser;
 
     use super::*;
     use crate::MailParameters;

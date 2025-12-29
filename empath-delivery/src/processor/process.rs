@@ -1,24 +1,19 @@
 //! Queue processing logic for delivery attempts
 
-use std::{sync::Arc, time::SystemTime};
+use std::sync::Arc;
+use std::time::SystemTime;
 
-use empath_common::{
-    DeliveryStatus,
-    email::ServerId,
-    tracing::{debug, error, info, warn},
-};
-use empath_spool::SpooledMessageId;
+use empath_common::DeliveryStatus;
+use empath_common::email::ServerId;
+use empath_common::tracing::{debug, error, info, warn};
+use empath_spool::{BackingStore, SpooledMessageId};
 use tokio::task::JoinSet;
 
-use crate::{
-    dns::MailServer,
-    error::DeliveryError,
-    processor::{
-        DeliveryProcessor,
-        delivery::{prepare_message, server_id_from},
-    },
-    types::DeliveryInfo,
-};
+use crate::dns::MailServer;
+use crate::error::DeliveryError;
+use crate::processor::DeliveryProcessor;
+use crate::processor::delivery::{prepare_message, server_id_from};
+use crate::types::DeliveryInfo;
 
 fn handle_circuit_breaker_gate(processor: &DeliveryProcessor, info: &DeliveryInfo) -> bool {
     if let Some(circuit_breaker) = &processor.circuit_breaker_instance
@@ -51,7 +46,7 @@ fn handle_circuit_breaker_gate(processor: &DeliveryProcessor, info: &DeliveryInf
 
 async fn handle_binding_disabled_gate(
     processor: &DeliveryProcessor,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     info: &DeliveryInfo,
 ) -> bool {
     let Some(binding_name) = info.binding.as_deref() else {
@@ -102,7 +97,7 @@ async fn handle_binding_disabled_gate(
 
 async fn handle_binding_health_gate(
     processor: &DeliveryProcessor,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     info: &DeliveryInfo,
 ) -> bool {
     let Some(binding_name) = info.binding.as_deref() else {
@@ -166,7 +161,7 @@ async fn handle_binding_health_gate(
 /// Process a single message for delivery (spawned as a task)
 async fn process_single_message(
     processor: Arc<DeliveryProcessor>,
-    spool: Arc<dyn empath_spool::BackingStore>,
+    spool: Arc<dyn BackingStore>,
     info: DeliveryInfo,
 ) {
     // Record queue age metric before attempting delivery
@@ -194,7 +189,11 @@ async fn process_single_message(
             "Failed to prepare message for delivery"
         );
 
-        if let Ok(mut context) = spool.read(&info.message_id).await {
+        let should_handle = processor
+            .queue
+            .get(&info.message_id)
+            .is_some_and(|entry| matches!(entry.status, DeliveryStatus::InProgress));
+        if should_handle && let Ok(mut context) = spool.read(&info.message_id).await {
             let server = info
                 .mail_servers
                 .get(info.current_server_index)
@@ -232,7 +231,7 @@ async fn process_single_message(
 /// Returns an error if processing fails
 pub async fn process_queue_internal(
     processor: Arc<DeliveryProcessor>,
-    spool: Arc<dyn empath_spool::BackingStore>,
+    spool: Arc<dyn BackingStore>,
 ) -> Result<(), DeliveryError> {
     let now = SystemTime::now();
 
@@ -367,7 +366,7 @@ fn retry_ready(
 
 async fn persist_updates(
     processor: &DeliveryProcessor,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     to_persist: Vec<SpooledMessageId>,
 ) {
     for message_id in to_persist {
@@ -384,7 +383,7 @@ async fn persist_updates(
 
 async fn process_pending_messages(
     processor: Arc<DeliveryProcessor>,
-    spool: Arc<dyn empath_spool::BackingStore>,
+    spool: Arc<dyn BackingStore>,
     pending_message_ids: Vec<SpooledMessageId>,
 ) {
     if pending_message_ids.is_empty() {
@@ -416,7 +415,7 @@ async fn process_pending_messages(
 fn spawn_delivery_task(
     join_set: &mut JoinSet<()>,
     processor: &Arc<DeliveryProcessor>,
-    spool: &Arc<dyn empath_spool::BackingStore>,
+    spool: &Arc<dyn BackingStore>,
     message_id: SpooledMessageId,
 ) {
     let processor_clone = Arc::clone(processor);
@@ -437,7 +436,8 @@ mod tests {
     use empath_spool::SpooledMessageId;
 
     use super::scan_queue;
-    use crate::{DeliveryInfo, processor::DeliveryProcessor};
+    use crate::DeliveryInfo;
+    use crate::processor::DeliveryProcessor;
 
     #[test]
     fn scan_queue_orders_by_priority_and_age() {

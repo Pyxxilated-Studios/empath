@@ -2,13 +2,13 @@
 //!
 //! This module provides integration between Python modules and the Empath module system.
 
-use std::{
-    path::PathBuf,
-    sync::OnceLock,
-    time::{Duration, Instant},
-};
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
-use empath_common::{context::Context, internal};
+use empath_common::context::Context;
+use empath_common::internal;
+use empath_metrics::try_metrics;
 use empath_python::{PythonError, PythonModule};
 use serde::Deserialize;
 
@@ -76,7 +76,7 @@ impl Python {
         let result = module.execute_callback(callback_name, context);
         let duration = start.elapsed();
 
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             metrics
                 .modules
                 .record_execution("python", callback_name, duration.as_secs_f64());
@@ -87,7 +87,7 @@ impl Python {
             Ok(false) => 1, // Reject
             Err(e) => {
                 let timeout = matches!(e, PythonError::Timeout(_, _));
-                if let Some(metrics) = empath_metrics::try_metrics() {
+                if let Some(metrics) = try_metrics() {
                     if timeout {
                         metrics.modules.record_timeout(module_path.as_ref());
                     }

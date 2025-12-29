@@ -1,14 +1,13 @@
 //! SMTP client connection pool for outbound delivery.
 
-use std::{
-    collections::VecDeque,
-    hash::{Hash, Hasher},
-    net::IpAddr,
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
+use std::net::IpAddr;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use empath_metrics::DeliveryMetrics;
 use empath_smtp::client::{ConnectConfig, SmtpClient};
 
 use crate::types::SmtpPoolConfig;
@@ -171,7 +170,7 @@ impl SmtpClientPool {
     pub async fn acquire(
         &self,
         request: SmtpPoolRequest<'_>,
-        metrics: Option<&empath_metrics::DeliveryMetrics>,
+        metrics: Option<&DeliveryMetrics>,
     ) -> Option<SmtpClient> {
         if !self.config.enabled {
             return None;
@@ -215,12 +214,7 @@ impl SmtpClientPool {
         None
     }
 
-    pub fn release(
-        &self,
-        key: SmtpPoolKey,
-        client: SmtpClient,
-        metrics: Option<&empath_metrics::DeliveryMetrics>,
-    ) {
+    pub fn release(&self, key: SmtpPoolKey, client: SmtpClient, metrics: Option<&DeliveryMetrics>) {
         if !self.config.enabled {
             return;
         }
@@ -255,7 +249,7 @@ impl SmtpClientPool {
         self.record_pool_size(&domain, metrics);
     }
 
-    pub fn cleanup_idle(&self, metrics: Option<&empath_metrics::DeliveryMetrics>) -> usize {
+    pub fn cleanup_idle(&self, metrics: Option<&DeliveryMetrics>) -> usize {
         if !self.config.enabled {
             return 0;
         }
@@ -306,7 +300,7 @@ impl SmtpClientPool {
     async fn try_take(
         &self,
         key: &SmtpPoolKey,
-        metrics: Option<&empath_metrics::DeliveryMetrics>,
+        metrics: Option<&DeliveryMetrics>,
     ) -> Option<SmtpClient> {
         let ttl = Duration::from_secs(self.config.idle_ttl_secs);
         loop {
@@ -342,19 +336,19 @@ impl SmtpClientPool {
         }
     }
 
-    fn record_hit(domain: &str, metrics: Option<&empath_metrics::DeliveryMetrics>) {
+    fn record_hit(domain: &str, metrics: Option<&DeliveryMetrics>) {
         if let Some(metrics) = metrics {
             metrics.record_smtp_pool_hit(domain);
         }
     }
 
-    fn record_miss(domain: &str, metrics: Option<&empath_metrics::DeliveryMetrics>) {
+    fn record_miss(domain: &str, metrics: Option<&DeliveryMetrics>) {
         if let Some(metrics) = metrics {
             metrics.record_smtp_pool_miss(domain);
         }
     }
 
-    fn record_pool_size(&self, domain: &str, metrics: Option<&empath_metrics::DeliveryMetrics>) {
+    fn record_pool_size(&self, domain: &str, metrics: Option<&DeliveryMetrics>) {
         if let Some(metrics) = metrics {
             metrics.update_smtp_pool_size(domain, self.pool_size_for_domain(domain));
         }

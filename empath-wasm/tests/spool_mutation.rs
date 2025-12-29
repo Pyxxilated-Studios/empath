@@ -1,30 +1,25 @@
 //! End-to-end: WASM message helpers mutate headers/body and persist to spool.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use empath_common::traits::protocol::Protocol;
+use empath_common::traits::protocol::{Protocol, SessionHandler};
+use empath_ffi::modules::wasm::Wasm;
 use empath_ffi::modules::{self, Module};
-use empath_smtp::{
-    Smtp, SmtpArgs,
-    client::{QuitAfter, SmtpClientBuilder},
-    extensions::Extension,
-};
+use empath_smtp::client::{QuitAfter, SmtpClientBuilder};
+use empath_smtp::extensions::Extension;
+use empath_smtp::{Smtp, SmtpArgs};
 use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
-use tokio::{
-    net::TcpListener,
-    time::{Duration, timeout},
-};
+use tokio::net::TcpListener;
+use tokio::time::{Duration, timeout};
 
 async fn start_server_with_module(
     module_path: PathBuf,
     spool: Arc<MemoryBackingStore>,
 ) -> (u16, tokio::task::JoinHandle<()>) {
-    let wasm_module = empath_ffi::modules::wasm::Wasm::from_path(module_path);
+    let wasm_module = Wasm::from_path(module_path);
     modules::init(vec![Module::Wasm(wasm_module)]).expect("modules init");
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -42,7 +37,7 @@ async fn start_server_with_module(
             let session = smtp.handle(stream, peer, HashMap::default(), args.clone());
             tokio::spawn(async move {
                 let _ = timeout(Duration::from_secs(30), async {
-                    empath_common::traits::protocol::SessionHandler::run(session, shutdown_rx).await
+                    SessionHandler::run(session, shutdown_rx).await
                 })
                 .await;
             });

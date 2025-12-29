@@ -1,16 +1,13 @@
-use std::{
-    fmt::{Debug, Write},
-    time::Instant,
-};
+use std::fmt::{Debug, Write};
+use std::time::Instant;
 
 use empath_common::tracing;
+use empath_metrics::try_metrics;
 use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio_rustls::{
-    TlsAcceptor,
-    rustls::{ProtocolVersion, ServerConnection, SupportedCipherSuite},
-    server::TlsStream,
-};
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::{ProtocolVersion, ServerConnection, SupportedCipherSuite};
+use tokio_rustls::server::TlsStream;
 
 use super::session::TlsContext;
 use crate::error::{ConnectionResult, TlsError, TlsResult};
@@ -167,7 +164,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                 let proto = info.proto();
                 let cipher = info.cipher();
 
-                if let Some(metrics) = empath_metrics::try_metrics() {
+                if let Some(metrics) = try_metrics() {
                     metrics
                         .smtp
                         .record_tls_handshake(duration_secs, &proto, &cipher);
@@ -183,7 +180,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
                 Ok((conn, info))
             }
             Err(err) => {
-                if let Some(metrics) = empath_metrics::try_metrics() {
+                if let Some(metrics) = try_metrics() {
                     metrics
                         .smtp
                         .record_tls_handshake_failure(tls_error_reason(&err));

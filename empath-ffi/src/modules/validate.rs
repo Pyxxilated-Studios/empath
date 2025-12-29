@@ -1,4 +1,5 @@
-use empath_common::{context::Context, internal};
+use empath_common::context::Context;
+use empath_common::internal;
 use empath_tracing::traced;
 use serde::Deserialize;
 
@@ -39,9 +40,7 @@ unsafe impl Send for ModuleValidation {}
 unsafe impl Sync for ModuleValidation {}
 
 impl ModuleValidation {
-    ///
     /// Emit an event to this library's validation module
-    ///
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub fn emit(&self, event: super::Event, context: &mut Context) -> i32 {
         match event {

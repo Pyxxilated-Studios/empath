@@ -27,6 +27,7 @@ pub struct PlainAuth;
 
 impl AuthMechanism for PlainAuth {
     type Credentials = PlainCredentials;
+
     const NAME: &'static str = "PLAIN";
 
     fn decode(response: &str) -> Result<Self::Credentials, AuthError> {

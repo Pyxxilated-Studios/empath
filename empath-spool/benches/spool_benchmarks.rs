@@ -7,11 +7,16 @@
 //! - In-memory spool operations (write, read, list, delete)
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{borrow::Cow, hint::black_box, sync::Arc};
+use std::borrow::Cow;
+use std::hint::black_box;
+use std::sync::Arc;
 
 use ahash::AHashMap;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use empath_common::{address::Address, address_parser, context::Context, envelope::Envelope};
+use empath_common::address::Address;
+use empath_common::address_parser;
+use empath_common::context::Context;
+use empath_common::envelope::Envelope;
 use empath_spool::{BackingStore, MemoryBackingStore, SpooledMessageId};
 
 // ============================================================================

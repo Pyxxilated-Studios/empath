@@ -16,15 +16,17 @@ pub mod state;
 pub mod transaction_handler;
 
 // Re-export commonly used types
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, RwLock},
-};
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
 
 pub use command::MailParameters;
-use empath_common::{context::Capability, error::ProtocolError, traits::protocol::Protocol};
+use empath_common::audit::AuditLogger;
+use empath_common::context::Capability;
+use empath_common::error::ProtocolError;
+use empath_common::traits::protocol::Protocol;
+use empath_spool::BackingStore;
 use empath_tracing::traced;
 use serde::Deserialize;
 pub use session::{Session, TlsContextInfo, TlsContextRegistry, TlsProfileInfo};
@@ -32,7 +34,9 @@ pub use session::{Session, TlsContextInfo, TlsContextRegistry, TlsProfileInfo};
 pub use state::State;
 use tokio::net::TcpStream;
 
-use crate::{extensions::Extension, orchestrator::SmtpSessionOrchestrator, session::SessionConfig};
+use crate::extensions::Extension;
+use crate::orchestrator::SmtpSessionOrchestrator;
+use crate::session::SessionConfig;
 
 /// SMTP server-side timeout configuration
 ///
@@ -124,7 +128,7 @@ pub struct SmtpArgs {
     #[serde(skip)]
     capabilities_state: Option<Arc<RwLock<Vec<Capability>>>>,
     #[serde(skip)]
-    spool: Option<Arc<dyn empath_spool::BackingStore>>,
+    spool: Option<Arc<dyn BackingStore>>,
     #[serde(default)]
     pub timeouts: SmtpServerTimeouts,
     #[serde(skip)]
@@ -132,7 +136,7 @@ pub struct SmtpArgs {
     #[serde(default)]
     pub spf_config: spf::SpfConfig,
     #[serde(skip)]
-    audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
+    audit_logger: Option<Arc<dyn AuditLogger>>,
 }
 
 impl std::fmt::Debug for SmtpArgs {
@@ -198,10 +202,7 @@ impl SmtpArgs {
 
     /// Set the audit logger for SMTP sessions.
     #[must_use]
-    pub fn with_audit_logger(
-        mut self,
-        audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
-    ) -> Self {
+    pub fn with_audit_logger(mut self, audit_logger: Arc<dyn AuditLogger>) -> Self {
         self.audit_logger = Some(audit_logger);
         self
     }
@@ -221,7 +222,7 @@ impl SmtpArgs {
 
     /// Set the spool controller for this SMTP server
     #[must_use]
-    pub fn with_spool(mut self, spool: Arc<dyn empath_spool::BackingStore>) -> Self {
+    pub fn with_spool(mut self, spool: Arc<dyn BackingStore>) -> Self {
         self.spool = Some(spool);
         self
     }
@@ -256,8 +257,8 @@ impl SmtpArgs {
 }
 
 impl Protocol for Smtp {
-    type Session = SmtpSessionOrchestrator<TcpStream>;
     type Args = SmtpArgs;
+    type Session = SmtpSessionOrchestrator<TcpStream>;
 
     fn ty() -> &'static str {
         "SMTP"

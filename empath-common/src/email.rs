@@ -1,8 +1,6 @@
-use std::{
-    fmt::{self, Display},
-    ops::Deref,
-    sync::Arc,
-};
+use std::fmt::{self, Display};
+use std::ops::Deref;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 

@@ -17,11 +17,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Domain,
-    email::{EmailAddress, ServerId},
-    message_api::{MutationKind, MutationRecord},
-};
+use crate::Domain;
+use crate::email::{EmailAddress, ServerId};
+use crate::message_api::{MutationKind, MutationRecord};
 
 /// Audit logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

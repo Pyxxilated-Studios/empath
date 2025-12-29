@@ -5,10 +5,8 @@
 
 use std::time::Duration;
 
-use pyo3::{
-    prelude::*,
-    types::{PyDict, PyTuple},
-};
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::error::{PythonError, Result};
 

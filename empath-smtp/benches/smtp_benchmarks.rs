@@ -7,15 +7,17 @@
 //! - Context operations
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{hint::black_box, sync::Arc};
+use std::hint::black_box;
+use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use empath_common::{address::Address, address_parser, context::Context};
-use empath_smtp::{
-    MailParameters, State,
-    command::{Command, HeloVariant},
-    state::{Connect, Data, Ehlo, MailFrom, RcptTo},
-};
+use empath_common::address::Address;
+use empath_common::address_parser;
+use empath_common::context::Context;
+use empath_common::envelope::Envelope;
+use empath_smtp::command::{Command, HeloVariant};
+use empath_smtp::state::{Connect, Data, Ehlo, MailFrom, RcptTo};
+use empath_smtp::{MailParameters, State};
 
 // ============================================================================
 // Command Parsing Benchmarks
@@ -336,7 +338,7 @@ fn bench_context_operations(c: &mut Criterion) {
 
     group.bench_function("context_with_data", |b| {
         b.iter(|| {
-            let mut envelope = empath_common::envelope::Envelope::default();
+            let mut envelope = Envelope::default();
             *envelope.sender_mut() = Some(
                 address_parser::parse_forward_path("<sender@example.com>")
                     .expect("Valid address")

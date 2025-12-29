@@ -16,23 +16,20 @@
 //! - `HickoryDnsResolver`: Production implementation using Hickory DNS
 //! - `MockDnsResolver`: Test implementation with configurable responses
 
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use empath_common::context::Context;
 use empath_ffi::modules;
+use empath_smtp::spf::{DnsLookupError, MailServer as SpfMailServer, SpfDnsResolver};
 use empath_tracing::traced;
-use hickory_resolver::{
-    TokioResolver,
-    config::{ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
-    proto::rr::Record,
-};
+use hickory_resolver::TokioResolver;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::proto::rr::Record;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{self, debug, warn};
@@ -366,7 +363,7 @@ pub struct HickoryDnsResolver {
     cache: Arc<DashMap<String, CachedResult>>,
     txt_cache: Arc<DashMap<String, CachedTxtResult>>,
     ptr_cache: Arc<DashMap<String, CachedPtrResult>>,
-    a_cache: Arc<DashMap<String, CachedPtrResult>>, // Reuse for A/AAAA records (stores IPs as strings)
+    a_cache: Arc<DashMap<String, CachedPtrResult>>, /* Reuse for A/AAAA records (stores IPs as strings) */
     config: DnsConfig,
 }
 
@@ -1526,53 +1523,41 @@ impl<D: ?Sized> SpfDnsAdapter<D> {
 }
 
 #[async_trait::async_trait]
-impl<D: ?Sized + DnsResolver> empath_smtp::spf::SpfDnsResolver for SpfDnsAdapter<D> {
-    async fn txt_lookup(
-        &self,
-        domain: &str,
-    ) -> Result<Arc<Vec<String>>, empath_smtp::spf::DnsLookupError> {
+impl<D: ?Sized + DnsResolver> SpfDnsResolver for SpfDnsAdapter<D> {
+    async fn txt_lookup(&self, domain: &str) -> Result<Arc<Vec<String>>, DnsLookupError> {
         self.resolver.txt_lookup(domain).await.map_err(|e| match e {
-            DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
-            _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+            DnsError::Timeout(msg) => DnsLookupError::Timeout(msg),
+            _ => DnsLookupError::LookupFailed(e.to_string()),
         })
     }
 
-    async fn ptr_lookup(
-        &self,
-        ip: std::net::IpAddr,
-    ) -> Result<Arc<Vec<String>>, empath_smtp::spf::DnsLookupError> {
+    async fn ptr_lookup(&self, ip: std::net::IpAddr) -> Result<Arc<Vec<String>>, DnsLookupError> {
         self.resolver.ptr_lookup(ip).await.map_err(|e| match e {
-            DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
-            _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+            DnsError::Timeout(msg) => DnsLookupError::Timeout(msg),
+            _ => DnsLookupError::LookupFailed(e.to_string()),
         })
     }
 
-    async fn a_lookup(
-        &self,
-        domain: &str,
-    ) -> Result<Arc<Vec<std::net::IpAddr>>, empath_smtp::spf::DnsLookupError> {
+    async fn a_lookup(&self, domain: &str) -> Result<Arc<Vec<std::net::IpAddr>>, DnsLookupError> {
         self.resolver.a_lookup(domain).await.map_err(|e| match e {
-            DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
-            _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+            DnsError::Timeout(msg) => DnsLookupError::Timeout(msg),
+            _ => DnsLookupError::LookupFailed(e.to_string()),
         })
     }
 
-    async fn mx_lookup(
-        &self,
-        domain: &str,
-    ) -> Result<Arc<Vec<empath_smtp::spf::MailServer>>, empath_smtp::spf::DnsLookupError> {
+    async fn mx_lookup(&self, domain: &str) -> Result<Arc<Vec<SpfMailServer>>, DnsLookupError> {
         self.resolver
             .resolve_mail_servers(domain)
             .await
             .map_err(|e| match e {
-                DnsError::Timeout(msg) => empath_smtp::spf::DnsLookupError::Timeout(msg),
-                _ => empath_smtp::spf::DnsLookupError::LookupFailed(e.to_string()),
+                DnsError::Timeout(msg) => DnsLookupError::Timeout(msg),
+                _ => DnsLookupError::LookupFailed(e.to_string()),
             })
             .map(|servers| {
-                // Convert empath_delivery::MailServer to empath_smtp::spf::MailServer
-                let spf_servers: Vec<empath_smtp::spf::MailServer> = servers
+                // Convert empath_delivery::MailServer to SpfMailServer
+                let spf_servers: Vec<SpfMailServer> = servers
                     .iter()
-                    .map(|s| empath_smtp::spf::MailServer {
+                    .map(|s| SpfMailServer {
                         host: s.host.clone(),
                         priority: s.priority,
                     })

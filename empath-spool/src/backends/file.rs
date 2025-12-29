@@ -1,29 +1,20 @@
-use std::{
-    convert::TryFrom,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Instant,
-};
+use std::convert::TryFrom;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
-use empath_common::{
-    Signal,
-    context::{Context, ContextMetadata},
-    internal,
-};
+use empath_common::context::{Context, ContextMetadata};
+use empath_common::{Signal, internal};
 use empath_tracing::traced;
 use serde::Deserialize;
-use tokio::{
-    fs,
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
-};
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 
-use crate::{
-    SpoolError, ValidationError,
-    observability::{SpoolObserver, default_spool_observer},
-    r#trait::{BackingStore, MessageMetadata, SpoolScanCursor, SpoolScanMode},
-    types::SpooledMessageId,
-};
+use crate::observability::{SpoolObserver, default_spool_observer};
+use crate::r#trait::{BackingStore, MessageMetadata, SpoolScanCursor, SpoolScanMode};
+use crate::types::SpooledMessageId;
+use crate::{SpoolError, ValidationError};
 
 const MANIFEST_FILENAME: &str = ".spool_manifest";
 

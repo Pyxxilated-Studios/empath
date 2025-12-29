@@ -4,19 +4,19 @@
 //! logic (validation, spooling, module dispatch) from protocol state management
 //! (FSM) and I/O orchestration.
 
-use std::{
-    borrow::Cow,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-};
+use std::borrow::Cow;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use empath_common::{
-    context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY},
-    status::Status,
-};
+use empath_common::audit::AuditLogger;
+#[cfg(test)]
+use empath_common::audit::AuditLoggerBuilder;
+use empath_common::context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY};
+use empath_common::status::Status;
 use empath_ffi::modules;
+use empath_metrics::try_metrics;
 use empath_spool::BackingStore;
 use opentelemetry::trace::TraceContextExt as _;
 use sha2::{Digest, Sha256};
@@ -157,7 +157,7 @@ pub trait SmtpTransactionHandler: Send + Sync {
 ///     SpfConfig::default(),
 ///     false,
 ///     false,
-///     empath_common::audit::AuditLoggerBuilder::default().build(),
+///     AuditLoggerBuilder::default().build(),
 /// );
 /// // Use handler with session orchestrator
 /// # }
@@ -176,7 +176,7 @@ pub struct DefaultSmtpTransactionHandler {
     /// Whether to enforce DMARC policy on failure
     dmarc_enforce: bool,
     /// Audit logger for message lifecycle events
-    audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
+    audit_logger: Arc<dyn AuditLogger>,
 }
 
 impl DefaultSmtpTransactionHandler {
@@ -199,7 +199,7 @@ impl DefaultSmtpTransactionHandler {
         spf_config: crate::spf::SpfConfig,
         require_dkim: bool,
         dmarc_enforce: bool,
-        audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
+        audit_logger: Arc<dyn AuditLogger>,
     ) -> Self {
         Self {
             spool,
@@ -518,7 +518,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         );
 
         if let Some(action) = dmarc_action {
-            if let Some(metrics) = empath_metrics::try_metrics() {
+            if let Some(metrics) = try_metrics() {
                 metrics.smtp.record_dmarc_enforcement(
                     action,
                     dmarc_policy.as_deref(),
@@ -544,7 +544,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 .transaction
                 .get("dkim_result")
                 .map_or("none", String::as_str);
-            if let Some(metrics) = empath_metrics::try_metrics() {
+            if let Some(metrics) = try_metrics() {
                 metrics.smtp.record_dkim_rejection(result);
             }
             tracing::warn!(dkim_result = %result, "DKIM verification failed");
@@ -608,7 +608,7 @@ impl DefaultSmtpTransactionHandler {
             ctx.transaction.insert(Cow::Borrowed("dkim_error"), error);
         }
 
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             metrics.smtp.record_dkim_verification(evaluation.result);
         }
 
@@ -663,7 +663,7 @@ impl DefaultSmtpTransactionHandler {
             ctx.transaction.insert(Cow::Borrowed("arc_error"), error);
         }
 
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             metrics.smtp.record_arc_verification(
                 evaluation.result,
                 evaluation.replayed,
@@ -794,7 +794,7 @@ impl DefaultSmtpTransactionHandler {
             ctx.transaction.insert(Cow::Borrowed("dmarc_error"), error);
         }
 
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             metrics.smtp.record_dmarc_evaluation(
                 evaluation.result.as_str(),
                 evaluation.policy.as_deref(),
@@ -869,7 +869,7 @@ impl DefaultSmtpTransactionHandler {
             DMARC_SAMPLE_RATE_BPS.to_string(),
         );
 
-        if let Some(metrics) = empath_metrics::try_metrics() {
+        if let Some(metrics) = try_metrics() {
             metrics
                 .smtp
                 .record_dmarc_sample(&sender, client_ip, &policy);
@@ -964,10 +964,8 @@ pub const fn requires_validation(state: &State) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use empath_common::{
-        address::{Address, AddressList},
-        address_parser,
-    };
+    use empath_common::address::{Address, AddressList};
+    use empath_common::address_parser;
 
     use super::*;
     use crate::MailParameters;
@@ -976,7 +974,7 @@ mod tests {
 
     #[test]
     fn test_default_handler_creation() -> TestResult {
-        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
+        let audit_logger = AuditLoggerBuilder::default().build();
         let handler = DefaultSmtpTransactionHandler::new(
             None,
             "127.0.0.1:1234"
@@ -998,7 +996,7 @@ mod tests {
         use empath_spool::MemoryBackingStore;
 
         let spool = Arc::new(MemoryBackingStore::default());
-        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
+        let audit_logger = AuditLoggerBuilder::default().build();
         let handler = DefaultSmtpTransactionHandler::new(
             Some(spool),
             "127.0.0.1:1234"
@@ -1061,7 +1059,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn received_header_is_inserted_before_body() -> TestResult {
-        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
+        let audit_logger = AuditLoggerBuilder::default().build();
         let handler = DefaultSmtpTransactionHandler::new(
             None,
             "203.0.113.5:2525"
@@ -1114,14 +1112,14 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_spf_evaluation_integration() -> TestResult {
-        use std::{net::IpAddr, sync::Mutex};
+        use std::net::IpAddr;
+        use std::sync::Mutex;
 
-        use empath_common::{address_parser::Mailbox, envelope::Envelope};
+        use empath_common::address_parser::Mailbox;
+        use empath_common::envelope::Envelope;
 
-        use crate::spf::{
-            MailServer, SpfConfig, SpfResult,
-            dns::{DnsLookupError, SpfDnsResolver},
-        };
+        use crate::spf::dns::{DnsLookupError, SpfDnsResolver};
+        use crate::spf::{MailServer, SpfConfig, SpfResult};
 
         // Mock DNS resolver that returns SPF records
         #[derive(Debug)]
@@ -1193,7 +1191,7 @@ mod tests {
             .map_err(|err| err.to_string())?;
 
         // Create transaction handler with SPF resolver
-        let audit_logger = empath_common::audit::AuditLoggerBuilder::default().build();
+        let audit_logger = AuditLoggerBuilder::default().build();
         let mut handler = DefaultSmtpTransactionHandler::new(
             None,
             "192.0.2.100:1234"

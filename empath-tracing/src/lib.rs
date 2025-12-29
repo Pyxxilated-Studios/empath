@@ -4,7 +4,8 @@ extern crate proc_macro;
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote, quote_spanned};
-use syn::{ItemFn, Stmt, parse::Parse, parse_macro_input, parse_quote};
+use syn::parse::Parse;
+use syn::{ItemFn, Stmt, parse_macro_input, parse_quote};
 
 #[derive(PartialEq, Eq, Clone, Copy, Default)]
 enum Precision {

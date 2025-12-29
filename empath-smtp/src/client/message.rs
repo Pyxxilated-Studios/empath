@@ -1,11 +1,9 @@
 //! Email message builder with support for headers, body, and MIME attachments.
 
-use std::{
-    collections::HashMap,
-    io::Write,
-    path::Path,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
+use std::io::Write;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::error::{ClientError, Result};
 

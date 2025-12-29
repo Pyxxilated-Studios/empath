@@ -1,7 +1,8 @@
 use ipnetwork::{Ipv4Network, Ipv6Network};
 use serde::{Deserialize, Serialize};
 
-use super::{error::SpfError, qualifiers::Qualifier};
+use super::error::SpfError;
+use super::qualifiers::Qualifier;
 
 /// Domain and CIDR specification for SPF mechanisms
 #[derive(Debug, Default)]

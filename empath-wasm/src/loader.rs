@@ -3,30 +3,22 @@
 //! This module handles loading WASM modules, managing the Wasmtime engine and store,
 //! and executing callbacks with resource limits and timeouts.
 
-use std::{
-    path::Path,
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
-use empath_common::{context::Context, internal};
-use wasmtime::{
-    Config, Engine, Store,
-    component::{Component, Linker},
-};
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder, p2::add_to_linker_sync};
+use empath_common::context::Context;
+use empath_common::internal;
+use wasmtime::component::{Component, Linker};
+use wasmtime::{Config, Engine, Store};
+use wasmtime_wasi::p2::add_to_linker_sync;
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
-use crate::{
-    bindings::{
-        Validator,
-        exports::empath::validator::{events as wit_events, validation as wit},
-    },
-    error::{Result, WasmError},
-    host::WasmStore,
-};
+use crate::bindings::Validator;
+use crate::bindings::exports::empath::validator::{events as wit_events, validation as wit};
+use crate::error::{Result, WasmError};
+use crate::host::WasmStore;
 
 /// Default timeout for callback execution (5 seconds)
 const DEFAULT_TIMEOUT_SECS: u64 = 5;
@@ -110,8 +102,8 @@ struct DeterministicRng {
 }
 
 impl DeterministicRng {
-    const MULTIPLIER: u64 = 6_364_136_223_846_793_005;
     const INCREMENT: u64 = 1;
+    const MULTIPLIER: u64 = 6_364_136_223_846_793_005;
 
     const fn new(seed: u64) -> Self {
         Self { state: seed }

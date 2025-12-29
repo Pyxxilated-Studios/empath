@@ -1,12 +1,12 @@
-use std::{collections::HashMap, fmt::Debug, net::SocketAddr};
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::net::SocketAddr;
 
 use serde::Deserialize;
 use tokio::net::TcpStream;
 
-use crate::{
-    Signal,
-    error::{ProtocolError, SessionError},
-};
+use crate::Signal;
+use crate::error::{ProtocolError, SessionError};
 
 pub trait SessionHandler {
     fn run(
@@ -29,7 +29,6 @@ pub trait Protocol: Default + Send + Sync {
         args: Self::Args,
     ) -> Self::Session;
 
-    ///
     /// Validate the arguments being provided to the protocol
     ///
     /// # Errors
@@ -37,7 +36,6 @@ pub trait Protocol: Default + Send + Sync {
     ///
     /// For example, when providing TLS certificates/keys it may be necessary to check that the
     /// paths provided actually exist
-    ///
     fn validate(&mut self, args: &mut Self::Args) -> Result<(), ProtocolError>;
 
     fn ty() -> &'static str;

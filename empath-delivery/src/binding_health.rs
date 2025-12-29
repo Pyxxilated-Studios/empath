@@ -1,9 +1,7 @@
 //! Outbound binding health tracking and circuit breaker.
 
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use dashmap::DashMap;
 use parking_lot::Mutex;

@@ -1,8 +1,10 @@
 //! Type definitions for delivery queue and processor
 
-use std::{sync::Arc, time::SystemTime};
+use std::sync::Arc;
+use std::time::SystemTime;
 
-use empath_common::{DeliveryStatus, context::DeliveryPriorityTier};
+use empath_common::context::DeliveryPriorityTier;
+use empath_common::{DeliveryAttempt, DeliveryStatus, Domain};
 use empath_spool::SpooledMessageId;
 use serde::{Deserialize, Serialize};
 
@@ -221,9 +223,9 @@ pub struct DeliveryInfo {
     /// Current delivery status
     pub status: DeliveryStatus,
     /// List of delivery attempts
-    pub attempts: Vec<empath_common::DeliveryAttempt>,
+    pub attempts: Vec<DeliveryAttempt>,
     /// Recipient domain for this delivery
-    pub recipient_domain: empath_common::Domain,
+    pub recipient_domain: Domain,
     /// Resolved mail servers (sorted by priority, Arc for cheap cloning)
     pub mail_servers: Arc<Vec<MailServer>>,
     /// Index of the current mail server being tried
@@ -246,7 +248,7 @@ impl DeliveryInfo {
             message_id,
             status: DeliveryStatus::Pending,
             attempts: Vec::new(),
-            recipient_domain: empath_common::Domain::new(recipient_domain),
+            recipient_domain: Domain::new(recipient_domain),
             mail_servers: Arc::new(Vec::new()),
             current_server_index: 0,
             priority_tier: DeliveryPriorityTier::default(),
@@ -278,7 +280,7 @@ impl DeliveryInfo {
     }
 
     /// Record a delivery attempt
-    pub fn record_attempt(&mut self, attempt: empath_common::DeliveryAttempt) {
+    pub fn record_attempt(&mut self, attempt: DeliveryAttempt) {
         self.attempts.push(attempt);
     }
 
@@ -325,7 +327,7 @@ impl DeliveryInfoBuilder {
     }
 
     #[must_use]
-    pub fn with_attempts(mut self, attempts: Vec<empath_common::DeliveryAttempt>) -> Self {
+    pub fn with_attempts(mut self, attempts: Vec<DeliveryAttempt>) -> Self {
         self.info.attempts = attempts;
         self
     }

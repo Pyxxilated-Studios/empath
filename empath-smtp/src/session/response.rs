@@ -1,11 +1,10 @@
-use empath_common::{context, status::Status, tracing};
+use empath_common::status::Status;
+use empath_common::{context, tracing};
+use empath_ffi::modules::{self, Ev, Event as ModuleEvent};
 use empath_tracing::traced;
 
-use crate::{
-    State,
-    session::{Event, Response, Session},
-    state,
-};
+use crate::session::{Event, Response, Session};
+use crate::{State, state};
 
 impl Session {
     /// Format and return the response to send to the client
@@ -23,10 +22,7 @@ impl Session {
         if let Some((status, _)) = &validate_context.response {
             // Dispatch error event for 4xx and 5xx responses
             if status.is_temporary() || status.is_permanent() {
-                let _ = empath_ffi::modules::dispatch(
-                    empath_ffi::modules::Event::Event(empath_ffi::modules::Ev::SmtpError),
-                    validate_context,
-                );
+                let _ = modules::dispatch(ModuleEvent::Event(Ev::SmtpError), validate_context);
             }
         }
 

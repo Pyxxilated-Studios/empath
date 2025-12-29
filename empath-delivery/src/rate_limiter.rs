@@ -20,13 +20,12 @@
 //! - Then limited to 10/sec sustained rate
 //! ```
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use empath_common::{domain::Domain, tracing};
+use empath_common::domain::Domain;
+use empath_common::tracing;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for rate limiting

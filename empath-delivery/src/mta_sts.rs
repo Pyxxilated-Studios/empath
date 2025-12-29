@@ -3,17 +3,17 @@
 //! This performs DNS TXT lookups for `_mta-sts.<domain>`, fetches the HTTPS
 //! policy, and parses enforcement rules for delivery.
 
-use std::{
-    fmt::{self, Display},
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::fmt::{self, Display};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use http_body_util::{BodyExt, Empty};
-use hyper::{StatusCode, Uri, body::Bytes};
+use hyper::body::Bytes;
+use hyper::{StatusCode, Uri};
 use hyper_rustls::HttpsConnectorBuilder;
-use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+use hyper_util::client::legacy::Client;
+use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
 
 use crate::dns::{DnsError, DnsResolver};

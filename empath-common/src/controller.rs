@@ -3,7 +3,10 @@ use futures_util::future::join_all;
 use serde::Deserialize;
 use tokio::sync::broadcast::Receiver;
 
-use crate::{Signal, error::ControllerError, internal, listener::Listener, traits::Protocol};
+use crate::error::ControllerError;
+use crate::listener::Listener;
+use crate::traits::Protocol;
+use crate::{Signal, internal};
 
 #[derive(Default, Deserialize)]
 pub struct Controller<Proto: Protocol> {
@@ -25,12 +28,10 @@ impl<Proto: Protocol> Controller<Proto> {
         }
     }
 
-    ///
     /// Initialise this controller
     ///
     /// # Errors
     /// Any errors initialising this controller
-    ///
     pub fn init(&mut self) -> Result<(), ControllerError> {
         internal!("Initialising Controller for {}", Proto::ty());
 
@@ -40,10 +41,8 @@ impl<Proto: Protocol> Controller<Proto> {
             .map_err(ControllerError::Protocol)
     }
 
-    ///
     /// # Errors
     /// If any of the listeners have a failure
-    ///
     #[traced(instrument(level = tracing::Level::TRACE, skip(self, signals)), timing(precision = "s"))]
     pub async fn control(self, signals: Vec<Receiver<Signal>>) -> Result<(), ControllerError> {
         join_all(

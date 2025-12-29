@@ -1,33 +1,30 @@
-use std::{
-    borrow::Cow,
-    collections::BTreeMap,
-    io as std_io,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::io as std_io;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ahash::AHashMap;
-use empath_common::{context::Capability, email::BannerHostname, tracing};
+use empath_common::audit::{AuditLogger, AuditLoggerBuilder};
+use empath_common::context::Capability;
+use empath_common::email::BannerHostname;
+use empath_common::tracing;
+use empath_spool::BackingStore;
 use empath_tracing::traced;
 use hex::encode as hex_encode;
 use parking_lot::RwLock;
-use serde::{Deserialize, Deserializer, de::Error as _};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
-use tokio_rustls::rustls::{
-    ServerConfig,
-    pki_types::{
-        CertificateDer, PrivateKeyDer,
-        pem::{Error as PemError, PemObject},
-    },
-};
+use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::pki_types::pem::{Error as PemError, PemObject};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use x509_parser::prelude::{X509Certificate, parse_x509_certificate};
 
-use crate::{
-    State,
-    extensions::Extension,
-    transaction_handler::{DefaultSmtpTransactionHandler, SmtpTransactionHandler},
-};
+use crate::State;
+use crate::extensions::Extension;
+use crate::transaction_handler::{DefaultSmtpTransactionHandler, SmtpTransactionHandler};
 
 // Submodules containing implementation details
 mod io;
@@ -632,14 +629,14 @@ pub struct SessionConfig {
     pub tls_context: Option<TlsContext>,
     pub require_dkim: bool,
     pub dmarc_enforce: bool,
-    pub spool: Option<Arc<dyn empath_spool::BackingStore>>,
+    pub spool: Option<Arc<dyn BackingStore>>,
     pub banner: BannerHostname,
     pub init_context: AHashMap<Cow<'static, str>, String>,
     pub timeouts: crate::SmtpServerTimeouts,
     pub spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
     pub spf_config: crate::spf::SpfConfig,
     pub transaction_handler: Option<Box<dyn SmtpTransactionHandler>>,
-    pub audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
+    pub audit_logger: Option<Arc<dyn AuditLogger>>,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -686,14 +683,14 @@ pub struct SessionConfigBuilder {
     tls_context: Option<TlsContext>,
     require_dkim: bool,
     dmarc_enforce: bool,
-    spool: Option<Arc<dyn empath_spool::BackingStore>>,
+    spool: Option<Arc<dyn BackingStore>>,
     banner: BannerHostname,
     init_context: AHashMap<Cow<'static, str>, String>,
     timeouts: crate::SmtpServerTimeouts,
     spf_dns_resolver: Option<Arc<dyn crate::spf::SpfDnsResolver>>,
     spf_config: crate::spf::SpfConfig,
     transaction_handler: Option<Box<dyn SmtpTransactionHandler>>,
-    audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
+    audit_logger: Option<Arc<dyn AuditLogger>>,
 }
 
 impl std::fmt::Debug for SessionConfigBuilder {
@@ -787,7 +784,7 @@ impl SessionConfigBuilder {
 
     /// Set the spool controller for message persistence
     #[must_use]
-    pub fn with_spool(mut self, spool: Option<Arc<dyn empath_spool::BackingStore>>) -> Self {
+    pub fn with_spool(mut self, spool: Option<Arc<dyn BackingStore>>) -> Self {
         self.spool = spool;
         self
     }
@@ -843,10 +840,7 @@ impl SessionConfigBuilder {
     }
 
     #[must_use]
-    pub fn with_audit_logger(
-        mut self,
-        audit_logger: Option<Arc<dyn empath_common::audit::AuditLogger>>,
-    ) -> Self {
+    pub fn with_audit_logger(mut self, audit_logger: Option<Arc<dyn AuditLogger>>) -> Self {
         self.audit_logger = audit_logger;
         self
     }
@@ -909,7 +903,7 @@ pub struct Session {
     pub(crate) max_message_size: usize,
 
     /// Audit logger for message lifecycle events.
-    pub(crate) audit_logger: Arc<dyn empath_common::audit::AuditLogger>,
+    pub(crate) audit_logger: Arc<dyn AuditLogger>,
 }
 
 impl Session {
@@ -949,7 +943,7 @@ impl Session {
 
         let audit_logger = config
             .audit_logger
-            .unwrap_or_else(|| empath_common::audit::AuditLoggerBuilder::default().build());
+            .unwrap_or_else(|| AuditLoggerBuilder::default().build());
 
         // Use provided transaction handler or create default
         let transaction_handler = config.transaction_handler.unwrap_or_else(|| {
@@ -982,31 +976,26 @@ impl Session {
 mod test {
     use std::sync::{Arc, RwLock};
 
-    use empath_common::{
-        address::{Address, AddressList},
-        context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY},
-        status::Status,
-    };
-    use empath_ffi::modules::{self, MODULE_STORE, Module, validate::Event};
+    use empath_common::address::{Address, AddressList};
+    use empath_common::address_parser;
+    use empath_common::context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY};
+    use empath_common::email::BannerHostname;
+    use empath_common::status::Status;
+    use empath_ffi::modules::validate::Event;
+    use empath_ffi::modules::{self, MODULE_STORE, Module};
     use empath_spool::{BackingStore, TestBackingStore};
-    use opentelemetry::{
-        Context as OtelContext,
-        trace::{
-            SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState,
-            TracerProvider as _,
-        },
+    use opentelemetry::Context as OtelContext;
+    use opentelemetry::trace::{
+        SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState, TracerProvider as _,
     };
     use opentelemetry_sdk::trace::SdkTracerProvider;
     use tracing::Instrument;
     use tracing_opentelemetry::{OpenTelemetryLayer, OpenTelemetrySpanExt as _};
     use tracing_subscriber::prelude::*;
 
-    use crate::{
-        State,
-        session::{Session, SessionConfig},
-        state,
-        transaction_handler::SmtpTransactionHandler,
-    };
+    use crate::session::{Session, SessionConfig};
+    use crate::transaction_handler::SmtpTransactionHandler;
+    use crate::{State, state};
 
     type TestResult = std::result::Result<(), String>;
 
@@ -1016,8 +1005,7 @@ mod test {
         // Initialize modules to add core module
         modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner =
-            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
+        let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -1047,8 +1035,7 @@ mod test {
         // Initialize modules to add core module
         modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner =
-            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
+        let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -1089,8 +1076,7 @@ mod test {
     async fn supports_extended_commands() -> TestResult {
         modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner =
-            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
+        let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -1173,8 +1159,7 @@ mod test {
         // Initialize modules to add core module
         modules::init(vec![]).map_err(|err| err.to_string())?;
 
-        let banner =
-            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
+        let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -1201,15 +1186,13 @@ mod test {
             sender: None,
             params: crate::MailParameters::new(),
         });
-        let sender_mailbox =
-            empath_common::address_parser::parse_forward_path("<test@example.com>")
-                .map_err(|err| format!("{err:?}"))?;
+        let sender_mailbox = address_parser::parse_forward_path("<test@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         Arc::make_mut(&mut context.envelope)
             .sender_mut()
             .replace(Address::from(sender_mailbox));
-        let recipient_mailbox =
-            empath_common::address_parser::parse_forward_path("<recipient@example.com>")
-                .map_err(|err| format!("{err:?}"))?;
+        let recipient_mailbox = address_parser::parse_forward_path("<recipient@example.com>")
+            .map_err(|err| format!("{err:?}"))?;
         Arc::make_mut(&mut context.envelope)
             .recipients_mut()
             .replace(AddressList::from(vec![Address::from(recipient_mailbox)]));
@@ -1285,8 +1268,7 @@ mod test {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn modules() -> TestResult {
-        let banner =
-            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
+        let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,
@@ -1347,13 +1329,9 @@ mod test {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_injectable_transaction_handler() -> TestResult {
-        use std::{
-            borrow::Cow,
-            sync::{
-                Arc,
-                atomic::{AtomicUsize, Ordering},
-            },
-        };
+        use std::borrow::Cow;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         use async_trait::async_trait;
 
@@ -1391,8 +1369,7 @@ mod test {
             }
         }
 
-        let banner =
-            empath_common::email::BannerHostname::new("testing").map_err(|err| err.to_string())?;
+        let banner = BannerHostname::new("testing").map_err(|err| err.to_string())?;
         let mut context = Context {
             banner: banner.as_str().into(),
             max_message_size: 0,

@@ -6,25 +6,22 @@
 //! - Context modifications (session + transaction)
 //! - Error handling and edge cases
 
-use std::{
-    borrow::Cow,
-    env,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::{Arc, OnceLock},
-    time::{Duration, SystemTime},
-};
+use std::borrow::Cow;
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, SystemTime};
 
 use ahash::AHashMap;
-use empath_common::{
-    address::{Address, AddressList},
-    address_parser::parse_forward_path,
-    context::Context,
-    envelope::Envelope,
-    message_id::SpooledMessageId,
-};
+use empath_common::address::{Address, AddressList};
+use empath_common::address_parser::parse_forward_path;
+use empath_common::context::Context;
+use empath_common::envelope::Envelope;
+use empath_common::message_id::SpooledMessageId;
 use empath_wasm::{DeterministicWasiConfig, WasmError, WasmModule};
-use proptest::{prelude::*, test_runner::TestCaseError};
+use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 use tokio::runtime::Runtime;
 
 type TestResult = Result<(), String>;

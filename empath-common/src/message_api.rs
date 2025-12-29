@@ -1,8 +1,10 @@
-use std::{borrow::Cow, ffi::CStr};
+use std::borrow::Cow;
+use std::ffi::CStr;
 
 use ulid::Ulid;
 
-use crate::{email::EmailAddress, error::MessageParseError};
+use crate::email::EmailAddress;
+use crate::error::MessageParseError;
 
 /// Maximum size and count constraints for header mutations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
