@@ -250,7 +250,8 @@ For production deployments:
 3. Configure proper TLS certificates
 4. Set appropriate resource limits in compose file
 5. Use secrets management for sensitive configuration
-6. Enable OTLP API key auth in `metrics.api_key` for collector deployments
+6. Replace the sample control socket tokens in `control_auth` before production
+7. Enable OTLP API key auth in `metrics.api_key` for collector deployments
 
 See the main repository `CLAUDE.md` for detailed deployment guidance.
 

@@ -198,22 +198,23 @@ Empath (
             ),
         },
     },
-    // Control socket authentication (optional)
-    // control_auth: (
-    //     enabled: true,
-    //     tokens: [
-    //         (
-    //             // SHA-256 hash of "read-token"
-    //             hash: "0328587016f9e316b9c31c94f944a2c453e1494a564062b5eab68039c75b58bf",
-    //             role: "read_only",
-    //         ),
-    //         (
-    //             // SHA-256 hash of "admin-token"
-    //             hash: "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a",
-    //             role: "admin",
-    //         ),
-    //     ],
-    // ),
+    // Control socket authentication
+    // Replace these sample hashes before production use.
+    control_auth: (
+        enabled: true,
+        tokens: [
+            (
+                // SHA-256 hash of "read-token"
+                hash: "0328587016f9e316b9c31c94f944a2c453e1494a564062b5eab68039c75b58bf",
+                role: "read_only",
+            ),
+            (
+                // SHA-256 hash of "admin-token"
+                hash: "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a",
+                role: "admin",
+            ),
+        ],
+    ),
     // Control socket command rate limiting (optional)
     // control_rate_limit: (
     //     enabled: true,
