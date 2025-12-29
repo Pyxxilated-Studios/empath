@@ -108,102 +108,25 @@ pub struct MtaStsPolicy {
     pub max_age: u64,
 }
 
+impl MtaStsPolicy {
+    #[must_use]
+    pub fn matches_mx(&self, host: &str) -> bool {
+        let host = normalize_host(host);
+        self.mx.iter().any(|pattern| {
+            pattern.strip_prefix("*.").map_or_else(
+                || host == *pattern,
+                |suffix| host == suffix || host.ends_with(&format!(".{suffix}")),
+            )
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MtaStsEvaluation {
     pub result: MtaStsResult,
     pub policy_id: Option<String>,
     pub policy: Option<MtaStsPolicy>,
     pub error: Option<String>,
-}
-
-pub async fn evaluate(resolver: &dyn DnsResolver, domain: &str) -> MtaStsEvaluation {
-    let lookup_domain = format!("_mta-sts.{domain}");
-    let txt_lookup = match resolver.txt_lookup(&lookup_domain).await {
-        Ok(records) => records,
-        Err(err) => {
-            let result = if err.is_temporary() {
-                MtaStsResult::TempError
-            } else if matches!(err, DnsError::DomainNotFound(_)) {
-                MtaStsResult::None
-            } else {
-                MtaStsResult::PermError
-            };
-            return MtaStsEvaluation {
-                result,
-                policy_id: None,
-                policy: None,
-                error: Some(err.to_string()),
-            };
-        }
-    };
-
-    let sts_records: Vec<&str> = txt_lookup
-        .iter()
-        .map(String::as_str)
-        .filter(|record| {
-            record
-                .trim_start()
-                .to_ascii_lowercase()
-                .starts_with("v=stsv1")
-        })
-        .collect();
-
-    let Some(record_value) = (match sts_records.len() {
-        0 => None,
-        1 => Some(sts_records[0]),
-        _ => {
-            return MtaStsEvaluation {
-                result: MtaStsResult::PermError,
-                policy_id: None,
-                policy: None,
-                error: Some("Multiple MTA-STS records found".to_string()),
-            };
-        }
-    }) else {
-        return MtaStsEvaluation {
-            result: MtaStsResult::None,
-            policy_id: None,
-            policy: None,
-            error: None,
-        };
-    };
-
-    let policy_id = match parse_dns_record(record_value) {
-        Ok(policy_id) => policy_id,
-        Err(err) => {
-            return MtaStsEvaluation {
-                result: MtaStsResult::PermError,
-                policy_id: None,
-                policy: None,
-                error: Some(err),
-            };
-        }
-    };
-
-    match fetch_policy(domain).await {
-        Ok(policy) => MtaStsEvaluation {
-            result: MtaStsResult::Present,
-            policy_id: Some(policy_id),
-            policy: Some(policy),
-            error: None,
-        },
-        Err(err) => MtaStsEvaluation {
-            result: MtaStsResult::TempError,
-            policy_id: Some(policy_id),
-            policy: None,
-            error: Some(err),
-        },
-    }
-}
-
-pub fn mx_matches(policy: &MtaStsPolicy, host: &str) -> bool {
-    let host = normalize_host(host);
-    policy.mx.iter().any(|pattern| {
-        pattern.strip_prefix("*.").map_or_else(
-            || host == *pattern,
-            |suffix| host == suffix || host.ends_with(&format!(".{suffix}")),
-        )
-    })
 }
 
 async fn fetch_policy(domain: &str) -> Result<MtaStsPolicy, String> {
@@ -354,10 +277,95 @@ pub struct MtaStsPolicyCache {
 
 impl MtaStsPolicyCache {
     #[must_use]
+    pub fn builder() -> MtaStsPolicyCacheBuilder {
+        MtaStsPolicyCacheBuilder::new()
+    }
+
+    #[must_use]
     pub fn new(config: MtaStsConfig) -> Self {
         Self {
             entries: Arc::new(DashMap::new()),
             config,
+        }
+    }
+
+    pub async fn evaluate(&self, resolver: &dyn DnsResolver, domain: &str) -> MtaStsEvaluation {
+        let lookup_domain = format!("_mta-sts.{domain}");
+        let txt_lookup = match resolver.txt_lookup(&lookup_domain).await {
+            Ok(records) => records,
+            Err(err) => {
+                let result = if err.is_temporary() {
+                    MtaStsResult::TempError
+                } else if matches!(err, DnsError::DomainNotFound(_)) {
+                    MtaStsResult::None
+                } else {
+                    MtaStsResult::PermError
+                };
+                return MtaStsEvaluation {
+                    result,
+                    policy_id: None,
+                    policy: None,
+                    error: Some(err.to_string()),
+                };
+            }
+        };
+
+        let sts_records: Vec<&str> = txt_lookup
+            .iter()
+            .map(String::as_str)
+            .filter(|record| {
+                record
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("v=stsv1")
+            })
+            .collect();
+
+        let Some(record_value) = (match sts_records.len() {
+            0 => None,
+            1 => Some(sts_records[0]),
+            _ => {
+                return MtaStsEvaluation {
+                    result: MtaStsResult::PermError,
+                    policy_id: None,
+                    policy: None,
+                    error: Some("Multiple MTA-STS records found".to_string()),
+                };
+            }
+        }) else {
+            return MtaStsEvaluation {
+                result: MtaStsResult::None,
+                policy_id: None,
+                policy: None,
+                error: None,
+            };
+        };
+
+        let policy_id = match parse_dns_record(record_value) {
+            Ok(policy_id) => policy_id,
+            Err(err) => {
+                return MtaStsEvaluation {
+                    result: MtaStsResult::PermError,
+                    policy_id: None,
+                    policy: None,
+                    error: Some(err),
+                };
+            }
+        };
+
+        match fetch_policy(domain).await {
+            Ok(policy) => MtaStsEvaluation {
+                result: MtaStsResult::Present,
+                policy_id: Some(policy_id),
+                policy: Some(policy),
+                error: None,
+            },
+            Err(err) => MtaStsEvaluation {
+                result: MtaStsResult::TempError,
+                policy_id: Some(policy_id),
+                policy: None,
+                error: Some(err),
+            },
         }
     }
 
@@ -378,7 +386,7 @@ impl MtaStsPolicyCache {
             };
         }
 
-        let evaluation = evaluate(resolver, domain).await;
+        let evaluation = self.evaluate(resolver, domain).await;
         if let Some(policy) = &evaluation.policy {
             let ttl = policy.max_age.clamp(
                 self.config.min_cache_age_secs,
@@ -401,6 +409,48 @@ impl MtaStsPolicyCache {
         }
 
         evaluation
+    }
+}
+
+pub struct MtaStsPolicyCacheBuilder {
+    config: MtaStsConfig,
+}
+
+impl Default for MtaStsPolicyCacheBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MtaStsPolicyCacheBuilder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            config: MtaStsConfig::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.config.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_min_cache_age_secs(mut self, min_cache_age_secs: u64) -> Self {
+        self.config.min_cache_age_secs = min_cache_age_secs;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_max_cache_age_secs(mut self, max_cache_age_secs: u64) -> Self {
+        self.config.max_cache_age_secs = max_cache_age_secs;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> MtaStsPolicyCache {
+        MtaStsPolicyCache::new(self.config)
     }
 }
 

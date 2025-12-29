@@ -279,7 +279,11 @@ impl From<DeliveryProcessorConfig> for DeliveryProcessor {
             circuit_breaker: RwLock::new(config.circuit_breaker),
             cleanup_interval_secs: config.cleanup_interval_secs,
             max_cleanup_attempts: config.max_cleanup_attempts,
-            mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::new(config.mta_sts),
+            mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::builder()
+                .with_enabled(config.mta_sts.enabled)
+                .with_min_cache_age_secs(config.mta_sts.min_cache_age_secs)
+                .with_max_cache_age_secs(config.mta_sts.max_cache_age_secs)
+                .build(),
             smtp_pool_state: crate::smtp_pool::SmtpClientPool::new(config.smtp_pool),
             audit_logger: AuditLoggerBuilder::default().build(),
             ..Default::default()
@@ -289,6 +293,7 @@ impl From<DeliveryProcessorConfig> for DeliveryProcessor {
 
 impl Default for DeliveryProcessor {
     fn default() -> Self {
+        let mta_sts = crate::mta_sts::MtaStsConfig::default();
         Self {
             scan_interval_secs: default_scan_interval(),
             process_interval_secs: default_process_interval(),
@@ -298,7 +303,7 @@ impl Default for DeliveryProcessor {
             accept_invalid_certs: false,
             tls_policy: TlsPolicy::default(),
             dns: DnsConfig::default(),
-            mta_sts: crate::mta_sts::MtaStsConfig::default(),
+            mta_sts: mta_sts.clone(),
             domains: DomainConfigRegistry::default(),
             outbound_bindings: OutboundBindingRegistry::default(),
             smtp_timeouts: RwLock::new(SmtpTimeouts::default()),
@@ -311,9 +316,11 @@ impl Default for DeliveryProcessor {
             spool: None,
             queue: DeliveryQueue::new(),
             dns_resolver: None,
-            mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::new(
-                crate::mta_sts::MtaStsConfig::default(),
-            ),
+            mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::builder()
+                .with_enabled(mta_sts.enabled)
+                .with_min_cache_age_secs(mta_sts.min_cache_age_secs)
+                .with_max_cache_age_secs(mta_sts.max_cache_age_secs)
+                .build(),
             cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
             metrics: None,
             smtp_pool_state: crate::smtp_pool::SmtpClientPool::new(SmtpPoolConfig::default()),
@@ -403,7 +410,11 @@ impl DeliveryProcessor {
             Some(resolver)
         };
 
-        self.mta_sts_cache = crate::mta_sts::MtaStsPolicyCache::new(self.mta_sts.clone());
+        self.mta_sts_cache = crate::mta_sts::MtaStsPolicyCache::builder()
+            .with_enabled(self.mta_sts.enabled)
+            .with_min_cache_age_secs(self.mta_sts.min_cache_age_secs)
+            .with_max_cache_age_secs(self.mta_sts.max_cache_age_secs)
+            .build();
 
         // Initialize delivery metrics
         let metrics = DeliveryMetrics::new(10, Vec::default());

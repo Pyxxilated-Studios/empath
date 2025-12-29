@@ -628,7 +628,7 @@ fn resolve_tls_settings(
             cert_validation = CertValidation::Strict;
             failure_policy = TlsFailurePolicy::Temporary;
             let mx_host = extract_host(server_address);
-            if !crate::mta_sts::mx_matches(sts_policy, &mx_host) {
+            if !sts_policy.matches_mx(&mx_host) {
                 return Err(TemporaryError::PolicyViolation(format!(
                     "MTA-STS policy does not permit MX host '{mx_host}'"
                 ))
@@ -962,12 +962,17 @@ async fn maybe_generate_dsn(
     info: &DeliveryInfo,
     error: &DeliveryError,
 ) {
-    if !processor.dsn.enabled || !crate::dsn::should_generate_dsn(context, info, error) {
+    let generator = crate::dsn::DsnGenerator::builder()
+        .with_enabled(processor.dsn.enabled)
+        .with_reporting_mta(processor.dsn.reporting_mta.clone())
+        .with_postmaster(processor.dsn.postmaster.clone())
+        .build();
+    if !generator.should_generate(context, info, error) {
         return;
     }
 
-    let request = crate::dsn::DsnRequest::new(context, info, error, &processor.dsn);
-    match crate::dsn::generate_dsn(&request) {
+    let request = crate::dsn::DsnRequest::new(context, info, error);
+    match generator.generate(&request) {
         Ok(dsn_context) => {
             if let Some(spool) = &processor.spool {
                 let mut dsn_context_mut = dsn_context;
