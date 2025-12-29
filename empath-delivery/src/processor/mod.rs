@@ -442,6 +442,18 @@ impl DeliveryProcessor {
             self.accept_invalid_certs
         );
 
+        if self.tls_policy == TlsPolicy::Disabled {
+            tracing::warn!("Global TLS policy is disabled; outbound deliveries will be plaintext");
+        }
+        for (name, binding) in &self.outbound_bindings.bindings {
+            if !binding.tls.attempt_starttls {
+                tracing::warn!(
+                    binding = %name,
+                    "Outbound binding disables STARTTLS; deliveries via this binding will be plaintext"
+                );
+            }
+        }
+
         Ok(())
     }
 

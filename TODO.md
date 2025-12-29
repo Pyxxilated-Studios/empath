@@ -14,7 +14,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P2 — Delivery Improvements
 - [ ] DEL-01: Binding selection transparency. Add control endpoint to show resolved binding + TLS policy per domain (preview mode).
-- [ ] DEL-02: TLS policy guardrails. Add warnings/logs when TLS is disabled at global or binding scope.
+- [x] DEL-02: TLS policy guardrails. Add warnings/logs when TLS is disabled at global or binding scope.
 
 ## P3 — Post-1.0 Candidates (Shortlist)
 - [ ] 6.1 Message data streaming (see `docs/BACKLOG.md`).
