@@ -49,4 +49,4 @@ jobs:
 
       - name: Generate code coverage
         run: |
-          cargo +nightly tarpaulin --all-features --workspace --timeout 120 --engine llvm --exclude empath-python --exclude simple-validator
+          cargo +nightly tarpaulin --all-features --workspace --timeout 120 --engine llvm --exclude empath-python --exclude simple-validator --exclude empath-wasm --exclude empath-examples

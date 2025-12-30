@@ -6,9 +6,9 @@ wit_bindgen::generate!({
     path: "../../../wit",
 });
 
-use exports::empath::validator::{
-    events::{EventContext, Guest as EventsGuest},
-    validation::{Guest as ValidationGuest, ValidationContext, ValidationResult},
+use exports::empath::validator::events::{EventContext, Guest as EventsGuest};
+use exports::empath::validator::validation::{
+    Guest as ValidationGuest, ValidationContext, ValidationResult,
 };
 
 struct Validator;
@@ -45,11 +45,18 @@ impl ValidationGuest for Validator {
 
 impl EventsGuest for Validator {
     fn on_connection_opened(_ctx: EventContext) {}
+
     fn on_connection_closed(_ctx: EventContext) {}
+
     fn on_delivery_attempt(_ctx: EventContext) {}
+
     fn on_delivery_success(_ctx: EventContext) {}
+
     fn on_delivery_failure(_ctx: EventContext) {}
+
     fn on_smtp_error(_ctx: EventContext) {}
+
     fn on_smtp_message_received(_ctx: EventContext) {}
+
     fn on_dns_lookup(_ctx: EventContext) {}
 }
