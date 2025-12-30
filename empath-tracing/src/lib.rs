@@ -1,5 +1,3 @@
-#![feature(fn_traits, unboxed_closures)]
-
 extern crate proc_macro;
 
 use proc_macro2::TokenStream;
@@ -17,10 +15,8 @@ enum Precision {
     Unspecified,
 }
 
-impl FnOnce<()> for Precision {
-    type Output = syn::Expr;
-
-    extern "rust-call" fn call_once(self, _args: ()) -> Self::Output {
+impl Precision {
+    fn expr(self) -> syn::Expr {
         match self {
             Self::Nanos => {
                 parse_quote!(|d: std::time::Duration| format!("{} ns elapsed", d.as_nanos()))
@@ -164,7 +160,7 @@ pub fn traced(
 
     let id = item_fn.sig.ident.to_string();
     let timing: Stmt = args.timing.map_or_else(|| parse_quote! { tracing::trace!("OnExit: {}", #id); }, |timing| {
-        let timing = timing();
+        let timing = timing.expr();
         parse_quote! { tracing::trace!("OnExit: {} ({})", #id, (#timing)(self.timer.elapsed())); }
     });
 

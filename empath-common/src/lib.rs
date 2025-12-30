@@ -1,5 +1,3 @@
-#![feature(associated_type_defaults, slice_pattern)]
-
 pub mod address;
 pub mod address_parser;
 pub mod audit;

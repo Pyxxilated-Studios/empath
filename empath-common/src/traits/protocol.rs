@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 
@@ -17,8 +16,7 @@ pub trait SessionHandler {
 
 pub trait Protocol: Default + Send + Sync {
     type Session: SessionHandler + Send + Sync + 'static;
-    type Context: Default + Clone + Debug + Send + Sync + for<'a> Deserialize<'a> =
-        HashMap<String, String>;
+    type Context: Default + Clone + Debug + Send + Sync + for<'a> Deserialize<'a>;
     type Args: Default + Clone + Debug + Send + Sync + for<'a> Deserialize<'a>;
 
     fn handle(

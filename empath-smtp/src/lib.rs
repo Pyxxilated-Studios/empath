@@ -258,6 +258,7 @@ impl SmtpArgs {
 
 impl Protocol for Smtp {
     type Args = SmtpArgs;
+    type Context = HashMap<String, String>;
     type Session = SmtpSessionOrchestrator<TcpStream>;
 
     fn ty() -> &'static str {

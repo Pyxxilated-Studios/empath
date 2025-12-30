@@ -71,7 +71,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
-          components: clippy miri
+          components: miri
           targets: wasm32-wasip2
 
       - uses: actions/cache@v5
@@ -103,31 +103,3 @@ jobs:
 
       - name: Test E2E
         run: cargo nextest run --test e2e_basic --test-threads=1
-
-  stable-check:
-    name: Stable compatibility (allowed to fail)
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - uses: rui314/setup-mold@v1
-
-      - name: Install Rust toolchain (stable)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build (stable, allow failure until nightly features removed)
-        run: cargo +stable build --all --all-targets
