@@ -34,16 +34,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
       - name: Install code coverage tool
         run: cargo install --force cargo-tarpaulin
 

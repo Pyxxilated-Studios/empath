@@ -1,7 +1,7 @@
 # Empath MTA
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.93.0--nightly+-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](https://www.rust-lang.org)
 
 **Empath** is a modern Mail Transfer Agent (MTA) written in Rust, designed to be fully functional, easy to debug, and extensible through a dynamic plugin system.
 
@@ -19,7 +19,7 @@
 
 ### Prerequisites
 
-- Rust nightly toolchain (`rustc 1.93.0-nightly` or later, see `rust-toolchain.toml`)
+- Rust nightly toolchain (see `rust-toolchain.toml`)
 - `just` task runner (optional but recommended): `cargo install just`
 
 ### Build and run
@@ -33,6 +33,7 @@ cargo build
 
 # Run the MTA with local config
 cargo run --bin empath -- empath.config.ron
+just run-default
 
 # Control CLI examples
 cargo run --bin empathctl -- queue stats
@@ -53,9 +54,12 @@ just docker-test-email
 
 - **empath**: main binary and controller loop
 - **empath-common**: shared types (contexts, envelope, newtypes, tracing macros)
-- **empath-smtp**: server/session FSM, SMTP commands, control socket
+- **empath-smtp**: server/session FSM and SMTP commands
+- **empath-smtp-client**: outbound SMTP client used by delivery
 - **empath-delivery**: spool-backed queue, MX resolution, retries/DSNs
 - **empath-spool**: file/memory spool backends
+- **empath-control**: control socket IPC and `empathctl` CLI
+- **empath-metrics** / **empath-tracing** / **empath-health**: observability and health checks
 - **empath-ffi** / **empath-wasm**: module interfaces for FFI and WASM
 
 ## Runtime Control
@@ -123,12 +127,19 @@ empath/
 ├── empath/              # Main binary and orchestration
 ├── empath-common/       # Core traits and abstractions
 ├── empath-smtp/         # SMTP protocol implementation
+├── empath-smtp-client/  # Outbound SMTP client
 ├── empath-delivery/     # Outbound delivery processor
 ├── empath-spool/        # Message persistence layer
 ├── empath-control/      # Control socket IPC
 ├── empath-metrics/      # OpenTelemetry metrics
+├── empath-health/       # Health checks and endpoints
+├── empath-python/       # Python module integration
 ├── empath-ffi/          # FFI and plugin system
-├── empath-tracing/      # Tracing macros
+├── empath-tracing/      # Tracing macros/helpers
+├── empath-wasm/         # WASM host integration
+├── empath-wasm-guest/   # WASM guest bindings
+├── empath-wasm-guest-macros/ # WASM guest proc-macros
+├── empath-examples/     # Example modules and integrations
 └── docker/              # Docker development environment
 ```
 
@@ -213,8 +224,8 @@ cargo bench
 - ✅ SMTP operation timeouts (RFC 5321 compliant)
 - ✅ Path traversal prevention in spool
 - ✅ Audit logging for control commands
-- ✅ Metrics export supports API key auth for OTLP collectors
-- ✅ Control socket authentication with roles (recommended for production)
+- ✅ Metrics export supports token auth for OTLP collectors
+- ✅ Control socket token auth (recommended in production configs)
 
 See `CLAUDE.md` for detailed security considerations.
 
@@ -224,7 +235,7 @@ For detailed configuration options, see:
 - `CLAUDE.md` - Complete project documentation
 - `empath.config.ron` - Example configuration
 - `docker/empath.config.ron` - Docker environment config
- - `docs/` - Additional notes (nightly features, completed tasks)
+- `docs/` - Architecture, security, deployment, and troubleshooting notes
 
 ## Contributing
 
@@ -249,7 +260,10 @@ All code must pass `cargo clippy --all-targets --all-features`.
 - **CLAUDE.md** - Comprehensive technical documentation for development
 - **docker/README.md** - Docker environment documentation
 - **TODO.md** - Project roadmap and future work
+- **docs/ARCHITECTURE.md** - System overview and module map
 - **docs/LOAD_TESTING.md** - Load and stress testing guide (Locust/k6)
+- **docs/SECURITY.md** - Threat model, controls, and hardening notes
+- **docs/TROUBLESHOOTING.md** - Common operational issues and fixes
 - **docs/message-mutation.md** - Examples for Python and C modules that mutate message headers/body
 - **docs/DEV_TOOLS.md** - Explanation of `just doctor`, `just check-changed`, and other helper scripts
 
@@ -259,12 +273,7 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ## Roadmap
 
-See [TODO.md](TODO.md) for the complete roadmap. Current priorities:
-
-- 🔴 Authentication for metrics/control endpoints
-- 🟡 Delivery queue polish (pooling, bindings, DR/backups)
-- 🟡 WASM module ergonomics and coverage
-- 🟡 Observability and DNSSEC validation
+See [TODO.md](TODO.md) for the current roadmap and priorities.
 
 ## Acknowledgments
 

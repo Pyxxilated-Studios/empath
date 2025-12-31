@@ -22,7 +22,7 @@ Empath is a modular Mail Transfer Agent (MTA) built with Rust, designed for:
 - **Easy debugging and testing**
 - **Extensibility through plugins** (FFI-based module system)
 - **Production-ready observability** (OpenTelemetry, Prometheus, Grafana)
-- **Embeddability** (produces cdylib for each crate)
+- **Embeddability** (several crates publish `cdylib` for FFI/embedding)
 
 ```mermaid
 graph TB
@@ -85,6 +85,7 @@ graph TD
 
     subgraph "Protocol & Delivery"
         SMTP[empath-smtp<br/>SMTP implementation]
+        SmtpClient[empath-smtp-client<br/>Outbound SMTP client]
         Delivery[empath-delivery<br/>Outbound queue]
         Spool[empath-spool<br/>Persistence]
     end
@@ -115,6 +116,7 @@ graph TD
     SMTP --> Common
     SMTP --> Tracing
     Delivery --> Common
+    Delivery --> SmtpClient
     Delivery --> Spool
     FFI --> Common
     Metrics --> Common
@@ -124,7 +126,8 @@ graph TD
 
 - **empath**: Main daemon, config parsing, controller orchestration, queue coordinator
 - **empath-common**: Protocol/FSM/controller/listener traits plus shared context helpers
-- **empath-smtp**: SMTP listener/session FSM with TLS, modules, and control integration
+- **empath-smtp**: SMTP listener/session FSM with TLS and module hooks
+- **empath-smtp-client**: Outbound SMTP client used by delivery
 - **empath-delivery**: Outbound queue scanner, delivery processor, rate limiting, retries
 - **empath-spool**: File/memory spool backends and persistence helpers
 - **empath-control**: Control socket protocol for queue health, metrics, and DNS cache commands
@@ -225,12 +228,36 @@ empath/
 │   ├── benches/              # Performance benchmarks
 │   └── Cargo.toml
 │
+├── empath-smtp-client/       # Outbound SMTP client
+│   ├── src/
+│   │   ├── lib.rs            # Client entry points
+│   │   └── transaction.rs    # SMTP transaction flow
+│   └── Cargo.toml
+│
 ├── empath-delivery/          # Outbound delivery
 │   ├── src/
 │   │   ├── lib.rs            # Delivery processor
 │   │   ├── queue/            # Queue management
 │   │   ├── dns.rs            # MX lookup
 │   │   └── processor/        # Delivery logic
+│   └── Cargo.toml
+│
+├── empath-control/           # Control socket IPC + empathctl
+│   ├── src/
+│   │   ├── server.rs         # Control socket server
+│   │   └── client.rs         # Control socket client
+│   └── Cargo.toml
+│
+├── empath-metrics/           # OpenTelemetry helpers
+│   ├── src/lib.rs
+│   └── Cargo.toml
+│
+├── empath-health/            # Health endpoints
+│   ├── src/lib.rs
+│   └── Cargo.toml
+│
+├── empath-python/            # Python module integration
+│   ├── src/lib.rs
 │   └── Cargo.toml
 │
 ├── empath-spool/             # Message persistence
@@ -251,8 +278,28 @@ empath/
 │   │   └── event.c           # Event listener
 │   └── Cargo.toml
 │
-└── empath-tracing/           # Instrumentation
-    ├── src/lib.rs            # #[traced] macro
+├── empath-tracing/           # Instrumentation
+│   ├── src/lib.rs            # #[traced] macro
+│   └── Cargo.toml
+│
+├── empath-wasm/              # WASM host integration
+│   ├── src/lib.rs
+│   └── Cargo.toml
+│
+├── empath-wasm-guest/        # WASM guest bindings
+│   ├── src/lib.rs
+│   └── Cargo.toml
+│
+├── empath-wasm-guest-macros/ # WASM guest proc-macros
+│   ├── src/lib.rs
+│   └── Cargo.toml
+│
+├── empath-examples/          # Example modules and configs
+│   ├── Cargo.toml
+│   └── wasm/
+│
+└── xtask/                    # Workspace helper binaries
+    ├── src/main.rs
     └── Cargo.toml
 ```
 
