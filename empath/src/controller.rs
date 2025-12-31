@@ -15,7 +15,7 @@ use empath_delivery::{
 };
 use empath_ffi::modules::{self, Module, ModuleDispatchConfig};
 use empath_health::{HealthChecker, HealthConfig, HealthServer};
-use empath_metrics::{Metrics, MetricsConfig, init_metrics, try_metrics};
+use empath_metrics::{Metrics, MetricsConfig, init_metrics, metrics};
 use empath_smtp::spf::SpfDnsResolver;
 use empath_smtp::{Smtp, TlsContextRegistry};
 use empath_spool::config::SpoolType;
@@ -390,7 +390,7 @@ impl Empath {
         tls_registry: Arc<TlsContextRegistry>,
         spool_path: Option<PathBuf>,
     ) {
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             let mut shutdown_rx = SHUTDOWN_BROADCAST.subscribe();
             join_set.spawn(async move {
                 let mut interval = time::interval(Duration::from_secs(15));

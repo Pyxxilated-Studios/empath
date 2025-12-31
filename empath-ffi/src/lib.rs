@@ -10,7 +10,7 @@ use empath_common::message_api::{
     HeaderValue, MutationAudit, MutationKind, NewlineStyle,
 };
 use empath_common::status::Status;
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 
 pub mod ffi_string;
 pub mod modules;
@@ -40,7 +40,7 @@ mod api {
         Address, Arc, BodyError, BodyLimits, BodyMut, BodyOpts, CStr, Capability, Charset, Context,
         Cow, EmOutboundBindingKind, EmOutboundBindingSelection, HeaderError, HeaderLimits,
         HeaderName, HeaderValue, MutationAudit, MutationKind, NewlineStyle,
-        OUTBOUND_BINDING_CONTEXT_KEY, Status, address_parser, try_metrics,
+        OUTBOUND_BINDING_CONTEXT_KEY, Status, address_parser, metrics,
     };
 
     /// Retrieve the id associated with this context
@@ -554,7 +554,7 @@ mod api {
                 logger.log_module_mutation(validate_context.id(), module_type, module_name, record);
             }
             #[cfg(feature = "metrics")]
-            if let Some(metrics) = try_metrics() {
+            if let Some(metrics) = metrics() {
                 let mutation_kind = match record.kind {
                     MutationKind::Header { .. } => "header",
                     MutationKind::Body => "body",
@@ -581,7 +581,7 @@ mod api {
             return;
         };
         #[cfg(feature = "metrics")]
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             metrics.modules.record_mutation(
                 module_type,
                 module_name,

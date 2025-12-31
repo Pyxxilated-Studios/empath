@@ -61,7 +61,6 @@ pub use system::SystemMetrics;
 
 /// Global metrics instance
 static METRICS_INSTANCE: OnceCell<Metrics> = OnceCell::new();
-static NOOP_METRICS: OnceCell<Metrics> = OnceCell::new();
 
 /// Root metrics container
 #[derive(Debug)]
@@ -148,54 +147,19 @@ pub fn init_metrics(config: &MetricsConfig) -> Result<(), MetricsError> {
     Ok(())
 }
 
-/// Get a reference to the global metrics instance
-///
-/// # Deprecated
-///
-/// Use `try_metrics()` instead to detect initialization explicitly.
-/// When metrics are not initialized, this returns a no-op metrics instance.
-///
-/// # Recommended Usage
-///
-/// ```ignore
-/// if let Some(m) = try_metrics() {
-///     m.smtp_connections.record(1);
-/// }
-/// ```
-#[must_use]
-#[deprecated(
-    since = "0.0.2",
-    note = "use `try_metrics()` instead for explicit initialization checks"
-)]
-pub fn metrics() -> &'static Metrics {
-    METRICS_INSTANCE
-        .get()
-        .unwrap_or_else(|| NOOP_METRICS.get_or_init(build_noop_metrics))
-}
-
-fn build_noop_metrics() -> Metrics {
-    Metrics {
-        smtp: SmtpMetrics::new(),
-        delivery: DeliveryMetrics::new(0, Vec::new()),
-        dns: DnsMetrics::new(),
-        system: SystemMetrics::new(),
-        modules: ModuleMetrics::new(),
-    }
-}
-
 /// Try to get a reference to the global metrics instance
 ///
-/// Returns `None` if metrics have not been initialized. This is the safe alternative to `metrics()`.
+/// Returns `None` if metrics have not been initialized.
 ///
 /// # Example
 ///
 /// ```ignore
-/// if let Some(m) = try_metrics() {
+/// if let Some(m) = metrics() {
 ///     m.smtp_connections.record(1);
 /// }
 /// ```
 #[must_use]
-pub fn try_metrics() -> Option<&'static Metrics> {
+pub fn metrics() -> Option<&'static Metrics> {
     METRICS_INSTANCE.get()
 }
 

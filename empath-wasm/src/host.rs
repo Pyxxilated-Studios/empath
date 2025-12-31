@@ -17,7 +17,7 @@ use empath_common::message_api::{
     BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
     HeaderValue, HeadersMut, MutationAudit, MutationKind, NewlineStyle,
 };
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 use serde::{Deserialize, Serialize};
 use wasmtime::ResourceLimiter;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
@@ -796,7 +796,7 @@ fn record_mutation_records(
         if let Some(logger) = context.audit_logger.as_ref() {
             logger.log_module_mutation(context.id(), module_type, module_name, record);
         }
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             let mutation_kind = match record.kind {
                 MutationKind::Header { .. } => "header",
                 MutationKind::Body => "body",
@@ -822,7 +822,7 @@ fn record_mutation_failure(
     let Some((module_type, module_name)) = module_context else {
         return;
     };
-    if let Some(metrics) = try_metrics() {
+    if let Some(metrics) = metrics() {
         metrics.modules.record_mutation(
             module_type,
             module_name,

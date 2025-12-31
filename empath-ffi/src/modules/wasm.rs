@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use empath_common::context::Context;
 use empath_common::internal;
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 use empath_wasm::{WasmError, WasmModule};
 use serde::Deserialize;
 
@@ -158,7 +158,7 @@ impl Wasm {
         let result = module.execute_callback(callback_name, context);
 
         // Record memory limit
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             // Update memory limit tracking (configured max memory for this module)
             if let Ok(max_memory) = u64::try_from(module.max_memory_bytes()) {
                 metrics.modules.update_memory(&module_path, max_memory);
@@ -177,7 +177,7 @@ impl Wasm {
                 };
 
                 // Record error metrics
-                if let Some(metrics) = try_metrics() {
+                if let Some(metrics) = metrics() {
                     if timeout {
                         metrics.modules.record_timeout(&module_path);
                     }

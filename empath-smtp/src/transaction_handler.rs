@@ -16,7 +16,7 @@ use empath_common::audit::AuditLoggerBuilder;
 use empath_common::context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY};
 use empath_common::status::Status;
 use empath_ffi::modules::{self, ModuleRegistry};
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 use empath_spool::BackingStore;
 use opentelemetry::trace::TraceContextExt as _;
 use sha2::{Digest, Sha256};
@@ -539,7 +539,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         );
 
         if let Some(action) = dmarc_action {
-            if let Some(metrics) = try_metrics() {
+            if let Some(metrics) = metrics() {
                 metrics.smtp.record_dmarc_enforcement(
                     action,
                     dmarc_policy.as_deref(),
@@ -565,7 +565,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 .transaction
                 .get("dkim_result")
                 .map_or("none", String::as_str);
-            if let Some(metrics) = try_metrics() {
+            if let Some(metrics) = metrics() {
                 metrics.smtp.record_dkim_rejection(result);
             }
             tracing::warn!(dkim_result = %result, "DKIM verification failed");
@@ -631,7 +631,7 @@ impl DefaultSmtpTransactionHandler {
             ctx.transaction.insert(Cow::Borrowed("dkim_error"), error);
         }
 
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             metrics.smtp.record_dkim_verification(evaluation.result);
         }
 
@@ -686,7 +686,7 @@ impl DefaultSmtpTransactionHandler {
             ctx.transaction.insert(Cow::Borrowed("arc_error"), error);
         }
 
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             metrics.smtp.record_arc_verification(
                 evaluation.result,
                 evaluation.replayed,
@@ -817,7 +817,7 @@ impl DefaultSmtpTransactionHandler {
             ctx.transaction.insert(Cow::Borrowed("dmarc_error"), error);
         }
 
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             metrics.smtp.record_dmarc_evaluation(
                 evaluation.result.as_str(),
                 evaluation.policy.as_deref(),
@@ -892,7 +892,7 @@ impl DefaultSmtpTransactionHandler {
             DMARC_SAMPLE_RATE_BPS.to_string(),
         );
 
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             metrics
                 .smtp
                 .record_dmarc_sample(&sender, client_ip, &policy);

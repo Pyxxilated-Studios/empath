@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use empath_common::context::Context;
 use empath_common::internal;
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 use empath_python::{PythonError, PythonModule};
 use serde::Deserialize;
 
@@ -79,7 +79,7 @@ impl Python {
             Ok(false) => 1, // Reject
             Err(e) => {
                 let timeout = matches!(e, PythonError::Timeout(_, _));
-                if let Some(metrics) = try_metrics() {
+                if let Some(metrics) = metrics() {
                     if timeout {
                         metrics.modules.record_timeout(module_path.as_ref());
                     }

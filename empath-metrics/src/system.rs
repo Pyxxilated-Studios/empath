@@ -328,7 +328,9 @@ impl SystemMetrics {
     /// let mut interval = interval(Duration::from_secs(15));
     /// loop {
     ///     interval.tick().await;
-    ///     metrics().system.update_process_metrics().await;
+    ///     if let Some(metrics) = metrics() {
+    ///         metrics.system.update_process_metrics().await;
+    ///     }
     /// }
     /// ```
     pub async fn update_process_metrics(&self) {
@@ -389,7 +391,9 @@ impl SystemMetrics {
     /// # Example
     ///
     /// ```ignore
-    /// metrics().system.update_spool_metrics(Path::new("./spool"));
+    /// if let Some(metrics) = metrics() {
+    ///     metrics.system.update_spool_metrics(Path::new("./spool"));
+    /// }
     /// ```
     pub fn update_spool_metrics(&self, spool_path: &Path) {
         if let Ok(usage) = fs2::statvfs(spool_path) {
@@ -447,7 +451,9 @@ impl SystemMetrics {
     /// # Example
     ///
     /// ```ignore
-    /// metrics().system.record_network_connections(42);
+    /// if let Some(metrics) = metrics() {
+    ///     metrics.system.record_network_connections(42);
+    /// }
     /// ```
     pub fn record_network_connections(&self, count: u64) {
         self.network_connections_total.record(count, &[]);
@@ -463,7 +469,9 @@ impl SystemMetrics {
     /// # Example
     ///
     /// ```ignore
-    /// metrics().system.record_network_bytes(1024000, 512000);
+    /// if let Some(metrics) = metrics() {
+    ///     metrics.system.record_network_bytes(1024000, 512000);
+    /// }
     /// ```
     pub fn record_network_bytes(&self, received: u64, sent: u64) {
         self.network_bytes_received.record(received, &[]);
@@ -483,7 +491,9 @@ impl SystemMetrics {
     /// ```ignore
     /// let start = Instant::now();
     /// // ... perform I/O ...
-    /// metrics().system.record_spool_io("write", 4096, start.elapsed());
+    /// if let Some(metrics) = metrics() {
+    ///     metrics.system.record_spool_io("write", 4096, start.elapsed());
+    /// }
     /// ```
     pub fn record_spool_io(&self, operation: &str, bytes: u64, duration: Duration) {
         let attrs = [KeyValue::new("operation", operation.to_string())];

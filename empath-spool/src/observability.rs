@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 use tracing::debug;
 
 use crate::SpooledMessageId;
@@ -29,7 +29,7 @@ impl SpoolObserver for DefaultSpoolObserver {
         backend: &'static str,
         message_id: Option<&SpooledMessageId>,
     ) {
-        if let Some(metrics) = try_metrics() {
+        if let Some(metrics) = metrics() {
             metrics.system.record_spool_io(operation, bytes, duration);
         }
 

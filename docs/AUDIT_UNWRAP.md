@@ -424,7 +424,7 @@ let addr: SocketAddr = s.parse().map_err(|e| Error::InvalidAddress(e))?;
 
 ### High-Priority Fixes (Completed)
 3. ✅ TLS Connection: Return Result with proper error handling
-4. ✅ Metrics Accessor: Added safe `try_metrics()` alternative
+4. ✅ Metrics Accessor: Added safe `metrics()` alternative
 
 ### Low-Priority Fixes (Completed)
 5. ✅ Message Parsing: Replaced `unsafe unwrap_unchecked()` with safe `expect()`

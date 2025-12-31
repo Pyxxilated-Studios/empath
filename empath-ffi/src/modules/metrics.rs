@@ -8,7 +8,7 @@
 //! Business logic (empath-smtp, empath-delivery) → Events → Metrics (infrastructure)
 
 use empath_common::context::Context;
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 
 use super::{Ev, Event};
 
@@ -23,7 +23,7 @@ pub(super) fn emit(event: Event, context: &Context) {
     };
 
     // Get metrics instance, skip if not enabled
-    let Some(metrics) = try_metrics() else {
+    let Some(metrics) = metrics() else {
         return;
     };
 

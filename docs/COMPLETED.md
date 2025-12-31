@@ -989,7 +989,7 @@ Comprehensive audit and elimination of all production unwrap/expect calls to pre
 - `empath-delivery/src/dns.rs:591` - Added Cloudflare DNS fallback (commit 5270d51)
 - `empath-metrics/src/delivery.rs:336,343` - Replaced RwLock with DashMap (commit 5270d51)
 - `empath-smtp/src/connection.rs:28-29` - TLS info returns Result (commit 24ffb27)
-- `empath-metrics/src/lib.rs:146` - Added safe `try_metrics()` alternative (commit 24ffb27)
+- `empath-metrics/src/lib.rs:146` - Added safe `metrics()` alternative (commit 24ffb27)
 - `empath-common/src/message.rs:188,213` - Replaced unsafe unwrap_unchecked (commit 00d7772)
 - `empath-ffi/src/modules/mod.rs:248` - TestModule handles poisoning (commit 00d7772)
 

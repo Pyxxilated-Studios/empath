@@ -8,7 +8,7 @@ use empath_common::internal;
 use empath_common::status::Status;
 use empath_metrics::is_enabled;
 #[cfg(feature = "metrics")]
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 use empath_tracing::traced;
 use serde::Deserialize;
 use thiserror::Error;
@@ -281,7 +281,7 @@ impl ModuleRegistry {
                 .await;
 
             #[cfg(feature = "metrics")]
-            if let Some(metrics) = try_metrics() {
+            if let Some(metrics) = metrics() {
                 metrics.modules.record_execution(
                     &module_context.module_type,
                     callback_name,
@@ -585,7 +585,7 @@ fn record_dispatch_error_metrics(
     event: Event,
     error_kind: &DispatchErrorKind,
 ) {
-    let Some(metrics) = try_metrics() else {
+    let Some(metrics) = metrics() else {
         return;
     };
 

@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime};
 use empath_common::domain::Domain;
 use empath_common::internal;
 use empath_common::tracing::{self, info, warn};
-use empath_metrics::try_metrics;
+use empath_metrics::metrics;
 use empath_spool::SpooledMessageId;
 use empath_tracing::traced;
 
@@ -157,7 +157,7 @@ impl<'a> DeliveryPipeline<'a> {
             Ok(()) => RateLimitResult::Allowed,
             Err(wait_time) => {
                 // Record rate limiting metrics
-                if let Some(metrics) = try_metrics() {
+                if let Some(metrics) = metrics() {
                     metrics
                         .delivery
                         .record_rate_limit(domain, wait_time.as_secs_f64());
