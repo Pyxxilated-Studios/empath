@@ -81,12 +81,7 @@ impl PyContext {
                 Ok(Some(Ok(value)))
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    action,
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", action, err.kind());
                 Ok(Some(Err(err)))
             }
             Ok(None) => {
@@ -127,12 +122,7 @@ impl PyContext {
                 Ok(Some(Ok(value)))
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "body",
-                    action,
-                    body_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "body", action, err.kind());
                 Ok(Some(Err(err)))
             }
             Ok(None) => {
@@ -153,27 +143,11 @@ impl PyContext {
     }
 
     fn map_header_error(err: HeaderError) -> PyErr {
-        let reason = match err {
-            HeaderError::TooMany => "too many headers",
-            HeaderError::NameTooLong => "header name too long",
-            HeaderError::ValueTooLong => "header value too long",
-            HeaderError::TotalSizeExceeded => "headers exceed total size limit",
-            HeaderError::InvalidName => "invalid header name",
-            HeaderError::InvalidValue => "invalid header value",
-            HeaderError::SignatureProtected => "header protected by signature",
-        };
-        PyValueError::new_err(reason)
+        PyValueError::new_err(err.message())
     }
 
     fn map_body_error(err: BodyError) -> PyErr {
-        let reason = match err {
-            BodyError::TooLarge => "body exceeds maximum length",
-            BodyError::GrowthExceeded => "body growth exceeds limit",
-            BodyError::InvalidCharset => "invalid charset",
-            BodyError::InvalidTransferEncoding => "invalid transfer encoding",
-            BodyError::MultipartError => "invalid multipart body",
-        };
-        PyValueError::new_err(reason)
+        PyValueError::new_err(err.message())
     }
 
     fn parse_charset(charset: &str) -> Charset {
@@ -243,28 +217,6 @@ fn record_mutation_failure(
             "failure",
             Some(error_kind),
         );
-    }
-}
-
-const fn header_error_kind(err: HeaderError) -> &'static str {
-    match err {
-        HeaderError::TooMany => "too_many",
-        HeaderError::NameTooLong => "name_too_long",
-        HeaderError::ValueTooLong => "value_too_long",
-        HeaderError::TotalSizeExceeded => "total_size_exceeded",
-        HeaderError::InvalidName => "invalid_name",
-        HeaderError::InvalidValue => "invalid_value",
-        HeaderError::SignatureProtected => "signature_protected",
-    }
-}
-
-const fn body_error_kind(err: BodyError) -> &'static str {
-    match err {
-        BodyError::TooLarge => "too_large",
-        BodyError::GrowthExceeded => "growth_exceeded",
-        BodyError::InvalidCharset => "invalid_charset",
-        BodyError::InvalidTransferEncoding => "invalid_transfer_encoding",
-        BodyError::MultipartError => "multipart_error",
     }
 }
 

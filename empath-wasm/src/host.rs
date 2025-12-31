@@ -384,12 +384,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
                 Ok(updated)
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "set",
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
                 Err(-1)
             }
             Ok(None) => {
@@ -474,12 +469,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
                     0
                 }
                 Ok(Some(Err(err))) => {
-                    record_mutation_failure(
-                        module_context.as_ref(),
-                        "header",
-                        "set",
-                        header_error_kind(err),
-                    );
+                    record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
                     -1
                 }
                 Ok(None) => {
@@ -643,7 +633,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
                         module_context.as_ref(),
                         "body",
                         "set-alternative",
-                        body_error_kind(err),
+                        err.kind(),
                     );
                     -1
                 }
@@ -698,12 +688,7 @@ impl WasmStore {
                     0
                 }
                 Ok(Some(Err(err))) => {
-                    record_mutation_failure(
-                        module_context.as_ref(),
-                        "header",
-                        action,
-                        header_error_kind(err),
-                    );
+                    record_mutation_failure(module_context.as_ref(), "header", action, err.kind());
                     -1
                 }
                 Ok(None) => {
@@ -753,12 +738,7 @@ impl WasmStore {
                     0
                 }
                 Ok(Some(Err(err))) => {
-                    record_mutation_failure(
-                        module_context.as_ref(),
-                        "body",
-                        action,
-                        body_error_kind(err),
-                    );
+                    record_mutation_failure(module_context.as_ref(), "body", action, err.kind());
                     -1
                 }
                 Ok(None) => {
@@ -831,28 +811,6 @@ fn record_mutation_failure(
             "failure",
             Some(error_kind),
         );
-    }
-}
-
-const fn header_error_kind(err: HeaderError) -> &'static str {
-    match err {
-        HeaderError::TooMany => "too_many",
-        HeaderError::NameTooLong => "name_too_long",
-        HeaderError::ValueTooLong => "value_too_long",
-        HeaderError::TotalSizeExceeded => "total_size_exceeded",
-        HeaderError::InvalidName => "invalid_name",
-        HeaderError::InvalidValue => "invalid_value",
-        HeaderError::SignatureProtected => "signature_protected",
-    }
-}
-
-const fn body_error_kind(err: BodyError) -> &'static str {
-    match err {
-        BodyError::TooLarge => "too_large",
-        BodyError::GrowthExceeded => "growth_exceeded",
-        BodyError::InvalidCharset => "invalid_charset",
-        BodyError::InvalidTransferEncoding => "invalid_transfer_encoding",
-        BodyError::MultipartError => "multipart_error",
     }
 }
 

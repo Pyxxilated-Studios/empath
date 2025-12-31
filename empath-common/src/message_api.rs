@@ -70,6 +70,34 @@ pub enum HeaderError {
     SignatureProtected,
 }
 
+impl HeaderError {
+    #[must_use]
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::TooMany => "too_many",
+            Self::NameTooLong => "name_too_long",
+            Self::ValueTooLong => "value_too_long",
+            Self::TotalSizeExceeded => "total_size_exceeded",
+            Self::InvalidName => "invalid_name",
+            Self::InvalidValue => "invalid_value",
+            Self::SignatureProtected => "signature_protected",
+        }
+    }
+
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::TooMany => "too many headers",
+            Self::NameTooLong => "header name too long",
+            Self::ValueTooLong => "header value too long",
+            Self::TotalSizeExceeded => "headers exceed total size limit",
+            Self::InvalidName => "invalid header name",
+            Self::InvalidValue => "invalid header value",
+            Self::SignatureProtected => "header protected by signature",
+        }
+    }
+}
+
 /// Errors that can occur when mutating bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyError {
@@ -78,6 +106,30 @@ pub enum BodyError {
     InvalidCharset,
     InvalidTransferEncoding,
     MultipartError,
+}
+
+impl BodyError {
+    #[must_use]
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::TooLarge => "too_large",
+            Self::GrowthExceeded => "growth_exceeded",
+            Self::InvalidCharset => "invalid_charset",
+            Self::InvalidTransferEncoding => "invalid_transfer_encoding",
+            Self::MultipartError => "multipart_error",
+        }
+    }
+
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::TooLarge => "body exceeds maximum length",
+            Self::GrowthExceeded => "body growth exceeds limit",
+            Self::InvalidCharset => "invalid charset",
+            Self::InvalidTransferEncoding => "invalid transfer encoding",
+            Self::MultipartError => "invalid multipart body",
+        }
+    }
 }
 
 /// Detected newline style for an existing body.

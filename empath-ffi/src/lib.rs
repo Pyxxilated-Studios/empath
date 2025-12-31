@@ -6,8 +6,8 @@ use empath_common::address::Address;
 use empath_common::address_parser;
 use empath_common::context::{Capability, Context, OUTBOUND_BINDING_CONTEXT_KEY};
 use empath_common::message_api::{
-    BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
-    HeaderValue, MutationAudit, MutationKind, NewlineStyle,
+    BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderLimits, HeaderName, HeaderValue,
+    MutationAudit, MutationKind, NewlineStyle,
 };
 use empath_common::status::Status;
 use empath_metrics::metrics;
@@ -38,9 +38,9 @@ pub struct EmOutboundBindingSelection {
 mod api {
     use super::{
         Address, Arc, BodyError, BodyLimits, BodyMut, BodyOpts, CStr, Capability, Charset, Context,
-        Cow, EmOutboundBindingKind, EmOutboundBindingSelection, HeaderError, HeaderLimits,
-        HeaderName, HeaderValue, MutationAudit, MutationKind, NewlineStyle,
-        OUTBOUND_BINDING_CONTEXT_KEY, Status, address_parser, metrics,
+        Cow, EmOutboundBindingKind, EmOutboundBindingSelection, HeaderLimits, HeaderName,
+        HeaderValue, MutationAudit, MutationKind, NewlineStyle, OUTBOUND_BINDING_CONTEXT_KEY,
+        Status, address_parser, metrics,
     };
 
     /// Retrieve the id associated with this context
@@ -593,28 +593,6 @@ mod api {
         }
     }
 
-    const fn header_error_kind(err: HeaderError) -> &'static str {
-        match err {
-            HeaderError::TooMany => "too_many",
-            HeaderError::NameTooLong => "name_too_long",
-            HeaderError::ValueTooLong => "value_too_long",
-            HeaderError::TotalSizeExceeded => "total_size_exceeded",
-            HeaderError::InvalidName => "invalid_name",
-            HeaderError::InvalidValue => "invalid_value",
-            HeaderError::SignatureProtected => "signature_protected",
-        }
-    }
-
-    const fn body_error_kind(err: BodyError) -> &'static str {
-        match err {
-            BodyError::TooLarge => "too_large",
-            BodyError::GrowthExceeded => "growth_exceeded",
-            BodyError::InvalidCharset => "invalid_charset",
-            BodyError::InvalidTransferEncoding => "invalid_transfer_encoding",
-            BodyError::MultipartError => "multipart_error",
-        }
-    }
-
     /// # Safety
     /// `validate_context` must point to a valid context, and `name` must be a valid
     /// null-terminated C string when non-null.
@@ -712,12 +690,7 @@ mod api {
                 true
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "set",
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
                 false
             }
             Ok(None) => {
@@ -774,12 +747,7 @@ mod api {
                 true
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "append",
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", "append", err.kind());
                 false
             }
             Ok(None) => {
@@ -842,12 +810,7 @@ mod api {
                 updated
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "set",
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
                 false
             }
             Ok(None) => {
@@ -940,12 +903,7 @@ mod api {
                 updated
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "set",
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
                 false
             }
             Ok(None) => {
@@ -998,12 +956,7 @@ mod api {
                 true
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "set",
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
                 false
             }
             Ok(None) => {
@@ -1056,12 +1009,7 @@ mod api {
                 true
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "set",
-                    header_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
                 false
             }
             Ok(None) => {
@@ -1100,12 +1048,7 @@ mod api {
                 true
             }
             Ok(Some(Err(err))) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "body",
-                    action,
-                    body_error_kind(err),
-                );
+                record_mutation_failure(module_context.as_ref(), "body", action, err.kind());
                 false
             }
             Ok(None) => {
