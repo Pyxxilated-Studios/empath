@@ -847,8 +847,6 @@ fn charset_from_string(s: &str) -> Charset {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
     use empath_common::message_api::MessageParts;
     use wasmtime_wasi::WasiCtxBuilder;
 
@@ -856,31 +854,36 @@ mod tests {
     use crate::bindings::empath::validator::host::Host;
     use crate::bindings::empath::validator::message::Host as MessageHost;
 
+    type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
     fn poison_context(context: &Arc<Mutex<Context>>) {
         let ctx_clone = Arc::clone(context);
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            let _guard = ctx_clone.lock().unwrap();
-            panic!("intentionally poison mutex");
+            let _guard = match ctx_clone.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            std::panic::resume_unwind(Box::new("intentionally poison mutex"));
         }));
     }
 
-    fn make_store(context: Arc<Mutex<Context>>) -> WasmStore {
+    fn make_store(context: Arc<Mutex<Context>>) -> TestResult<WasmStore> {
         let wasi_ctx = WasiCtxBuilder::new().build();
         let outbound_bindings = Arc::from(Vec::<String>::new().into_boxed_slice());
-        WasmStore::new(
+        let store = WasmStore::new(
             context,
             1024,
             Duration::from_secs(1),
             wasi_ctx,
             outbound_bindings,
-        )
-        .expect("store creation should succeed")
+        )?;
+        Ok(store)
     }
 
     #[test]
-    fn poisoned_mutex_returns_safe_defaults() {
+    fn poisoned_mutex_returns_safe_defaults() -> TestResult {
         let context = Arc::new(Mutex::new(Context::default()));
-        let mut store = make_store(Arc::clone(&context));
+        let mut store = make_store(Arc::clone(&context))?;
 
         poison_context(&context);
 
@@ -895,33 +898,36 @@ mod tests {
         assert!(!store.transaction_exists("txn_key".into()));
         assert_eq!(store.transaction_get("txn_key".into()), None);
 
-        let guard = context
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = match context.lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        };
         assert!(guard.session.is_empty());
         assert!(guard.transaction.is_empty());
         drop(guard);
+        Ok(())
     }
 
     #[test]
-    fn memory_growth_respects_limit() {
+    fn memory_growth_respects_limit() -> TestResult {
         let context = Arc::new(Mutex::new(Context::default()));
-        let mut store = make_store(context);
+        let mut store = make_store(context)?;
 
         // Allow growth within limit
-        assert!(store.memory_growing(0, 512, None).unwrap());
+        assert!(store.memory_growing(0, 512, None)?);
         // Reject growth above limit
-        assert!(!store.memory_growing(0, 2048, None).unwrap());
+        assert!(!store.memory_growing(0, 2048, None)?);
+        Ok(())
     }
 
     #[test]
-    fn raw_read_exposes_message_data() {
+    fn raw_read_exposes_message_data() -> TestResult {
         let context = Context {
             data: Some(Arc::from(b"hello world".to_vec())),
             ..Default::default()
         };
 
-        let mut store = make_store(Arc::new(Mutex::new(context)));
+        let mut store = make_store(Arc::new(Mutex::new(context)))?;
 
         assert_eq!(MessageHost::raw_len(&mut store), Ok(11));
         assert_eq!(
@@ -929,15 +935,16 @@ mod tests {
             Ok(b"world".to_vec()),
             "raw_read should surface original message data"
         );
+        Ok(())
     }
 
     #[test]
-    fn body_read_errors_on_parse_failure() {
+    fn body_read_errors_on_parse_failure() -> TestResult {
         let context = Context {
             data: Some(Arc::from(b"Subject: Broken Body".to_vec())),
             ..Default::default()
         };
-        let mut store = make_store(Arc::new(Mutex::new(context)));
+        let mut store = make_store(Arc::new(Mutex::new(context)))?;
 
         assert_eq!(
             MessageHost::body_len(&mut store),
@@ -947,11 +954,12 @@ mod tests {
             MessageHost::body_read(&mut store, 0, 8),
             Err(crate::bindings::empath::validator::message::ReadError::ParseFailed)
         );
+        Ok(())
     }
 
     #[test]
-    fn raw_read_reports_missing_data() {
-        let mut store = make_store(Arc::new(Mutex::new(Context::default())));
+    fn raw_read_reports_missing_data() -> TestResult {
+        let mut store = make_store(Arc::new(Mutex::new(Context::default())))?;
 
         assert_eq!(
             MessageHost::raw_len(&mut store),
@@ -961,16 +969,17 @@ mod tests {
             MessageHost::raw_read(&mut store, 0, 4),
             Err(crate::bindings::empath::validator::message::ReadError::MissingData)
         );
+        Ok(())
     }
 
     #[test]
-    fn message_helpers_persist_changes() {
+    fn message_helpers_persist_changes() -> TestResult {
         let msg = b"Subject: Old\r\n\r\nBody";
         let context = Arc::new(Mutex::new(Context {
             data: Some(Arc::from(msg.as_slice())),
             ..Context::default()
         }));
-        let mut store = make_store(Arc::clone(&context));
+        let mut store = make_store(Arc::clone(&context))?;
 
         assert_eq!(
             MessageHost::headers_set(&mut store, "X-Test".into(), "ok".into()),
@@ -982,18 +991,23 @@ mod tests {
         );
 
         let data = {
-            let ctx = context.lock().unwrap();
-            ctx.data.as_deref().unwrap().to_vec()
+            let ctx = context
+                .lock()
+                .map_err(|err| format!("context lock poisoned: {err}"))?;
+            ctx.data.as_deref().ok_or("context data missing")?.to_vec()
         };
-        let parts = MessageParts::from_bytes(&data).expect("parse");
+        let parts = MessageParts::from_bytes(&data)?;
 
         let headers = parts.headers_view();
+        let header_name = HeaderName::new("X-Test")
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err.message()))?;
         let value = headers
-            .get(&HeaderName::new("X-Test").unwrap())
+            .get(&header_name)
             .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string());
         assert_eq!(value.as_deref(), Some("ok"));
 
         let body = String::from_utf8_lossy(parts.body_view().as_bytes()).to_string();
         assert!(body.ends_with("Body tail"));
+        Ok(())
     }
 }

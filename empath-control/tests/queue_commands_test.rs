@@ -1,10 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::unreachable
-)]
-
 use empath_control::protocol::{
     QueueCommand, QueueListPage, Request, RequestCommand, Response, ResponseData, ResponsePayload,
 };
@@ -12,7 +5,7 @@ use empath_control::protocol::{
 /// Integration test for queue list command via control socket
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_queue_list_command() {
+async fn test_queue_list_command() -> Result<(), Box<dyn std::error::Error>> {
     // This test requires a full empath instance with delivery processor
     // For now, we verify the protocol serialization works correctly
 
@@ -24,9 +17,8 @@ async fn test_queue_list_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
-    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
-        .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request)?;
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())?;
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::List {
@@ -38,13 +30,14 @@ async fn test_queue_list_command() {
             assert!(page.is_none());
             assert!(page_size.is_none());
         }
-        _ => panic!("Expected QueueCommand::List"),
+        _ => return Err("expected QueueCommand::List".into()),
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_queue_list_with_status_filter() {
+async fn test_queue_list_with_status_filter() -> Result<(), Box<dyn std::error::Error>> {
     // Test QueueCommand::List with status filter
     let request = Request::new(RequestCommand::Queue(QueueCommand::List {
         status_filter: Some("failed".to_string()),
@@ -53,9 +46,8 @@ async fn test_queue_list_with_status_filter() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
-    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
-        .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request)?;
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())?;
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::List {
@@ -67,13 +59,14 @@ async fn test_queue_list_with_status_filter() {
             assert_eq!(page, Some(2));
             assert_eq!(page_size, Some(25));
         }
-        _ => panic!("Expected QueueCommand::List"),
+        _ => return Err("expected QueueCommand::List".into()),
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_queue_message_response_serialization() {
+async fn test_queue_message_response_serialization() -> Result<(), Box<dyn std::error::Error>> {
     use empath_control::protocol::QueueMessage;
 
     // Test response serialization
@@ -113,9 +106,8 @@ async fn test_queue_message_response_serialization() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = postcard::to_allocvec(&response).expect("Failed to serialize response");
-    let deserialized = postcard::from_bytes::<Response>(serialized.as_slice())
-        .expect("Failed to deserialize response");
+    let serialized = postcard::to_allocvec(&response)?;
+    let deserialized = postcard::from_bytes::<Response>(serialized.as_slice())?;
 
     match deserialized.payload {
         ResponsePayload::Data(data) => match *data {
@@ -141,34 +133,35 @@ async fn test_queue_message_response_serialization() {
                 assert_eq!(page.messages[1].to.len(), 2);
                 assert_eq!(page.messages[1].next_retry, Some(1_700_001_000));
             }
-            _ => panic!("Expected QueueList response"),
+            _ => return Err("expected QueueList response".into()),
         },
-        _ => panic!("Expected Data response"),
+        _ => return Err("expected Data response".into()),
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_queue_stats_command() {
+async fn test_queue_stats_command() -> Result<(), Box<dyn std::error::Error>> {
     // Test QueueCommand::Stats serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::Stats));
 
     // Verify serialization/deserialization
-    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
-    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
-        .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request)?;
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())?;
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::Stats) => {
             // Success
         }
-        _ => panic!("Expected QueueCommand::Stats"),
+        _ => return Err("expected QueueCommand::Stats".into()),
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_queue_view_command() {
+async fn test_queue_view_command() -> Result<(), Box<dyn std::error::Error>> {
     // Test QueueCommand::View serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::View {
         message_id: "01JCXYZ123ABC".to_string(),
@@ -178,9 +171,8 @@ async fn test_queue_view_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
-    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
-        .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request)?;
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())?;
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::View {
@@ -194,34 +186,35 @@ async fn test_queue_view_command() {
             assert!(!include_body_preview);
             assert!(include_transaction);
         }
-        _ => panic!("Expected QueueCommand::View"),
+        _ => return Err("expected QueueCommand::View".into()),
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_queue_delete_command() {
+async fn test_queue_delete_command() -> Result<(), Box<dyn std::error::Error>> {
     // Test QueueCommand::Delete serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::Delete {
         message_id: "01JCXYZ123ABC".to_string(),
     }));
 
     // Verify serialization/deserialization
-    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
-    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
-        .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request)?;
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())?;
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::Delete { message_id }) => {
             assert_eq!(message_id, "01JCXYZ123ABC", "Expected correct message ID");
         }
-        _ => panic!("Expected QueueCommand::Delete"),
+        _ => return Err("expected QueueCommand::Delete".into()),
     }
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Calls an unsupported method")]
-async fn test_queue_retry_command() {
+async fn test_queue_retry_command() -> Result<(), Box<dyn std::error::Error>> {
     // Test QueueCommand::Retry serialization
     let request = Request::new(RequestCommand::Queue(QueueCommand::Retry {
         message_id: "01JCXYZ123ABC".to_string(),
@@ -229,15 +222,15 @@ async fn test_queue_retry_command() {
     }));
 
     // Verify serialization/deserialization
-    let serialized = postcard::to_allocvec(&request).expect("Failed to serialize request");
-    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())
-        .expect("Failed to deserialize request");
+    let serialized = postcard::to_allocvec(&request)?;
+    let deserialized = postcard::from_bytes::<Request>(serialized.as_slice())?;
 
     match deserialized.command {
         RequestCommand::Queue(QueueCommand::Retry { message_id, force }) => {
             assert_eq!(message_id, "01JCXYZ123ABC", "Expected correct message ID");
             assert!(!force, "Expected force to be false");
         }
-        _ => panic!("Expected QueueCommand::Retry"),
+        _ => return Err("expected QueueCommand::Retry".into()),
     }
+    Ok(())
 }

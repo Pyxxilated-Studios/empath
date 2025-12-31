@@ -269,60 +269,69 @@ impl TryFrom<&str> for BannerHostname {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::unwrap_in_result,
-        clippy::unwrap_or_default,
-        reason = "tests should fail loudly on validation regression"
-    )]
     use super::{BannerHostname, EmailAddress, EmailValidationError, ServerId};
 
     #[test]
-    fn email_valid() {
-        let addr = EmailAddress::new("user@example.com").unwrap();
+    fn email_valid() -> Result<(), EmailValidationError> {
+        let addr = EmailAddress::new("user@example.com")?;
         assert_eq!(addr.as_str(), "user@example.com");
+        Ok(())
     }
 
     #[test]
-    fn email_invalid_missing_at() {
-        let err = EmailAddress::new("invalid").unwrap_err();
+    fn email_invalid_missing_at() -> Result<(), Box<dyn std::error::Error>> {
+        let Err(err) = EmailAddress::new("invalid") else {
+            return Err("expected missing-at error".into());
+        };
         assert_eq!(err, EmailValidationError::MissingAt);
+        Ok(())
     }
 
     #[test]
-    fn email_invalid_whitespace() {
-        let err = EmailAddress::new("user @example.com").unwrap_err();
+    fn email_invalid_whitespace() -> Result<(), Box<dyn std::error::Error>> {
+        let Err(err) = EmailAddress::new("user @example.com") else {
+            return Err("expected whitespace error".into());
+        };
         assert_eq!(
             err,
             EmailValidationError::InvalidFormat("address cannot contain whitespace")
         );
+        Ok(())
     }
 
     #[test]
-    fn server_id_rejects_empty() {
-        let err = ServerId::new("").unwrap_err();
+    fn server_id_rejects_empty() -> Result<(), Box<dyn std::error::Error>> {
+        let Err(err) = ServerId::new("") else {
+            return Err("expected empty server id error".into());
+        };
         assert_eq!(
             err,
             EmailValidationError::InvalidFormat("server id cannot be empty")
         );
+        Ok(())
     }
 
     #[test]
-    fn banner_hostname_rejects_whitespace() {
-        let err = BannerHostname::new("mail host").unwrap_err();
+    fn banner_hostname_rejects_whitespace() -> Result<(), Box<dyn std::error::Error>> {
+        let Err(err) = BannerHostname::new("mail host") else {
+            return Err("expected whitespace error".into());
+        };
         assert_eq!(
             err,
             EmailValidationError::InvalidFormat("banner hostname cannot contain whitespace")
         );
+        Ok(())
     }
 
     #[test]
-    fn banner_hostname_rejects_empty() {
-        let err = BannerHostname::new("").unwrap_err();
+    fn banner_hostname_rejects_empty() -> Result<(), Box<dyn std::error::Error>> {
+        let Err(err) = BannerHostname::new("") else {
+            return Err("expected empty banner hostname error".into());
+        };
         assert_eq!(
             err,
             EmailValidationError::InvalidFormat("banner hostname cannot be empty")
         );
+        Ok(())
     }
 }

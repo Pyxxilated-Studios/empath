@@ -45,8 +45,6 @@ pub struct EmpathControlHandler {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
     use std::sync::{Arc, Mutex};
     use std::time::SystemTime;
 
@@ -61,6 +59,7 @@ mod tests {
     use super::reload_config_from_disk;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
     struct EnvVarGuard {
         key: &'static str,
@@ -106,43 +105,43 @@ mod tests {
 
     impl MockDelivery {
         fn replaced_domains_len(&self) -> Option<usize> {
-            self.replaced_domains
-                .lock()
-                .expect("lock replaced_domains")
-                .as_ref()
-                .map(DomainConfigRegistry::len)
+            let guard = match self.replaced_domains.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            guard.as_ref().map(DomainConfigRegistry::len)
         }
 
         fn replaced_rate_limit_mps(&self) -> Option<f64> {
-            self.replaced_rate_limit
-                .lock()
-                .expect("lock replaced_rate_limit")
-                .as_ref()
-                .map(|cfg| cfg.messages_per_second)
+            let guard = match self.replaced_rate_limit.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            guard.as_ref().map(|cfg| cfg.messages_per_second)
         }
 
         fn replaced_retry_policy_max_attempts(&self) -> Option<u32> {
-            self.replaced_retry_policy
-                .lock()
-                .expect("lock replaced_retry_policy")
-                .as_ref()
-                .map(|cfg| cfg.max_attempts)
+            let guard = match self.replaced_retry_policy.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            guard.as_ref().map(|cfg| cfg.max_attempts)
         }
 
         fn replaced_smtp_timeouts_ehlo_secs(&self) -> Option<u64> {
-            self.replaced_smtp_timeouts
-                .lock()
-                .expect("lock replaced_smtp_timeouts")
-                .as_ref()
-                .map(|cfg| cfg.ehlo_secs)
+            let guard = match self.replaced_smtp_timeouts.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            guard.as_ref().map(|cfg| cfg.ehlo_secs)
         }
 
         fn replaced_circuit_breaker_threshold(&self) -> Option<u32> {
-            self.replaced_circuit_breaker
-                .lock()
-                .expect("lock replaced_circuit_breaker")
-                .as_ref()
-                .map(|cfg| cfg.failure_threshold)
+            let guard = match self.replaced_circuit_breaker.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            guard.as_ref().map(|cfg| cfg.failure_threshold)
         }
     }
 
@@ -231,39 +230,42 @@ mod tests {
         }
 
         fn replace_rate_limit_config(&self, config: RateLimitConfig) {
-            let mut guard = self
-                .replaced_rate_limit
-                .lock()
-                .expect("lock replaced_rate_limit");
+            let mut guard = match self.replaced_rate_limit.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
             *guard = Some(config);
         }
 
         fn replace_retry_policy(&self, policy: RetryPolicy) {
-            let mut guard = self
-                .replaced_retry_policy
-                .lock()
-                .expect("lock replaced_retry_policy");
+            let mut guard = match self.replaced_retry_policy.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
             *guard = Some(policy);
         }
 
         fn replace_smtp_timeouts(&self, timeouts: SmtpTimeouts) {
-            let mut guard = self
-                .replaced_smtp_timeouts
-                .lock()
-                .expect("lock replaced_smtp_timeouts");
+            let mut guard = match self.replaced_smtp_timeouts.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
             *guard = Some(timeouts);
         }
 
         fn replace_circuit_breaker_config(&self, config: CircuitBreakerConfig) {
-            let mut guard = self
-                .replaced_circuit_breaker
-                .lock()
-                .expect("lock replaced_circuit_breaker");
+            let mut guard = match self.replaced_circuit_breaker.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
             *guard = Some(config);
         }
 
         fn replace_domains(&self, registry: DomainConfigRegistry) {
-            let mut guard = self.replaced_domains.lock().expect("lock replaced_domains");
+            let mut guard = match self.replaced_domains.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
             *guard = Some(registry);
         }
 
@@ -274,9 +276,9 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn reload_config_reports_restart_required_fields() {
-        let _guard = ENV_LOCK.lock().expect("lock env");
-        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    fn reload_config_reports_restart_required_fields() -> TestResult {
+        let _guard = ENV_LOCK.lock().map_err(|err| format!("lock env: {err}"))?;
+        let temp_dir = tempfile::TempDir::new()?;
         let config_path = temp_dir.path().join("empath.config.ron");
         let config = r#"
 Empath (
@@ -303,12 +305,12 @@ Empath (
   },
 )
 "#;
-        std::fs::write(&config_path, config).expect("write config");
+        std::fs::write(&config_path, config)?;
         let _env = EnvVarGuard::set("EMPATH_CONFIG", &config_path);
 
         let delivery = Arc::new(MockDelivery::default());
         let delivery_service: Arc<dyn DeliveryQueryService> = delivery.clone();
-        let message = reload_config_from_disk(&delivery_service).expect("reload config");
+        let message = reload_config_from_disk(&delivery_service)?;
 
         assert!(message.contains("Applied:"));
         assert!(message.contains("Restart required"));
@@ -317,6 +319,7 @@ Empath (
         assert_eq!(delivery.replaced_retry_policy_max_attempts(), Some(7));
         assert_eq!(delivery.replaced_smtp_timeouts_ehlo_secs(), Some(5));
         assert_eq!(delivery.replaced_circuit_breaker_threshold(), Some(7));
+        Ok(())
     }
 }
 

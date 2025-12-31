@@ -498,7 +498,7 @@ Eliminated all production panic calls and enforced panic-safety via strict clipp
 - ✅ Audited all 27 panic-related calls (25 in tests, 2 in production)
 - ✅ Refactored 2 `unreachable!` calls to use proper error handling
 - ✅ Added workspace-level clippy lints (deny: panic, todo, unimplemented, unreachable)
-- ✅ Added `#[allow]` attributes to test modules for legitimate test panics
+- ✅ Refactored tests to avoid panic/unwrap by returning Results
 - ✅ All clippy checks pass with strict lints
 - ✅ Zero production panics remain
 
@@ -981,7 +981,7 @@ Comprehensive audit and elimination of all production unwrap/expect calls to pre
 **Accomplishments**:
 - ✅ Created `docs/AUDIT_UNWRAP.md` (463 lines) categorizing all 330+ unwrap/expect calls
 - ✅ Eliminated all 10 production unwraps across 6 files via 3 commits
-- ✅ All ~300 test unwraps properly annotated with `#[allow(clippy::unwrap_used)]`
+- ✅ All tests use explicit error handling instead of unwrap/expect
 - ✅ Workspace-level CI lints upgraded from "warn" to "deny" for unwrap_used/expect_used
 - ✅ All 348 tests passing, zero clippy warnings
 

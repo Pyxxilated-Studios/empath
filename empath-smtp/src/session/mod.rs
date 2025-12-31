@@ -554,72 +554,69 @@ fn format_ip_address(bytes: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
     use std::path::PathBuf;
 
     use super::{TlsContext, TlsProfileSet};
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn inspect_reads_certificate_metadata() {
+    fn inspect_reads_certificate_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cert_path = manifest_dir.join("../certificate.crt");
         let key_path = manifest_dir.join("../private.key");
         if !key_path.exists() || !cert_path.exists() {
-            return;
+            return Ok(());
         }
 
-        let ctx = TlsContext::new(cert_path, key_path).expect("create TLS context");
+        let ctx = TlsContext::new(cert_path, key_path)?;
         let info = ctx.inspect();
 
         assert!(info.parse_error.is_none(), "certificate should parse");
-        let fingerprint = info
-            .fingerprint_sha256
-            .as_ref()
-            .expect("fingerprint should exist");
+        let Some(fingerprint) = info.fingerprint_sha256.as_ref() else {
+            return Err("fingerprint missing".into());
+        };
         assert_eq!(fingerprint.len(), 64, "fingerprint should be hex SHA-256");
         assert!(
             info.not_after.is_some(),
             "certificate expiry should be present"
         );
+        Ok(())
     }
 
     #[test]
-    fn profile_set_defaults_to_default() {
-        let primary =
-            TlsContext::new("cert.pem".into(), "key.pem".into()).expect("create TLS context");
-        let rotation =
-            TlsContext::new("cert2.pem".into(), "key2.pem".into()).expect("create TLS context");
+    fn profile_set_defaults_to_default() -> Result<(), Box<dyn std::error::Error>> {
+        let primary = TlsContext::new("cert.pem".into(), "key.pem".into())?;
+        let rotation = TlsContext::new("cert2.pem".into(), "key2.pem".into())?;
 
         let mut profiles = std::collections::BTreeMap::new();
         profiles.insert("default".to_string(), primary);
         profiles.insert("rotation".to_string(), rotation);
 
-        let set = TlsProfileSet::new(Some("smtp".to_string()), profiles, None)
-            .expect("create profile set");
+        let set = TlsProfileSet::new(Some("smtp".to_string()), profiles, None)?;
 
         assert_eq!(set.active_profile(), "default");
+        Ok(())
     }
 
     #[test]
-    fn profile_set_rejects_missing_profile() {
-        let primary =
-            TlsContext::new("cert.pem".into(), "key.pem".into()).expect("create TLS context");
+    fn profile_set_rejects_missing_profile() -> Result<(), Box<dyn std::error::Error>> {
+        let primary = TlsContext::new("cert.pem".into(), "key.pem".into())?;
         let mut profiles = std::collections::BTreeMap::new();
         profiles.insert("default".to_string(), primary);
 
-        let err = TlsProfileSet::new(
+        let Err(err) = TlsProfileSet::new(
             Some("smtp".to_string()),
             profiles,
             Some("missing".to_string()),
-        )
-        .expect_err("expected missing profile error");
+        ) else {
+            return Err("expected missing profile error".into());
+        };
 
         assert_eq!(
             err.to_string(),
             "TLS profile 'missing' not found in set 'smtp'"
         );
+        Ok(())
     }
 }
 

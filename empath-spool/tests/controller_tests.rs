@@ -1,37 +1,37 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
-
 use std::path::PathBuf;
 
 use empath_spool::FileBackingStore;
 
 #[test]
-fn test_path_validation_rejects_parent_dir() {
+fn test_path_validation_rejects_parent_dir() -> Result<(), Box<dyn std::error::Error>> {
     let result = FileBackingStore::builder()
         .path(PathBuf::from("/var/spool/../etc/passwd"))
         .build();
 
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot contain '..'")
-    );
+    let Err(err) = result else {
+        return Err("expected path rejection".into());
+    };
+    assert!(err.to_string().contains("cannot contain '..'"));
+    Ok(())
 }
 
 #[test]
-fn test_path_validation_rejects_relative_paths() {
+fn test_path_validation_rejects_relative_paths() -> Result<(), Box<dyn std::error::Error>> {
     let result = FileBackingStore::builder()
         .path(PathBuf::from("relative/path"))
         .build();
 
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("must be absolute"));
+    let Err(err) = result else {
+        return Err("expected path rejection".into());
+    };
+    assert!(err.to_string().contains("must be absolute"));
+    Ok(())
 }
 
 #[test]
 #[cfg(unix)]
-fn test_path_validation_rejects_unix_system_directories() {
+fn test_path_validation_rejects_unix_system_directories() -> Result<(), Box<dyn std::error::Error>>
+{
     let system_paths = vec![
         "/etc/spool",
         "/bin/messages",
@@ -48,17 +48,21 @@ fn test_path_validation_rejects_unix_system_directories() {
             .path(PathBuf::from(path))
             .build();
 
-        assert!(result.is_err(), "Path {path} should be rejected but wasn't");
+        let Err(err) = result else {
+            return Err(format!("path {path} should be rejected").into());
+        };
         assert!(
-            result.unwrap_err().to_string().contains("system directory"),
+            err.to_string().contains("system directory"),
             "Wrong error for path {path}"
         );
     }
+    Ok(())
 }
 
 #[test]
 #[cfg(windows)]
-fn test_path_validation_rejects_windows_system_directories() {
+fn test_path_validation_rejects_windows_system_directories()
+-> Result<(), Box<dyn std::error::Error>> {
     let system_paths = vec![
         "C:\\Windows\\System32",
         "C:\\Program Files\\Test",
@@ -74,17 +78,21 @@ fn test_path_validation_rejects_windows_system_directories() {
             .path(PathBuf::from(path))
             .build();
 
-        assert!(result.is_err(), "Path {path} should be rejected but wasn't");
+        let err = match result {
+            Ok(_) => return Err(format!("path {path} should be rejected").into()),
+            Err(err) => err,
+        };
         assert!(
-            result.unwrap_err().to_string().contains("system directory"),
+            err.to_string().contains("system directory"),
             "Wrong error for path {path}"
         );
     }
+    Ok(())
 }
 
 #[test]
 #[cfg(unix)]
-fn test_path_validation_accepts_valid_unix_paths() {
+fn test_path_validation_accepts_valid_unix_paths() -> Result<(), Box<dyn std::error::Error>> {
     let valid_paths = vec![
         "/var/spool/empath",
         "/home/user/mail",
@@ -97,18 +105,17 @@ fn test_path_validation_accepts_valid_unix_paths() {
             .path(PathBuf::from(path))
             .build();
 
-        assert!(
-            result.is_ok(),
-            "Valid path {} was rejected: {:?}",
-            path,
-            result.unwrap_err()
-        );
+        let Err(err) = result else {
+            continue;
+        };
+        return Err(format!("Valid path {path} was rejected: {err:?}").into());
     }
+    Ok(())
 }
 
 #[test]
 #[cfg(windows)]
-fn test_path_validation_accepts_valid_windows_paths() {
+fn test_path_validation_accepts_valid_windows_paths() -> Result<(), Box<dyn std::error::Error>> {
     let valid_paths = vec![
         "D:\\Mail\\Spool",
         "C:\\Users\\Admin\\Mail",
@@ -120,13 +127,13 @@ fn test_path_validation_accepts_valid_windows_paths() {
             .path(PathBuf::from(path))
             .build();
 
-        assert!(
-            result.is_ok(),
-            "Valid path {} was rejected: {:?}",
-            path,
-            result.unwrap_err()
-        );
+        let err = match result {
+            Ok(_) => continue,
+            Err(err) => err,
+        };
+        return Err(format!("Valid path {path} was rejected: {err:?}").into());
     }
+    Ok(())
 }
 
 #[test]
@@ -143,17 +150,16 @@ fn test_deserialization_validates_unix_path() {
 
 #[test]
 #[cfg(unix)]
-fn test_deserialization_accepts_valid_unix_path() {
+fn test_deserialization_accepts_valid_unix_path() -> Result<(), Box<dyn std::error::Error>> {
     let valid_config = r#"(
         path: "/var/spool/empath"
     )"#;
 
     let result: Result<FileBackingStore, _> = ron::from_str(valid_config);
-    assert!(
-        result.is_ok(),
-        "Valid path rejected during deserialization: {:?}",
-        result.unwrap_err()
-    );
+    let Err(err) = result else {
+        return Ok(());
+    };
+    Err(format!("Valid path rejected during deserialization: {err:?}").into())
 }
 
 #[test]
@@ -170,15 +176,14 @@ fn test_deserialization_validates_windows_path() {
 
 #[test]
 #[cfg(windows)]
-fn test_deserialization_accepts_valid_windows_path() {
+fn test_deserialization_accepts_valid_windows_path() -> Result<(), Box<dyn std::error::Error>> {
     let valid_config = r#"(
         path: "D:\\Mail\\Spool"
     )"#;
 
     let result: Result<FileBackingStore, _> = ron::from_str(valid_config);
-    assert!(
-        result.is_ok(),
-        "Valid path rejected during deserialization: {:?}",
-        result.unwrap_err()
-    );
+    let Err(err) = result else {
+        return Ok(());
+    };
+    Err(format!("Valid path rejected during deserialization: {err:?}").into())
 }

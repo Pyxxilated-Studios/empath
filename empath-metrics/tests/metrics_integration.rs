@@ -2,8 +2,6 @@
 //!
 //! Verifies that metric counters accurately reflect actual events, especially
 //! after the `AtomicU64` optimization (task 0.30) which reduced overhead by 90%.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
-
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -209,7 +207,7 @@ fn test_module_metrics_memory_and_helpers() {
 }
 
 #[test]
-fn test_concurrent_metric_updates() {
+fn test_concurrent_metric_updates() -> Result<(), Box<dyn std::error::Error>> {
     use std::thread;
 
     let metrics = Arc::new(SmtpMetrics::new());
@@ -229,7 +227,9 @@ fn test_concurrent_metric_updates() {
 
     // Wait for all threads to complete
     for handle in handles {
-        handle.join().expect("Thread panicked");
+        handle
+            .join()
+            .map_err(|_| "thread panicked during metrics updates")?;
     }
 
     // Verify all 1000 connections were recorded (10 threads * 100 connections)
@@ -238,6 +238,7 @@ fn test_concurrent_metric_updates() {
         1000,
         "All concurrent connections should be recorded correctly"
     );
+    Ok(())
 }
 
 #[test]
@@ -480,7 +481,7 @@ fn test_delivery_domain_high_priority_bypass() {
 }
 
 #[test]
-fn test_delivery_domain_cardinality_concurrent() {
+fn test_delivery_domain_cardinality_concurrent() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;
     use std::thread;
 
@@ -501,7 +502,9 @@ fn test_delivery_domain_cardinality_concurrent() {
 
     // Wait for all threads
     for handle in handles {
-        handle.join().unwrap();
+        handle
+            .join()
+            .map_err(|_| "worker thread panicked during metrics recording")?;
     }
 
     // Verify some domains were bucketed (limit is 10, we tried 20)
@@ -510,4 +513,5 @@ fn test_delivery_domain_cardinality_concurrent() {
         bucketed >= 10,
         "Expected at least 10 bucketed domains in concurrent test, got {bucketed}"
     );
+    Ok(())
 }

@@ -5,8 +5,6 @@
 //! - Bincode serialization/deserialization of metadata
 //! - ULID generation and parsing
 //! - In-memory spool operations (write, read, list, delete)
-#![allow(clippy::expect_used, clippy::unwrap_used)]
-
 use std::borrow::Cow;
 use std::hint::black_box;
 use std::sync::Arc;
@@ -31,17 +29,16 @@ fn create_test_message(data_size: usize) -> Context {
     session.insert(Cow::Borrowed("tls_version"), "TLSv1.3".to_string());
 
     let mut envelope = Envelope::default();
-    *envelope.sender_mut() = Some(
-        address_parser::parse_forward_path("<sender@example.com>")
-            .expect("Valid address")
-            .into(),
+    let sender = unwrap_or_exit(
+        address_parser::parse_forward_path("<sender@example.com>"),
+        "Failed to parse sender address",
     );
-    *envelope.recipients_mut() = Some(
-        vec![Address::from(
-            address_parser::parse_forward_path("<recipient@example.com>").expect("Valid address"),
-        )]
-        .into(),
+    let recipient = unwrap_or_exit(
+        address_parser::parse_forward_path("<recipient@example.com>"),
+        "Failed to parse recipient address",
     );
+    *envelope.sender_mut() = Some(sender.into());
+    *envelope.recipients_mut() = Some(vec![Address::from(recipient)].into());
 
     Context {
         envelope: Arc::new(envelope),
@@ -49,6 +46,16 @@ fn create_test_message(data_size: usize) -> Context {
         extended: true,
         session,
         ..Default::default()
+    }
+}
+
+fn unwrap_or_exit<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{context}: {err}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -128,7 +135,7 @@ fn bench_message_id_operations(c: &mut Criterion) {
 fn bench_spool_write(c: &mut Criterion) {
     let mut group = c.benchmark_group("spool_write");
 
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let runtime = unwrap_or_exit(tokio::runtime::Runtime::new(), "Failed to create runtime");
 
     let sizes = vec![(1024, "1KB"), (10 * 1024, "10KB"), (100 * 1024, "100KB")];
 
@@ -138,7 +145,7 @@ fn bench_spool_write(c: &mut Criterion) {
             b.to_async(&runtime).iter(|| async move {
                 let spool = MemoryBackingStore::new();
                 let mut message = create_test_message(black_box(size));
-                let id = spool.write(&mut message).await.expect("Write succeeds");
+                let id = unwrap_or_exit(spool.write(&mut message).await, "Write failed");
                 black_box(id)
             });
         });
@@ -150,15 +157,15 @@ fn bench_spool_write(c: &mut Criterion) {
 fn bench_spool_read(c: &mut Criterion) {
     let mut group = c.benchmark_group("spool_read");
 
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let runtime = unwrap_or_exit(tokio::runtime::Runtime::new(), "Failed to create runtime");
 
     let sizes = vec![(1024, "1KB"), (10 * 1024, "10KB"), (100 * 1024, "100KB")];
 
     for (size, desc) in sizes {
         let spool = MemoryBackingStore::new();
         let mut message = create_test_message(size);
-        let id =
-            runtime.block_on(async { spool.write(&mut message).await.expect("Write succeeds") });
+        let id = runtime
+            .block_on(async { unwrap_or_exit(spool.write(&mut message).await, "Write failed") });
 
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(desc), &size, |b, &_size| {
@@ -168,7 +175,7 @@ fn bench_spool_read(c: &mut Criterion) {
                     (spool.clone(), id.clone())
                 },
                 |(spool, id)| async move {
-                    let message = spool.read(black_box(&id)).await.expect("Read succeeds");
+                    let message = unwrap_or_exit(spool.read(black_box(&id)).await, "Read failed");
                     black_box(message)
                 },
                 criterion::BatchSize::SmallInput,
@@ -182,7 +189,7 @@ fn bench_spool_read(c: &mut Criterion) {
 fn bench_spool_list(c: &mut Criterion) {
     let mut group = c.benchmark_group("spool_list");
 
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let runtime = unwrap_or_exit(tokio::runtime::Runtime::new(), "Failed to create runtime");
 
     let message_counts = vec![10, 100, 1000];
 
@@ -191,7 +198,7 @@ fn bench_spool_list(c: &mut Criterion) {
         runtime.block_on(async {
             for _ in 0..count {
                 let mut message = create_test_message(1024);
-                spool.write(&mut message).await.expect("Write succeeds");
+                unwrap_or_exit(spool.write(&mut message).await, "Write failed");
             }
         });
 
@@ -206,7 +213,7 @@ fn bench_spool_list(c: &mut Criterion) {
                         spool.clone()
                     },
                     |spool| async move {
-                        let ids = spool.list().await.expect("List succeeds");
+                        let ids = unwrap_or_exit(spool.list().await, "List failed");
                         black_box(ids)
                     },
                     criterion::BatchSize::SmallInput,
@@ -221,7 +228,7 @@ fn bench_spool_list(c: &mut Criterion) {
 fn bench_spool_full_lifecycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("spool_full_lifecycle");
 
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+    let runtime = unwrap_or_exit(tokio::runtime::Runtime::new(), "Failed to create runtime");
 
     group.bench_function("write_read_delete", |b| {
         b.to_async(&runtime).iter(|| async {
@@ -229,14 +236,14 @@ fn bench_spool_full_lifecycle(c: &mut Criterion) {
             let mut message = create_test_message(1024);
 
             // Write
-            let id = spool.write(&mut message).await.expect("Write succeeds");
+            let id = unwrap_or_exit(spool.write(&mut message).await, "Write failed");
 
             // Read
-            let read_msg = spool.read(&id).await.expect("Read succeeds");
+            let read_msg = unwrap_or_exit(spool.read(&id).await, "Read failed");
             black_box(read_msg);
 
             // Delete
-            spool.delete(&id).await.expect("Delete succeeds");
+            unwrap_or_exit(spool.delete(&id).await, "Delete failed");
         });
     });
 

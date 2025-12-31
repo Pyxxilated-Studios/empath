@@ -5,8 +5,6 @@
 //! - ESMTP parameter parsing with perfect hash map
 //! - FSM state transitions
 //! - Context operations
-#![allow(clippy::expect_used, clippy::unwrap_used)]
-
 use std::hint::black_box;
 use std::sync::Arc;
 
@@ -18,6 +16,16 @@ use empath_common::envelope::Envelope;
 use empath_smtp::command::{Command, HeloVariant};
 use empath_smtp::state::{Connect, Data, Ehlo, MailFrom, RcptTo};
 use empath_smtp::{MailParameters, State};
+
+fn unwrap_or_exit<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{context}: {err}");
+            std::process::exit(1);
+        }
+    }
+}
 
 // ============================================================================
 // Command Parsing Benchmarks
@@ -142,8 +150,10 @@ fn bench_mail_parameters_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("mail_parameters_operations");
 
     // Benchmark parameter lookups (tests perfect hash map performance)
-    let params = MailParameters::from_params_str("SIZE=12345 BODY=8BITMIME AUTH=<> SMTPUTF8")
-        .expect("Valid params");
+    let params = unwrap_or_exit(
+        MailParameters::from_params_str("SIZE=12345 BODY=8BITMIME AUTH=<> SMTPUTF8"),
+        "Failed to parse mail parameters",
+    );
 
     group.bench_function("has_known_param", |b| {
         b.iter(|| black_box(&params).has(black_box("SIZE")));
@@ -204,9 +214,11 @@ fn bench_fsm_transitions(c: &mut Criterion) {
             });
             let cmd = Command::MailFrom(
                 Some(
-                    address_parser::parse_forward_path("<user@example.com>")
-                        .expect("Valid address")
-                        .into(),
+                    unwrap_or_exit(
+                        address_parser::parse_forward_path("<user@example.com>"),
+                        "Failed to parse sender address",
+                    )
+                    .into(),
                 ),
                 MailParameters::new(),
             );
@@ -220,17 +232,19 @@ fn bench_fsm_transitions(c: &mut Criterion) {
             let mut ctx = Context::default();
             let state = State::MailFrom(MailFrom {
                 sender: Some(
-                    address_parser::parse_forward_path("<user@example.com>")
-                        .expect("Valid address")
-                        .into(),
+                    unwrap_or_exit(
+                        address_parser::parse_forward_path("<user@example.com>"),
+                        "Failed to parse sender address",
+                    )
+                    .into(),
                 ),
                 params: MailParameters::new(),
             });
             let cmd = Command::RcptTo(
-                vec![Address::from(
-                    address_parser::parse_forward_path("<recipient@example.com>")
-                        .expect("Valid address"),
-                )]
+                vec![Address::from(unwrap_or_exit(
+                    address_parser::parse_forward_path("<recipient@example.com>"),
+                    "Failed to parse recipient address",
+                ))]
                 .into(),
             );
             let new_state = black_box(state).transition(black_box(cmd), &mut ctx);
@@ -243,9 +257,11 @@ fn bench_fsm_transitions(c: &mut Criterion) {
             let mut ctx = Context::default();
             let state = State::RcptTo(RcptTo {
                 sender: Some(
-                    address_parser::parse_forward_path("<user@example.com>")
-                        .expect("Valid address")
-                        .into(),
+                    unwrap_or_exit(
+                        address_parser::parse_forward_path("<user@example.com>"),
+                        "Failed to parse sender address",
+                    )
+                    .into(),
                 ),
                 params: MailParameters::new(),
             });
@@ -287,9 +303,11 @@ fn bench_fsm_full_transaction(c: &mut Criterion) {
             state = state.transition(
                 Command::MailFrom(
                     Some(
-                        address_parser::parse_forward_path("<sender@example.com>")
-                            .expect("Valid address")
-                            .into(),
+                        unwrap_or_exit(
+                            address_parser::parse_forward_path("<sender@example.com>"),
+                            "Failed to parse sender address",
+                        )
+                        .into(),
                     ),
                     MailParameters::new(),
                 ),
@@ -299,10 +317,10 @@ fn bench_fsm_full_transaction(c: &mut Criterion) {
             // RCPT TO
             state = state.transition(
                 Command::RcptTo(
-                    vec![Address::from(
-                        address_parser::parse_forward_path("<recipient@example.com>")
-                            .expect("Valid address"),
-                    )]
+                    vec![Address::from(unwrap_or_exit(
+                        address_parser::parse_forward_path("<recipient@example.com>"),
+                        "Failed to parse recipient address",
+                    ))]
                     .into(),
                 ),
                 &mut ctx,
@@ -340,15 +358,17 @@ fn bench_context_operations(c: &mut Criterion) {
         b.iter(|| {
             let mut envelope = Envelope::default();
             *envelope.sender_mut() = Some(
-                address_parser::parse_forward_path("<sender@example.com>")
-                    .expect("Valid address")
-                    .into(),
+                unwrap_or_exit(
+                    address_parser::parse_forward_path("<sender@example.com>"),
+                    "Failed to parse sender address",
+                )
+                .into(),
             );
             *envelope.recipients_mut() = Some(
-                vec![Address::from(
-                    address_parser::parse_forward_path("<recipient@example.com>")
-                        .expect("Valid address"),
-                )]
+                vec![Address::from(unwrap_or_exit(
+                    address_parser::parse_forward_path("<recipient@example.com>"),
+                    "Failed to parse recipient address",
+                ))]
                 .into(),
             );
 

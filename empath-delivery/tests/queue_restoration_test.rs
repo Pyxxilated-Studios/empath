@@ -4,8 +4,6 @@
 //! 1. Queue state is restored from Context.delivery in spooled messages
 //! 2. `next_retry_at` timestamps are honored (no immediate retries)
 //! 3. All delivery state fields are preserved (status, attempts, `current_server_index`)
-#![allow(clippy::expect_used, clippy::unwrap_used)]
-
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -17,13 +15,15 @@ use empath_common::{DeliveryAttempt, DeliveryStatus, Domain, SpooledMessageId, a
 use empath_delivery::{DeliveryInfo, DeliveryProcessor};
 use empath_spool::{BackingStore, MemoryBackingStore};
 
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
 fn create_test_context_with_delivery_state(
     from: &str,
     to: &str,
     status: DeliveryStatus,
     attempts: u32,
     next_retry_at: Option<SystemTime>,
-) -> Context {
+) -> TestResult<Context> {
     let mut envelope = Envelope::default();
 
     // Parse and set sender - add brackets if needed
@@ -49,18 +49,22 @@ fn create_test_context_with_delivery_state(
 
     // Create delivery context with state
     // Generate attempt history matching the attempt count
+    let server_id = ServerId::new("mx.example.com:25")
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err.to_string()))?;
     let attempt_history: Vec<DeliveryAttempt> = (0..attempts)
         .map(|i| DeliveryAttempt {
             timestamp: SystemTime::now() - Duration::from_secs(120 * u64::from(attempts - i)),
             error: Some(format!("Attempt {}: Connection refused", i + 1)),
-            server: ServerId::new("mx.example.com:25").unwrap(),
+            server: server_id.clone(),
         })
         .collect();
 
     let delivery = DeliveryContext {
         message_id: SpooledMessageId::generate(),
         domain: Domain::new(domain),
-        server: Some(ServerId::new("mx.example.com:25").unwrap()),
+        server: Some(ServerId::new("mx.example.com:25").map_err(|err| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, err.to_string())
+        })?),
         error: Some("Connection refused".to_string()),
         attempts: Some(attempts),
         binding: Some("primary".to_string()),
@@ -72,7 +76,7 @@ fn create_test_context_with_delivery_state(
         priority_tier: DeliveryPriorityTier::default(),
     };
 
-    Context {
+    Ok(Context {
         envelope: Arc::new(envelope),
         id: "test-session".to_string(),
         data: Some(Arc::from(
@@ -80,10 +84,10 @@ fn create_test_context_with_delivery_state(
         )),
         delivery: Some(delivery),
         ..Default::default()
-    }
+    })
 }
 
-fn init_processor(spool: Arc<dyn BackingStore>) -> DeliveryProcessor {
+fn init_processor(spool: Arc<dyn BackingStore>) -> TestResult<DeliveryProcessor> {
     let mut processor = DeliveryProcessor::default();
     processor.scan_interval_secs = 1;
     processor.process_interval_secs = 1;
@@ -92,13 +96,13 @@ fn init_processor(spool: Arc<dyn BackingStore>) -> DeliveryProcessor {
         retry_policy.max_attempts = 5;
         retry_policy.base_retry_delay_secs = 60;
     }
-    processor
-        .init(spool, None)
-        .expect("Failed to init processor");
-    processor
+    processor.init(spool, None)?;
+    Ok(processor)
 }
 
-async fn spool_retry_message(spool: Arc<dyn BackingStore>) -> (SpooledMessageId, SystemTime) {
+async fn spool_retry_message(
+    spool: Arc<dyn BackingStore>,
+) -> TestResult<(SpooledMessageId, SystemTime)> {
     let future_retry_time = SystemTime::now() + Duration::from_secs(3600);
     let mut context = create_test_context_with_delivery_state(
         "sender@example.org",
@@ -109,44 +113,43 @@ async fn spool_retry_message(spool: Arc<dyn BackingStore>) -> (SpooledMessageId,
         },
         2,
         Some(future_retry_time),
-    );
+    )?;
 
-    let msg_id = BackingStore::write(spool.as_ref(), &mut context)
-        .await
-        .expect("Failed to spool message");
+    let msg_id = BackingStore::write(spool.as_ref(), &mut context).await?;
 
-    (msg_id, future_retry_time)
+    Ok((msg_id, future_retry_time))
 }
 
-async fn assert_persisted_delivery(spool: Arc<dyn BackingStore>, msg_id: &SpooledMessageId) {
-    let persisted_context: Context = BackingStore::read(spool.as_ref(), msg_id)
-        .await
-        .expect("Failed to read spooled message");
+async fn assert_persisted_delivery(
+    spool: Arc<dyn BackingStore>,
+    msg_id: &SpooledMessageId,
+) -> TestResult {
+    let persisted_context: Context = BackingStore::read(spool.as_ref(), msg_id).await?;
     assert!(
         persisted_context.delivery.is_some(),
         "Context.delivery should be persisted"
     );
-    let persisted_delivery = persisted_context.delivery.as_ref().unwrap();
+    let persisted_delivery = persisted_context
+        .delivery
+        .as_ref()
+        .ok_or("missing delivery context")?;
     assert_eq!(persisted_delivery.attempts, Some(2));
     assert_eq!(persisted_delivery.current_server_index, 1);
     assert!(
         persisted_delivery.next_retry_at.is_some(),
         "next_retry_at should be persisted"
     );
+    Ok(())
 }
 
 async fn restore_queue(
     processor: &DeliveryProcessor,
     spool: Arc<dyn BackingStore>,
-) -> Vec<SpooledMessageId> {
-    let messages = BackingStore::list(spool.as_ref())
-        .await
-        .expect("Failed to list spool");
+) -> TestResult<Vec<SpooledMessageId>> {
+    let messages = BackingStore::list(spool.as_ref()).await?;
 
     for msg_id in &messages {
-        let context = BackingStore::read(spool.as_ref(), msg_id)
-            .await
-            .expect("Failed to read message");
+        let context = BackingStore::read(spool.as_ref(), msg_id).await?;
 
         if let Some(delivery_ctx) = &context.delivery {
             let info = DeliveryInfo {
@@ -166,10 +169,10 @@ async fn restore_queue(
         }
     }
 
-    messages
+    Ok(messages)
 }
 
-fn assert_restored_info(restored_info: &DeliveryInfo, future_retry_time: SystemTime) {
+fn assert_restored_info(restored_info: &DeliveryInfo, future_retry_time: SystemTime) -> TestResult {
     assert!(
         matches!(
             restored_info.status,
@@ -196,7 +199,9 @@ fn assert_restored_info(restored_info: &DeliveryInfo, future_retry_time: SystemT
         "binding should be restored"
     );
 
-    let restored_retry_time = restored_info.next_retry_at.unwrap();
+    let restored_retry_time = restored_info
+        .next_retry_at
+        .ok_or("expected next_retry_at")?;
     let time_diff = restored_retry_time
         .duration_since(future_retry_time)
         .unwrap_or_else(|e| e.duration());
@@ -211,33 +216,35 @@ fn assert_restored_info(restored_info: &DeliveryInfo, future_retry_time: SystemT
         restored_retry_time > now,
         "next_retry_at should be in the future"
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Async operations")]
-async fn test_queue_restoration_across_restart() {
+async fn test_queue_restoration_across_restart() -> TestResult {
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
-    let processor1 = init_processor(spool.clone());
-    let (msg_id, future_retry_time) = spool_retry_message(spool.clone()).await;
-    assert_persisted_delivery(spool.clone(), &msg_id).await;
+    let processor1 = init_processor(spool.clone())?;
+    let (msg_id, future_retry_time) = spool_retry_message(spool.clone()).await?;
+    assert_persisted_delivery(spool.clone(), &msg_id).await?;
 
     drop(processor1);
-    let processor2 = init_processor(spool.clone());
-    let messages = restore_queue(&processor2, spool.clone()).await;
+    let processor2 = init_processor(spool.clone())?;
+    let messages = restore_queue(&processor2, spool.clone()).await?;
     assert_eq!(messages.len(), 1, "Should have 1 message in spool");
 
     let restored_info = processor2
         .queue()
         .get(&msg_id)
-        .expect("Message should be in queue");
+        .ok_or("message should be in queue")?;
 
-    assert_restored_info(&restored_info, future_retry_time);
+    assert_restored_info(&restored_info, future_retry_time)?;
+    Ok(())
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Async operations")]
-async fn test_queue_restoration_with_multiple_messages() {
+async fn test_queue_restoration_with_multiple_messages() -> TestResult {
     let spool: Arc<dyn BackingStore> = Arc::new(MemoryBackingStore::default());
 
     // Create multiple messages with different states
@@ -270,11 +277,9 @@ async fn test_queue_restoration_with_multiple_messages() {
             status.clone(),
             attempts,
             next_retry_at,
-        );
+        )?;
 
-        let msg_id = BackingStore::write(spool.as_ref(), &mut context)
-            .await
-            .expect("Failed to spool");
+        let msg_id = BackingStore::write(spool.as_ref(), &mut context).await?;
         message_ids.push((msg_id, status, attempts, next_retry_at));
     }
 
@@ -284,8 +289,8 @@ async fn test_queue_restoration_with_multiple_messages() {
     );
 
     // Create processor and restore queue
-    let processor = init_processor(spool.clone());
-    let messages = restore_queue(&processor, spool.clone()).await;
+    let processor = init_processor(spool.clone())?;
+    let messages = restore_queue(&processor, spool.clone()).await?;
 
     // Verify all messages were restored
     assert_eq!(
@@ -298,7 +303,7 @@ async fn test_queue_restoration_with_multiple_messages() {
         let info = processor
             .queue()
             .get(&msg_id)
-            .expect("Message should be in queue");
+            .ok_or("message should be in queue")?;
 
         // Verify status
         assert_eq!(
@@ -323,4 +328,5 @@ async fn test_queue_restoration_with_multiple_messages() {
     }
 
     println!("✅ Multi-message queue restoration test PASSED");
+    Ok(())
 }

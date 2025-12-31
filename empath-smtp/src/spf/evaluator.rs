@@ -2,8 +2,6 @@
 //!
 //! Implements RFC 7208 SPF evaluation with DNS lookups and mechanism checking.
 
-#![allow(clippy::too_many_lines)]
-
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
