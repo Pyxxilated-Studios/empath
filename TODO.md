@@ -14,7 +14,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P1 — Architecture & Safety
 - [x] ARCH-01: Decouple outbound delivery from SMTP server crate. Extract an SMTP client crate or trait (minimal API) and migrate `empath-delivery` to it. Prevent inbound/outbound circular deps.
-- [ ] ARCH-02: Isolate module dispatch on SMTP hot path. Add per-event timeouts, metrics, and optional isolation (spawn_blocking or WASM sandbox), with config knobs and failure policy.
+- [x] ARCH-02: Isolate module dispatch on SMTP hot path. Add per-event timeouts, metrics, and optional isolation (spawn_blocking or WASM sandbox), with config knobs and failure policy.
 
 ## P2 — Delivery Improvements
 - [x] DEL-01: Binding selection transparency. Add control endpoint to show resolved binding + TLS policy per domain (preview mode).

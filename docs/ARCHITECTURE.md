@@ -633,8 +633,9 @@ graph TB
 
 ### 3. Module/Plugin System
 - C FFI for language-agnostic extensions
-- Synchronous dispatch (all modules called sequentially)
-- First non-zero return rejects transaction
+- Sequential dispatch with configurable timeouts per event type
+- Optional isolation via `spawn_blocking` with fail-open/fail-closed policy
+- Validation callbacks can reject transactions; event callbacks default to fail-open
 
 ### 4. Controller/Listener Pattern
 - Controller manages multiple listeners
