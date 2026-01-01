@@ -105,18 +105,20 @@ Key requirements:
 
 ### Workspace Structure
 
-11-crate workspace:
+Workspace core crates:
 1. **empath** - Main binary orchestrating components
-2. **empath-common** - Core traits (`Protocol`, `FiniteStateMachine`, `Controller`, `Listener`)
-3. **empath-smtp** - SMTP protocol with FSM and session management
-4. **empath-delivery** - Outbound delivery queue and processor
-5. **empath-ffi** - C-compatible API for modules
-6. **empath-health** - HTTP health check endpoints
-7. **empath-metrics** - OpenTelemetry metrics
-8. **empath-python** - Python module support via PyO3
-9. **empath-control** - Control socket IPC
-10. **empath-spool** - Message persistence
-11. **empath-tracing** - `#[traced]` instrumentation macros
+2. **empath-core** - Domain types (address, envelope, message, SPF)
+3. **empath-common** - Core traits (`Protocol`, `FiniteStateMachine`, `Controller`, `Listener`) and context helpers
+4. **empath-smtp** - SMTP protocol with FSM and session management
+5. **empath-smtp-client** - Outbound SMTP client used by delivery
+6. **empath-delivery** - Outbound delivery queue and processor
+7. **empath-ffi** - C-compatible API for modules
+8. **empath-health** - HTTP health check endpoints
+9. **empath-metrics** - OpenTelemetry metrics
+10. **empath-python** - Python module support via PyO3
+11. **empath-control** - Control socket IPC
+12. **empath-spool** - Message persistence
+13. **empath-tracing** - `#[traced]` instrumentation macros
 
 ### Key Architectural Patterns
 

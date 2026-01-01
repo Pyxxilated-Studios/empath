@@ -53,7 +53,8 @@ just docker-test-email
 ## Architecture (high level)
 
 - **empath**: main binary and controller loop
-- **empath-common**: shared types (contexts, envelope, newtypes, tracing macros)
+- **empath-core**: domain types (address, envelope, message, SPF) with no tokio/tracing deps
+- **empath-common**: shared traits/context helpers and optional observability glue
 - **empath-smtp**: server/session FSM and SMTP commands
 - **empath-smtp-client**: outbound SMTP client used by delivery
 - **empath-delivery**: spool-backed queue, MX resolution, retries/DSNs
@@ -61,6 +62,8 @@ just docker-test-email
 - **empath-control**: control socket IPC and `empathctl` CLI
 - **empath-metrics** / **empath-tracing** / **empath-health**: observability and health checks
 - **empath-ffi** / **empath-wasm**: module interfaces for FFI and WASM
+
+Note: `empath-common` enables the `observability` feature by default (OpenTelemetry + logging). Use `default-features = false` when you only need traits/context helpers without OTEL, or depend directly on `empath-core` for domain types.
 
 ## Runtime Control
 
@@ -125,7 +128,8 @@ just bench       # Run all benchmarks
 ```
 empath/
 ├── empath/              # Main binary and orchestration
-├── empath-common/       # Core traits and abstractions
+├── empath-core/         # Domain types (no tokio/tracing)
+├── empath-common/       # Core traits, context helpers, observability glue
 ├── empath-smtp/         # SMTP protocol implementation
 ├── empath-smtp-client/  # Outbound SMTP client
 ├── empath-delivery/     # Outbound delivery processor

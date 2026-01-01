@@ -77,6 +77,7 @@ graph TD
     end
 
     subgraph "Shared Libraries"
+        Core[empath-core<br/>Domain types]
         Common[empath-common<br/>Core traits & context]
         Tracing[empath-tracing<br/>Instrumentation macros]
         Metrics[empath-metrics<br/>OpenTelemetry helpers]
@@ -114,6 +115,7 @@ graph TD
     Main --> WasmHost
 
     SMTP --> Common
+    Common --> Core
     SMTP --> Tracing
     Delivery --> Common
     Delivery --> SmtpClient
@@ -125,7 +127,8 @@ graph TD
 **Crate Responsibilities:**
 
 - **empath**: Main daemon, config parsing, controller orchestration, queue coordinator
-- **empath-common**: Protocol/FSM/controller/listener traits plus shared context helpers
+- **empath-core**: Domain types (address, envelope, message, SPF) with no tokio/tracing deps
+- **empath-common**: Protocol/FSM/controller/listener traits plus shared context helpers (observability optional)
 - **empath-smtp**: SMTP listener/session FSM with TLS and module hooks
 - **empath-smtp-client**: Outbound SMTP client used by delivery
 - **empath-delivery**: Outbound queue scanner, delivery processor, rate limiting, retries
@@ -139,6 +142,11 @@ graph TD
 - **empath-wasm / empath-wasm-guest / empath-wasm-guest-macros**: WASM runtime and example guests for module development
 - **empath-examples / empath-examples/wasm**: Sample configs and modules that illustrate integration
 - **xtask**: Custom build helpers (example/module compilation, docs generation)
+
+**Feature Flags and Migration Notes:**
+
+- **Domain split**: Domain types moved to `empath-core`. `empath-common` re-exports these for compatibility, but new crates should depend on `empath-core` when they only need address/envelope/message/SPF types.
+- **Observability gate**: `empath-common` enables the `observability` feature by default (OpenTelemetry + logging). Disable it with `default-features = false` in downstream `Cargo.toml` when you need a minimal dependency surface.
 
 ---
 

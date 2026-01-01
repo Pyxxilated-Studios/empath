@@ -133,16 +133,18 @@ Work through these steps in order. Each should take 1-3 minutes.
 **Workspace Snapshot:**
 
 1. **empath** - Main daemon, configuration loader, controller orchestration
-2. **empath-common** - Shared protocols, FSM traits, context helpers
-3. **empath-smtp** - SMTP listener/FSM, TLS/STARTTLS handling, module integration
-4. **empath-delivery** - Delivery queue scanner, retry scheduler, rate limiting
-5. **empath-spool** - File/memory spool backends that persist queued messages
-6. **empath-control** - Control socket + CLI helpers for queue/metrics/dns operations
-7. **empath-health** - HTTP health endpoints (`/health/live`, `/health/ready`) used by Kubernetes
-8. **empath-metrics** - OpenTelemetry exporter, metrics builder, and helpers
-9. **empath-ffi** / **empath-python** / **empath-wasm** - Module surfaces for C, Python, and WASM extensions (plus wasm-guest and wasm-guest-macros helpers)
-10. **empath-tracing** - `#[traced]` procedural macro plus instrumentation utilities
-11. **empath-examples** & **xtask** - Sample configurations/modules and build helpers for examples/extensions
+2. **empath-core** - Domain types (address, envelope, message, SPF) with no tokio/tracing
+3. **empath-common** - Shared protocols, FSM traits, context helpers, observability glue
+4. **empath-smtp** - SMTP listener/FSM, TLS/STARTTLS handling, module integration
+5. **empath-smtp-client** - Outbound SMTP client used by delivery
+6. **empath-delivery** - Delivery queue scanner, retry scheduler, rate limiting
+7. **empath-spool** - File/memory spool backends that persist queued messages
+8. **empath-control** - Control socket + CLI helpers for queue/metrics/dns operations
+9. **empath-health** - HTTP health endpoints (`/health/live`, `/health/ready`) used by Kubernetes
+10. **empath-metrics** - OpenTelemetry exporter, metrics builder, and helpers
+11. **empath-ffi** / **empath-python** / **empath-wasm** - Module surfaces for C, Python, and WASM extensions (plus wasm-guest and wasm-guest-macros helpers)
+12. **empath-tracing** - `#[traced]` procedural macro plus instrumentation utilities
+13. **empath-examples** & **xtask** - Sample configurations/modules and build helpers for examples/extensions
 
 **Data Flow:**
 ```
