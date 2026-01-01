@@ -134,6 +134,18 @@ Default: 5 seconds. Configurable via `timeout_secs`:
 
 Uses Wasmtime's epoch-based interruption for precise timeouts without fuel overhead.
 
+## Module Arguments
+
+Pass module arguments via `args` in config; they are exposed to WASI as `argv` (use `std::env::args()` in guest code):
+
+```ron
+{
+    type: "Wasm",
+    path: "module.wasm",
+    args: ["rules=/etc/empath/rules"],
+}
+```
+
 ## Error Handling
 
 - **Module not found**: Logged as error, initialization fails

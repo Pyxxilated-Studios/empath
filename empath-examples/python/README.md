@@ -190,11 +190,12 @@ ctx.rejection                         # Get (code, message) tuple if rejected
 ### 1. Initialize Carefully
 
 ```python
-def init():
+def init(args):
     """
     Optional initialization function
     Called once when the module is loaded
     """
+    # args is a list of strings from config "args"
     # Load configuration
     # Initialize connections
     # Set up state

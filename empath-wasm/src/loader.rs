@@ -361,6 +361,9 @@ pub struct WasmModule {
     /// Configured outbound bindings for validation helpers
     outbound_bindings: Arc<[String]>,
 
+    /// Module arguments passed via WASI argv
+    module_args: Arc<[String]>,
+
     /// WASI preopened directories: (`host_path`, `guest_name`, readonly)
     wasi_dirs: Vec<(String, String, bool)>,
 
@@ -403,6 +406,7 @@ impl WasmModule {
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
             outbound_bindings: Arc::from(Vec::<String>::new().into_boxed_slice()),
+            module_args: Arc::from(Vec::<String>::new().into_boxed_slice()),
             wasi_dirs: Vec::new(),
             wasi_inherit_env: false,
             deterministic_wasi: None,
@@ -427,6 +431,13 @@ impl WasmModule {
     #[must_use]
     pub fn with_outbound_bindings(mut self, bindings: Vec<String>) -> Self {
         self.outbound_bindings = Arc::from(bindings.into_boxed_slice());
+        self
+    }
+
+    /// Set module arguments passed to the WASI runtime.
+    #[must_use]
+    pub fn with_args(mut self, args: Vec<String>) -> Self {
+        self.module_args = Arc::from(args.into_boxed_slice());
         self
     }
 
@@ -678,6 +689,13 @@ impl WasmModule {
         if self.wasi_inherit_env {
             internal!(level = TRACE, "WASI: Inheriting host environment variables");
             builder.inherit_env();
+        }
+
+        if !self.module_args.is_empty() {
+            let mut args = Vec::with_capacity(self.module_args.len() + 1);
+            args.push(self.path.as_str());
+            args.extend(self.module_args.iter().map(String::as_str));
+            builder.args(&args);
         }
 
         if let Some(config) = &self.deterministic_wasi {

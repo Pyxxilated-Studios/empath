@@ -23,6 +23,10 @@ pub struct Wasm {
     /// Path to the .wasm file
     path: PathBuf,
 
+    /// Module initialization arguments
+    #[serde(alias = "args", default)]
+    arguments: Vec<String>,
+
     /// Execution timeout in seconds (optional, default: 5)
     #[serde(default)]
     timeout_secs: Option<u64>,
@@ -53,6 +57,7 @@ impl fmt::Debug for Wasm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Wasm")
             .field("path", &self.path)
+            .field("arguments", &self.arguments)
             .field("timeout_secs", &self.timeout_secs)
             .field("max_memory_bytes", &self.max_memory_bytes)
             .field("enable_wasi", &self.enable_wasi)
@@ -66,6 +71,7 @@ impl Clone for Wasm {
     fn clone(&self) -> Self {
         Self {
             path: self.path.clone(),
+            arguments: self.arguments.clone(),
             timeout_secs: self.timeout_secs,
             max_memory_bytes: self.max_memory_bytes,
             enable_wasi: self.enable_wasi,
@@ -83,6 +89,7 @@ impl Wasm {
         let _ = path.as_os_str();
         Self {
             path,
+            arguments: Vec::new(),
             timeout_secs: None,
             max_memory_bytes: None,
             enable_wasi: false,
@@ -104,6 +111,7 @@ impl Wasm {
             ))
         })?;
         module = module.with_outbound_bindings(outbound_bindings.to_vec());
+        module = module.with_args(self.arguments.clone());
 
         if let Some(timeout_secs) = self.timeout_secs {
             module = module.with_timeout(Duration::from_secs(timeout_secs));

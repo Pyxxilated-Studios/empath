@@ -22,7 +22,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P2 — SMTP & Modules
 - [ ] SMTP-01: Add implicit TLS support for inbound listeners (SMTPS).
-- [ ] MOD-01: Pass module args into Python/WASM init functions (parity with C-FFI module args).
+- [x] MOD-01: Pass module args into Python/WASM init functions (parity with C-FFI module args).
 
 ## P2 — Core Type Safety
 - [ ] ARCH-03: Replace stringly-typed context keys with typed accessors/newtypes for core keys (TLS/auth/SPF/DMARC). Deprecate raw key usage in core crates.

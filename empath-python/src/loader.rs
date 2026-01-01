@@ -69,16 +69,19 @@ impl PythonModule {
 
     /// Initialize the module (call `init()` if it exists)
     ///
+    /// # Arguments
+    /// * `args` - Arguments passed to the module init function
+    ///
     /// # Errors
     /// Returns error if initialization fails
-    pub fn initialize(&self) -> Result<()> {
+    pub fn initialize(&self, args: &[String]) -> Result<()> {
         Python::initialize();
 
         Python::attach(|py| {
             let module = self.get_module_dict(py)?;
 
             // Call init() if it exists
-            let args = PyTuple::empty(py);
+            let args = PyTuple::new(py, args.iter().map(String::as_str))?;
             if let Some(result) = call_callback(py, &module, "init", &args, self.timeout)? {
                 // Check for initialization errors
                 if matches!(result.extract::<bool>(), Ok(false)) {
@@ -223,13 +226,34 @@ mod tests {
         file.flush().map_err(|err| err.to_string())?;
 
         let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
-        module.initialize().map_err(|err| err.to_string())?;
+        module.initialize(&[]).map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module
             .execute_callback("validate_connect", &mut context)
             .map_err(|err| err.to_string())?;
         assert!(result);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "PyO3 doesn't play nice with miri")]
+    fn test_init_receives_args() -> TestResult {
+        use std::io::Write;
+
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().map_err(|err| err.to_string())?;
+        writeln!(file, "def init(args):").map_err(|err| err.to_string())?;
+        writeln!(file, "    return args == ['alpha', 'beta']").map_err(|err| err.to_string())?;
+        writeln!(file, "def validate_connect(ctx):").map_err(|err| err.to_string())?;
+        writeln!(file, "    return True").map_err(|err| err.to_string())?;
+        file.flush().map_err(|err| err.to_string())?;
+
+        let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
+        let args = vec!["alpha".to_string(), "beta".to_string()];
+        module.initialize(&args).map_err(|err| err.to_string())?;
+
         Ok(())
     }
 
@@ -247,7 +271,7 @@ mod tests {
         file.flush().map_err(|err| err.to_string())?;
 
         let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
-        module.initialize().map_err(|err| err.to_string())?;
+        module.initialize(&[]).map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module
@@ -279,7 +303,7 @@ mod tests {
         file.flush().map_err(|err| err.to_string())?;
 
         let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
-        module.initialize().map_err(|err| err.to_string())?;
+        module.initialize(&[]).map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module
@@ -305,7 +329,7 @@ mod tests {
         file.flush().map_err(|err| err.to_string())?;
 
         let module = PythonModule::load(file.path()).map_err(|err| err.to_string())?;
-        module.initialize().map_err(|err| err.to_string())?;
+        module.initialize(&[]).map_err(|err| err.to_string())?;
 
         let mut context = create_test_context();
         let result = module

@@ -18,6 +18,8 @@ use super::{Error, Event};
 #[derive(Clone, Debug, Deserialize)]
 pub struct Python {
     path: PathBuf,
+    #[serde(alias = "args", default)]
+    arguments: Vec<String>,
     #[serde(default)]
     timeout_secs: Option<u64>,
     /// Loaded module (populated during init)
@@ -43,7 +45,7 @@ impl Python {
         }
 
         module
-            .initialize()
+            .initialize(&self.arguments)
             .map_err(|e| Error::Init(format!("Failed to initialize Python module: {e}")))?;
 
         self.module

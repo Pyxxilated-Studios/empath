@@ -61,10 +61,12 @@ Empath (
         // (
         //     type: "Python",
         //     path: "empath-examples/python/simple.py",
+        //     args: [],
         // ),
         // (
         //     type: "Python",
         //     path: "empath-examples/python/spam_filter.py",
+        //     args: [],
         // ),
         // (
         //     type: "SharedLibrary",
@@ -80,6 +82,7 @@ Empath (
         //     type: "Wasm",
         //     path: "target/modules/simple_validator.wasm",
         //     enable_wasi: true,
+        //     args: [],
         // ),
     ],
     // Module dispatch configuration
