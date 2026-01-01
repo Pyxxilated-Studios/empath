@@ -985,6 +985,7 @@ dependencies = [
  "async-trait",
  "cbindgen",
  "charset",
+ "empath-core",
  "empath-tracing",
  "encoding_rs",
  "futures-util",
@@ -1018,6 +1019,19 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "empath-core"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "async-trait",
+ "pretty_assertions",
+ "ron",
+ "serde",
+ "thiserror 2.0.17",
+ "ulid",
 ]
 
 [[package]]

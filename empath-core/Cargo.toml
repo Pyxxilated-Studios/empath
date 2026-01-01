@@ -1,0 +1,29 @@
+[package]
+name = "empath-core"
+version = "0.0.1"
+description = "Empath core domain types"
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "empath_core"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ahash.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+ron.workspace = true

@@ -26,7 +26,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P2 — Core Type Safety
 - [x] ARCH-03: Replace stringly-typed context keys with typed accessors/newtypes for core keys (TLS/auth/SPF/DMARC). Deprecate raw key usage in core crates.
-- [ ] ARCH-04: Split `empath-common` into `empath-core` (domain types, no tracing/tokio) + `empath-common` (infra + otel). Gate observability with features.
+- [x] ARCH-04: Split `empath-common` into `empath-core` (domain types, no tracing/tokio) + `empath-common` (infra + otel). Gate observability with features.
 
 ## P2 — DX & API Cohesion
 - [x] DX-01: Add a config validation binary. Provide `--check` to validate configs (CI for example configs) and `--emit-default` to print a canonical default config for faster local iteration.

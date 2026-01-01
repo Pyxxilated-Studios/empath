@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "empath",
+    "empath-core",
     "empath-common",
     "empath-control",
     "empath-delivery",
@@ -22,6 +23,7 @@ members = [
 ]
 default-members = [
     "empath",
+    "empath-core",
     "empath-common",
     "empath-control",
     "empath-delivery",
@@ -87,6 +89,7 @@ clap = { version = "4", default-features = false, features = [
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 dashmap = "6"
 empath = { path = "empath", version = "0" }
+empath-core = { path = "empath-core", version = "0" }
 empath-common = { path = "empath-common", version = "0" }
 empath-control = { path = "empath-control", version = "0" }
 empath-delivery = { path = "empath-delivery", version = "0" }

@@ -22,19 +22,30 @@ ahash.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 charset.workspace = true
+empath-core.workspace = true
 empath-tracing.workspace = true
 encoding_rs.workspace = true
 futures-util.workspace = true
-opentelemetry.workspace = true
-opentelemetry_sdk.workspace = true
-opentelemetry-otlp.workspace = true
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
-tracing-opentelemetry.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 tokio.workspace = true
 ulid.workspace = true
+
+[features]
+default = ["observability"]
+observability = [
+    "opentelemetry",
+    "opentelemetry-otlp",
+    "opentelemetry_sdk",
+    "tracing-opentelemetry",
+    "tracing-subscriber",
+]
 
 [dev-dependencies]
 ron.workspace = true
