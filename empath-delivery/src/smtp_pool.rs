@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use empath_metrics::DeliveryMetrics;
-use empath_smtp::client::{ConnectConfig, SmtpClient};
 pub use empath_smtp_client::{CertValidation, TlsMode};
+use empath_smtp_client::{ConnectConfig, SmtpClient};
 
 use crate::types::SmtpPoolConfig;
 

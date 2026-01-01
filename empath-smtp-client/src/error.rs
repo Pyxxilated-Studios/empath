@@ -1,7 +1,8 @@
 //! Shared delivery error types for outbound SMTP transactions.
 
-use empath_smtp::client::ClientError;
 use thiserror::Error;
+
+use crate::client::ClientError;
 
 /// Top-level delivery error type.
 #[derive(Debug, Error)]

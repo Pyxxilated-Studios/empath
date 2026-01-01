@@ -8,10 +8,12 @@ license = "Apache-2.0"
 async-trait.workspace = true
 empath-common.workspace = true
 empath-metrics.workspace = true
-empath-smtp.workspace = true
 empath-spool.workspace = true
 empath-tracing.workspace = true
+libc.workspace = true
+rustls-native-certs.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util", "time"] }
+tokio = { workspace = true, features = ["io-util", "net", "time"] }
+tokio-rustls.workspace = true
 tracing.workspace = true

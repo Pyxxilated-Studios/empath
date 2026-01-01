@@ -13,7 +13,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] OPS-02: Config reload safety net. Add control command output that reports reloadable vs restart-required fields (single canonical list) and keep docs in sync.
 
 ## P1 — Architecture & Safety
-- [ ] ARCH-01: Decouple outbound delivery from SMTP server crate. Extract an SMTP client crate or trait (minimal API) and migrate `empath-delivery` to it. Prevent inbound/outbound circular deps.
+- [x] ARCH-01: Decouple outbound delivery from SMTP server crate. Extract an SMTP client crate or trait (minimal API) and migrate `empath-delivery` to it. Prevent inbound/outbound circular deps.
 - [ ] ARCH-02: Isolate module dispatch on SMTP hot path. Add per-event timeouts, metrics, and optional isolation (spawn_blocking or WASM sandbox), with config knobs and failure policy.
 
 ## P2 — Delivery Improvements

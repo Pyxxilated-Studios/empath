@@ -25,7 +25,6 @@ empath-common.workspace = true
 empath-ffi.workspace = true
 empath-metrics.workspace = true
 empath-smtp-client.workspace = true
-empath-smtp.workspace = true
 empath-spool.workspace = true
 empath-tracing.workspace = true
 hickory-resolver.workspace = true

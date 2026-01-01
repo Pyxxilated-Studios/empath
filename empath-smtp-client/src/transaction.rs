@@ -10,10 +10,10 @@ use empath_common::address::Address;
 use empath_common::context::Context;
 use empath_common::tracing;
 use empath_metrics::DeliveryMetrics;
-use empath_smtp::client::{ClientError, ConnectConfig, Response as ClientResponse, SmtpClient};
 use empath_spool::{BackingStore, SpooledMessageId};
 use empath_tracing::traced;
 
+use crate::client::{ClientError, ConnectConfig, Response as ClientResponse, SmtpClient};
 use crate::error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 use crate::timeouts::SmtpTimeouts;
 use crate::tls::{CertValidation, TlsMode};

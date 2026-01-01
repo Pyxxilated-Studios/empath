@@ -982,6 +982,7 @@ version = "0.0.1"
 dependencies = [
  "ahash",
  "anyhow",
+ "async-trait",
  "cbindgen",
  "charset",
  "empath-tracing",
@@ -1030,7 +1031,6 @@ dependencies = [
  "empath-common",
  "empath-ffi",
  "empath-metrics",
- "empath-smtp",
  "empath-smtp-client",
  "empath-spool",
  "empath-tracing",
@@ -1162,12 +1162,14 @@ dependencies = [
  "async-trait",
  "empath-common",
  "empath-metrics",
- "empath-smtp",
  "empath-spool",
  "empath-tracing",
+ "libc",
+ "rustls-native-certs",
  "serde",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-rustls",
  "tracing",
 ]
 

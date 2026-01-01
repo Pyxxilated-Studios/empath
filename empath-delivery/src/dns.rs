@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use empath_common::context::Context;
+use empath_common::spf::{DnsLookupError, MailServer as SpfMailServer, SpfDnsResolver};
 use empath_ffi::modules::{self, ModuleRegistry};
-use empath_smtp::spf::{DnsLookupError, MailServer as SpfMailServer, SpfDnsResolver};
 use empath_tracing::traced;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};

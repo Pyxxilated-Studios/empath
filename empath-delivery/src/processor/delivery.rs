@@ -8,7 +8,7 @@ use empath_common::email::ServerId;
 use empath_common::tracing::{error, info, warn};
 use empath_common::{DeliveryAttempt, DeliveryStatus, internal};
 use empath_ffi::modules::{Ev, Event, ModuleRegistry};
-use empath_smtp::client::ConnectConfig;
+use empath_smtp_client::ConnectConfig;
 use empath_spool::{BackingStore, SpooledMessageId};
 use opentelemetry::Context as OtelContext;
 use opentelemetry::trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState};
