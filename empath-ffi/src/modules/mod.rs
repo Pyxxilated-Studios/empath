@@ -832,6 +832,8 @@ pub enum Error {
 pub struct Test {
     pub events_called: Vec<Ev>,
     pub validators_called: Vec<validate::Event>,
+    pub sleep_millis: Option<u64>,
+    pub return_code: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -985,6 +987,8 @@ struct ModuleInitContext {
 }
 
 pub mod test {
+    use std::time::Duration;
+
     use empath_common::context::Context;
 
     use super::{Event, Module};
@@ -992,14 +996,24 @@ pub mod test {
     pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
         if let Module::TestModule(mute) = module {
             // Use poisoned data if lock is poisoned (test module only exists in debug builds)
-            let mut inner = mute
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match event {
-                Event::Validate(ev) => inner.validators_called.push(ev),
-                Event::Event(ev) => inner.events_called.push(ev),
+            let (sleep_millis, return_code) = {
+                let mut inner = mute
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                match event {
+                    Event::Validate(ev) => inner.validators_called.push(ev),
+                    Event::Event(ev) => inner.events_called.push(ev),
+                }
+                (inner.sleep_millis, inner.return_code)
+            };
+
+            if let Some(sleep_millis) = sleep_millis {
+                std::thread::sleep(Duration::from_millis(sleep_millis));
             }
+
+            return_code
+        } else {
+            0
         }
-        0
     }
 }

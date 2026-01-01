@@ -112,7 +112,7 @@ impl Display for DeliveryPriorityTier {
 
 #[cfg(test)]
 mod tests {
-    use super::DeliveryPriorityTier;
+    use super::{Context, DeliveryPriorityTier};
 
     #[test]
     fn parse_priority_tier() {
@@ -141,6 +141,77 @@ mod tests {
             Some(DeliveryPriorityTier::Low)
         );
         assert_eq!(DeliveryPriorityTier::parse("other"), None);
+    }
+
+    #[test]
+    fn tls_context_accessors_round_trip() {
+        let mut context = Context::default();
+
+        context.set_tls_info("TLS1.3", "AES256-GCM");
+        assert!(context.is_tls());
+        assert_eq!(context.tls_protocol(), Some("TLS1.3"));
+        assert_eq!(context.tls_cipher(), Some("AES256-GCM"));
+
+        context.clear_tls_info();
+        assert!(!context.is_tls());
+        assert_eq!(context.tls_protocol(), None);
+        assert_eq!(context.tls_cipher(), None);
+    }
+
+    #[test]
+    fn auth_context_accessors_round_trip() {
+        let mut context = Context::default();
+
+        context.set_authenticated(true);
+        context.set_auth_mechanism("PLAIN");
+        context.set_auth_user("alice");
+        context.set_authzid(Some("admin".to_string()));
+        context.set_auth_password("secret");
+
+        assert!(context.is_authenticated());
+        assert_eq!(context.auth_mechanism(), Some("PLAIN"));
+        assert_eq!(context.auth_user(), Some("alice"));
+        assert_eq!(context.authzid(), Some("admin"));
+        assert_eq!(context.auth_password(), Some("secret"));
+
+        context.set_authenticated(false);
+        context.set_authzid(None);
+        context.clear_auth_password();
+
+        assert!(!context.is_authenticated());
+        assert_eq!(context.authzid(), None);
+        assert_eq!(context.auth_password(), None);
+    }
+
+    #[test]
+    fn spf_dmarc_context_accessors_round_trip() {
+        let mut context = Context::default();
+
+        context.set_spf_result("pass");
+        context.set_spf_domain("example.com");
+        context.set_spf_helo_domain("mail.example.com");
+        context.set_spf_explanation("ok");
+
+        assert_eq!(context.spf_result(), Some("pass"));
+        assert_eq!(context.spf_domain(), Some("example.com"));
+        assert_eq!(context.spf_helo_domain(), Some("mail.example.com"));
+        assert_eq!(context.spf_explanation(), Some("ok"));
+
+        context.set_dmarc_domain("example.com");
+        context.set_dmarc_result("pass");
+        context.set_dmarc_policy("none");
+        context.set_dmarc_error("none");
+        context.set_dmarc_reason("aligned");
+        context.set_dmarc_action("accept");
+        context.set_dmarc_sample_rate_bps(2500);
+
+        assert_eq!(context.dmarc_domain(), Some("example.com"));
+        assert_eq!(context.dmarc_result(), Some("pass"));
+        assert_eq!(context.dmarc_policy(), Some("none"));
+        assert_eq!(context.dmarc_error(), Some("none"));
+        assert_eq!(context.dmarc_reason(), Some("aligned"));
+        assert_eq!(context.dmarc_action(), Some("accept"));
+        assert_eq!(context.dmarc_sample_rate_bps(), Some("2500"));
     }
 }
 

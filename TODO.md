@@ -47,7 +47,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] PLAN-03: Add module dispatch timeouts and cancellation behavior; capture per-event timing metrics and add explicit failure policy (fail-open/fail-closed per event).
 - [x] PLAN-04: Introduce typed context keys (newtypes + getters/setters) in `empath-common`; migrate core crates to use them; keep raw map only for module extensions.
 - [x] PLAN-05: Split `empath-common` into domain vs infra crates; update workspace dependencies; document feature flags and migration guide.
-- [ ] PLAN-06: Add targeted tests: timeout behavior, module isolation failure modes, typed-context regressions, and delivery client contract tests.
+- [wip] PLAN-06: Add targeted tests: timeout behavior, module isolation failure modes, typed-context regressions, and delivery client contract tests.
 - [ ] PLAN-07: Add benchmarks for SMTP hot path and delivery queue throughput before/after refactor; gate regressions.
 
 ## P3 — Post-1.0 Candidates
