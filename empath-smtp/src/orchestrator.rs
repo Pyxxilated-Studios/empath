@@ -57,6 +57,9 @@ pub struct SmtpSessionOrchestrator<Stream: AsyncRead + AsyncWrite + Unpin + Send
 
     /// TLS context for STARTTLS support
     tls_context: Option<TlsContext>,
+
+    /// TLS context for implicit TLS listeners (SMTPS).
+    implicit_tls_context: Option<TlsContext>,
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrator<Stream> {
@@ -77,6 +80,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         transaction_handler: Box<dyn SmtpTransactionHandler>,
         timeouts: crate::SmtpServerTimeouts,
         tls_context: Option<TlsContext>,
+        implicit_tls_context: Option<TlsContext>,
     ) -> Self {
         Self {
             connection: Some(Connection::Plain {
@@ -91,6 +95,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             start_time: std::time::Instant::now(),
             peer,
             tls_context,
+            implicit_tls_context,
         }
     }
 
@@ -127,6 +132,20 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
     ) -> Result<(), SessionError> {
         internal!("Connected");
 
+        let tls_info = if let Some(tls_context) = self.implicit_tls_context.as_ref() {
+            let connection = self.connection.take().ok_or_else(|| {
+                SessionError::Protocol("Implicit TLS without an active connection".to_string())
+            })?;
+            let (conn, info) = connection
+                .upgrade(tls_context)
+                .await
+                .map_err(|e| SessionError::Protocol(e.to_string()))?;
+            self.connection = Some(conn);
+            Some(info)
+        } else {
+            None
+        };
+
         // Initialize business context from session state
         let mut validate_context = context::Context {
             banner: Arc::clone(&self.session.banner),
@@ -146,6 +165,18 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             },
             ..Default::default()
         };
+
+        if let Some(info) = tls_info {
+            validate_context
+                .session
+                .insert(Cow::Borrowed("tls"), "true".to_string());
+            validate_context
+                .session
+                .insert(Cow::Borrowed("protocol"), info.proto());
+            validate_context
+                .session
+                .insert(Cow::Borrowed("cipher"), info.cipher());
+        }
 
         // Validate connection (Connect state)
         self.emit(&mut validate_context).await;

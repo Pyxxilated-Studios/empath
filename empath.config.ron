@@ -45,12 +45,23 @@ Empath (
                     // },
                 ]
             },
-            // Optional second listener (implicit TLS is not supported; use STARTTLS).
+            // Optional second listener (implicit TLS / SMTPS).
             // {
             //     "socket": "[::]:1026",
             //     "context": {
             //         "service": "smtp-alt",
             //     },
+            //     // Implicit TLS uses the same profile format as STARTTLS.
+            //     // "implicit_tls": {
+            //     //     "id": "smtp-implicit",
+            //     //     "active_profile": "default",
+            //     //     "profiles": {
+            //     //         "default": {
+            //     //             "key": "/etc/empath/tls/private.key",
+            //     //             "certificate": "/etc/empath/tls/certificate.crt",
+            //     //         },
+            //     //     },
+            //     // },
             // },
         ],
     ),

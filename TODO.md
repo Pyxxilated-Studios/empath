@@ -21,7 +21,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] DEL-02: TLS policy guardrails. Add warnings/logs when TLS is disabled at global or binding scope.
 
 ## P2 — SMTP & Modules
-- [ ] SMTP-01: Add implicit TLS support for inbound listeners (SMTPS).
+- [x] SMTP-01: Add implicit TLS support for inbound listeners (SMTPS).
 - [x] MOD-01: Pass module args into Python/WASM init functions (parity with C-FFI module args).
 
 ## P2 — Core Type Safety

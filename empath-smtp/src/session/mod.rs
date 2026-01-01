@@ -433,6 +433,11 @@ impl TlsContextRegistry {
         }
     }
 
+    /// Register a TLS profile set outside of STARTTLS extensions.
+    pub fn register_profile_set(&self, profile_set: TlsProfileSet) {
+        self.profiles.write().push(profile_set);
+    }
+
     /// Reload all registered contexts and return the number reloaded.
     ///
     /// # Errors

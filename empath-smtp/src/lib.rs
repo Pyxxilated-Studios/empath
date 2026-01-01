@@ -36,7 +36,7 @@ use tokio::net::TcpStream;
 
 use crate::extensions::Extension;
 use crate::orchestrator::SmtpSessionOrchestrator;
-use crate::session::SessionConfig;
+use crate::session::{SessionConfig, TlsProfileSet};
 
 /// SMTP server-side timeout configuration
 ///
@@ -120,6 +120,8 @@ pub struct SmtpArgs {
     #[serde(default)]
     extensions: Vec<Extension>,
     #[serde(default)]
+    implicit_tls: Option<TlsProfileSet>,
+    #[serde(default)]
     capabilities: Vec<Capability>,
     #[serde(default)]
     require_dkim: bool,
@@ -143,6 +145,7 @@ impl std::fmt::Debug for SmtpArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SmtpArgs")
             .field("extensions", &self.extensions)
+            .field("implicit_tls", &self.implicit_tls)
             .field("capabilities", &self.capabilities)
             .field("require_dkim", &self.require_dkim)
             .field("dmarc_enforce", &self.dmarc_enforce)
@@ -252,6 +255,9 @@ impl SmtpArgs {
     #[must_use]
     pub fn with_tls_context_registry(self, registry: &Arc<TlsContextRegistry>) -> Self {
         registry.register_extensions(&self.extensions);
+        if let Some(profile_set) = &self.implicit_tls {
+            registry.register_profile_set(profile_set.clone());
+        }
         self
     }
 }
@@ -273,6 +279,19 @@ impl Protocol for Smtp {
         init_context: HashMap<String, String>,
         args: Self::Args,
     ) -> Self::Session {
+        let implicit_tls_context = args
+            .implicit_tls
+            .as_ref()
+            .and_then(|profile_set| profile_set.active_context().ok());
+        let extensions = if implicit_tls_context.is_some() {
+            args.extensions
+                .iter()
+                .filter(|ext| !matches!(ext, Extension::Starttls(_)))
+                .cloned()
+                .collect()
+        } else {
+            args.extensions.clone()
+        };
         let timeouts = args.timeouts.clone();
         let capabilities = args
             .capabilities_state
@@ -282,7 +301,7 @@ impl Protocol for Smtp {
         let (session, transaction_handler, tls_context) = crate::session::Session::create(
             peer,
             SessionConfig::builder()
-                .with_extensions(args.extensions)
+                .with_extensions(extensions)
                 .with_capabilities(capabilities)
                 .with_require_dkim(args.require_dkim)
                 .with_dmarc_enforce(args.dmarc_enforce)
@@ -307,43 +326,71 @@ impl Protocol for Smtp {
             transaction_handler,
             timeouts,
             tls_context,
+            implicit_tls_context,
         )
     }
 
     #[traced(instrument(skip(self, args)), timing(precision = "ns"))]
     fn validate(&mut self, args: &mut Self::Args) -> Result<(), ProtocolError> {
-        if let Some(Extension::Starttls(profile_set)) = args
-            .extensions
-            .iter()
-            .find(|arg| matches!(arg, Extension::Starttls(_)))
-        {
-            for (profile, tls) in profile_set.profiles() {
-                let cert_path = tls.certificate_path();
-                if !cert_path.try_exists()? {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!(
-                            "Unable to find TLS certificate {} for profile '{profile}'",
-                            cert_path.display()
-                        ),
-                    )
-                    .into());
-                }
-
-                let key_path = tls.key_path();
-                if !key_path.try_exists()? {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!(
-                            "Unable to find TLS key {} for profile '{profile}'",
-                            key_path.display()
-                        ),
-                    )
-                    .into());
-                }
+        let mut starttls_profile = None;
+        for ext in &args.extensions {
+            if let Extension::Starttls(profile_set) = ext {
+                starttls_profile = Some(profile_set);
+                break;
             }
+        }
+
+        if let Some(profile_set) = starttls_profile {
+            validate_tls_profiles(profile_set)?;
+        }
+
+        if let Some(profile_set) = &args.implicit_tls {
+            if starttls_profile.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Implicit TLS listeners cannot also advertise STARTTLS",
+                )
+                .into());
+            }
+            validate_tls_profiles(profile_set)?;
         }
 
         Ok(())
     }
+}
+
+fn validate_tls_profiles(profile_set: &TlsProfileSet) -> Result<(), ProtocolError> {
+    for (profile, tls) in profile_set.profiles() {
+        let cert_path = tls.certificate_path();
+        if !cert_path.try_exists()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "Unable to find TLS certificate {} for profile '{profile}'",
+                    cert_path.display()
+                ),
+            )
+            .into());
+        }
+
+        let key_path = tls.key_path();
+        if !key_path.try_exists()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "Unable to find TLS key {} for profile '{profile}'",
+                    key_path.display()
+                ),
+            )
+            .into());
+        }
+    }
+
+    let _ = profile_set.active_context().map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid TLS profile selection: {err}"),
+        )
+    })?;
+    Ok(())
 }
