@@ -24,9 +24,9 @@ use empath_delivery::{
 };
 use empath_smtp::TlsContextRegistry;
 use empath_spool::{BackingStore, SpooledMessageId};
-use ron::Options;
 use tracing_subscriber::filter::LevelFilter;
 
+use crate::config;
 use crate::controller::Empath;
 
 /// Handler for control commands
@@ -370,13 +370,7 @@ fn parse_message_id(message_id: &str) -> ControlResult<SpooledMessageId> {
 
 fn reload_config_from_disk(delivery: &Arc<dyn DeliveryQueryService>) -> Result<String, String> {
     let config_path = find_config_file().map_err(|e| e.to_string())?;
-    let config_content = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config from {}: {e}", config_path.display()))?;
-
-    let empath: Empath = Options::default()
-        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
-        .from_str(&config_content)
-        .map_err(|e| format!("Failed to parse config: {e}"))?;
+    let empath: Empath = config::parse_config_file(&config_path).map_err(|e| e.to_string())?;
 
     let (domains, rate_limit, retry_policy, smtp_timeouts, circuit_breaker) =
         empath.delivery_reload_settings();

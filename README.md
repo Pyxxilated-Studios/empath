@@ -236,6 +236,7 @@ For detailed configuration options, see:
 - `empath.config.ron` - Example configuration
 - `docker/empath.config.ron` - Docker environment config
 - `docs/` - Architecture, security, deployment, and troubleshooting notes
+- `empathcfg emit-default` - Print the validated default config template
 
 ## Contributing
 

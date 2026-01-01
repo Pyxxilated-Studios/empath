@@ -1474,7 +1474,7 @@ and `empathctl restore` usage, RTO/RPO guidance, and validation scenarios.
 sudo journalctl -u empath -n 50
 
 # Check configuration syntax
-/usr/local/bin/empath /etc/empath/empath.config.ron --dry-run
+/usr/local/bin/empathcfg check /etc/empath/empath.config.ron
 
 # Check permissions
 ls -la /var/spool/empath

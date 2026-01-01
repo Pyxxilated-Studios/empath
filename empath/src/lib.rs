@@ -1,3 +1,4 @@
+pub mod config;
 pub mod control_handler;
 pub mod controller;
 

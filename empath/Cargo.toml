@@ -26,6 +26,10 @@ path = "bin/empath.rs"
 name = "empathctl"
 path = "bin/empathctl.rs"
 
+[[bin]]
+name = "empathcfg"
+path = "bin/empathcfg.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

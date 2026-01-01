@@ -4,19 +4,7 @@ compile_error!("Only macos and unix are currently supported");
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config_path = find_config_file()?;
-    let config_content = std::fs::read_to_string(&config_path).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to read config from {}: {}",
-            config_path.display(),
-            e
-        )
-    })?;
-
-    // Use RON options with implicit_some to allow writing `mx_override: "localhost:1025"`
-    // instead of requiring `mx_override: Some("localhost:1025")`
-    let empath: empath::controller::Empath = ron::Options::default()
-        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
-        .from_str(&config_content)?;
+    let empath = empath::config::parse_config_file(&config_path)?;
 
     empath.run().await
 }

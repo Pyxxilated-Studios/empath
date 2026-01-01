@@ -1,7 +1,10 @@
 Empath (
+    // Canonical default configuration template.
+    // This file is validated by `empathcfg emit-default` and must remain parseable.
     smtp: (
         listeners: [
             {
+                // Address/port to bind (IPv4/IPv6). Required.
                 "socket": "[::]:1025",
                 "context": {
                     "service": "smtp",
@@ -21,89 +24,130 @@ Empath (
                 // Enforce DMARC policy failures (reject/quarantine)
                 // Default: false
                 "dmarc_enforce": false,
+                // SMTP extensions advertised after EHLO.
+                // Default: empty list (no extensions).
                 "extensions": [
-                    {
-                        "size": 10000,
-                    }
+                    // SIZE - maximum message size in bytes (0 = unlimited).
+                    { "size": 10000 },
+
+                    // STARTTLS - enable TLS upgrade (requires cert/key).
+                    // {
+                    //     "starttls": {
+                    //         "id": "smtp-primary",
+                    //         "active_profile": "default",
+                    //         "profiles": {
+                    //             "default": {
+                    //                 "key": "/etc/empath/tls/private.key",
+                    //                 "certificate": "/etc/empath/tls/certificate.crt",
+                    //             },
+                    //         },
+                    //     }
+                    // },
                 ]
             },
-            {
-                "socket": "[::]:1026",
-                "context": {
-                    "service": "smtps",
-                },
-            },
+            // Optional second listener (implicit TLS is not supported; use STARTTLS).
+            // {
+            //     "socket": "[::]:1026",
+            //     "context": {
+            //         "service": "smtp-alt",
+            //     },
+            // },
         ],
     ),
+    // Module list is optional. Default: empty list.
+    // Uncomment examples below after building the modules they reference.
+    // NOTE: Python/Wasm support requires enabling those features at build time.
     modules: [
-        (
-            type: "Python",
-            path: "empath-examples/python/simple.py",
-        ),
-        (
-            type: "Python",
-            path: "empath-examples/python/spam_filter.py",
-        ),
-        (
-            type: "SharedLibrary",
-            name: "target/modules/libevent.so",
-            args: [],
-        ),
-        (
-            type: "SharedLibrary",
-            name: "target/modules/libexample.so",
-            args: [],
-        ),
-        (
-            type: "Wasm",
-            path: "target/modules/simple_validator.wasm",
-            enable_wasi: true,
-        )
+        // (
+        //     type: "Python",
+        //     path: "empath-examples/python/simple.py",
+        // ),
+        // (
+        //     type: "Python",
+        //     path: "empath-examples/python/spam_filter.py",
+        // ),
+        // (
+        //     type: "SharedLibrary",
+        //     name: "target/modules/libevent.so",
+        //     args: [],
+        // ),
+        // (
+        //     type: "SharedLibrary",
+        //     name: "target/modules/libexample.so",
+        //     args: [],
+        // ),
+        // (
+        //     type: "Wasm",
+        //     path: "target/modules/simple_validator.wasm",
+        //     enable_wasi: true,
+        // ),
     ],
     // Module dispatch configuration
     // Timeout fields are in seconds; set to None to disable.
     module_dispatch: (
-        validation_timeout_secs: 5,
-        event_timeout_secs: 2,
+        // Default: None (no timeout)
+        validation_timeout_secs: None,
+        // Default: None (no timeout)
+        event_timeout_secs: None,
+        // Default: fail_closed (reject on module failure)
         validation_failure_mode: fail_closed,
+        // Default: fail_open (allow on module failure)
         event_failure_mode: fail_open,
+        // Default: none (no isolation)
         isolation: none,
     ),
+    // Spool configuration (message persistence)
+    // Default path is /var/spool/empath; /tmp is convenient for local dev.
     spool: (
         type: "File",
         path: "/tmp/spool/empath",
     ),
+    // In-memory spool example (useful for tests/dev)
+    // spool: (
+    //     type: "Memory",
+    //     capacity: 1000, // Optional; omit for unlimited
+    // ),
     delivery: {
+        // How often to scan the spool for new messages (seconds).
+        // Default: 30
         "scan_interval_secs": 30,
+        // How often to process the delivery queue (seconds).
+        // Default: 10
         "process_interval_secs": 10,
+        // Maximum concurrent delivery tasks.
+        // Default: number of CPU cores
+        // max_concurrent_deliveries: 8,
+
+        // Retry policy (flattened into delivery config)
+        // Default max_attempts: 25
         "max_attempts": 25,
 
         // Exponential backoff configuration for retry scheduling
         // Base delay for first retry (in seconds). Subsequent retries double this delay.
-        // Default: 60 seconds (1 minute)
-        "base_retry_delay_secs": 60,
+        // Default: 300 seconds (5 minutes)
+        "base_retry_delay_secs": 300,
 
         // Maximum delay between retry attempts (in seconds). Caps exponential growth.
         // Default: 86400 seconds (24 hours)
         "max_retry_delay_secs": 86400,
 
         // Jitter factor for randomizing retry delays (0.0 to 1.0)
-        // Adds ±20% randomness to prevent thundering herd. Default: 0.2
-        "retry_jitter_factor": 0.2,
+        // Adds ±10% randomness to prevent thundering herd. Default: 0.1
+        "retry_jitter_factor": 0.1,
 
         // Message expiration time (in seconds)
         // Messages older than this will be marked as expired.
         // Set to None to never expire messages. Default: None
         // Example: 604800 = 7 days
-        // message_expiration_secs: 604800,
+        "message_expiration_secs": None,
 
         // SECURITY WARNING: Accept invalid TLS certificates globally (for testing only)
         // Default: false (secure). Only enable for testing with self-signed certificates.
-        // accept_invalid_certs: false,
+        "accept_invalid_certs": false,
 
         // TLS delivery policy for outbound connections.
         // Options: "opportunistic" (default), "required", "disabled" (testing only).
-        // tls_policy: "opportunistic",
+        "tls_policy": opportunistic,
 
         // SMTP operation timeout configuration (all values in seconds)
         // These timeouts prevent hung connections and ensure timely failure detection
@@ -116,6 +160,54 @@ Empath (
             data_secs: 120,        // DATA command and message transmission (longer for large messages)
             quit_secs: 10,         // QUIT command
         ),
+
+        // DNS resolver configuration
+        "dns": (
+            timeout_secs: 5,        // Query timeout
+            cache_ttl_secs: None,   // Override TTL (None = use DNS records)
+            min_cache_ttl_secs: 60, // Minimum cached TTL
+            max_cache_ttl_secs: 3600, // Maximum cached TTL
+            cache_size: 1000,       // Cache size hint
+            dnssec_enabled: false,  // Enable DNSSEC validation
+            dnssec_strict: false,   // Fail lookups on bogus/indeterminate
+        ),
+
+        // SMTP client connection pool configuration
+        "smtp_pool": (
+            enabled: true,
+            max_per_domain: 4,
+            idle_ttl_secs: 60,
+            health_check_on_acquire: true,
+            cleanup_interval_secs: 30,
+        ),
+
+        // DSN (bounce) generation configuration
+        "dsn": (
+            enabled: true,
+            reporting_mta: "localhost",
+            postmaster: "postmaster@localhost",
+        ),
+
+        // Per-domain rate limit configuration (token bucket)
+        "rate_limit": (
+            messages_per_second: 10.0,
+            burst_size: 20,
+            domain_limits: {},
+        ),
+
+        // Circuit breaker configuration for repeated failures
+        "circuit_breaker": (
+            failure_threshold: 5,
+            failure_window_secs: 60,
+            timeout_secs: 300,
+            success_threshold: 1,
+            domain_overrides: {},
+        ),
+
+        // Cleanup configuration for failed spool deletions
+        // Default: 60 seconds, 3 attempts
+        "cleanup_interval_secs": 60,
+        "max_cleanup_attempts": 3,
 
         // MTA-STS policy fetching and enforcement
         // When enabled, Empath fetches the policy and enforces it if the
@@ -131,8 +223,10 @@ Empath (
         // Bindings control source IP/interface and HELO/TLS behavior per delivery.
         // Modules can override by setting transaction["outbound_binding"].
         "outbound_bindings": (
+            // Default binding name (optional)
             default: "primary",
             // Default binding health configuration (optional)
+            // Defaults: failure_threshold=5, open_timeout_secs=300, success_threshold=1
             // health: (
             //     failure_threshold: 5,
             //     open_timeout_secs: 300,
@@ -140,6 +234,7 @@ Empath (
             // ),
             bindings: {
                 "primary": (
+                    // Use either source_ip or source_interface (not both)
                     source_ip: "192.0.2.10",
                     helo_domain: "mx1.example.com",
                     tls: (attempt_starttls: true),
@@ -161,8 +256,10 @@ Empath (
                     //     retry_jitter_factor: 0.2,
                     // ),
                     // Allow retry failover to another binding once this policy is exhausted
+                    // Default: false
                     // allow_failover: false,
                     // Override whether MTA-STS is fetched for this binding
+                    // Default: None (uses global mta_sts.enabled)
                     // mta_sts_enabled: true,
                     // Optional per-binding health overrides
                     // health: (
@@ -196,7 +293,7 @@ Empath (
             "secure.example.com": (
                 require_tls: true,
                 // Or use a policy override:
-                // tls_policy: "required",
+                // tls_policy: required,
                 max_connections: 5,
                 // Explicitly require valid certificates (overrides global setting)
                 accept_invalid_certs: false,
@@ -250,9 +347,17 @@ Empath (
         //   - "http://otel-collector:4318/v1/metrics" (Docker Compose, service name)
         // Default: http://localhost:4318/v1/metrics
         // NOTE: When running in Docker Compose, use the service name (otel-collector)
-        endpoint: "http://otel-collector:4318/v1/metrics",
+        endpoint: "http://localhost:4318/v1/metrics",
 
-        // Optional API key for OTLP collector auth
+        // Limit for unique domain label cardinality
+        // Default: 1000
+        max_domain_cardinality: 1000,
+
+        // Domains that should always be tracked individually
+        // Default: empty list
+        high_priority_domains: [],
+
+        // Optional API key for OTLP collector auth (plaintext)
         // api_key: "replace-with-token",
     ),
     // Health check endpoints configuration
@@ -300,4 +405,7 @@ Empath (
         // Default: true (content is redacted)
         "redact_message_content": true,
     },
+    // Shutdown drain timeout (seconds)
+    // Default: 10
+    shutdown_timeout_secs: 10,
 )
