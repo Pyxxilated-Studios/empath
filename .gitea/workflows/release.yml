@@ -16,6 +16,36 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  changelog:
+    name: Generate Release Notes
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: -vv --latest --strip header
+        env:
+          OUTPUT: CHANGES.md
+
+      - name: Publish release notes
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file: ${{ steps.git-cliff.outputs.changelog }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref }}
+          body: ${{ steps.git-cliff.outputs.content }}
+
   build:
     name: Release
     runs-on: ubuntu-latest
@@ -84,21 +114,16 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           cargo sbom > "empath-${VERSION}-sbom.json"
 
-      - name: Upload SBOM artifacts
-        uses: https://github.com/christopherHX/gitea-upload-artifact@v4
-        with:
-          name: sbom
-          path: |
-            empath-*-sbom.json
-          retention-days: 365
-
       - name: Create SBOM checksums
         run: |
           sha256sum empath-*-sbom.* > empath-sbom-checksums.txt
 
-      - name: Upload SBOM checksums
-        uses: https://github.com/christopherHX/gitea-upload-artifact@v4
+      - name: Upload SBOM to release
+        uses: svenstaro/upload-release-action@v2
         with:
-          name: sbom-checksums
-          path: empath-sbom-checksums.txt
-          retention-days: 365
+          file: |
+            empath-*-sbom.json
+            empath-sbom-checksums.txt
+          file_glob: true
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref }}

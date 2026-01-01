@@ -30,7 +30,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P2 — DX & API Cohesion
 - [x] DX-01: Add a config validation binary. Provide `--check` to validate configs (CI for example configs) and `--emit-default` to print a canonical default config for faster local iteration.
-- [ ] DX-02: Add a release workflow to automate builds, artifacts, and release notes for tagged versions.
+- [x] DX-02: Add a release workflow to automate builds, artifacts, and release notes for tagged versions.
 - [x] ARCH-05: Introduce `AuditLogger` trait + builder; replace `audit::*` free functions with injected logger (avoid global config).
 - [x] ARCH-06: Replace logging free functions with `LoggingConfigBuilder` + `LoggingHandle` (init + runtime level updates).
 - [x] ARCH-07: Convert `record_spool_io` free function into a `SpoolObserver` trait injected via spool/backing store config.
