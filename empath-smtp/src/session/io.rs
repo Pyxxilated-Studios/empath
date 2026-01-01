@@ -16,17 +16,9 @@ trait ApplyAuthCredentials {
 
 impl ApplyAuthCredentials for PlainCredentials {
     fn apply_to_context(&self, validate_context: &mut context::Context) {
-        if let Some(authzid) = self.authzid.as_ref() {
-            validate_context
-                .session
-                .insert(Cow::Borrowed("authzid"), authzid.clone());
-        }
-        validate_context
-            .session
-            .insert(Cow::Borrowed("auth_user"), self.authcid.clone());
-        validate_context
-            .session
-            .insert(Cow::Borrowed("auth_password"), self.password.clone());
+        validate_context.set_authzid(self.authzid.clone());
+        validate_context.set_auth_user(self.authcid.clone());
+        validate_context.set_auth_password(self.password.clone());
     }
 }
 
@@ -235,7 +227,7 @@ impl Session {
             return true;
         }
 
-        if validate_context.session.get("tls").is_none() {
+        if !validate_context.is_tls() {
             validate_context.response = Some((
                 Status::Unknown(530),
                 Cow::Borrowed("Must issue STARTTLS first"),
@@ -333,9 +325,7 @@ impl Session {
         M::Credentials: ApplyAuthCredentials,
     {
         let creds = M::decode(response)?;
-        validate_context
-            .session
-            .insert(Cow::Borrowed("auth_mechanism"), M::NAME.to_string());
+        validate_context.set_auth_mechanism(M::NAME.to_string());
         creds.apply_to_context(validate_context);
         Ok(())
     }

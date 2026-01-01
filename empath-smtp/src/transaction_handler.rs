@@ -351,10 +351,7 @@ impl DefaultSmtpTransactionHandler {
             ctx.banner.as_ref()
         };
 
-        let is_tls = ctx
-            .session
-            .get("tls")
-            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+        let is_tls = ctx.is_tls();
 
         let mut proto = if ctx.extended {
             "ESMTP".to_string()
@@ -438,19 +435,13 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
             let spf_evaluation = evaluator.evaluate(&sender, client_ip, &helo_domain).await;
 
             // Store SPF results in transaction context
-            ctx.transaction.insert(
-                Cow::Borrowed("spf_result"),
-                spf_evaluation.result.to_string(),
-            );
+            ctx.set_spf_result(spf_evaluation.result.to_string());
             if let Some(sender_domain) = dmarc::domain_from_address(sender.as_str()) {
-                ctx.transaction
-                    .insert(Cow::Borrowed("spf_domain"), sender_domain);
+                ctx.set_spf_domain(sender_domain);
             }
-            ctx.transaction
-                .insert(Cow::Borrowed("spf_helo_domain"), helo_domain.clone());
+            ctx.set_spf_helo_domain(helo_domain.clone());
             if let Some(explanation) = spf_evaluation.explanation {
-                ctx.transaction
-                    .insert(Cow::Borrowed("spf_explanation"), explanation);
+                ctx.set_spf_explanation(explanation);
             }
 
             tracing::info!(
@@ -498,8 +489,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         );
 
         if accepted {
-            ctx.session
-                .insert(Cow::Borrowed("auth"), "true".to_string());
+            ctx.set_authenticated(true);
             if ctx.response.is_none() {
                 ctx.response = Some((
                     Status::Unknown(235),
@@ -507,10 +497,10 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 ));
             }
         } else {
-            ctx.session.remove("auth");
+            ctx.set_authenticated(false);
         }
 
-        ctx.session.remove("auth_password");
+        ctx.clear_auth_password();
 
         accepted
     }
@@ -520,12 +510,10 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         self.evaluate_dkim(ctx).await;
         self.evaluate_dmarc(ctx).await;
 
-        let dmarc_policy = ctx.transaction.get("dmarc_policy").cloned();
+        let dmarc_policy = ctx.dmarc_policy().map(ToString::to_string);
         let dmarc_result = ctx
-            .transaction
-            .get("dmarc_result")
-            .cloned()
-            .unwrap_or_else(|| "none".to_string());
+            .dmarc_result()
+            .map_or_else(|| "none".to_string(), ToString::to_string);
 
         let dmarc_action = if self.dmarc_enforce {
             dmarc_enforcement_action(dmarc_result.as_str(), dmarc_policy.as_deref())
@@ -533,10 +521,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
             None
         };
 
-        ctx.transaction.insert(
-            Cow::Borrowed("dmarc_action"),
-            dmarc_action.unwrap_or("none").to_string(),
-        );
+        ctx.set_dmarc_action(dmarc_action.unwrap_or("none").to_string());
 
         if let Some(action) = dmarc_action {
             if let Some(metrics) = metrics() {
@@ -727,19 +712,13 @@ impl DefaultSmtpTransactionHandler {
         let from_domain = match ctx.headers_view() {
             Ok(Some(headers)) => dmarc::extract_from_domain(&headers),
             Ok(None) => {
-                ctx.transaction
-                    .insert(Cow::Borrowed("dmarc_result"), "none".to_string());
-                ctx.transaction.insert(
-                    Cow::Borrowed("dmarc_reason"),
-                    "missing_message_data".to_string(),
-                );
+                ctx.set_dmarc_result("none".to_string());
+                ctx.set_dmarc_reason("missing_message_data".to_string());
                 return;
             }
             Err(err) => {
-                ctx.transaction
-                    .insert(Cow::Borrowed("dmarc_result"), "permerror".to_string());
-                ctx.transaction
-                    .insert(Cow::Borrowed("dmarc_error"), err.to_string());
+                ctx.set_dmarc_result("permerror".to_string());
+                ctx.set_dmarc_error(err.to_string());
                 return;
             }
         };
@@ -762,17 +741,15 @@ impl DefaultSmtpTransactionHandler {
         }
 
         let Some(from_domain) = from_domain else {
-            ctx.transaction
-                .insert(Cow::Borrowed("dmarc_result"), "none".to_string());
-            ctx.transaction
-                .insert(Cow::Borrowed("dmarc_reason"), "missing_from".to_string());
+            ctx.set_dmarc_result("none".to_string());
+            ctx.set_dmarc_reason("missing_from".to_string());
             return;
         };
 
         let mail_from_domain = ctx
             .sender_email()
             .and_then(|sender| dmarc::domain_from_address(sender.as_str()));
-        let spf_result = ctx.transaction.get("spf_result").map(String::as_str);
+        let spf_result = ctx.spf_result();
         let dkim_result = dkim_result
             .as_deref()
             .or_else(|| ctx.transaction.get("dkim_result").map(String::as_str));
@@ -797,24 +774,15 @@ impl DefaultSmtpTransactionHandler {
         from_domain: String,
         evaluation: &dmarc::DmarcEvaluation,
     ) {
-        ctx.transaction
-            .insert(Cow::Borrowed("dmarc_domain"), from_domain);
-        ctx.transaction
-            .insert(Cow::Borrowed("dmarc_result"), evaluation.result.to_string());
+        ctx.set_dmarc_domain(from_domain);
+        ctx.set_dmarc_result(evaluation.result.to_string());
         if let Some(policy) = evaluation.policy.clone() {
-            ctx.transaction
-                .insert(Cow::Borrowed("dmarc_policy"), policy);
+            ctx.set_dmarc_policy(policy);
         }
-        ctx.transaction.insert(
-            Cow::Borrowed("dmarc_spf_aligned"),
-            evaluation.spf_aligned.to_string(),
-        );
-        ctx.transaction.insert(
-            Cow::Borrowed("dmarc_dkim_aligned"),
-            evaluation.dkim_aligned.to_string(),
-        );
+        ctx.set_dmarc_spf_aligned(evaluation.spf_aligned);
+        ctx.set_dmarc_dkim_aligned(evaluation.dkim_aligned);
         if let Some(error) = evaluation.error.clone() {
-            ctx.transaction.insert(Cow::Borrowed("dmarc_error"), error);
+            ctx.set_dmarc_error(error);
         }
 
         if let Some(metrics) = metrics() {
@@ -833,8 +801,8 @@ impl DefaultSmtpTransactionHandler {
         match evaluation.result {
             dmarc::DmarcResult::Fail => {
                 tracing::warn!(
-                    dmarc_domain = %ctx.transaction.get("dmarc_domain").map_or("unknown", String::as_str),
-                    dmarc_policy = %ctx.transaction.get("dmarc_policy").map_or("none", String::as_str),
+                    dmarc_domain = %ctx.dmarc_domain().unwrap_or("unknown"),
+                    dmarc_policy = %ctx.dmarc_policy().unwrap_or("none"),
                     dmarc_spf_aligned = %evaluation.spf_aligned,
                     dmarc_dkim_aligned = %evaluation.dkim_aligned,
                     "DMARC evaluation failed"
@@ -842,8 +810,8 @@ impl DefaultSmtpTransactionHandler {
             }
             dmarc::DmarcResult::TempError | dmarc::DmarcResult::PermError => {
                 tracing::warn!(
-                    dmarc_domain = %ctx.transaction.get("dmarc_domain").map_or("unknown", String::as_str),
-                    dmarc_error = %ctx.transaction.get("dmarc_error").map_or("", String::as_str),
+                    dmarc_domain = %ctx.dmarc_domain().unwrap_or("unknown"),
+                    dmarc_error = %ctx.dmarc_error().unwrap_or(""),
                     "DMARC evaluation error"
                 );
             }
@@ -864,13 +832,11 @@ impl DefaultSmtpTransactionHandler {
             .map_or_else(|| "unknown".to_string(), |value| value.as_str().to_string());
         let client_ip = self.client_ip(ctx);
         let policy = ctx
-            .transaction
-            .get("dmarc_policy")
-            .map_or_else(|| "none".to_string(), |value| value.as_str().to_string());
+            .dmarc_policy()
+            .map_or_else(|| "none".to_string(), ToString::to_string);
         let domain = ctx
-            .transaction
-            .get("dmarc_domain")
-            .map_or_else(|| "unknown".to_string(), |value| value.as_str().to_string());
+            .dmarc_domain()
+            .map_or_else(|| "unknown".to_string(), ToString::to_string);
 
         let sample_key = format!(
             "{}|{}|{}|{}|{}",
@@ -885,12 +851,8 @@ impl DefaultSmtpTransactionHandler {
             return;
         }
 
-        ctx.transaction
-            .insert(Cow::Borrowed("dmarc_sampled"), "true".to_string());
-        ctx.transaction.insert(
-            Cow::Borrowed("dmarc_sample_rate_bps"),
-            DMARC_SAMPLE_RATE_BPS.to_string(),
-        );
+        ctx.set_dmarc_sampled(true);
+        ctx.set_dmarc_sample_rate_bps(DMARC_SAMPLE_RATE_BPS);
 
         if let Some(metrics) = metrics() {
             metrics
@@ -1111,7 +1073,7 @@ mod tests {
             .recipients_mut()
             .replace(AddressList::from(vec![recipient_address]));
 
-        ctx.session.insert(Cow::Borrowed("tls"), "true".to_string());
+        ctx.set_tls_info("TLSv1.3".to_string(), "TLS_AES_256_GCM_SHA384".to_string());
 
         handler.insert_received_header(&mut ctx);
 
@@ -1249,10 +1211,8 @@ mod tests {
         // Check that SPF result was stored in transaction context
         // (Note: module dispatch may return a non-accept result when no modules loaded,
         // but SPF evaluation should still have occurred)
-        assert!(ctx.transaction.contains_key("spf_result"));
         let spf_result = ctx
-            .transaction
-            .get("spf_result")
+            .spf_result()
             .ok_or_else(|| "spf_result missing".to_string())?;
         assert_eq!(spf_result, SpfResult::Pass.to_string().as_str());
         Ok(())

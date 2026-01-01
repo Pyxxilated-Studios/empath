@@ -590,23 +590,19 @@ impl PyContext {
     /// Check if the connection is using TLS
     #[getter]
     fn is_tls(&self) -> bool {
-        self.inner
-            .read()
-            .session
-            .get("tls")
-            .is_some_and(|v| v == "true")
+        self.inner.read().is_tls()
     }
 
     /// Get TLS protocol version (e.g., "TLSv1.3")
     #[getter]
     fn tls_protocol(&self) -> Option<String> {
-        self.inner.read().session.get("protocol").cloned()
+        self.inner.read().tls_protocol().map(ToString::to_string)
     }
 
     /// Get TLS cipher suite
     #[getter]
     fn tls_cipher(&self) -> Option<String> {
-        self.inner.read().session.get("cipher").cloned()
+        self.inner.read().tls_cipher().map(ToString::to_string)
     }
 
     // ===== Rejection Interface =====

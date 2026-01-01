@@ -134,25 +134,20 @@ mod api {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn em_context_is_tls(validate_context: &Context) -> bool {
-        // TLS state is session context
-        validate_context.session.contains_key("tls")
+        validate_context.is_tls()
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn em_context_tls_protocol(validate_context: &Context) -> crate::string::String {
-        // TLS protocol is session context
         validate_context
-            .session
-            .get("protocol")
+            .tls_protocol()
             .map_or_else(crate::string::String::default, crate::string::String::from)
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn em_context_tls_cipher(validate_context: &Context) -> crate::string::String {
-        // TLS cipher is session context
         validate_context
-            .session
-            .get("cipher")
+            .tls_cipher()
             .map_or_else(crate::string::String::default, crate::string::String::from)
     }
 

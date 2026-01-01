@@ -25,7 +25,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] MOD-01: Pass module args into Python/WASM init functions (parity with C-FFI module args).
 
 ## P2 — Core Type Safety
-- [ ] ARCH-03: Replace stringly-typed context keys with typed accessors/newtypes for core keys (TLS/auth/SPF/DMARC). Deprecate raw key usage in core crates.
+- [x] ARCH-03: Replace stringly-typed context keys with typed accessors/newtypes for core keys (TLS/auth/SPF/DMARC). Deprecate raw key usage in core crates.
 - [ ] ARCH-04: Split `empath-common` into `empath-core` (domain types, no tracing/tokio) + `empath-common` (infra + otel). Gate observability with features.
 
 ## P2 — DX & API Cohesion

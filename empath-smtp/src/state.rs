@@ -585,13 +585,7 @@ mod test {
         };
 
         // Set session context (e.g., TLS state, connection properties)
-        ctx.session.insert(Cow::Borrowed("tls"), "true".to_string());
-        ctx.session
-            .insert(Cow::Borrowed("protocol"), "TLSv1.3".to_string());
-        ctx.session.insert(
-            Cow::Borrowed("cipher"),
-            "TLS_AES_256_GCM_SHA384".to_string(),
-        );
+        ctx.set_tls_info("TLSv1.3".to_string(), "TLS_AES_256_GCM_SHA384".to_string());
         ctx.session
             .insert(Cow::Borrowed("client_ip"), "192.0.2.1".to_string());
 
@@ -617,7 +611,7 @@ mod test {
         // Verify context is set before RSET
         assert_eq!(ctx.session.len(), 4);
         assert_eq!(ctx.transaction.len(), 3);
-        assert_eq!(ctx.session.get("tls"), Some(&"true".to_string()));
+        assert!(ctx.is_tls());
         assert_eq!(ctx.transaction.get("spam_score"), Some(&"3.5".to_string()));
 
         // Issue RSET command
@@ -635,16 +629,9 @@ mod test {
             4,
             "Session context should persist across RSET - this is needed for TLS state, connection properties, etc."
         );
-        assert_eq!(
-            ctx.session.get("tls"),
-            Some(&"true".to_string()),
-            "TLS session state must persist"
-        );
-        assert_eq!(ctx.session.get("protocol"), Some(&"TLSv1.3".to_string()));
-        assert_eq!(
-            ctx.session.get("cipher"),
-            Some(&"TLS_AES_256_GCM_SHA384".to_string())
-        );
+        assert!(ctx.is_tls(), "TLS session state must persist");
+        assert_eq!(ctx.tls_protocol(), Some("TLSv1.3"));
+        assert_eq!(ctx.tls_cipher(), Some("TLS_AES_256_GCM_SHA384"));
         assert_eq!(ctx.session.get("client_ip"), Some(&"192.0.2.1".to_string()));
 
         // CRITICAL: Transaction context should be cleared on RSET

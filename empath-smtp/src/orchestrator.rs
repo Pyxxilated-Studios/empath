@@ -167,15 +167,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         };
 
         if let Some(info) = tls_info {
-            validate_context
-                .session
-                .insert(Cow::Borrowed("tls"), "true".to_string());
-            validate_context
-                .session
-                .insert(Cow::Borrowed("protocol"), info.proto());
-            validate_context
-                .session
-                .insert(Cow::Borrowed("cipher"), info.cipher());
+            validate_context.set_tls_info(info.proto(), info.cipher());
         }
 
         // Validate connection (Connect state)
@@ -295,15 +287,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         self.connection = Some(conn);
 
         // TLS state is session context (persists across RSET)
-        validate_context
-            .session
-            .insert(Cow::Borrowed("tls"), "true".to_string());
-        validate_context
-            .session
-            .insert(Cow::Borrowed("protocol"), info.proto());
-        validate_context
-            .session
-            .insert(Cow::Borrowed("cipher"), info.cipher());
+        validate_context.set_tls_info(info.proto(), info.cipher());
 
         self.session.context = Context {
             sent: true,
