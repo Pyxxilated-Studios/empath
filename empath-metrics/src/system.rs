@@ -372,14 +372,11 @@ impl SystemMetrics {
             }
         }
 
-        // Get system-wide thread count for this process
-        sys.refresh_all();
-        if let Some(_process) = sys.process(pid) {
-            // Note: sysinfo 0.33 doesn't have a direct thread count API,
-            // so we'll skip this metric for now or implement via platform-specific code
-            // For now, record a placeholder of 0
-            self.process_thread_count.record(0, &[]);
-        }
+        drop(sys);
+
+        // Note: sysinfo 0.33 doesn't have a direct thread count API,
+        // so we'll skip this metric for now or implement via platform-specific code.
+        self.process_thread_count.record(0, &[]);
     }
 
     /// Update spool disk metrics
