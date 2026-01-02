@@ -614,7 +614,7 @@ just doctor           # Diagnose environment issues
 - Check existing documentation first (CLAUDE.md is very comprehensive)
 - Run `just doctor` to diagnose setup issues
 - Review similar code in the codebase
-- Create an issue on GitHub with your question
+- Create an issue in the tracker with your question
 
 ---
 

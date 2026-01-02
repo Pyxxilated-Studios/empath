@@ -27,8 +27,8 @@ This document describes the security features, threat model, and best practices 
 
 ### Reporting Process
 
-1. **DO NOT** open a public GitHub issue for security vulnerabilities
-2. Email security reports to: **security@empath-mta.org** (or create a private security advisory on GitHub)
+1. **DO NOT** open a public issue for security vulnerabilities
+2. Email security reports to: **security@pyxxilated.studio** (or create a private security advisory on your forge)
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
@@ -1229,11 +1229,11 @@ When a security vulnerability is discovered in a dependency:
    # - Build release binaries
    # - Generate SBOM
    # - Publish Docker images
-   # - Create GitHub/Gitea release
+   # - Create forge release
    ```
 
 7. **Notify Users**:
-   - GitHub/Gitea security advisory (if applicable)
+   - Forge security advisory (if applicable)
    - Release notes with security section
    - Email notification to maintainers mailing list
    - Update docs/SECURITY.md with resolution
