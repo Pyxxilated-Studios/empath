@@ -46,3 +46,122 @@ fn find_config_file() -> anyhow::Result<std::path::PathBuf> {
         "No configuration file found. Tried:\n  - EMPATH_CONFIG environment variable\n{paths_tried}"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+    use std::{env, fs};
+
+    use anyhow::{Result, anyhow};
+    use tempfile::tempdir;
+
+    use super::find_config_file;
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                unsafe {
+                    env::set_var(self.key, value);
+                }
+            } else {
+                unsafe {
+                    env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    struct DirGuard {
+        previous: PathBuf,
+    }
+
+    impl Drop for DirGuard {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.previous);
+        }
+    }
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let lock = LOCK.get_or_init(|| Mutex::new(()));
+        match lock.lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        }
+    }
+
+    fn set_env_var(key: &'static str, value: &OsStr) -> EnvGuard {
+        let previous = env::var_os(key);
+        unsafe {
+            env::set_var(key, value);
+        }
+        EnvGuard { key, previous }
+    }
+
+    fn clear_env_var(key: &'static str) -> EnvGuard {
+        let previous = env::var_os(key);
+        unsafe {
+            env::remove_var(key);
+        }
+        EnvGuard { key, previous }
+    }
+
+    fn set_current_dir(path: &std::path::Path) -> Result<DirGuard> {
+        let previous = env::current_dir()?;
+        env::set_current_dir(path)?;
+        Ok(DirGuard { previous })
+    }
+
+    #[test]
+    fn find_config_file_prefers_env_var() -> Result<()> {
+        let _lock = env_lock();
+        let temp = tempdir()?;
+        let config_path = temp.path().join("custom.config.ron");
+        fs::write(&config_path, b"")?;
+
+        let _env_guard = set_env_var("EMPATH_CONFIG", config_path.as_os_str());
+        let found = find_config_file()?;
+
+        assert_eq!(found, config_path);
+        Ok(())
+    }
+
+    #[test]
+    fn find_config_file_errors_when_env_missing() -> Result<()> {
+        let _lock = env_lock();
+        let temp = tempdir()?;
+        let config_path = temp.path().join("missing.config.ron");
+
+        let _env_guard = set_env_var("EMPATH_CONFIG", config_path.as_os_str());
+        let Err(err) = find_config_file() else {
+            return Err(anyhow!("expected an error for missing EMPATH_CONFIG path"));
+        };
+        assert!(
+            err.to_string()
+                .contains("EMPATH_CONFIG points to non-existent file")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn find_config_file_falls_back_to_cwd() -> Result<()> {
+        let _lock = env_lock();
+        let temp = tempdir()?;
+        let config_path = temp.path().join("empath.config.ron");
+        fs::write(&config_path, b"")?;
+
+        let _env_guard = clear_env_var("EMPATH_CONFIG");
+        let _dir_guard = set_current_dir(temp.path())?;
+        let found = find_config_file()?;
+
+        assert_eq!(found, config_path);
+        Ok(())
+    }
+}
