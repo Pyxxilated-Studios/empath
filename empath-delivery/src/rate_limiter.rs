@@ -289,6 +289,8 @@ pub struct RateLimitStats {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     type TestResult = std::result::Result<(), String>;
@@ -419,5 +421,46 @@ mod tests {
             .ok_or_else(|| "expected stats".to_string())?;
         assert!((stats.available_tokens - 18.0).abs() < 0.1);
         Ok(())
+    }
+
+    proptest! {
+        #[test]
+        #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
+        fn token_bucket_refill_never_exceeds_capacity(
+            rate in 0.1f64..1000.0,
+            burst in 1u32..1000u32,
+            elapsed_ms in 0u64..5_000u64,
+            start_fraction in 0.0f64..1.0f64,
+        ) {
+            let mut bucket = TokenBucket::new(rate, burst);
+            let capacity = bucket.capacity;
+            let start_tokens = capacity * start_fraction;
+            bucket.tokens = start_tokens;
+            bucket.last_refill = Instant::now()
+                .checked_sub(Duration::from_millis(elapsed_ms))
+                .unwrap_or_else(Instant::now);
+
+            bucket.refill();
+
+            prop_assert!(bucket.tokens <= capacity + f64::EPSILON);
+            prop_assert!(bucket.tokens + 1e-6 >= start_tokens);
+        }
+
+        #[test]
+        fn token_bucket_wait_time_zero_when_token_available(
+            rate in 0.1f64..1000.0,
+            burst in 1u32..1000u32,
+            start_fraction in 0.0f64..1.0f64,
+        ) {
+            let mut bucket = TokenBucket::new(rate, burst);
+            let capacity = bucket.capacity;
+            let start_tokens = (capacity * start_fraction).max(1.0);
+            bucket.tokens = start_tokens.min(capacity);
+            bucket.last_refill = Instant::now();
+
+            let wait = bucket.time_until_available();
+
+            prop_assert_eq!(wait, Duration::ZERO);
+        }
     }
 }
