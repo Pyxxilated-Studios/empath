@@ -772,7 +772,7 @@ openssl s_client -starttls smtp -connect mail.example.com:25 2>/dev/null | \
 
 Edit `/etc/security/limits.conf`:
 
-```
+```text
 empath soft nofile 65536
 empath hard nofile 65536
 empath soft nproc 4096
@@ -781,7 +781,7 @@ empath hard nproc 4096
 
 Edit `/etc/sysctl.conf`:
 
-```
+```text
 # TCP tuning
 net.core.somaxconn = 4096
 net.ipv4.tcp_max_syn_backlog = 4096
@@ -1667,7 +1667,7 @@ sudo journalctl -u empath -f
 
 Create `/etc/logrotate.d/empath`:
 
-```
+```text
 /var/log/empath/*.log {
     daily
     missingok
@@ -1770,7 +1770,7 @@ resources:
 
 **Layer 4 (TCP) Load Balancer:**
 
-```
+```text
          ┌──────────────┐
          │ Load Balancer │ (HAProxy, NGINX, or Cloud LB)
          └───────┬───────┘
@@ -1784,7 +1784,7 @@ resources:
 
 **HAProxy Example:**
 
-```
+```text
 frontend smtp
     bind *:25
     mode tcp
@@ -1807,7 +1807,7 @@ backend empath_cluster
 - **CLAUDE.md:** Development guide with architecture details
 - **docker/README.md:** Docker development environment guide
 - **examples/config/README.md:** Configuration documentation
-- **GitHub Issues:** https://github.com/Pyxxilated-Studios/empath/issues
+- **Issue tracker:** <your-forge-issues-url>
 
 ---
 

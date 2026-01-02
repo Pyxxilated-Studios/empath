@@ -147,7 +147,7 @@ Work through these steps in order. Each should take 1-3 minutes.
 13. **empath-examples** & **xtask** - Sample configurations/modules and build helpers for examples/extensions
 
 **Data Flow:**
-```
+```text
 Client → Listener → Session (SMTP FSM) → Module Validation → Spool → Delivery Queue → External SMTP
 ```
 
@@ -296,7 +296,7 @@ just doctor           # Diagnose environment issues
 - Check existing documentation first (CLAUDE.md is very comprehensive)
 - Run `just doctor` to diagnose setup issues
 - Review similar code in the codebase
-- Create an issue on GitHub with your question
+- Create an issue in the tracker with your question
 
 ---
 

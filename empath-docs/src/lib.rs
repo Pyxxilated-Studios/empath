@@ -2,3 +2,6 @@
 #![doc = include_str!("../../README.md")]
 #![doc = include_str!("../../CLAUDE.md")]
 #![doc = include_str!("../../CONTRIBUTING.md")]
+#![doc = include_str!("../../docs/ONBOARDING.md")]
+#![doc = include_str!("../../docs/DEPLOYMENT.md")]
+#![doc = include_str!("../../docs/QUICKSTART.md")]

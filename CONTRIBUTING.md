@@ -313,7 +313,7 @@ See [Commit Message Guidelines](#commit-message-guidelines) below.
 git push -u origin feature/descriptive-name
 ```
 
-Create pull request on GitHub with:
+Create a pull request on the project forge with:
 - **Clear title** following conventional commits format
 - **Description** of what changed and why
 - **Test plan** - how you verified the changes
@@ -481,7 +481,7 @@ be mocked in tests.
 
 ### Communication
 
-- **GitHub Issues** - Bug reports, feature requests
+- **Issue tracker** - Bug reports, feature requests
 - **Pull Requests** - Code changes and discussions
 - **Discussions** - General questions and ideas
 
@@ -538,9 +538,9 @@ Any other relevant information
 4. Run `just doctor` to diagnose environment issues
 
 **Where to ask:**
-- **Simple questions**: GitHub Discussions
-- **Bug reports**: GitHub Issues
-- **Feature proposals**: GitHub Discussions first, then issue
+- **Simple questions**: Project discussions
+- **Bug reports**: Issue tracker
+- **Feature proposals**: Discussions first, then issue
 
 **What to include:**
 - What you're trying to do
