@@ -110,7 +110,7 @@ This file contains tasks deferred to post-1.0 release. These are enhancements an
 - [ ] Property tests for DNS response parsing
 - [x] Property tests for retry schedule calculation
 - [x] Property tests for rate limiter token bucket
-- [ ] Property tests for circuit breaker state machine
+- [x] Property tests for circuit breaker state machine
 - [ ] Fuzz testing integration (cargo fuzz) - optional
 
 **Dependencies**: None

@@ -407,6 +407,8 @@ pub struct CircuitBreakerStats {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -565,5 +567,53 @@ mod tests {
 
         let stats = breaker.get_stats(&domain);
         assert_eq!(stats.failure_count, 2);
+    }
+
+    proptest! {
+        #[test]
+        #[cfg_attr(miri, ignore = "Uses thread sleep for timing")]
+        fn circuit_breaker_opens_on_threshold(failure_threshold in 1u32..10) {
+            let config = CircuitBreakerConfig {
+                failure_threshold,
+                failure_window_secs: 60,
+                timeout_secs: 60,
+                success_threshold: 1,
+                domain_overrides: ahash::AHashMap::default(),
+            };
+            let breaker = CircuitBreaker::new(config);
+            let domain = Domain::new("example.com");
+
+            for _ in 0..failure_threshold.saturating_sub(1) {
+                breaker.record_failure(&domain);
+                prop_assert_eq!(breaker.get_state(&domain), CircuitState::Closed);
+            }
+
+            breaker.record_failure(&domain);
+            prop_assert_eq!(breaker.get_state(&domain), CircuitState::Open);
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore = "Uses thread sleep for timing")]
+        fn circuit_breaker_does_not_open_before_threshold(
+            failure_threshold in 2u32..10,
+            failures in 0u32..9,
+        ) {
+            let failures = failures.min(failure_threshold - 1);
+            let config = CircuitBreakerConfig {
+                failure_threshold,
+                failure_window_secs: 60,
+                timeout_secs: 60,
+                success_threshold: 1,
+                domain_overrides: ahash::AHashMap::default(),
+            };
+            let breaker = CircuitBreaker::new(config);
+            let domain = Domain::new("example.com");
+
+            for _ in 0..failures {
+                breaker.record_failure(&domain);
+            }
+
+            prop_assert_eq!(breaker.get_state(&domain), CircuitState::Closed);
+        }
     }
 }
