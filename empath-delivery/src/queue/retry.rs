@@ -49,6 +49,8 @@ pub fn calculate_next_retry_time(
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -110,5 +112,70 @@ mod tests {
             delay >= min && delay <= max,
             "Delay {delay} should be within jitter range [{min}, {max}]"
         );
+    }
+
+    fn expected_delay_secs(attempt: u32, base_delay_secs: u64, max_delay_secs: u64) -> u64 {
+        let exponent = attempt.saturating_sub(1);
+        if exponent >= 63 {
+            return max_delay_secs;
+        }
+        let multiplier = 1u64 << exponent;
+        base_delay_secs
+            .saturating_mul(multiplier)
+            .min(max_delay_secs)
+    }
+
+    proptest! {
+        #[test]
+        #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+        fn retry_time_matches_expected_without_jitter(
+            attempt in 1u32..80,
+            base_delay_secs in 1u64..3600,
+            max_delay_secs in 1u64..200_000,
+        ) {
+            let max_delay_secs = max_delay_secs.max(base_delay_secs);
+            let expected = expected_delay_secs(attempt, base_delay_secs, max_delay_secs);
+            let before = SystemTime::now();
+            let next_retry = calculate_next_retry_time(
+                attempt,
+                base_delay_secs,
+                max_delay_secs,
+                0.0,
+            );
+            let after = SystemTime::now();
+            let earliest = before + Duration::from_secs(expected);
+            let latest = after + Duration::from_secs(expected);
+
+            prop_assert!(next_retry >= earliest && next_retry <= latest);
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+        fn retry_time_with_jitter_within_expected_bounds(
+            attempt in 1u32..80,
+            base_delay_secs in 1u64..3600,
+            max_delay_secs in 1u64..200_000,
+            jitter_factor in 0.0f64..0.5,
+        ) {
+            let max_delay_secs = max_delay_secs.max(base_delay_secs);
+            let expected = expected_delay_secs(attempt, base_delay_secs, max_delay_secs);
+            let expected_secs = f64::from(u32::try_from(expected).unwrap_or(u32::MAX));
+            let jitter_range = expected_secs * jitter_factor;
+            let min_secs = (expected_secs - jitter_range).max(0.0);
+            let max_secs = expected_secs + jitter_range;
+
+            let before = SystemTime::now();
+            let next_retry = calculate_next_retry_time(
+                attempt,
+                base_delay_secs,
+                max_delay_secs,
+                jitter_factor,
+            );
+            let after = SystemTime::now();
+            let earliest = before + Duration::from_secs_f64(min_secs);
+            let latest = after + Duration::from_secs_f64(max_secs);
+
+            prop_assert!(next_retry >= earliest && next_retry <= latest);
+        }
     }
 }
