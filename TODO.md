@@ -8,7 +8,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [ ] PERF-01: Avoid holding `spool_scan_cursor` lock across `list_delta().await` to prevent scan head-of-line blocking. (`empath-delivery/src/processor/scan.rs`)
 - [ ] PERF-02: Replace per-call `record_pool_size` full-map scan with per-domain counters or cached sizes. (`empath-delivery/src/smtp_pool.rs`)
 - [ ] PERF-03: Remove `sys.refresh_all()` in `update_process_metrics` until thread count is implemented or move heavy refresh off async path. (`empath-metrics/src/system.rs`)
-- [ ] PERF-04: Replace temporary `HashMap<Domain, Vec<String>>` in spool scan with `HashSet<Domain>` (recipients list unused). (`empath-delivery/src/processor/scan.rs`)
+- [x] PERF-04: Replace temporary `HashMap<Domain, Vec<String>>` in spool scan with `HashSet<Domain>` (recipients list unused). (`empath-delivery/src/processor/scan.rs`)
 
 ## P3 — Test Coverage Gaps
 - [ ] TEST-01: Add smoke coverage for `empath/bin/empath.rs` entry point. (`empath/bin/empath.rs`)

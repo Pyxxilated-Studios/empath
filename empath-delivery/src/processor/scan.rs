@@ -90,21 +90,16 @@ pub async fn scan_spool_internal(
         };
 
         // Collect unique domains from all recipients
-        let mut domains = std::collections::HashMap::new();
+        let mut domains = std::collections::HashSet::new();
         for recipient in recipients.iter() {
             // Extract the domain from the Mailbox
             let domain = recipient.domain.clone();
-            let recipient_str = recipient.to_string();
-
-            domains
-                .entry(domain)
-                .or_insert_with(Vec::new)
-                .push(recipient_str);
+            domains.insert(domain);
         }
 
         // Enqueue for each unique domain
         let priority_tier = resolve_priority_tier(&context);
-        for (domain, _recipients) in domains {
+        for domain in domains {
             processor
                 .queue
                 .enqueue_with_priority(msg_id.clone(), domain, priority_tier);
