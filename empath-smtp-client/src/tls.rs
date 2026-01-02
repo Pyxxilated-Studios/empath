@@ -31,6 +31,32 @@ impl TlsMode {
     }
 }
 
+/// Minimum TLS version required for outbound SMTP connections.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum TlsMinimumVersion {
+    Tls12,
+}
+
+impl TlsMinimumVersion {
+    #[must_use]
+    pub const fn is_satisfied_by(self, version: tokio_rustls::rustls::ProtocolVersion) -> bool {
+        match self {
+            Self::Tls12 => matches!(
+                version,
+                tokio_rustls::rustls::ProtocolVersion::TLSv1_2
+                    | tokio_rustls::rustls::ProtocolVersion::TLSv1_3
+            ),
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tls12 => "tls1.2+",
+        }
+    }
+}
+
 /// Certificate validation mode for outbound SMTP.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum CertValidation {

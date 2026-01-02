@@ -13,7 +13,7 @@ use async_trait::async_trait;
 pub use client::{ClientError, ConnectConfig, Response, ResponseLine, SmtpClient};
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 pub use timeouts::SmtpTimeouts;
-pub use tls::{CertValidation, TlsMode};
+pub use tls::{CertValidation, TlsMinimumVersion, TlsMode};
 use tokio::io::AsyncRead;
 pub use transaction::{SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy};
 

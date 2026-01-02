@@ -18,7 +18,7 @@ use crate::error::{DeliveryError, SystemError, TemporaryError};
 use crate::processor::DeliveryProcessor;
 use crate::smtp_pool::{CertValidation, SmtpPoolKey, SmtpPoolRequest, TlsMode};
 use crate::types::DeliveryInfo;
-use crate::{OutboundBinding, SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy};
+use crate::{OutboundBinding, SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy, TlsMinimumVersion};
 
 pub(super) fn server_id_from(address: &str) -> Result<ServerId, DeliveryError> {
     ServerId::new(address.to_owned()).map_err(|e| {
@@ -40,6 +40,7 @@ struct DeliveryTlsSettings {
     policy: crate::policy::TlsPolicy,
     cert_validation: CertValidation,
     failure_policy: TlsFailurePolicy,
+    min_tls_version: Option<TlsMinimumVersion>,
 }
 
 struct BindingSelection {
@@ -627,12 +628,14 @@ fn resolve_tls_settings(
             CertValidation::Strict
         };
     let mut failure_policy = TlsFailurePolicy::Permanent;
+    let mut min_tls_version = None;
 
     if let Some(sts_policy) = mta_sts_policy {
         if sts_policy.mode == crate::mta_sts::MtaStsMode::Enforce {
             policy = crate::policy::TlsPolicy::Required;
             cert_validation = CertValidation::Strict;
             failure_policy = TlsFailurePolicy::Temporary;
+            min_tls_version = Some(TlsMinimumVersion::Tls12);
             let mx_host = extract_host(server_address);
             if !sts_policy.matches_mx(&mx_host) {
                 return Err(TemporaryError::PolicyViolation(format!(
@@ -656,6 +659,7 @@ fn resolve_tls_settings(
         policy,
         cert_validation,
         failure_policy,
+        min_tls_version,
     })
 }
 
@@ -1127,7 +1131,8 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
 
     // Create and execute the SMTP transaction
     let tls_config = SmtpTlsConfig::new(binding.tls_mode, binding.cert_validation)
-        .with_failure_policy(tls_settings.failure_policy);
+        .with_failure_policy(tls_settings.failure_policy)
+        .with_min_tls_version(tls_settings.min_tls_version);
     let transaction = SmtpTransaction::new(
         context,
         server_address.to_string(),

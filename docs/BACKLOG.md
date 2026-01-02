@@ -288,7 +288,7 @@ This file contains tasks deferred to post-1.0 release. These are enhancements an
 ### 🟢 5.3 - TLS Policy Enforcement
 **Priority**: Medium
 **Effort**: 2-3 days
-**Status**: Deferred
+**Status**: ✅ Complete
 **Tags**: security, delivery
 
 **Problem**: No TLS policy enforcement - can deliver via plaintext to sensitive domains.

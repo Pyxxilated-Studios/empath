@@ -43,7 +43,7 @@ pub use domain_config::{DomainConfig, DomainConfigRegistry};
 pub use dsn::DsnConfig;
 // Re-export common types
 pub use empath_common::{DeliveryAttempt, DeliveryStatus};
-pub use empath_smtp_client::{SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy};
+pub use empath_smtp_client::{SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy, TlsMinimumVersion};
 // Re-export error types
 pub use error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 // Re-export policy types

@@ -16,7 +16,7 @@ use empath_tracing::traced;
 use crate::client::{ClientError, ConnectConfig, Response as ClientResponse, SmtpClient};
 use crate::error::{DeliveryError, PermanentError, SystemError, TemporaryError};
 use crate::timeouts::SmtpTimeouts;
-use crate::tls::{CertValidation, TlsMode};
+use crate::tls::{CertValidation, TlsMinimumVersion, TlsMode};
 
 #[derive(Debug, Clone, Copy)]
 enum TlsRequirement {
@@ -36,6 +36,7 @@ mod tests {
         starttls_result: Option<Result<ClientResponse, ClientError>>,
         ehlo_calls: usize,
         starttls_calls: usize,
+        protocol_version: Option<tokio_rustls::rustls::ProtocolVersion>,
     }
 
     #[async_trait]
@@ -59,6 +60,10 @@ mod tests {
 
         fn is_tls(&self) -> bool {
             false
+        }
+
+        fn tls_protocol_version(&self) -> Option<tokio_rustls::rustls::ProtocolVersion> {
+            self.protocol_version
         }
     }
 
@@ -232,6 +237,95 @@ mod tests {
         assert_eq!(client.starttls_calls, 1);
         Ok(())
     }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn require_tls_fails_when_starttls_not_advertised() -> Result<(), DeliveryError> {
+        let context = make_context();
+        let timeouts = default_timeouts();
+        let tls_config = SmtpTlsConfig::new(TlsMode::Required, CertValidation::Strict);
+        let transaction =
+            SmtpTransaction::new(&context, "secure:25".to_string(), tls_config, &timeouts);
+
+        let mut client = MockStarttlsClient {
+            ehlo_responses: vec![starttls_not_supported_response()],
+            starttls_result: None,
+            ..Default::default()
+        };
+
+        let err: DeliveryError = match transaction.negotiate_tls(&mut client).await {
+            Ok(outcome) => {
+                return Err(DeliveryError::System(SystemError::Internal(format!(
+                    "expected TLS failure, got {outcome:?}"
+                ))));
+            }
+            Err(e) => e,
+        };
+
+        match err {
+            DeliveryError::Permanent(PermanentError::TlsRequired(msg)) => {
+                assert!(
+                    msg.contains("does not advertise STARTTLS"),
+                    "expected STARTTLS advertisement error"
+                );
+            }
+            other => {
+                return Err(DeliveryError::System(SystemError::Internal(format!(
+                    "expected permanent TLS-required error, got {other:?}"
+                ))));
+            }
+        }
+        assert_eq!(client.starttls_calls, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn require_tls_fails_when_version_too_low() -> Result<(), DeliveryError> {
+        let context = make_context();
+        let timeouts = default_timeouts();
+        let tls_config = SmtpTlsConfig::new(TlsMode::Required, CertValidation::Strict)
+            .with_min_tls_version(Some(TlsMinimumVersion::Tls12));
+        let transaction =
+            SmtpTransaction::new(&context, "secure:25".to_string(), tls_config, &timeouts);
+
+        let mut client = MockStarttlsClient {
+            ehlo_responses: vec![
+                starttls_advertised_response(),
+                starttls_not_supported_response(),
+            ],
+            starttls_result: Some(Ok(ClientResponse::new(
+                220,
+                vec!["Ready to start TLS".to_string()],
+            ))),
+            protocol_version: Some(tokio_rustls::rustls::ProtocolVersion::TLSv1_1),
+            ..Default::default()
+        };
+
+        let err: DeliveryError = match transaction.negotiate_tls(&mut client).await {
+            Ok(outcome) => {
+                return Err(DeliveryError::System(SystemError::Internal(format!(
+                    "expected TLS failure, got {outcome:?}"
+                ))));
+            }
+            Err(e) => e,
+        };
+
+        match err {
+            DeliveryError::Permanent(PermanentError::TlsRequired(msg)) => {
+                assert!(
+                    msg.contains("TLS protocol version"),
+                    "expected TLS version error"
+                );
+            }
+            other => {
+                return Err(DeliveryError::System(SystemError::Internal(format!(
+                    "expected permanent TLS-required error, got {other:?}"
+                ))));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl TlsRequirement {
@@ -268,6 +362,7 @@ pub struct SmtpTlsConfig {
     pub mode: TlsMode,
     pub validation: CertValidation,
     pub failure_policy: TlsFailurePolicy,
+    pub min_tls_version: Option<TlsMinimumVersion>,
 }
 
 impl SmtpTlsConfig {
@@ -277,12 +372,22 @@ impl SmtpTlsConfig {
             mode,
             validation,
             failure_policy: TlsFailurePolicy::Permanent,
+            min_tls_version: None,
         }
     }
 
     #[must_use]
     pub const fn with_failure_policy(mut self, failure_policy: TlsFailurePolicy) -> Self {
         self.failure_policy = failure_policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_min_tls_version(
+        mut self,
+        min_tls_version: Option<TlsMinimumVersion>,
+    ) -> Self {
+        self.min_tls_version = min_tls_version;
         self
     }
 }
@@ -323,6 +428,8 @@ pub struct SmtpTransaction<'a> {
     tls_requirement: TlsRequirement,
     /// TLS certificate validation policy
     tls_validation: CertValidation,
+    /// Minimum TLS version requirement, if any.
+    min_tls_version: Option<TlsMinimumVersion>,
     /// Timeout configuration for SMTP operations
     smtp_timeouts: &'a SmtpTimeouts,
     /// Optional HELO/EHLO override
@@ -348,6 +455,7 @@ trait StarttlsClient {
     async fn ehlo(&mut self, domain: &str) -> Result<ClientResponse, ClientError>;
     async fn starttls(&mut self) -> Result<ClientResponse, ClientError>;
     fn is_tls(&self) -> bool;
+    fn tls_protocol_version(&self) -> Option<tokio_rustls::rustls::ProtocolVersion>;
 }
 
 #[async_trait]
@@ -362,6 +470,10 @@ impl StarttlsClient for SmtpClient {
 
     fn is_tls(&self) -> bool {
         self.is_tls()
+    }
+
+    fn tls_protocol_version(&self) -> Option<tokio_rustls::rustls::ProtocolVersion> {
+        self.tls_protocol_version()
     }
 }
 
@@ -389,6 +501,7 @@ impl<'a> SmtpTransaction<'a> {
             attempt_tls: tls_config.mode.attempt_tls(),
             tls_requirement,
             tls_validation: tls_config.validation,
+            min_tls_version: tls_config.min_tls_version,
             smtp_timeouts,
             helo_domain: None,
             connect_config: None,
@@ -441,6 +554,29 @@ impl<'a> SmtpTransaction<'a> {
         } else {
             PermanentError::TlsRequired(message).into()
         }
+    }
+
+    fn enforce_min_tls_version(&self, client: &impl StarttlsClient) -> Result<(), DeliveryError> {
+        let Some(min_version) = self.min_tls_version else {
+            return Ok(());
+        };
+
+        let Some(actual) = client.tls_protocol_version() else {
+            return Err(self.require_tls_error(format!(
+                "TLS negotiation succeeded but protocol version is unavailable (minimum {})",
+                min_version.as_str()
+            )));
+        };
+
+        if !min_version.is_satisfied_by(actual) {
+            return Err(self.require_tls_error(format!(
+                "TLS protocol version {:?} does not meet minimum {}",
+                actual,
+                min_version.as_str()
+            )));
+        }
+
+        Ok(())
     }
 
     fn record_connect_duration(&self, start: Instant) {
@@ -634,7 +770,12 @@ impl<'a> SmtpTransaction<'a> {
         }
 
         let supports_starttls = Self::supports_starttls(&ehlo_response);
-        if !supports_starttls && !self.tls_requirement.is_required() {
+        if !supports_starttls {
+            if self.tls_requirement.is_required() {
+                return Err(
+                    self.require_tls_error("Server does not advertise STARTTLS".to_string())
+                );
+            }
             return Ok(TlsNegotiationOutcome::Skipped);
         }
 
@@ -660,6 +801,7 @@ impl<'a> SmtpTransaction<'a> {
             ))
             .into());
         }
+        self.enforce_min_tls_version(client)?;
         Ok(TlsNegotiationOutcome::Success)
     }
 
@@ -746,6 +888,8 @@ impl<'a> SmtpTransaction<'a> {
             ))
             .into());
         }
+
+        self.enforce_min_tls_version(client)?;
 
         tracing::debug!(
             domain = helo_domain,

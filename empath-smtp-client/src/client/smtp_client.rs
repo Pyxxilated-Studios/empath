@@ -11,7 +11,7 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::pki_types::ServerName;
-use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::rustls::{ClientConfig, ProtocolVersion, RootCertStore};
 
 use super::error::{ClientError, Result};
 use super::response::Response;
@@ -317,6 +317,15 @@ impl SmtpClient {
     #[must_use]
     pub fn is_tls(&self) -> bool {
         matches!(self.connection, Some(ClientConnection::Tls(_)))
+    }
+
+    /// Returns the negotiated TLS protocol version, if available.
+    #[must_use]
+    pub fn tls_protocol_version(&self) -> Option<ProtocolVersion> {
+        match &self.connection {
+            Some(ClientConnection::Tls(stream)) => stream.get_ref().1.protocol_version(),
+            _ => None,
+        }
     }
 
     /// Read the initial server greeting.
