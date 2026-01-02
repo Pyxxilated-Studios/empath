@@ -849,7 +849,7 @@ After applying optimizations:
 
 ## CI Integration
 
-**Benchmark Regression Detection** (.gitea/workflows/bench.yml):
+**Benchmark Regression Detection** (CI workflow example):
 
 ```yaml
 name: Benchmark Regression Detection
@@ -862,20 +862,20 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0  # Need full history for baseline
+      - name: Checkout repository
+        run: git fetch --unshallow || true
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly
 
       - name: Checkout main and save baseline
         run: |
           git checkout main
           cargo bench -- --save-baseline main
 
-      - name: Checkout PR and compare
+      - name: Checkout change and compare
         run: |
-          git checkout ${{ github.sha }}
+          git checkout ${CI_COMMIT_SHA}
           cargo bench -- --baseline main --baseline-lenient
 
       # Fails if any benchmark regresses >10%

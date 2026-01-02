@@ -46,7 +46,7 @@ default-members = [
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Pyxxil"]
-repository = "https://github.com/Pyxxilated-Studios/empath"
+repository = "<your-forge-repo-url>"
 categories = ["command-line-utilities", "email", "network-programming"]
 keywords = ["email"]
 
