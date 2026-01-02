@@ -101,6 +101,8 @@ empathctl queue delete <message-id> --yes
 
 ## Development
 
+Production distribution is container-first. See `docs/DEPLOYMENT.md` for container deployment guidance.
+
 ### Common Commands
 
 ```bash

@@ -2,13 +2,15 @@
 
 This guide provides comprehensive instructions for deploying and operating Empath MTA in production environments.
 
+Empath is distributed via container images for production. Source builds are supported for development or bespoke environments.
+
 ## Table of Contents
 
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
-  - [From Source](#from-source)
   - [Docker Deployment](#docker-deployment)
   - [Kubernetes Deployment](#kubernetes-deployment)
+  - [From Source (Development Only)](#from-source-development-only)
 - [Configuration](#configuration)
   - [Production Configuration](#production-configuration)
   - [TLS Setup](#tls-setup)
@@ -54,17 +56,17 @@ This guide provides comprehensive instructions for deploying and operating Empat
 ### Software Requirements
 
 **Operating System:**
-- Linux (Ubuntu 20.04+, Debian 11+, RHEL 8+, or similar)
+- Linux with a container runtime (Docker or Podman) for production
 - macOS 11+ (development only)
 - Windows (limited support, development only)
 
-**Rust Toolchain:**
+**Rust Toolchain (source builds only):**
 - Rust nightly (channel: nightly)
 - Version: rustc 1.93.0-nightly or later
 - Components: rustfmt, clippy
 - Install: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 
-**Build Tools:**
+**Build Tools (source builds only):**
 - mold linker (Linux only, optional but recommended for 40-60% faster builds)
   ```bash
   # Ubuntu/Debian
@@ -80,8 +82,8 @@ This guide provides comprehensive instructions for deploying and operating Empat
   ```
 
 **Runtime Dependencies:**
-- None (statically linked binaries)
-- OpenSSL/LibreSSL (for TLS support)
+- None when using container images
+- OpenSSL/LibreSSL required for source builds with TLS
 
 ### Network Requirements
 
@@ -107,7 +109,7 @@ sudo ufw allow from 10.1.0.0/16 to any port 4318 proto tcp comment 'OTLP metrics
 
 ## Installation
 
-### From Source
+### From Source (Development Only)
 
 #### 1. Install Rust Toolchain
 
@@ -129,7 +131,7 @@ rustc --version  # Should show 1.93.0-nightly or later
 #### 2. Clone Repository
 
 ```bash
-git clone https://github.com/Pyxxilated-Studios/empath.git
+git clone <your-internal-repo>
 cd empath
 ```
 
@@ -191,7 +193,7 @@ Create `/etc/systemd/system/empath.service`:
 ```ini
 [Unit]
 Description=Empath Mail Transfer Agent
-Documentation=https://github.com/Pyxxilated-Studios/empath
+Documentation=docs/DEPLOYMENT.md
 After=network-online.target
 Wants=network-online.target
 

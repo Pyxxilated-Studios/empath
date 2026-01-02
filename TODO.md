@@ -52,6 +52,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P3 — Post-1.0 Candidates
 - [x] DOC-01: Add a 5-minute quickstart guide in `docs/QUICKSTART.md`.
+- [x] DOC-02: Document container-first distribution in `docs/DEPLOYMENT.md`.
 - Tracked in `docs/BACKLOG.md`.
 
 ## Notes
