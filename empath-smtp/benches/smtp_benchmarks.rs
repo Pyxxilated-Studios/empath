@@ -340,6 +340,41 @@ fn bench_fsm_full_transaction(c: &mut Criterion) {
 }
 
 // ============================================================================
+// SMTP Hot Path Benchmarks
+// ============================================================================
+
+fn bench_hot_path_command_loop(c: &mut Criterion) {
+    let mut group = c.benchmark_group("smtp_hot_path");
+    let commands: Vec<&[u8]> = vec![
+        b"EHLO example.com",
+        b"MAIL FROM:<sender@example.com>",
+        b"RCPT TO:<recipient@example.com>",
+        b"DATA",
+    ];
+
+    group.bench_function("parse_and_transition_pre_data", |b| {
+        b.iter(|| {
+            let mut ctx = Context::default();
+            let mut state = State::Connect(Connect);
+
+            for cmd_bytes in &commands {
+                let command: Command = unwrap_or_exit(
+                    black_box(*cmd_bytes)
+                        .try_into()
+                        .map_err(|err: Command| err.to_string()),
+                    "Failed to parse command",
+                );
+                state = black_box(state).transition(black_box(command), &mut ctx);
+            }
+
+            black_box(state)
+        });
+    });
+
+    group.finish();
+}
+
+// ============================================================================
 // Context Operations Benchmarks
 // ============================================================================
 
@@ -399,6 +434,7 @@ criterion_group!(
     bench_mail_parameters_operations,
     bench_fsm_transitions,
     bench_fsm_full_transaction,
+    bench_hot_path_command_loop,
     bench_context_operations,
 );
 criterion_main!(benches);

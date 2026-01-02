@@ -1041,6 +1041,7 @@ dependencies = [
  "ahash",
  "async-trait",
  "chrono",
+ "criterion",
  "dashmap",
  "empath-common",
  "empath-ffi",

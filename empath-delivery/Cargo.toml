@@ -44,4 +44,5 @@ tracing-opentelemetry.workspace = true
 ulid.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 ron.workspace = true
