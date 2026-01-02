@@ -20,13 +20,21 @@ pub async fn scan_spool_internal(
     spool: &Arc<dyn BackingStore>,
     mode: SpoolScanMode,
 ) -> Result<usize, DeliveryError> {
-    let message_ids = {
-        let mut cursor = processor.spool_scan_cursor.lock().await;
-        spool
-            .list_delta(&mut cursor, mode)
+    let (message_ids, next_cursor) = {
+        let cursor = *processor.spool_scan_cursor.lock().await;
+        let mut next_cursor = cursor;
+        let message_ids = spool
+            .list_delta(&mut next_cursor, mode)
             .await
-            .map_err(|e| SystemError::SpoolRead(e.to_string()))?
+            .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+        (message_ids, next_cursor)
     };
+    {
+        let mut cursor = processor.spool_scan_cursor.lock().await;
+        if next_cursor.offset > cursor.offset {
+            *cursor = next_cursor;
+        }
+    }
     let mut added = 0;
 
     for msg_id in message_ids {
