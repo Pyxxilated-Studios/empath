@@ -51,7 +51,8 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] PLAN-07: Add benchmarks for SMTP hot path and delivery queue throughput before/after refactor; gate regressions.
 
 ## P3 — Post-1.0 Candidates
-Tracked in `docs/BACKLOG.md`.
+- [x] DOC-01: Add a 5-minute quickstart guide in `docs/QUICKSTART.md`.
+- Tracked in `docs/BACKLOG.md`.
 
 ## Notes
 - Prefer `just test-nextest` locally; `just ci` before PRs.

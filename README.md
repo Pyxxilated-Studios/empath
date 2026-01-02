@@ -123,6 +123,10 @@ just fmt         # Format code
 just bench       # Run all benchmarks
 ```
 
+### Quickstart
+
+Prefer a scannable setup? See `docs/QUICKSTART.md` for a 5-minute path.
+
 ### Project Structure
 
 ```
