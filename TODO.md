@@ -15,7 +15,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] TEST-02: Add smoke/CLI coverage for `empath/bin/empathctl.rs` (control CLI entry point). (`empath/bin/empathctl.rs`)
 - [x] TEST-03: Add focused tests for control path logic (handler + controller). (`empath/src/control_handler.rs`, `empath/src/controller.rs`)
 - [x] TEST-04: Add unit tests for `empath-common` listener/logging utilities. (`empath-common/src/listener.rs`, `empath-common/src/logging.rs`)
-- [ ] TEST-05: Add coverage for system metrics + exporter modules. (`empath-metrics/src/system.rs`, `empath-metrics/src/exporter.rs`)
+- [x] TEST-05: Add coverage for system metrics + exporter modules. (`empath-metrics/src/system.rs`, `empath-metrics/src/exporter.rs`)
 - [ ] TEST-06: Add minimal coverage for FFI modules with 0% coverage (library/metrics/python/validate/wasm). (`empath-ffi/src/modules/library.rs`, `empath-ffi/src/modules/metrics.rs`, `empath-ffi/src/modules/python.rs`, `empath-ffi/src/modules/validate.rs`, `empath-ffi/src/modules/wasm.rs`)
 
 ## Notes

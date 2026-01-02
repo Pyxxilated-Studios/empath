@@ -534,3 +534,26 @@ fn count_files_in_directory(path: &Path) -> Result<u64, std::io::Error> {
         .count() as u64;
     Ok(count)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, io};
+
+    use tempfile::tempdir;
+
+    use super::count_files_in_directory;
+
+    #[test]
+    fn count_files_in_directory_counts_only_files() -> io::Result<()> {
+        let dir = tempdir()?;
+        fs::write(dir.path().join("one.txt"), b"one")?;
+        fs::write(dir.path().join("two.txt"), b"two")?;
+        fs::create_dir(dir.path().join("subdir"))?;
+        fs::write(dir.path().join("subdir").join("nested.txt"), b"nested")?;
+
+        let count = count_files_in_directory(dir.path())?;
+
+        assert_eq!(count, 2);
+        Ok(())
+    }
+}

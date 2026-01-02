@@ -19,11 +19,7 @@ use crate::{MetricsConfig, MetricsError};
 ///
 /// Returns an error if the OTLP exporter cannot be initialized.
 pub fn init_otlp_exporter(config: &MetricsConfig) -> Result<SdkMeterProvider, MetricsError> {
-    let endpoint = if config.endpoint.ends_with("/v1/metrics") {
-        config.endpoint.clone()
-    } else {
-        format!("{}/v1/metrics", config.endpoint.trim_end_matches('/'))
-    };
+    let endpoint = normalize_otlp_endpoint(&config.endpoint);
 
     tracing::info!(endpoint = endpoint, "Configuring OTLP metrics exporter");
 
@@ -52,4 +48,35 @@ pub fn init_otlp_exporter(config: &MetricsConfig) -> Result<SdkMeterProvider, Me
 
     tracing::info!("OTLP metrics exporter initialized successfully");
     Ok(provider)
+}
+
+fn normalize_otlp_endpoint(endpoint: &str) -> String {
+    if endpoint.ends_with("/v1/metrics") {
+        endpoint.to_string()
+    } else {
+        format!("{}/v1/metrics", endpoint.trim_end_matches('/'))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_otlp_endpoint;
+
+    #[test]
+    fn normalize_otlp_endpoint_keeps_metrics_path() {
+        let endpoint = normalize_otlp_endpoint("http://localhost:4318/v1/metrics");
+        assert_eq!(endpoint, "http://localhost:4318/v1/metrics");
+    }
+
+    #[test]
+    fn normalize_otlp_endpoint_appends_metrics_path() {
+        let endpoint = normalize_otlp_endpoint("http://localhost:4318");
+        assert_eq!(endpoint, "http://localhost:4318/v1/metrics");
+    }
+
+    #[test]
+    fn normalize_otlp_endpoint_trims_trailing_slash() {
+        let endpoint = normalize_otlp_endpoint("http://localhost:4318/");
+        assert_eq!(endpoint, "http://localhost:4318/v1/metrics");
+    }
 }
