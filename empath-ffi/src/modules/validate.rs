@@ -71,3 +71,66 @@ impl ModuleValidation {
         .unwrap_or_default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+
+    use empath_common::context::Context;
+
+    use super::{Event as ValidateEvent, ModuleValidation, Validators};
+    use crate::modules::Event as ModuleEvent;
+    use crate::string::StringVector;
+
+    unsafe extern "C-unwind" fn validate_connect(_context: &mut Context) -> i32 {
+        250
+    }
+
+    unsafe extern "C" fn init_stub(_args: StringVector) -> i32 {
+        0
+    }
+
+    #[test]
+    fn emit_returns_validator_result() {
+        let module = ModuleValidation {
+            module_name: ptr::null(),
+            init: init_stub,
+            validators: Validators {
+                validate_connect: Some(validate_connect),
+                validate_ehlo: None,
+                validate_mail_from: None,
+                validate_rcpt_to: None,
+                validate_data: None,
+                validate_starttls: None,
+                validate_auth: None,
+            },
+        };
+        let mut context = Context::default();
+
+        let result = module.emit(ModuleEvent::Validate(ValidateEvent::Connect), &mut context);
+
+        assert_eq!(result, 250);
+    }
+
+    #[test]
+    fn emit_defaults_when_validator_missing() {
+        let module = ModuleValidation {
+            module_name: ptr::null(),
+            init: init_stub,
+            validators: Validators {
+                validate_connect: None,
+                validate_ehlo: None,
+                validate_mail_from: None,
+                validate_rcpt_to: None,
+                validate_data: None,
+                validate_starttls: None,
+                validate_auth: None,
+            },
+        };
+        let mut context = Context::default();
+
+        let result = module.emit(ModuleEvent::Validate(ValidateEvent::Ehlo), &mut context);
+
+        assert_eq!(result, 0);
+    }
+}

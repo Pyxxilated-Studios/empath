@@ -136,3 +136,23 @@ pub(super) fn emit(event: Event, context: &Context) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use empath_common::context::Context;
+
+    use super::{Ev, Event, emit};
+    use crate::modules::validate::Event as ValidateEvent;
+
+    #[test]
+    fn emit_ignores_validate_events() {
+        let context = Context::default();
+        emit(Event::Validate(ValidateEvent::Connect), &context);
+    }
+
+    #[test]
+    fn emit_noops_when_metrics_disabled() {
+        let context = Context::default();
+        emit(Event::Event(Ev::ConnectionOpened), &context);
+    }
+}

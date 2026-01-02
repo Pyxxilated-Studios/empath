@@ -71,3 +71,28 @@ impl Shared {
         module.emit(event, validate_context)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::Shared;
+
+    #[test]
+    fn display_includes_name_and_args() {
+        let arguments: Arc<[Arc<str>]> =
+            Arc::from(vec![Arc::from("alpha"), Arc::from("beta")].into_boxed_slice());
+        let shared = Shared {
+            name: "module.so".to_string(),
+            arguments,
+            module: None,
+            library: None,
+        };
+
+        let rendered = shared.to_string();
+
+        assert!(rendered.contains("module.so"));
+        assert!(rendered.contains("alpha"));
+        assert!(rendered.contains("beta"));
+    }
+}

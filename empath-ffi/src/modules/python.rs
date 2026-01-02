@@ -147,3 +147,41 @@ impl Python {
         &self.path
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+
+    use empath_common::context::Context;
+
+    use super::{Event, Python};
+    use crate::modules::Ev;
+
+    #[test]
+    fn emit_returns_zero_when_uninitialized() {
+        let module = Python {
+            path: PathBuf::from("module.py"),
+            arguments: Vec::new(),
+            timeout_secs: None,
+            module: OnceLock::new(),
+        };
+        let mut context = Context::default();
+
+        let result = module.emit(Event::Event(Ev::ConnectionOpened), &mut context);
+
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn path_returns_configured_path() {
+        let module = Python {
+            path: PathBuf::from("module.py"),
+            arguments: Vec::new(),
+            timeout_secs: None,
+            module: OnceLock::new(),
+        };
+
+        assert_eq!(module.path(), PathBuf::from("module.py").as_path());
+    }
+}
