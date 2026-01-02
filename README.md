@@ -25,7 +25,7 @@
 ### Build and run
 
 ```bash
-git clone https://github.com/Pyxxilated-Studios/empath.git
+git clone <your-internal-repo>
 cd empath
 
 # Build everything (or use `just build`)

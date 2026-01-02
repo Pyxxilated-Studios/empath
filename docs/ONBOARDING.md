@@ -40,7 +40,7 @@ Work through these steps in order. Each should take 1-3 minutes.
 
 - [ ] **Clone repository**
   ```bash
-  git clone https://github.com/Pyxxilated-Studios/empath.git
+  git clone <your-internal-repo>
   cd empath
   ```
 

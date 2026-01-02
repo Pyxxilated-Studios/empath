@@ -469,7 +469,7 @@ expr: histogram_quantile(0.95, rate(empath_delivery_queue_age_seconds_bucket[5m]
   annotations:
     summary: "Short description ({{ $value }})"
     description: "Detailed description with context"
-    runbook_url: "https://github.com/yourorg/empath/blob/main/docs/observability/RUNBOOKS.md#customalertname"
+    runbook_url: "https://<your-forge>/empath/blob/main/docs/observability/RUNBOOKS.md#customalertname"
     dashboard_url: "http://grafana:3000/d/empath-component"
 ```
 
@@ -553,7 +553,7 @@ expr: histogram_quantile(0.95, rate(empath_delivery_queue_age_seconds_bucket[5m]
 - **AlertManager Documentation**: https://prometheus.io/docs/alerting/latest/
 - **Empath Metrics**: See `empath-metrics/src/` for metric definitions
 - **Empath Configuration**: See `empath.config.ron` for tunable parameters
-- **Support**: File issues at https://github.com/yourorg/empath/issues
+- **Support**: File issues at <your-forge-issues-url>
 
 ---
 

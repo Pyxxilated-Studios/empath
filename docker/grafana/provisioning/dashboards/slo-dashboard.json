@@ -42,7 +42,7 @@
       "title": "SLO Documentation",
       "tooltip": "View SLO definitions and runbooks",
       "type": "link",
-      "url": "https://github.com/Pyxxilated-Studios/empath/blob/master/docs/observability/README.md"
+      "url": "https://<your-forge>/empath/blob/main/docs/observability/README.md"
     }
   ],
   "liveNow": false,

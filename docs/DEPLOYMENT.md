@@ -242,7 +242,7 @@ sudo systemctl status empath
 
 ```bash
 # Clone repository
-git clone https://github.com/Pyxxilated-Studios/empath.git
+git clone <your-internal-repo>
 cd empath/docker
 
 # Start full stack (Empath + OpenTelemetry + Prometheus + Grafana)

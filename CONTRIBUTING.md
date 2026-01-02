@@ -27,7 +27,7 @@ Thank you for your interest in contributing to Empath! This document provides gu
 
 2. **Set up your environment:**
    ```bash
-   git clone https://github.com/Pyxxilated-Studios/empath.git
+   git clone <your-internal-repo>
    cd empath
    just setup    # Installs all dev tools
    just doctor   # Verify environment health
