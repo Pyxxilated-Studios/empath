@@ -585,3 +585,29 @@ fn record_tls_watchdog_metrics(metrics: &Metrics, registry: &TlsContextRegistry)
         parse_errors,
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Result, ensure};
+    use empath_control::DEFAULT_CONTROL_SOCKET;
+
+    use super::{default_control_socket, default_shutdown_timeout_secs};
+
+    #[test]
+    fn default_control_socket_matches_const() -> Result<()> {
+        ensure!(
+            default_control_socket() == DEFAULT_CONTROL_SOCKET,
+            "expected default control socket path to match constant"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_shutdown_timeout_is_expected() -> Result<()> {
+        ensure!(
+            default_shutdown_timeout_secs() == 10,
+            "expected default shutdown timeout to be 10 seconds"
+        );
+        Ok(())
+    }
+}

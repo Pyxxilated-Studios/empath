@@ -45,18 +45,20 @@ pub struct EmpathControlHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::sync::{Arc, Mutex};
     use std::time::SystemTime;
 
     use empath_common::DeliveryStatus;
     use empath_delivery::{
         BindingHealthStatus, CircuitBreakerConfig, ConnectionStats, DeliveryInfo,
-        DeliveryQueryService, DnsResolver, DomainConfigRegistry, OutboundBindingRegistry,
-        QueueSnapshot, RateLimitConfig, RetryPolicy, SmtpTimeouts, TlsPolicy,
+        DeliveryQueryService, DnsResolver, DomainConfig, DomainConfigRegistry,
+        OutboundBindingRegistry, QueueSnapshot, RateLimitConfig, RetryPolicy, SmtpTimeouts,
+        TlsPolicy,
     };
     use empath_spool::{BackingStore, SpooledMessageId};
 
-    use super::reload_config_from_disk;
+    use super::{parse_message_id, reload_config_from_disk, resolve_tls_policy_preview};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
     type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -320,6 +322,58 @@ Empath (
         assert_eq!(delivery.replaced_smtp_timeouts_ehlo_secs(), Some(5));
         assert_eq!(delivery.replaced_circuit_breaker_threshold(), Some(7));
         Ok(())
+    }
+
+    #[test]
+    fn parse_message_id_accepts_ulid() -> TestResult {
+        let message_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let parsed = parse_message_id(message_id)
+            .map_err(|err| format!("expected valid message id: {err}"))?;
+        assert_eq!(parsed.to_string(), message_id);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_message_id_rejects_invalid_ulid() -> TestResult {
+        let err = parse_message_id("not_a_valid_ulid")
+            .err()
+            .ok_or_else(|| io::Error::other("expected invalid message id to error"))?;
+        assert!(err.to_string().contains("Invalid message ID"));
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_tls_policy_preview_prefers_explicit_policy() {
+        let registry = DomainConfigRegistry::new();
+        let config = DomainConfig {
+            tls_policy: Some(TlsPolicy::Disabled),
+            require_tls: true,
+            ..DomainConfig::default()
+        };
+        registry.insert("example.com".to_string(), config);
+        let resolved = resolve_tls_policy_preview(&registry, "example.com", TlsPolicy::Required);
+        assert_eq!(resolved, TlsPolicy::Disabled);
+    }
+
+    #[test]
+    fn resolve_tls_policy_preview_requires_tls_when_flag_set() {
+        let registry = DomainConfigRegistry::new();
+        let config = DomainConfig {
+            require_tls: true,
+            ..DomainConfig::default()
+        };
+        registry.insert("example.com".to_string(), config);
+        let resolved =
+            resolve_tls_policy_preview(&registry, "example.com", TlsPolicy::Opportunistic);
+        assert_eq!(resolved, TlsPolicy::Required);
+    }
+
+    #[test]
+    fn resolve_tls_policy_preview_falls_back_to_global() {
+        let registry = DomainConfigRegistry::new();
+        let resolved =
+            resolve_tls_policy_preview(&registry, "example.com", TlsPolicy::Opportunistic);
+        assert_eq!(resolved, TlsPolicy::Opportunistic);
     }
 }
 
