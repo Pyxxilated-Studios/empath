@@ -459,3 +459,47 @@ impl Default for MtaStsPolicyCache {
         Self::new(MtaStsConfig::default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::parse_dns_record;
+
+    fn id_strategy() -> impl Strategy<Value = String> {
+        let chars: Vec<char> = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            .chars()
+            .collect();
+        prop::collection::vec(prop::sample::select(chars), 1..32)
+            .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        #[test]
+        fn parse_dns_record_returns_id_when_version_present(id in id_strategy()) {
+            let record = format!("v=STSv1; id={id}");
+            let parsed = parse_dns_record(&record);
+            prop_assert!(matches!(parsed, Ok(value) if value == id));
+        }
+
+        #[test]
+        fn parse_dns_record_is_case_insensitive_for_version(id in id_strategy()) {
+            let record = format!("v=stsv1; id={id}");
+            let parsed = parse_dns_record(&record);
+            prop_assert!(matches!(parsed, Ok(value) if value == id));
+        }
+
+        #[test]
+        fn parse_dns_record_ignores_extra_fields(id in id_strategy()) {
+            let record = format!("foo=bar; v=STSv1; id={id}; note=ignored");
+            let parsed = parse_dns_record(&record);
+            prop_assert!(matches!(parsed, Ok(value) if value == id));
+        }
+
+        #[test]
+        fn parse_dns_record_requires_version_tag(id in id_strategy()) {
+            let record = format!("id={id}; note=missing-version");
+            prop_assert!(parse_dns_record(&record).is_err());
+        }
+    }
+}

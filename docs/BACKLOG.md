@@ -107,7 +107,7 @@ This file contains tasks deferred to post-1.0 release. These are enhancements an
 **Solution**: Extend proptest coverage to DNS and delivery layers.
 
 **Success Criteria**:
-- [ ] Property tests for DNS response parsing
+- [x] Property tests for DNS response parsing
 - [x] Property tests for retry schedule calculation
 - [x] Property tests for rate limiter token bucket
 - [x] Property tests for circuit breaker state machine
