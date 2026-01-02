@@ -1357,3 +1357,59 @@ fn format_timestamp_secs(timestamp: u64) -> String {
         |dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Result, anyhow};
+
+    use super::*;
+
+    #[test]
+    fn parse_queue_list_defaults() -> Result<()> {
+        let cli = Cli::try_parse_from(["empathctl", "queue", "list"])?;
+        assert_eq!(cli.spool_path, PathBuf::from("/tmp/spool/empath"));
+        match cli.command {
+            Commands::Queue { action } => match action {
+                QueueAction::List {
+                    status,
+                    page,
+                    page_size,
+                    format,
+                } => {
+                    assert!(status.is_none());
+                    assert_eq!(page, 1);
+                    assert_eq!(page_size, 100);
+                    assert_eq!(format, "text");
+                }
+                _ => return Err(anyhow!("expected queue list command")),
+            },
+            _ => return Err(anyhow!("expected queue command")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_backup_defaults() -> Result<()> {
+        let cli =
+            Cli::try_parse_from(["empathctl", "backup", "--output-dir", "/tmp/empath-backup"])?;
+        match cli.command {
+            Commands::Backup {
+                output_dir,
+                include_spool,
+                include_queue_state,
+                config_path,
+                tls_path,
+                force,
+            } => {
+                assert_eq!(output_dir, PathBuf::from("/tmp/empath-backup"));
+                assert!(include_spool);
+                assert!(include_queue_state);
+                assert!(config_path.is_none());
+                assert!(tls_path.is_none());
+                assert!(!force);
+            }
+            _ => return Err(anyhow!("expected backup command")),
+        }
+        Ok(())
+    }
+}

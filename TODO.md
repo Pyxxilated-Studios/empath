@@ -12,7 +12,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P3 — Test Coverage Gaps
 - [x] TEST-01: Add smoke coverage for `empath/bin/empath.rs` entry point. (`empath/bin/empath.rs`)
-- [ ] TEST-02: Add smoke/CLI coverage for `empath/bin/empathctl.rs` (control CLI entry point). (`empath/bin/empathctl.rs`)
+- [x] TEST-02: Add smoke/CLI coverage for `empath/bin/empathctl.rs` (control CLI entry point). (`empath/bin/empathctl.rs`)
 - [ ] TEST-03: Add focused tests for control path logic (handler + controller). (`empath/src/control_handler.rs`, `empath/src/controller.rs`)
 - [ ] TEST-04: Add unit tests for `empath-common` listener/logging utilities. (`empath-common/src/listener.rs`, `empath-common/src/logging.rs`)
 - [ ] TEST-05: Add coverage for system metrics + exporter modules. (`empath-metrics/src/system.rs`, `empath-metrics/src/exporter.rs`)
