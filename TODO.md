@@ -59,6 +59,7 @@ Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] DOC-06: Remove GitHub references from security and troubleshooting docs.
 - [x] DOC-07: Remove project GitHub URLs from quickstart and observability docs.
 - [x] DOC-08: Make profiling docs and repository metadata forge-agnostic.
+- [x] DOC-09: Fix runbook URL typo in observability alerts.
 - Tracked in `docs/BACKLOG.md`.
 
 ## Notes

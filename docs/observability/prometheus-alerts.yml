@@ -158,7 +158,7 @@ groups:
         annotations:
           summary: "Delivery error rate elevated ({{ $value | humanizePercentage }})"
           description: "Delivery error rate is {{ $value | humanizePercentage }}, above 5%. Not yet critical (< 5% success rate threshold) but warrants investigation."
-          runbook_url: "https://<your-forge>/empath/blob/main/docs/observability/RUNBOOKS.md#deliveryerrorrateele vated"
+          runbook_url: "https://<your-forge>/empath/blob/main/docs/observability/RUNBOOKS.md#deliveryerrorrateelevated"
           dashboard_url: "http://grafana:3000/d/empath-delivery"
 
       - alert: QueueSizeGrowing
