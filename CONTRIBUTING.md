@@ -143,7 +143,7 @@ just fmt-check
 
 All public items must have documentation:
 
-```rust
+```rust,ignore
 /// Brief description of what this function does.
 ///
 /// More detailed explanation if needed.
@@ -208,7 +208,7 @@ cargo tarpaulin --out Html
 ### Test Types
 
 **Unit Tests:**
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,7 +246,7 @@ just bench-baseline-compare my-feature
 
 ### Async Tests
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_async_feature() {
     // Test implementation
@@ -354,7 +354,7 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/) specifica
 
 ### Format
 
-```
+```text
 <type>(<scope>): <description>
 
 [optional body]
@@ -488,7 +488,7 @@ be mocked in tests.
 ### Reporting Issues
 
 **Bug Reports:**
-```markdown
+```text
 **Description**
 Clear description of the bug
 
@@ -509,9 +509,7 @@ What actually happens
 - Empath version: `git rev-parse HEAD`
 
 **Logs**
-```
 relevant logs here
-```
 ```
 
 **Feature Requests:**

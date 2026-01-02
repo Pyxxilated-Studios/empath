@@ -131,7 +131,7 @@ Prefer a scannable setup? See `docs/QUICKSTART.md` for a 5-minute path.
 
 ### Project Structure
 
-```
+```text
 empath/
 ├── empath/              # Main binary and orchestration
 ├── empath-core/         # Domain types (no tokio/tracing)

@@ -1,0 +1,16 @@
+[package]
+name = "empath-docs"
+version = "0.0.1"
+categories.workspace = true
+keywords.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "empath_docs"
+path = "src/lib.rs"

@@ -125,7 +125,7 @@ Workspace core crates:
 #### 1. Generic Protocol System
 
 New protocols implement the `Protocol` trait (`empath-common/src/traits/protocol.rs`):
-```rust
+```rust,ignore
 pub trait Protocol: Default + Send + Sync {
     type Session: SessionHandler;
     type Args: Clone + Debug + Deserialize;
@@ -139,7 +139,7 @@ pub trait Protocol: Default + Send + Sync {
 #### 2. Finite State Machine Pattern
 
 Protocol states managed via FSM trait (`empath-common/src/traits/fsm.rs`):
-```rust
+```rust,ignore
 pub trait FiniteStateMachine {
     type Input;
     type Context;
@@ -178,7 +178,7 @@ The SMTP protocol implementation uses a clean three-layer separation:
 - **Single Responsibility**: Clear separation of concerns (protocol vs business vs I/O)
 
 **Example - Pure FSM Usage:**
-```rust
+```rust,ignore
 use empath_common::traits::fsm::FiniteStateMachine;
 use empath_smtp::{session_state::SessionState, state::State, command::Command};
 
@@ -194,7 +194,7 @@ let new_state = FiniteStateMachine::transition(
 ```
 
 **Example - Transaction Handler Usage:**
-```rust
+```rust,ignore
 use empath_smtp::transaction_handler::{SmtpTransactionHandler, DefaultSmtpTransactionHandler};
 
 let handler = DefaultSmtpTransactionHandler::new(
@@ -633,7 +633,7 @@ Location: `empath-delivery/src/processor/mod.rs:326-450`
 
 #### Session Creation
 Use config struct to avoid too-many-arguments:
-```rust
+```rust,ignore
 Session::create(queue, stream, peer, SessionConfig { ... })
 ```
 
@@ -642,7 +642,7 @@ Keep under 100 lines. Extract helpers for complex logic.
 
 #### Collapsible If Statements
 Use let-chains:
-```rust
+```rust,ignore
 if let Some(spool) = &self.spool
     && let Some(data) = &validate_context.data
 { ... }
