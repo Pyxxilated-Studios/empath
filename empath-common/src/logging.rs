@@ -264,3 +264,23 @@ macro_rules! internal {
         $crate::internal!(level = TRACE, $($msg),*)
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use tracing::metadata::LevelFilter;
+    use tracing_subscriber::filter::EnvFilter;
+    use tracing_subscriber::reload;
+
+    use super::LoggingHandle;
+
+    #[test]
+    fn set_log_level_updates_filter_handle() {
+        let filter = EnvFilter::builder().parse_lossy("info");
+        let (_layer, handle) = reload::Layer::new(filter);
+        let handle = LoggingHandle {
+            filter_handle: handle,
+        };
+
+        assert!(handle.set_log_level(LevelFilter::WARN).is_ok());
+    }
+}

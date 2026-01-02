@@ -154,3 +154,103 @@ impl<Proto: Protocol> Listener<Proto> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Result, anyhow};
+    use serde::Deserialize;
+    use tokio::net::TcpStream;
+
+    use super::*;
+    use crate::error::ProtocolError;
+
+    #[derive(Debug, Clone, Default, Deserialize)]
+    struct DummyArgs {
+        value: u32,
+    }
+
+    #[derive(Debug, Clone, Default, Deserialize)]
+    struct DummyContext {
+        name: String,
+    }
+
+    #[derive(Default)]
+    struct DummyProtocol;
+
+    struct DummySession;
+
+    impl SessionHandler for DummySession {
+        fn run(
+            self,
+            _signal: tokio::sync::broadcast::Receiver<Signal>,
+        ) -> impl std::future::Future<Output = Result<(), crate::error::SessionError>> + Send
+        {
+            std::future::ready(Ok(()))
+        }
+    }
+
+    impl Protocol for DummyProtocol {
+        type Args = DummyArgs;
+        type Context = DummyContext;
+        type Session = DummySession;
+
+        fn handle(
+            &self,
+            _stream: TcpStream,
+            _address: SocketAddr,
+            _context: Self::Context,
+            _args: Self::Args,
+        ) -> Self::Session {
+            DummySession
+        }
+
+        fn validate(&mut self, args: &mut Self::Args) -> Result<(), ProtocolError> {
+            if args.value == 0 {
+                return Err(ProtocolError::MissingField("value"));
+            }
+            Ok(())
+        }
+
+        fn ty() -> &'static str {
+            "dummy"
+        }
+    }
+
+    #[test]
+    fn map_args_updates_listener_args() -> Result<()> {
+        let mut listener: Listener<DummyProtocol> = ron::from_str(
+            r#"
+(
+  socket: "127.0.0.1:0",
+  args: (value: 1),
+  context: (name: "alpha"),
+)
+"#,
+        )?;
+        listener.map_args(&|args| DummyArgs {
+            value: args.value + 1,
+        });
+        assert_eq!(listener.args.value, 2);
+        assert_eq!(listener.context.name, "alpha");
+        Ok(())
+    }
+
+    #[test]
+    fn init_rejects_invalid_args() -> Result<()> {
+        let mut listener: Listener<DummyProtocol> = ron::from_str(
+            r#"
+(
+  socket: "127.0.0.1:0",
+  args: (value: 0),
+  context: (name: "alpha"),
+)
+"#,
+        )?;
+        let err = listener
+            .init()
+            .err()
+            .ok_or_else(|| anyhow!("expected invalid args to fail validation"))?;
+        assert!(matches!(err, ProtocolError::MissingField("value")));
+        Ok(())
+    }
+}
