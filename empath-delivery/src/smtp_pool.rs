@@ -92,6 +92,7 @@ struct PoolEntry {
 pub struct SmtpClientPool {
     config: SmtpPoolConfig,
     entries: DashMap<SmtpPoolKey, Mutex<VecDeque<PoolEntry>>>,
+    pool_sizes: DashMap<String, u64>,
 }
 
 impl std::fmt::Debug for SmtpClientPool {
@@ -101,6 +102,7 @@ impl std::fmt::Debug for SmtpClientPool {
             .field("max_per_domain", &self.config.max_per_domain)
             .field("idle_ttl_secs", &self.config.idle_ttl_secs)
             .field("entries", &self.entries.len())
+            .field("pool_sizes", &self.pool_sizes.len())
             .finish()
     }
 }
@@ -117,6 +119,7 @@ impl SmtpClientPool {
         Self {
             config,
             entries: DashMap::new(),
+            pool_sizes: DashMap::new(),
         }
     }
 
@@ -177,6 +180,7 @@ impl SmtpClientPool {
             return;
         }
         if self.config.max_per_domain == 0 {
+            self.clear_pool_size(&key.domain);
             self.record_pool_size(&key.domain, metrics);
             return;
         }
@@ -203,6 +207,7 @@ impl SmtpClientPool {
         }
         guard.push_back(entry);
         drop(guard);
+        self.add_pool_size(&domain, 1);
 
         self.record_pool_size(&domain, metrics);
     }
@@ -230,7 +235,9 @@ impl SmtpClientPool {
                 let before = guard.len();
                 guard.retain(|entry| now.duration_since(entry.last_used) <= ttl);
                 let after = guard.len();
-                removed += before.saturating_sub(after);
+                let expired = before.saturating_sub(after);
+                removed += expired;
+                self.sub_pool_size(&key.domain, u64::try_from(expired).unwrap_or(0));
                 drop(guard);
                 affected_domains.push(key.domain.clone());
             }
@@ -273,6 +280,7 @@ impl SmtpClientPool {
             };
 
             let mut entry = entry?;
+            self.sub_pool_size(&key.domain, 1);
 
             if entry.last_used.elapsed() > ttl {
                 self.record_pool_size(&key.domain, metrics);
@@ -313,16 +321,35 @@ impl SmtpClientPool {
     }
 
     fn pool_size_for_domain(&self, domain: &str) -> u64 {
-        self.entries
-            .iter()
-            .filter(|entry| entry.key().domain == domain)
-            .map(|entry| {
-                let guard = entry
-                    .value()
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                u64::try_from(guard.len()).unwrap_or(0)
-            })
-            .sum()
+        self.pool_sizes.get(domain).map_or(0, |entry| *entry)
+    }
+
+    fn add_pool_size(&self, domain: &str, delta: u64) {
+        if delta == 0 {
+            return;
+        }
+        let mut entry = self.pool_sizes.entry(domain.to_string()).or_insert(0);
+        *entry = entry.saturating_add(delta);
+    }
+
+    fn sub_pool_size(&self, domain: &str, delta: u64) {
+        if delta == 0 {
+            return;
+        }
+        let Some(mut entry) = self.pool_sizes.get_mut(domain) else {
+            return;
+        };
+        let new_size = entry.saturating_sub(delta);
+        if new_size == 0 {
+            *entry = 0;
+            drop(entry);
+            self.pool_sizes.remove(domain);
+        } else {
+            *entry = new_size;
+        }
+    }
+
+    fn clear_pool_size(&self, domain: &str) {
+        self.pool_sizes.remove(domain);
     }
 }
