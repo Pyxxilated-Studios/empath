@@ -47,6 +47,7 @@ pub fn emit_default_config() -> anyhow::Result<String> {
 mod tests {
     use super::{default_config_template, parse_config_str};
 
+    #[cfg_attr(miri, ignore = "Miri timeout parsing default config template")]
     #[test]
     fn default_config_template_parses() -> anyhow::Result<()> {
         parse_config_str(default_config_template())?;
