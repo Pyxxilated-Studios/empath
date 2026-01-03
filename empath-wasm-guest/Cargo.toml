@@ -1,6 +1,6 @@
 [package]
 name = "empath-wasm-guest"
-version = "0.0.1"
+version = "1.0.0"
 description = "Helper crate for building Empath WASM validation modules"
 categories.workspace = true
 keywords.workspace = true

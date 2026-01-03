@@ -1,6 +1,6 @@
 [package]
 name = "empath-core"
-version = "0.0.1"
+version = "1.0.0"
 description = "Empath core domain types"
 categories.workspace = true
 keywords.workspace = true

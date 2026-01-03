@@ -1,6 +1,6 @@
 [package]
 name = "empath-wasm-guest-macros"
-version = "0.0.1"
+version = "1.0.0"
 description = "Proc macros for empath-wasm-guest helper crate"
 categories.workspace = true
 keywords.workspace = true

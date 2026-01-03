@@ -1,6 +1,6 @@
 [package]
 name = "empath-common"
-version = "0.0.1"
+version = "1.0.0"
 description = "An MTA written in Rust"
 categories.workspace = true
 keywords.workspace = true

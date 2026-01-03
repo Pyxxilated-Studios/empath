@@ -91,23 +91,23 @@ clap = { version = "4", default-features = false, features = [
 ] }
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 dashmap = "6"
-empath = { path = "empath", version = "0" }
-empath-core = { path = "empath-core", version = "0" }
-empath-common = { path = "empath-common", version = "0" }
-empath-control = { path = "empath-control", version = "0" }
-empath-delivery = { path = "empath-delivery", version = "0" }
-empath-examples = { path = "empath-examples", version = "0" }
-empath-ffi = { path = "empath-ffi", version = "0" }
-empath-health = { path = "empath-health", version = "0" }
-empath-metrics = { path = "empath-metrics", version = "0" }
-empath-python = { path = "empath-python", version = "0" }
-empath-smtp = { path = "empath-smtp", version = "0" }
-empath-smtp-client = { path = "empath-smtp-client", version = "0" }
-empath-spool = { path = "empath-spool", version = "0" }
-empath-tracing = { path = "empath-tracing", version = "0" }
-empath-wasm = { path = "empath-wasm", version = "0" }
-empath-wasm-guest = { path = "empath-wasm-guest", version = "0" }
-empath-wasm-guest-macros = { path = "empath-wasm-guest-macros", version = "0" }
+empath = { path = "empath", version = "1" }
+empath-core = { path = "empath-core", version = "1" }
+empath-common = { path = "empath-common", version = "1" }
+empath-control = { path = "empath-control", version = "1" }
+empath-delivery = { path = "empath-delivery", version = "1" }
+empath-examples = { path = "empath-examples", version = "1" }
+empath-ffi = { path = "empath-ffi", version = "1" }
+empath-health = { path = "empath-health", version = "1" }
+empath-metrics = { path = "empath-metrics", version = "1" }
+empath-python = { path = "empath-python", version = "1" }
+empath-smtp = { path = "empath-smtp", version = "1" }
+empath-smtp-client = { path = "empath-smtp-client", version = "1" }
+empath-spool = { path = "empath-spool", version = "1" }
+empath-tracing = { path = "empath-tracing", version = "1" }
+empath-wasm = { path = "empath-wasm", version = "1" }
+empath-wasm-guest = { path = "empath-wasm-guest", version = "1" }
+empath-wasm-guest-macros = { path = "empath-wasm-guest-macros", version = "1" }
 encoding_rs = "0.8.35"
 fs2 = "0.4"
 futures-util = "0.3"

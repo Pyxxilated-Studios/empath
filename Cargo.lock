@@ -951,7 +951,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "empath"
-version = "0.0.2"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "empath-common"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "anyhow",
@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "empath-control"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "empath-core"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "empath-delivery"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1072,15 +1072,15 @@ dependencies = [
 
 [[package]]
 name = "empath-docs"
-version = "0.0.1"
+version = "1.0.0"
 
 [[package]]
 name = "empath-examples"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "empath-ffi"
-version = "0.0.2"
+version = "1.0.0"
 dependencies = [
  "cbindgen",
  "empath-common",
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "empath-health"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "axum",
  "empath-common",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "empath-metrics"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "dashmap",
  "fs2",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "empath-python"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "empath-common",
@@ -1143,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "empath-smtp"
-version = "0.0.2"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "arrayvec",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "empath-smtp-client"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "empath-common",
@@ -1198,7 +1198,7 @@ dependencies = [
 
 [[package]]
 name = "empath-spool"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "empath-tracing"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1227,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "empath-wasm"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "anyhow",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "empath-wasm-guest"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "empath-wasm-guest-macros",
  "pretty_assertions",
@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "empath-wasm-guest-macros"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3534,7 +3534,7 @@ checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 
 [[package]]
 name = "simple-validator"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "empath-wasm-guest",
  "wit-bindgen 0.50.0",
@@ -5290,7 +5290,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
 ]

@@ -1,6 +1,6 @@
 [package]
 name = "empath"
-version = "0.0.2"
+version = "1.0.0"
 description = "An MTA written in Rust"
 build = "build.rs"
 categories.workspace = true

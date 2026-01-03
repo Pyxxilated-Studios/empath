@@ -1,6 +1,6 @@
 [package]
 name = "empath-ffi"
-version = "0.0.2"
+version = "1.0.0"
 categories.workspace = true
 keywords.workspace = true
 edition.workspace = true
