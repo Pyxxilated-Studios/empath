@@ -18,7 +18,9 @@ use crate::error::{DeliveryError, SystemError, TemporaryError};
 use crate::processor::DeliveryProcessor;
 use crate::smtp_pool::{CertValidation, SmtpPoolKey, SmtpPoolRequest, TlsMode};
 use crate::types::DeliveryInfo;
-use crate::{OutboundBinding, SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy, TlsMinimumVersion};
+use crate::{
+    OutboundBinding, SmtpTlsConfig, SmtpTransaction, TlsFailurePolicy, TlsMinimumVersion, dkim,
+};
 
 pub(super) fn server_id_from(address: &str) -> Result<ServerId, DeliveryError> {
     ServerId::new(address.to_owned()).map_err(|e| {
@@ -1129,11 +1131,21 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
         .acquire(pool_request, processor.metrics.as_ref())
         .await;
 
+    let dkim_prefix = if let Some(signing) = &processor.dkim_signer {
+        let mut body_stream = spool
+            .open_message_stream(message_id)
+            .await
+            .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+        Some(dkim::sign_message_stream(signing.signer(), &mut body_stream).await?)
+    } else {
+        None
+    };
+
     // Create and execute the SMTP transaction
     let tls_config = SmtpTlsConfig::new(binding.tls_mode, binding.cert_validation)
         .with_failure_policy(tls_settings.failure_policy)
         .with_min_tls_version(tls_settings.min_tls_version);
-    let transaction = SmtpTransaction::new(
+    let mut transaction = SmtpTransaction::new(
         context,
         server_address.to_string(),
         tls_config,
@@ -1142,8 +1154,13 @@ async fn deliver_message(args: DeliverMessageArgs<'_>) -> Result<(), DeliveryErr
     .with_helo_domain(binding.helo_domain.clone())
     .with_connect_config(binding.connect_config.clone())
     .with_metrics(processor.metrics.as_ref())
-    .with_binding_name(delivery_info.binding.as_deref())
-    .with_spool_body(spool, message_id);
+    .with_binding_name(delivery_info.binding.as_deref());
+
+    transaction = if let Some(prefix) = dkim_prefix {
+        transaction.with_spool_body_prefix(spool, message_id, prefix)
+    } else {
+        transaction.with_spool_body(spool, message_id)
+    };
 
     if let Some(client) = pooled_client {
         match Box::pin(transaction.execute_with_client(client)).await {

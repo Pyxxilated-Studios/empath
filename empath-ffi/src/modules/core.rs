@@ -73,6 +73,10 @@ fn validate_data(validation_context: &mut Context) -> i32 {
     0
 }
 
+const fn validate_pre_spool(_validation_context: &mut Context) -> i32 {
+    0
+}
+
 const fn validate_start_tls(_validation_context: &mut Context) -> i32 {
     // TLS validation happens elsewhere
     0
@@ -95,6 +99,7 @@ pub(super) fn emit(
         Event::Validate(validate::Event::MailFrom) => validate_mail_from(validation_context),
         Event::Validate(validate::Event::RcptTo) => validate_rcpt_to(validation_context),
         Event::Validate(validate::Event::Data) => validate_data(validation_context),
+        Event::Validate(validate::Event::PreSpool) => validate_pre_spool(validation_context),
         Event::Validate(validate::Event::StartTls) => validate_start_tls(validation_context),
         Event::Validate(validate::Event::Auth) => validate_auth(validation_context),
         Event::Event(_) => 0, // Core module doesn't handle connection lifecycle events

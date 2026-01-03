@@ -4,6 +4,9 @@ Last updated: 2026-01-02. See `docs/COMPLETED.md` for history and `docs/BACKLOG.
 
 Legend: P0 (critical) → P3 (low). Status: [ ] open, [wip] in progress, [x] done.
 
+## P1 — Core MTA Features
+- [x] MTA-01: Add outbound DKIM signing with streamed prefix injection. (`empath-delivery/src/dkim.rs`, `empath-delivery/src/processor/delivery.rs`, `empath-smtp-client/src/transaction.rs`)
+
 ## P2 — Code Quality & Performance
 - [x] PERF-01: Avoid holding `spool_scan_cursor` lock across `list_delta().await` to prevent scan head-of-line blocking. (`empath-delivery/src/processor/scan.rs`)
 - [x] PERF-02: Replace per-call `record_pool_size` full-map scan with per-domain counters or cached sizes. (`empath-delivery/src/smtp_pool.rs`)

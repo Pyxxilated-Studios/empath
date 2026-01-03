@@ -78,6 +78,7 @@ arrayvec = "0.7"
 async-trait = "0.1"
 axum = "0.8"
 cap-std = "4.0"
+cap-rand = "3.4.5"
 cbindgen = { version = "0.29", default-features = false }
 charset = "0.1.5"
 chrono = "0.4"
@@ -146,6 +147,7 @@ rand_core = "0"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 ron = "0.12"
 rustls-native-certs = "0.8"
+rustls-pki-types = "1.13"
 serde = { version = "1", default-features = false, features = ["derive", "rc"] }
 sha2 = "0.10"
 socket2 = { version = "0.6", features = ["all"] }

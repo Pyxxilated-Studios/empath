@@ -135,7 +135,7 @@ impl wasmtime_wasi::RngCore for DeterministicRng {
         }
     }
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), cap_rand::Error> {
         self.fill_bytes(dest);
         Ok(())
     }

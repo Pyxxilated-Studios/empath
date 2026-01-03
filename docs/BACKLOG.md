@@ -41,7 +41,7 @@ This file contains tasks deferred to post-1.0 release. These are enhancements an
 **Solution**: Implement DKIM signing (RFC 6376) for outbound messages.
 
 **Success Criteria**:
-- [ ] DKIM signing for outbound messages
+- [x] DKIM signing for outbound messages
 - [ ] Per-domain DKIM key configuration
 - [ ] Configurable signing headers (From, To, Subject, Date, etc.)
 - [ ] Private key storage (file-based or external KMS)

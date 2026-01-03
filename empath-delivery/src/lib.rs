@@ -12,6 +12,7 @@
 mod binding;
 mod binding_health;
 mod circuit_breaker;
+mod dkim;
 mod dns;
 mod domain_config;
 mod dsn;

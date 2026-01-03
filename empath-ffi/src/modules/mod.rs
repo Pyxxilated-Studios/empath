@@ -755,6 +755,7 @@ impl Event {
             Self::Validate(validate::Event::MailFrom) => "validate_mail_from",
             Self::Validate(validate::Event::RcptTo) => "validate_rcpt_to",
             Self::Validate(validate::Event::Data) => "validate_data",
+            Self::Validate(validate::Event::PreSpool) => "validate_pre_spool",
             Self::Validate(validate::Event::StartTls) => "validate_starttls",
             Self::Validate(validate::Event::Auth) => "validate_auth",
             Self::Event(Ev::ConnectionOpened) => "on_connection_opened",

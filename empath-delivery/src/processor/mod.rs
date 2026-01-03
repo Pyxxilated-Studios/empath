@@ -107,6 +107,9 @@ pub struct DeliveryProcessor {
     /// MTA-STS configuration
     pub mta_sts: crate::mta_sts::MtaStsConfig,
 
+    /// DKIM signing configuration
+    pub dkim_signing: Option<crate::dkim::DkimSigningConfig>,
+
     /// Per-domain delivery configuration
     pub domains: DomainConfigRegistry,
 
@@ -192,6 +195,9 @@ pub struct DeliveryProcessor {
     /// Binding health tracker (initialized in `init()`)
     pub(crate) binding_health: Option<BindingHealthTracker>,
 
+    /// DKIM signer for outbound messages (initialized in `init()`)
+    pub(crate) dkim_signer: Option<Arc<crate::dkim::DkimSigningKey>>,
+
     /// Audit logger for delivery lifecycle events.
     pub(crate) audit_logger: Arc<dyn AuditLogger>,
 
@@ -228,6 +234,8 @@ struct DeliveryProcessorConfig {
     dns: DnsConfig,
     #[serde(default)]
     mta_sts: crate::mta_sts::MtaStsConfig,
+    #[serde(default)]
+    dkim_signing: Option<crate::dkim::DkimSigningConfig>,
     #[serde(default)]
     domains: DomainConfigRegistry,
     #[serde(default)]
@@ -270,6 +278,7 @@ impl From<DeliveryProcessorConfig> for DeliveryProcessor {
             tls_policy: config.tls_policy,
             dns: config.dns,
             mta_sts: config.mta_sts.clone(),
+            dkim_signing: config.dkim_signing,
             domains: config.domains,
             outbound_bindings: config.outbound_bindings,
             smtp_timeouts: RwLock::new(config.smtp_timeouts),
@@ -304,6 +313,7 @@ impl Default for DeliveryProcessor {
             tls_policy: TlsPolicy::default(),
             dns: DnsConfig::default(),
             mta_sts: mta_sts.clone(),
+            dkim_signing: None,
             domains: DomainConfigRegistry::default(),
             outbound_bindings: OutboundBindingRegistry::default(),
             smtp_timeouts: RwLock::new(SmtpTimeouts::default()),
@@ -328,6 +338,7 @@ impl Default for DeliveryProcessor {
             circuit_breaker_instance: None,
             binding_health: None,
             audit_logger: AuditLoggerBuilder::default().build(),
+            dkim_signer: None,
             disabled_bindings: DashSet::new(),
             domain_resolver: None,
             process_now_notifier: Notify::new(),
@@ -450,6 +461,18 @@ impl DeliveryProcessor {
 
         self.binding_health = Some(BindingHealthTracker::new());
         internal!("Binding health tracker initialized");
+
+        if let Some(config) = &self.dkim_signing {
+            let signer = config.build_signer()?;
+            self.dkim_signer = Some(Arc::new(signer));
+            internal!(
+                "DKIM signing enabled (domain: {}, selector: {})",
+                config.domain,
+                config.selector
+            );
+        } else {
+            self.dkim_signer = None;
+        }
 
         // Initialize domain policy resolver
         self.domain_resolver = Some(crate::policy::DomainPolicyResolver::new(

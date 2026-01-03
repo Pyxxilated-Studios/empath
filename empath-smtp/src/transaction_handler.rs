@@ -572,6 +572,7 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
         ctx.persist_message_parts();
 
         // If validation passed, do the work (spooling)
+        let mut accepted = valid;
         if valid {
             // Check if any module set a rejection response
             // Positive responses are < 400 (2xx and 3xx codes)
@@ -581,11 +582,32 @@ impl SmtpTransactionHandler for DefaultSmtpTransactionHandler {
                 .is_none_or(|(status, _)| !status.is_temporary() && !status.is_permanent());
 
             if should_spool {
-                self.spool_message(ctx).await;
+                let pre_spool_valid = matches!(
+                    ModuleRegistry::dispatch_with_registry(
+                        ModuleRegistry::global(),
+                        modules::Event::Validate(modules::validate::Event::PreSpool),
+                        ctx,
+                    )
+                    .await,
+                    modules::DispatchResult::Accept
+                );
+                ctx.persist_message_parts();
+
+                if pre_spool_valid {
+                    let should_spool = ctx
+                        .response
+                        .as_ref()
+                        .is_none_or(|(status, _)| !status.is_temporary() && !status.is_permanent());
+                    if should_spool {
+                        self.spool_message(ctx).await;
+                    }
+                } else {
+                    accepted = false;
+                }
             }
         }
 
-        valid
+        accepted
     }
 }
 

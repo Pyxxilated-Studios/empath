@@ -2,7 +2,9 @@
 //!
 //! This module handles the execution of SMTP transactions for message delivery.
 
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -12,6 +14,7 @@ use empath_common::tracing;
 use empath_metrics::DeliveryMetrics;
 use empath_spool::{BackingStore, SpooledMessageId};
 use empath_tracing::traced;
+use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::client::{ClientError, ConnectConfig, Response as ClientResponse, SmtpClient};
 use crate::error::{DeliveryError, PermanentError, SystemError, TemporaryError};
@@ -448,6 +451,45 @@ enum MessageBodySource<'a> {
         spool: &'a Arc<dyn BackingStore>,
         message_id: &'a SpooledMessageId,
     },
+    SpoolWithPrefix {
+        spool: &'a Arc<dyn BackingStore>,
+        message_id: &'a SpooledMessageId,
+        prefix: Arc<[u8]>,
+    },
+}
+
+struct PrefixedReader<R> {
+    prefix: Arc<[u8]>,
+    offset: usize,
+    inner: R,
+}
+
+impl<R> PrefixedReader<R> {
+    fn new(prefix: Arc<[u8]>, inner: R) -> Self {
+        Self {
+            prefix,
+            offset: 0,
+            inner,
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for PrefixedReader<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.offset < self.prefix.len() {
+            let remaining = &self.prefix[self.offset..];
+            let to_copy = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..to_copy]);
+            self.offset += to_copy;
+            return Poll::Ready(Ok(()));
+        }
+
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
 }
 
 #[async_trait]
@@ -517,6 +559,21 @@ impl<'a> SmtpTransaction<'a> {
         message_id: &'a SpooledMessageId,
     ) -> Self {
         self.body_source = MessageBodySource::Spool { spool, message_id };
+        self
+    }
+
+    #[must_use]
+    pub fn with_spool_body_prefix(
+        mut self,
+        spool: &'a Arc<dyn BackingStore>,
+        message_id: &'a SpooledMessageId,
+        prefix: Vec<u8>,
+    ) -> Self {
+        self.body_source = MessageBodySource::SpoolWithPrefix {
+            spool,
+            message_id,
+            prefix: Arc::from(prefix),
+        };
         self
     }
 
@@ -1006,6 +1063,28 @@ impl<'a> SmtpTransaction<'a> {
                 Box::pin(tokio::time::timeout(
                     data_timeout,
                     client.send_data_stream(body_stream),
+                ))
+                .await
+                .map_err(|_| {
+                    TemporaryError::Timeout(format!(
+                        "Sending message data timed out after {data_timeout:?}"
+                    ))
+                })??
+            }
+            MessageBodySource::SpoolWithPrefix {
+                spool,
+                message_id,
+                ref prefix,
+            } => {
+                let body_stream = spool
+                    .open_message_stream(message_id)
+                    .await
+                    .map_err(|e| SystemError::SpoolRead(e.to_string()))?;
+                let prefixed = PrefixedReader::new(Arc::clone(prefix), body_stream);
+
+                Box::pin(tokio::time::timeout(
+                    data_timeout,
+                    client.send_data_stream(prefixed),
                 ))
                 .await
                 .map_err(|_| {

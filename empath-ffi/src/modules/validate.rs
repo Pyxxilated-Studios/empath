@@ -12,6 +12,7 @@ pub enum Event {
     MailFrom,
     RcptTo,
     Data,
+    PreSpool,
     StartTls,
     Auth,
 }
@@ -24,6 +25,7 @@ pub struct Validators {
     pub validate_mail_from: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_rcpt_to: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_data: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
+    pub validate_pre_spool: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_starttls: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
     pub validate_auth: Option<unsafe extern "C-unwind" fn(&mut Context) -> i32>,
 }
@@ -58,6 +60,9 @@ impl ModuleValidation {
             },
             super::Event::Validate(Event::Data) => unsafe {
                 self.validators.validate_data.map(|func| func(context))
+            },
+            super::Event::Validate(Event::PreSpool) => unsafe {
+                self.validators.validate_pre_spool.map(|func| func(context))
             },
             super::Event::Validate(Event::StartTls) => unsafe {
                 self.validators.validate_starttls.map(|func| func(context))
@@ -101,6 +106,7 @@ mod tests {
                 validate_mail_from: None,
                 validate_rcpt_to: None,
                 validate_data: None,
+                validate_pre_spool: None,
                 validate_starttls: None,
                 validate_auth: None,
             },
@@ -123,6 +129,7 @@ mod tests {
                 validate_mail_from: None,
                 validate_rcpt_to: None,
                 validate_data: None,
+                validate_pre_spool: None,
                 validate_starttls: None,
                 validate_auth: None,
             },
