@@ -812,6 +812,16 @@ impl<'a> SmtpTransaction<'a> {
                 domain = %self.context.id,
                 "TLS negotiation skipped due to disabled policy"
             );
+            let ehlo_response = self
+                .send_ehlo(client, helo_domain, EhloStage::Initial)
+                .await?;
+            if !ehlo_response.is_success() {
+                return Err(TemporaryError::SmtpTemporary(format!(
+                    "Server rejected EHLO: {}",
+                    ehlo_response.message()
+                ))
+                .into());
+            }
             return Ok(TlsNegotiationOutcome::Skipped);
         }
 

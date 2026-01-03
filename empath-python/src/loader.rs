@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use empath_common::context::Context;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::context::PyContext;
 use crate::error::{PythonError, Result};
@@ -81,7 +81,8 @@ impl PythonModule {
             let module = self.get_module_dict(py)?;
 
             // Call init() if it exists
-            let args = PyTuple::new(py, args.iter().map(String::as_str))?;
+            let arg_list = PyList::new(py, args.iter().map(String::as_str))?;
+            let args = PyTuple::new(py, &[arg_list])?;
             if let Some(result) = call_callback(py, &module, "init", &args, self.timeout)? {
                 // Check for initialization errors
                 if matches!(result.extract::<bool>(), Ok(false)) {

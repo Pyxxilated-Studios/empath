@@ -99,7 +99,7 @@ impl<'a> Body<'a> {
     /// # Examples
     ///
     /// ```
-    /// use empath_common::message::Body;
+    /// use empath_core::message::Body;
     ///
     /// let body = Body::parse(b"Hello, there.\r\n.\r\n");
     /// assert!(body.is_ok());

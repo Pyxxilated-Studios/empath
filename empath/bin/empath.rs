@@ -14,10 +14,19 @@ async fn main() -> anyhow::Result<()> {
 /// 2. ./empath.config.ron (current working directory)
 /// 3. /etc/empath/empath.config.ron (system-wide config)
 fn find_config_file() -> anyhow::Result<std::path::PathBuf> {
+    fn normalize_path(path: std::path::PathBuf) -> anyhow::Result<std::path::PathBuf> {
+        let absolute = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        Ok(std::fs::canonicalize(&absolute)?)
+    }
+
     if let Ok(env_path) = std::env::var("EMPATH_CONFIG") {
         let path = std::path::PathBuf::from(env_path);
         if path.exists() {
-            return Ok(path);
+            return normalize_path(path);
         }
         anyhow::bail!(
             "EMPATH_CONFIG points to non-existent file: {}",
@@ -32,7 +41,7 @@ fn find_config_file() -> anyhow::Result<std::path::PathBuf> {
 
     for path in &default_paths {
         if path.exists() {
-            return Ok(path.clone());
+            return normalize_path(path.clone());
         }
     }
 
@@ -125,11 +134,12 @@ mod tests {
         let temp = tempdir()?;
         let config_path = temp.path().join("custom.config.ron");
         fs::write(&config_path, b"")?;
+        let expected = fs::canonicalize(&config_path)?;
 
         let _env_guard = set_env_var("EMPATH_CONFIG", config_path.as_os_str());
         let found = find_config_file()?;
 
-        assert_eq!(found, config_path);
+        assert_eq!(found, expected);
         Ok(())
     }
 
@@ -156,12 +166,13 @@ mod tests {
         let temp = tempdir()?;
         let config_path = temp.path().join("empath.config.ron");
         fs::write(&config_path, b"")?;
+        let expected = fs::canonicalize(&config_path)?;
 
         let _env_guard = clear_env_var("EMPATH_CONFIG");
         let _dir_guard = set_current_dir(temp.path())?;
         let found = find_config_file()?;
 
-        assert_eq!(found, config_path);
+        assert_eq!(found, expected);
         Ok(())
     }
 }

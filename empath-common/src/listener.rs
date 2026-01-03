@@ -220,11 +220,11 @@ mod tests {
     fn map_args_updates_listener_args() -> Result<()> {
         let mut listener: Listener<DummyProtocol> = ron::from_str(
             r#"
-(
-  socket: "127.0.0.1:0",
-  args: (value: 1),
-  context: (name: "alpha"),
-)
+{
+  "socket": "127.0.0.1:0",
+  "value": 1,
+  "context": (name: "alpha"),
+}
 "#,
         )?;
         listener.map_args(&|args| DummyArgs {
@@ -239,11 +239,11 @@ mod tests {
     fn init_rejects_invalid_args() -> Result<()> {
         let mut listener: Listener<DummyProtocol> = ron::from_str(
             r#"
-(
-  socket: "127.0.0.1:0",
-  args: (value: 0),
-  context: (name: "alpha"),
-)
+{
+  "socket": "127.0.0.1:0",
+  "value": 0,
+  "context": (name: "alpha"),
+}
 "#,
         )?;
         let err = listener

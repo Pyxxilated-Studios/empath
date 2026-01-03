@@ -372,7 +372,7 @@ impl E2ETestHarnessBuilder {
             mock_dns.add_response(
                 &self.test_domain,
                 Ok(vec![MailServer::new(
-                    "localhost".to_string(),
+                    mock_addr.ip().to_string(),
                     0,
                     mock_addr.port(),
                 )]),

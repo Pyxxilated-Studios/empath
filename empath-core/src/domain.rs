@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```
-/// use empath_common::Domain;
+/// use empath_core::Domain;
 ///
 /// let domain = Domain::new("example.com");
 /// assert_eq!(domain.as_str(), "example.com");
@@ -40,7 +40,7 @@ impl Domain {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use empath_common::Domain;
+    /// use empath_core::Domain;
     ///
     /// let domain = Domain::new("example.com");
     /// let domain = Domain::new(String::from("example.com"));
@@ -56,7 +56,7 @@ impl Domain {
     /// # Examples
     ///
     /// ```
-    /// use empath_common::Domain;
+    /// use empath_core::Domain;
     ///
     /// let domain = Domain::new("example.com");
     /// assert_eq!(domain.as_str(), "example.com");
@@ -71,7 +71,7 @@ impl Domain {
     /// # Examples
     ///
     /// ```
-    /// use empath_common::Domain;
+    /// use empath_core::Domain;
     ///
     /// let domain = Domain::new("example.com");
     /// let arc_str = domain.into_inner();
