@@ -38,6 +38,10 @@ fn configure_test_module(
 }
 
 #[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support kqueue-backed Tokio runtime on macOS"
+)]
 async fn dispatch_event_timeout_fail_closed_returns_error() -> Result<(), String> {
     let config = ModuleDispatchConfig {
         event_timeout_secs: Some(0),
@@ -68,6 +72,10 @@ async fn dispatch_event_timeout_fail_closed_returns_error() -> Result<(), String
 }
 
 #[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support kqueue-backed Tokio runtime on macOS"
+)]
 async fn dispatch_validation_timeout_fail_closed_rejects() -> Result<(), String> {
     let config = ModuleDispatchConfig {
         validation_timeout_secs: Some(0),

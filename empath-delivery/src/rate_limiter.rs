@@ -289,6 +289,7 @@ pub struct RateLimitStats {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(miri))]
     use proptest::prelude::*;
 
     use super::*;
@@ -423,6 +424,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(miri))]
     proptest! {
         #[test]
         #[cfg_attr(miri, ignore = "Time-based test not compatible with Miri")]
@@ -462,5 +464,25 @@ mod tests {
 
             prop_assert_eq!(wait, Duration::ZERO);
         }
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn token_bucket_refill_never_exceeds_capacity() {
+        let mut bucket = TokenBucket::new(10.0, 100);
+        bucket.tokens = 50.0;
+        bucket.last_refill = Instant::now();
+        bucket.refill();
+        assert!(bucket.tokens <= bucket.capacity + f64::EPSILON);
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn token_bucket_wait_time_zero_when_token_available() {
+        let mut bucket = TokenBucket::new(5.0, 10);
+        bucket.tokens = 1.0;
+        bucket.last_refill = Instant::now();
+        let wait = bucket.time_until_available();
+        assert_eq!(wait, Duration::ZERO);
     }
 }

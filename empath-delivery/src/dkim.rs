@@ -175,6 +175,10 @@ Message-ID: <test@example.com>\r\n\
 TPS reports ASAP.\r\n";
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support ring CPU feature detection on macOS"
+    )]
     fn signs_message_bytes_with_header() -> Result<(), DeliveryError> {
         let config = DkimSigningConfig {
             domain: "example.com".to_string(),

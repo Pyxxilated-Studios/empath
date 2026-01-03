@@ -544,6 +544,7 @@ mod tests {
     use super::count_files_in_directory;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri does not support filesystem temp dirs")]
     fn count_files_in_directory_counts_only_files() -> io::Result<()> {
         let dir = tempdir()?;
         fs::write(dir.path().join("one.txt"), b"one")?;

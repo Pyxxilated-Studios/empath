@@ -129,6 +129,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri does not support filesystem temp dirs")]
     fn find_config_file_prefers_env_var() -> Result<()> {
         let _lock = env_lock();
         let temp = tempdir()?;
@@ -144,6 +145,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri does not support filesystem temp dirs")]
     fn find_config_file_errors_when_env_missing() -> Result<()> {
         let _lock = env_lock();
         let temp = tempdir()?;
@@ -161,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri does not support filesystem temp dirs")]
     fn find_config_file_falls_back_to_cwd() -> Result<()> {
         let _lock = env_lock();
         let temp = tempdir()?;

@@ -440,6 +440,7 @@ mod tests {
     use crate::processor::DeliveryProcessor;
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri does not support SystemTime::now with isolation")]
     fn scan_queue_orders_by_priority_and_age() {
         let processor = DeliveryProcessor::default();
         let now = SystemTime::now();

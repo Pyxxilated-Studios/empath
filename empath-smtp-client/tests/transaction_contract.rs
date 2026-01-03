@@ -154,6 +154,10 @@ fn make_context() -> Context {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support kqueue-backed Tokio runtime on macOS"
+)]
 async fn transaction_execute_sends_quit() -> Result<(), String> {
     let (addr, handle) = spawn_mock_server(FinalCommand::Quit).await?;
     let context = make_context();
@@ -175,6 +179,10 @@ async fn transaction_execute_sends_quit() -> Result<(), String> {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support kqueue-backed Tokio runtime on macOS"
+)]
 async fn transaction_execute_with_client_sends_rset() -> Result<(), String> {
     let (addr, handle) = spawn_mock_server(FinalCommand::Rset).await?;
     let context = make_context();
