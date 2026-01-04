@@ -30,7 +30,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["metrics", "python", "wasm"]
+default = ["metrics", "python"]
 metrics = ["dep:empath-metrics"]
 python = ["dep:empath-python"]
 wasm = ["dep:empath-wasm"]

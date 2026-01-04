@@ -38,7 +38,7 @@ chrono.workspace = true
 empath-common.workspace = true
 empath-control.workspace = true
 empath-delivery.workspace = true
-empath-ffi.workspace = true
+empath-ffi = { workspace = true, features = ["wasm"] }
 empath-health.workspace = true
 empath-metrics.workspace = true
 empath-smtp.workspace = true
