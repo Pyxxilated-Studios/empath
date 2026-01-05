@@ -1055,4 +1055,207 @@ mod tests {
         assert_eq!(parts.body_view().as_bytes(), b"Line1\r\nLine2\r\nLine3\r\n");
         Ok(())
     }
+
+    #[test]
+    fn header_name_and_value_validation() {
+        assert!(matches!(HeaderName::new(""), Err(HeaderError::InvalidName)));
+        assert!(matches!(
+            HeaderName::new("Bad:Name"),
+            Err(HeaderError::InvalidName)
+        ));
+        let long_name = "a".repeat(HeaderLimits::default().max_name_len + 1);
+        assert!(matches!(
+            HeaderName::new(long_name),
+            Err(HeaderError::NameTooLong)
+        ));
+        assert!(matches!(
+            HeaderValue::new(b"line1\r\nline2"),
+            Err(HeaderError::InvalidValue)
+        ));
+        let long_value = vec![b'a'; HeaderLimits::default().max_value_len + 1];
+        assert!(matches!(
+            HeaderValue::new(&long_value),
+            Err(HeaderError::ValueTooLong)
+        ));
+    }
+
+    #[test]
+    fn headers_mut_limits_and_upserts() -> Result<(), String> {
+        let raw = b"Subject: test\r\n\r\nBody";
+        let mut parts = MessageParts::from_bytes(raw).map_err(|err| format!("parse: {err:?}"))?;
+        let mut headers = parts.headers_mut(
+            HeaderLimits {
+                max_headers: 2,
+                max_name_len: 10,
+                max_value_len: 10,
+                max_total_size: 20,
+            },
+            None,
+        );
+
+        let name = HeaderName::new("X-Test").map_err(|err| format!("{err:?}"))?;
+        let value = HeaderValue::new(b"one").map_err(|err| format!("{err:?}"))?;
+        {
+            headers
+                .set(&name, &value)
+                .map_err(|err| format!("{err:?}"))?;
+
+            let second = HeaderValue::new(b"two").map_err(|err| format!("{err:?}"))?;
+            let Err(err) = headers.append(&name, &second) else {
+                return Err("expected too many headers error".to_string());
+            };
+            assert_eq!(err, HeaderError::TooMany);
+
+            headers.remove(&name);
+            let inserted = headers
+                .set_if_absent(&name, &value)
+                .map_err(|err| format!("{err:?}"))?;
+            assert!(inserted);
+            let inserted = headers
+                .set_if_absent(&name, &value)
+                .map_err(|err| format!("{err:?}"))?;
+            assert!(!inserted);
+
+            headers
+                .upsert(&name, |existing| {
+                    if existing.is_some() {
+                        HeaderValue::new(b"two")
+                    } else {
+                        HeaderValue::new(b"one")
+                    }
+                })
+                .map_err(|err| format!("{err:?}"))?;
+        }
+        let view = parts.headers_view();
+        let current = view
+            .get(&name)
+            .ok_or_else(|| "missing header".to_string())?;
+        assert_eq!(current.as_bytes(), b"two");
+        Ok(())
+    }
+
+    #[test]
+    fn header_helpers_write_expected_values() -> Result<(), String> {
+        let raw = b"\r\n\r\nBody";
+        let mut parts = MessageParts::from_bytes(raw).map_err(|err| format!("parse: {err:?}"))?;
+        {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), None);
+            let mut ct = ContentType::new("text/plain");
+            ct.charset = Some(Charset::Utf8);
+            ct.boundary = Some(Cow::Borrowed("boundary"));
+            headers
+                .set_content_type(&ct)
+                .map_err(|err| format!("set content-type: {err:?}"))?;
+            headers
+                .set_transfer_encoding(&TransferEncoding::QuotedPrintable)
+                .map_err(|err| format!("set transfer encoding: {err:?}"))?;
+            headers
+                .set_reply_to(
+                    &EmailAddress::new("user@example.com")
+                        .map_err(|err| format!("email address: {err:?}"))?,
+                )
+                .map_err(|err| format!("set reply-to: {err:?}"))?;
+            headers
+                .ensure_message_id()
+                .map_err(|err| format!("ensure message id: {err:?}"))?;
+        }
+
+        let view = parts.headers_view();
+        let ct = view
+            .get(&HeaderName::new("Content-Type").map_err(|err| format!("{err:?}"))?)
+            .ok_or_else(|| "missing content-type".to_string())?;
+        assert_eq!(
+            ct.as_bytes(),
+            b"text/plain; charset=utf-8; boundary=boundary"
+        );
+        let encoding = view
+            .get(&HeaderName::new("Content-Transfer-Encoding").map_err(|err| format!("{err:?}"))?)
+            .ok_or_else(|| "missing transfer encoding".to_string())?;
+        assert_eq!(encoding.as_bytes(), b"quoted-printable");
+        let reply_to = view
+            .get(&HeaderName::new("Reply-To").map_err(|err| format!("{err:?}"))?)
+            .ok_or_else(|| "missing reply-to".to_string())?;
+        assert_eq!(reply_to.as_bytes(), b"user@example.com");
+        let message_id = view
+            .get(&HeaderName::new("Message-ID").map_err(|err| format!("{err:?}"))?)
+            .ok_or_else(|| "missing message-id".to_string())?;
+        let message_id_str = String::from_utf8_lossy(message_id.as_bytes());
+        assert!(message_id_str.starts_with('<'));
+        assert!(message_id_str.ends_with("@localhost>"));
+        Ok(())
+    }
+
+    #[test]
+    fn body_limits_and_newline_styles() -> Result<(), String> {
+        let raw = b"Subject: test\r\n\r\nLine\r\n";
+        let mut parts = MessageParts::from_bytes(raw).map_err(|err| format!("parse: {err:?}"))?;
+        {
+            let mut body = parts.body_mut(
+                BodyLimits {
+                    max_len: 5,
+                    max_growth: 5,
+                },
+                None,
+            );
+            let Err(err) = body.set_bytes(b"123456", BodyOpts::default()) else {
+                return Err("expected too large error".to_string());
+            };
+            assert_eq!(err, BodyError::TooLarge);
+        }
+        {
+            let mut body = parts.body_mut(
+                BodyLimits {
+                    max_len: 32,
+                    max_growth: 1,
+                },
+                None,
+            );
+            let Err(err) = body.append_bytes(b"AB", BodyOpts::default()) else {
+                return Err("expected growth exceeded error".to_string());
+            };
+            assert_eq!(err, BodyError::GrowthExceeded);
+        }
+
+        let view = parts.body_view();
+        assert_eq!(view.newline_style(), NewlineStyle::Crlf);
+        let lf_view = BodyView::new(b"line1\nline2\n");
+        assert_eq!(lf_view.newline_style(), NewlineStyle::Lf);
+        let mixed_view = BodyView::new(b"line1\r\nline2\n");
+        assert_eq!(mixed_view.newline_style(), NewlineStyle::Mixed);
+        Ok(())
+    }
+
+    #[test]
+    fn mutation_audit_records_header_and_body() -> Result<(), String> {
+        let raw = b"\r\n\r\nBody";
+        let mut parts = MessageParts::from_bytes(raw).map_err(|err| format!("parse: {err:?}"))?;
+        let mut audit = MutationAudit::new("module");
+        {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), Some(&mut audit));
+            let name = HeaderName::new("X-Test").map_err(|err| format!("{err:?}"))?;
+            let value = HeaderValue::new(b"one").map_err(|err| format!("{err:?}"))?;
+            headers
+                .set(&name, &value)
+                .map_err(|err| format!("{err:?}"))?;
+            headers.remove(&name);
+        }
+        {
+            let mut body = parts.body_mut(BodyLimits::default(), Some(&mut audit));
+            body.set_bytes(b"Body", BodyOpts::default())
+                .map_err(|err| format!("{err:?}"))?;
+        }
+
+        let records = audit.records();
+        assert!(
+            records
+                .iter()
+                .any(|record| matches!(record.kind, MutationKind::Header { .. }))
+        );
+        assert!(
+            records
+                .iter()
+                .any(|record| record.kind == MutationKind::Body)
+        );
+        Ok(())
+    }
 }

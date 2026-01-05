@@ -96,3 +96,36 @@ impl DerefMut for AddressList {
         &mut self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::address_parser;
+
+    #[test]
+    fn address_from_mailbox_formats_and_exposes_parts() -> Result<(), String> {
+        let mailbox = address_parser::parse_forward_path("<user@example.com>")
+            .map_err(|err| err.to_string())?;
+        let address = Address::from(mailbox.clone());
+
+        assert_eq!(address.mailbox(), &mailbox);
+        assert_eq!(address.email().to_string(), "user@example.com");
+        assert_eq!(address.to_string(), "user@example.com");
+        assert_eq!(address.local_part, "user");
+        assert_eq!(address.domain, "example.com");
+        Ok(())
+    }
+
+    #[test]
+    fn address_list_displays_comma_separated() -> Result<(), String> {
+        let first = address_parser::parse_forward_path("<user@example.com>")
+            .map_err(|err| err.to_string())?;
+        let second = address_parser::parse_forward_path("<other@example.org>")
+            .map_err(|err| err.to_string())?;
+        let list = AddressList::from(vec![Address::from(first), Address::from(second)]);
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.to_string(), "user@example.com, other@example.org");
+        Ok(())
+    }
+}

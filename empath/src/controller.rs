@@ -590,8 +590,12 @@ fn record_tls_watchdog_metrics(metrics: &Metrics, registry: &TlsContextRegistry)
 mod tests {
     use anyhow::{Result, ensure};
     use empath_control::DEFAULT_CONTROL_SOCKET;
+    use empath_delivery::{
+        CircuitBreakerConfig, DomainConfig, DomainRateLimit, RateLimitConfig, RetryPolicy,
+        SmtpTimeouts, TlsPolicy,
+    };
 
-    use super::{default_control_socket, default_shutdown_timeout_secs};
+    use super::{Empath, default_control_socket, default_shutdown_timeout_secs};
 
     #[test]
     fn default_control_socket_matches_const() -> Result<()> {
@@ -608,6 +612,133 @@ mod tests {
             default_shutdown_timeout_secs() == 10,
             "expected default shutdown timeout to be 10 seconds"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn delivery_reload_settings_snapshots_delivery_config() -> Result<()> {
+        let mut empath = Empath::default();
+        let domain = DomainConfig {
+            mx_override: Some("smtp.example.com:2525".to_string()),
+            require_tls: true,
+            accept_invalid_certs: Some(true),
+            tls_policy: Some(TlsPolicy::Required),
+            max_connections: Some(5),
+            ..DomainConfig::default()
+        };
+        empath
+            .delivery
+            .domains
+            .insert("example.com".to_string(), domain);
+
+        let mut rate_limit = RateLimitConfig {
+            messages_per_second: 3.5,
+            burst_size: 12,
+            ..RateLimitConfig::default()
+        };
+        rate_limit.domain_limits.insert(
+            "example.com".to_string(),
+            DomainRateLimit {
+                messages_per_second: 1.5,
+                burst_size: 3,
+            },
+        );
+        empath.delivery.rate_limit = rate_limit;
+
+        let retry_policy = RetryPolicy {
+            max_attempts: 5,
+            base_retry_delay_secs: 42,
+            max_retry_delay_secs: 600,
+            retry_jitter_factor: 0.25,
+        };
+        *empath.delivery.retry_policy.write() = retry_policy;
+
+        let timeouts = SmtpTimeouts {
+            connect_secs: 11,
+            ehlo_secs: 12,
+            starttls_secs: 13,
+            mail_from_secs: 14,
+            rcpt_to_secs: 15,
+            data_secs: 16,
+            quit_secs: 17,
+        };
+        *empath.delivery.smtp_timeouts.write() = timeouts;
+
+        let circuit = CircuitBreakerConfig {
+            failure_threshold: 7,
+            failure_window_secs: 33,
+            timeout_secs: 77,
+            success_threshold: 2,
+            ..CircuitBreakerConfig::default()
+        };
+        *empath.delivery.circuit_breaker.write() = circuit;
+
+        let (domains, rate_limit, retry_policy, timeouts, circuit) =
+            empath.delivery_reload_settings();
+
+        let (require_tls, accept_invalid_certs, tls_policy, mx_override) = {
+            let entry = domains
+                .get("example.com")
+                .ok_or_else(|| anyhow::anyhow!("missing domain config"))?;
+            let require_tls = entry.require_tls;
+            let accept_invalid_certs = entry.accept_invalid_certs;
+            let tls_policy = entry.tls_policy;
+            let mx_override = entry.mx_override.clone();
+            drop(entry);
+            (require_tls, accept_invalid_certs, tls_policy, mx_override)
+        };
+        ensure!(
+            require_tls
+                && accept_invalid_certs == Some(true)
+                && tls_policy == Some(TlsPolicy::Required),
+            "domain configuration not preserved"
+        );
+        ensure!(
+            mx_override.as_deref() == Some("smtp.example.com:2525"),
+            "domain MX override not preserved"
+        );
+
+        ensure!(
+            (rate_limit.messages_per_second - 3.5).abs() < f64::EPSILON
+                && rate_limit.burst_size == 12,
+            "rate limit defaults not preserved"
+        );
+        let rate_override = rate_limit
+            .domain_limits
+            .get("example.com")
+            .ok_or_else(|| anyhow::anyhow!("missing per-domain rate limit"))?;
+        ensure!(
+            (rate_override.messages_per_second - 1.5).abs() < f64::EPSILON
+                && rate_override.burst_size == 3,
+            "per-domain rate limit not preserved"
+        );
+
+        ensure!(
+            retry_policy.max_attempts == 5
+                && retry_policy.base_retry_delay_secs == 42
+                && retry_policy.max_retry_delay_secs == 600
+                && (retry_policy.retry_jitter_factor - 0.25).abs() < f64::EPSILON,
+            "retry policy not preserved"
+        );
+        ensure!(
+            timeouts.connect_secs == 11
+                && timeouts.ehlo_secs == 12
+                && timeouts.starttls_secs == 13
+                && timeouts.mail_from_secs == 14
+                && timeouts.rcpt_to_secs == 15
+                && timeouts.data_secs == 16
+                && timeouts.quit_secs == 17,
+            "SMTP timeouts not preserved"
+        );
+        ensure!(
+            circuit.failure_threshold == 7
+                && circuit.failure_window_secs == 33
+                && circuit.timeout_secs == 77
+                && circuit.success_threshold == 2,
+            "circuit breaker config not preserved"
+        );
+
         Ok(())
     }
 }

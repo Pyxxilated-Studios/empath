@@ -51,3 +51,58 @@ fn main() -> anyhow::Result<()> {
 fn validate_config(path: &std::path::Path) -> anyhow::Result<()> {
     empath::config::parse_config_file(path).map(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{Cli, Command, validate_config};
+
+    #[test]
+    fn parse_check_command() -> Result<(), String> {
+        let cli = Cli::try_parse_from(["empathcfg", "check", "one.ron", "two.ron"])
+            .map_err(|err| err.to_string())?;
+        match cli.command {
+            Command::Check { paths } => {
+                assert_eq!(paths.len(), 2);
+                assert!(paths.iter().any(|path| path.ends_with("one.ron")));
+                assert!(paths.iter().any(|path| path.ends_with("two.ron")));
+                Ok(())
+            }
+            Command::EmitDefault => Err("expected check command".to_string()),
+        }
+    }
+
+    #[test]
+    fn parse_emit_default_command() -> Result<(), String> {
+        let cli =
+            Cli::try_parse_from(["empathcfg", "emit-default"]).map_err(|err| err.to_string())?;
+        match cli.command {
+            Command::EmitDefault => Ok(()),
+            Command::Check { .. } => Err("expected emit-default command".to_string()),
+        }
+    }
+
+    #[test]
+    fn validate_config_accepts_default() -> anyhow::Result<()> {
+        let content = empath::config::emit_default_config()?;
+        let path = std::env::temp_dir().join(format!(
+            "empathcfg-test-{}.ron",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::write(&path, content)?;
+        let result = validate_config(&path);
+        let _ = std::fs::remove_file(&path);
+        result
+    }
+
+    #[test]
+    fn validate_config_missing_file_reports_error() {
+        let path = std::env::temp_dir().join("empathcfg-missing-file.ron");
+        let err = validate_config(&path).err();
+        assert!(err.is_some());
+    }
+}

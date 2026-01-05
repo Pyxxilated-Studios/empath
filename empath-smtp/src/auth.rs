@@ -161,3 +161,80 @@ fn decode_quartet(quartet: [u8; 4], output: &mut Vec<u8>) -> Result<(), AuthErro
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AuthError, PlainCredentials};
+
+    #[test]
+    fn plain_decode_without_authzid() -> Result<(), AuthError> {
+        let creds = PlainCredentials::decode("AHVzZXIAcGFzcw==")?;
+        assert_eq!(creds.authzid, None);
+        assert_eq!(creds.authcid, "user");
+        assert_eq!(creds.password, "pass");
+        Ok(())
+    }
+
+    #[test]
+    fn plain_decode_with_authzid() -> Result<(), AuthError> {
+        let creds = PlainCredentials::decode("YXV0aHoAdXNlcgBwYXNz")?;
+        assert_eq!(creds.authzid.as_deref(), Some("authz"));
+        assert_eq!(creds.authcid, "user");
+        assert_eq!(creds.password, "pass");
+        Ok(())
+    }
+
+    #[test]
+    fn plain_decode_missing_authcid() {
+        let err = PlainCredentials::decode("AABwYXNz").err();
+        assert_eq!(
+            err.as_ref().map(std::string::ToString::to_string),
+            Some("Missing authcid in PLAIN auth payload".to_string())
+        );
+    }
+
+    #[test]
+    fn plain_decode_invalid_authcid_encoding() {
+        let err = PlainCredentials::decode("AP8AcGFzcw==").err();
+        assert_eq!(
+            err.as_ref().map(std::string::ToString::to_string),
+            Some("Invalid authcid encoding".to_string())
+        );
+    }
+
+    #[test]
+    fn plain_decode_invalid_authzid_encoding() {
+        let err = PlainCredentials::decode("/wB1c2VyAHBhc3M=").err();
+        assert_eq!(
+            err.as_ref().map(std::string::ToString::to_string),
+            Some("Invalid authzid encoding".to_string())
+        );
+    }
+
+    #[test]
+    fn plain_decode_invalid_base64() {
+        let err = PlainCredentials::decode("AA?A").err();
+        assert_eq!(
+            err.as_ref().map(std::string::ToString::to_string),
+            Some("Invalid base64 character".to_string())
+        );
+
+        let err = PlainCredentials::decode("AAA").err();
+        assert_eq!(
+            err.as_ref().map(std::string::ToString::to_string),
+            Some("Invalid base64 length".to_string())
+        );
+
+        let err = PlainCredentials::decode("==AA").err();
+        assert_eq!(
+            err.as_ref().map(std::string::ToString::to_string),
+            Some("Invalid base64 padding".to_string())
+        );
+
+        let err = PlainCredentials::decode("AA=A").err();
+        assert_eq!(
+            err.as_ref().map(std::string::ToString::to_string),
+            Some("Invalid base64 padding".to_string())
+        );
+    }
+}

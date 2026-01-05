@@ -343,6 +343,15 @@ impl E2ETestHarnessBuilder {
         self
     }
 
+    /// Replace any SIZE extension with a new size limit.
+    #[must_use]
+    pub fn with_smtp_size_limit(mut self, max_bytes: usize) -> Self {
+        self.smtp_extensions
+            .retain(|ext| !matches!(ext, Extension::Size(_)));
+        self.smtp_extensions.push(Extension::Size(max_bytes));
+        self
+    }
+
     /// Inject a DNS resolver for testing DNS failure scenarios
     ///
     /// If not provided, a `MockDnsResolver` will be created automatically

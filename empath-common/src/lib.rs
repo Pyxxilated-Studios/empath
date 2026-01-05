@@ -58,3 +58,25 @@ pub enum Signal {
     Finalised,
     Drain(std::net::SocketAddr),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Signal;
+
+    #[test]
+    fn signal_variants_roundtrip() -> Result<(), String> {
+        let addr: std::net::SocketAddr = "127.0.0.1:25"
+            .parse()
+            .map_err(|err: std::net::AddrParseError| err.to_string())?;
+        let drain = Signal::Drain(addr);
+        if let Signal::Drain(found) = drain {
+            assert_eq!(found, addr);
+        } else {
+            return Err(String::from("expected drain signal"));
+        }
+
+        let _ = Signal::Shutdown;
+        let _ = Signal::Finalised;
+        Ok(())
+    }
+}

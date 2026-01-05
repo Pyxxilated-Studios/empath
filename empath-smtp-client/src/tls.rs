@@ -70,3 +70,42 @@ impl CertValidation {
         matches!(self, Self::AllowInvalid)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio_rustls::rustls::ProtocolVersion;
+
+    use super::{CertValidation, TlsMinimumVersion, TlsMode};
+
+    #[test]
+    fn tls_mode_construction_and_flags() {
+        let disabled = TlsMode::new(false, false);
+        assert_eq!(disabled, TlsMode::Disabled);
+        assert!(!disabled.attempt_tls());
+        assert!(!disabled.require_tls());
+
+        let opportunistic = TlsMode::new(true, false);
+        assert_eq!(opportunistic, TlsMode::Opportunistic);
+        assert!(opportunistic.attempt_tls());
+        assert!(!opportunistic.require_tls());
+
+        let required = TlsMode::new(true, true);
+        assert_eq!(required, TlsMode::Required);
+        assert!(required.attempt_tls());
+        assert!(required.require_tls());
+    }
+
+    #[test]
+    fn tls_minimum_version_accepts_tls12_and_tls13() {
+        let min = TlsMinimumVersion::Tls12;
+        assert!(min.is_satisfied_by(ProtocolVersion::TLSv1_2));
+        assert!(min.is_satisfied_by(ProtocolVersion::TLSv1_3));
+        assert_eq!(min.as_str(), "tls1.2+");
+    }
+
+    #[test]
+    fn cert_validation_accepts_invalid() {
+        assert!(!CertValidation::Strict.accepts_invalid());
+        assert!(CertValidation::AllowInvalid.accepts_invalid());
+    }
+}

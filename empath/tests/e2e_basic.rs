@@ -283,7 +283,8 @@ async fn test_smtp_size_extension() -> TestResult {
 
     let harness = E2ETestHarness::builder()
         .with_test_domain("test.example.com")
-        .with_smtp_extension(Extension::Size(1000)) // 1KB limit
+        .with_smtp_size_limit(1000) // 1KB limit
+        .with_smtp_extension(Extension::Help)
         .build()
         .await?;
 
@@ -297,6 +298,48 @@ async fn test_smtp_size_extension() -> TestResult {
         .await;
 
     assert!(result.is_ok(), "Small message should be accepted");
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+/// Test SMTP SIZE enforcement for oversized messages
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri does not support the socket syscall")]
+async fn test_smtp_size_rejects_large_message() -> TestResult {
+    use empath_smtp::client::SmtpClientBuilder;
+
+    let harness = E2ETestHarness::builder()
+        .with_test_domain("test.example.com")
+        .with_smtp_size_limit(50) // Small limit to force rejection
+        .build()
+        .await?;
+
+    let oversized_body = "A".repeat(200);
+    let oversized_message = format!("Subject: Too Large\r\n\r\n{oversized_body}\r\n");
+    let responses = SmtpClientBuilder::new(
+        format!("127.0.0.1:{}", harness.smtp_port()),
+        "localhost".to_string(),
+    )
+    .accept_invalid_certs(true)
+    .ehlo("test-client")
+    .mail_from_with_size("sender@example.org", oversized_message.len())
+    .rcpt_to("recipient@test.example.com")
+    .data_with_content(&oversized_message)
+    .execute()
+    .await?;
+
+    assert!(
+        responses.iter().any(|response| response.code == 552),
+        "Oversized message should be rejected with 552"
+    );
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let commands = harness.mock_commands().await;
+    assert!(
+        commands.is_empty(),
+        "Oversized message should not reach the delivery server"
+    );
 
     harness.shutdown().await;
     Ok(())

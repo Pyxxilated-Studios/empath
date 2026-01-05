@@ -266,3 +266,55 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
+
+    use super::*;
+
+    fn make_plain(stream: tokio::io::DuplexStream) -> Connection<tokio::io::DuplexStream> {
+        Connection::Plain {
+            stream,
+            read_buf: Vec::new(),
+            read_pos: 0,
+            read_len: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn send_appends_crlf_and_reports_length() -> Result<(), Box<dyn std::error::Error>> {
+        let (client, mut server) = duplex(64);
+        let mut connection = make_plain(client);
+        let response = "250 OK";
+
+        let written = connection.send(&response).await?;
+
+        let mut buf = vec![0u8; response.len() + 2];
+        server.read_exact(&mut buf).await?;
+
+        assert_eq!(written, response.len() + 2);
+        assert_eq!(buf, b"250 OK\r\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn receive_uses_buffered_data_before_reading_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (client, mut server) = duplex(64);
+        let mut connection = make_plain(client);
+
+        server.write_all(b"hello").await?;
+
+        let mut buf = [0u8; 2];
+        let first_read = connection.receive(&mut buf).await?;
+        assert_eq!(first_read, 2);
+        assert_eq!(&buf, b"he");
+
+        let mut buf = [0u8; 4];
+        let second_read = connection.receive(&mut buf).await?;
+        assert_eq!(second_read, 3);
+        assert_eq!(&buf[..second_read], b"llo");
+        Ok(())
+    }
+}

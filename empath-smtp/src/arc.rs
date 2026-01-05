@@ -175,3 +175,55 @@ impl ArcReplayState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use mail_auth::Error;
+
+    use super::*;
+
+    #[test]
+    fn summarize_result_reports_errors_for_failures() {
+        let (result, error) = summarize_result(&DkimResult::Fail(Error::FailedVerification));
+
+        assert_eq!(result, "fail");
+        assert!(
+            error
+                .as_ref()
+                .is_some_and(|msg| msg.contains("Signature verification failed")),
+            "expected failure details to include verification error"
+        );
+    }
+
+    #[test]
+    fn replay_cache_marks_repeated_digests() {
+        let cache = ArcReplayCache::new(Duration::from_secs(60), 8);
+
+        assert!(!cache.note("digest-a"));
+        assert!(cache.note("digest-a"));
+    }
+
+    #[test]
+    fn replay_cache_eviction_allows_reused_digest_after_overflow() {
+        let cache = ArcReplayCache::new(Duration::from_secs(60), 2);
+
+        assert!(!cache.note("digest-a"));
+        assert!(!cache.note("digest-b"));
+        assert!(!cache.note("digest-c"));
+        assert!(
+            !cache.note("digest-a"),
+            "oldest entry should be evicted when cache overflows"
+        );
+    }
+
+    #[test]
+    fn replay_cache_expires_entries_immediately_with_zero_ttl() {
+        let cache = ArcReplayCache::new(Duration::from_secs(0), 4);
+
+        assert!(!cache.note("digest-a"));
+        assert!(
+            !cache.note("digest-a"),
+            "digest should expire immediately with zero TTL"
+        );
+    }
+}

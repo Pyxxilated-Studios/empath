@@ -30,6 +30,7 @@ enum TlsRequirement {
 #[cfg(test)]
 mod tests {
     use empath_common::context::Context;
+    use tokio::io::AsyncReadExt;
 
     use super::*;
 
@@ -103,6 +104,65 @@ mod tests {
                 .map(str::to_string)
                 .collect(),
         )
+    }
+
+    struct InMemoryReader {
+        data: Vec<u8>,
+        offset: usize,
+    }
+
+    impl InMemoryReader {
+        fn new(data: Vec<u8>) -> Self {
+            Self { data, offset: 0 }
+        }
+    }
+
+    impl AsyncRead for InMemoryReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let remaining = self.data.len().saturating_sub(self.offset);
+            if remaining == 0 {
+                return Poll::Ready(Ok(()));
+            }
+
+            let to_copy = remaining.min(buf.remaining());
+            buf.put_slice(&self.data[self.offset..self.offset + to_copy]);
+            self.offset += to_copy;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn prefixed_reader_emits_prefix_then_inner() -> std::io::Result<()> {
+        let prefix = Arc::from(b"HEAD".as_slice());
+        let inner = InMemoryReader::new(b"BODY".to_vec());
+        let mut reader = PrefixedReader::new(prefix, inner);
+        let mut collected = Vec::new();
+
+        reader.read_to_end(&mut collected).await?;
+
+        assert_eq!(collected, b"HEADBODY");
+        Ok(())
+    }
+
+    #[test]
+    fn supports_starttls_matches_case_insensitive_lines() {
+        let response = ClientResponse::new(
+            250,
+            vec!["SIZE 35882577".to_string(), "StartTls".to_string()],
+        );
+
+        assert!(SmtpTransaction::supports_starttls(&response));
+    }
+
+    #[test]
+    fn supports_starttls_rejects_missing_capability() {
+        let response = ClientResponse::new(250, vec!["PIPELINING".to_string()]);
+
+        assert!(!SmtpTransaction::supports_starttls(&response));
     }
 
     #[tokio::test]

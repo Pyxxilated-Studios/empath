@@ -112,7 +112,12 @@ impl Display for DeliveryPriorityTier {
 
 #[cfg(test)]
 mod tests {
-    use super::{Context, DeliveryPriorityTier};
+    use std::sync::Arc;
+
+    use super::{Context, DeliveryPriorityTier, DeliveryStatus};
+    use crate::address::AddressList;
+    use crate::address_parser::Mailbox;
+    use crate::envelope::Envelope;
 
     #[test]
     fn parse_priority_tier() {
@@ -212,6 +217,65 @@ mod tests {
         assert_eq!(context.dmarc_reason(), Some("aligned"));
         assert_eq!(context.dmarc_action(), Some("accept"));
         assert_eq!(context.dmarc_sample_rate_bps(), Some("2500"));
+    }
+
+    #[test]
+    fn metadata_round_trip_preserves_transactional_fields() {
+        let mut envelope = Envelope::default();
+        *envelope.sender_mut() = Some(
+            Mailbox {
+                local_part: "sender".to_string(),
+                domain: "example.com".to_string(),
+            }
+            .into(),
+        );
+        *envelope.recipients_mut() = Some(AddressList(vec![
+            Mailbox {
+                local_part: "rcpt".to_string(),
+                domain: "example.net".to_string(),
+            }
+            .into(),
+        ]));
+
+        let context = Context::builder()
+            .with_envelope(Arc::new(envelope))
+            .with_id("ctx-1")
+            .with_banner("banner.example.com")
+            .with_max_message_size(1024)
+            .with_transaction_value(std::borrow::Cow::Borrowed("spf_result"), "pass")
+            .build();
+
+        let metadata = context.to_metadata();
+        let rebuilt = Context::from_metadata(metadata);
+
+        assert_eq!(rebuilt.id(), "ctx-1");
+        assert_eq!(rebuilt.banner.as_ref(), "banner.example.com");
+        assert_eq!(rebuilt.max_message_size, 1024);
+        assert_eq!(rebuilt.sender(), "sender@example.com");
+        assert_eq!(rebuilt.recipients(), vec!["RCPT TO:rcpt@example.net"]);
+        assert_eq!(rebuilt.spf_result(), Some("pass"));
+    }
+
+    #[test]
+    fn message_helpers_use_cached_length_and_lossy_decode() {
+        let data = Arc::from(b"Body\xff".as_slice());
+        let context = Context::builder().with_data(Some(data)).build();
+
+        assert_eq!(context.data_len, Some(5));
+        assert!(context.message().starts_with("Body"));
+        assert_eq!(context.message_cow(), "Body\u{FFFD}");
+    }
+
+    #[test]
+    fn delivery_status_labels_and_filters() {
+        let status = DeliveryStatus::Retry {
+            attempts: 2,
+            last_error: "temp".to_string(),
+        };
+
+        assert_eq!(status.label(), "Retry");
+        assert!(status.matches_filter("retry"));
+        assert!(!status.matches_filter("failed"));
     }
 }
 

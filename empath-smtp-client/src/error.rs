@@ -176,3 +176,120 @@ impl From<ClientError> for DeliveryError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_temporary_with_message(error: DeliveryError, needle: &str) {
+        match error {
+            DeliveryError::Temporary(TemporaryError::SmtpTemporary(msg))
+            | DeliveryError::Temporary(TemporaryError::ConnectionFailed(msg))
+            | DeliveryError::Temporary(TemporaryError::TlsHandshakeFailed(msg)) => {
+                assert!(
+                    msg.contains(needle),
+                    "expected temporary error message to contain '{needle}', got '{msg}'"
+                );
+            }
+            other => panic!("expected temporary error, got {other:?}"),
+        }
+    }
+
+    fn assert_system_with_message(error: DeliveryError, needle: &str) {
+        match error {
+            DeliveryError::System(SystemError::Internal(msg))
+            | DeliveryError::System(SystemError::Configuration(msg)) => {
+                assert!(
+                    msg.contains(needle),
+                    "expected system error message to contain '{needle}', got '{msg}'"
+                );
+            }
+            other => panic!("expected system error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn smtp_4xx_maps_to_temporary_smtp_error() {
+        let error = DeliveryError::from(ClientError::SmtpError {
+            code: 421,
+            message: "Service not available".to_string(),
+        });
+
+        assert_temporary_with_message(error, "421");
+    }
+
+    #[test]
+    fn smtp_5xx_maps_to_permanent_message_rejected() {
+        let error = DeliveryError::from(ClientError::SmtpError {
+            code: 550,
+            message: "User unknown".to_string(),
+        });
+
+        match error {
+            DeliveryError::Permanent(PermanentError::MessageRejected(msg)) => {
+                assert!(
+                    msg.contains("550") && msg.contains("User unknown"),
+                    "expected message rejection to include SMTP context, got '{msg}'"
+                );
+            }
+            other => panic!("expected permanent error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unexpected_response_maps_to_system_internal() {
+        let error = DeliveryError::from(ClientError::UnexpectedResponse {
+            code: 250,
+            message: "OK".to_string(),
+        });
+
+        assert_system_with_message(error, "Unexpected SMTP response");
+    }
+
+    #[test]
+    fn io_error_maps_to_temporary_connection_failure() {
+        let error = DeliveryError::from(ClientError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "refused",
+        )));
+
+        assert_temporary_with_message(error, "I/O error");
+    }
+
+    #[test]
+    fn connection_closed_maps_to_temporary_connection_failure() {
+        let error = DeliveryError::from(ClientError::ConnectionClosed);
+
+        assert_temporary_with_message(error, "Connection closed unexpectedly");
+    }
+
+    #[test]
+    fn tls_error_maps_to_temporary_tls_handshake_failure() {
+        let error = DeliveryError::from(ClientError::TlsError("handshake".to_string()));
+
+        assert_temporary_with_message(error, "handshake");
+    }
+
+    #[test]
+    fn parse_error_maps_to_system_internal() {
+        let error = DeliveryError::from(ClientError::ParseError("bad response".to_string()));
+
+        assert_system_with_message(error, "SMTP protocol parse error");
+    }
+
+    #[test]
+    fn builder_error_maps_to_system_configuration() {
+        let error = DeliveryError::from(ClientError::BuilderError("bad config".to_string()));
+
+        assert_system_with_message(error, "SMTP client config error");
+    }
+
+    #[test]
+    fn utf8_error_maps_to_system_internal() {
+        let bytes = vec![0xF0, 0x28, 0x8C, 0x28];
+        let bad_utf8 = std::str::from_utf8(&bytes).unwrap_err();
+        let error = DeliveryError::from(ClientError::Utf8Error(bad_utf8));
+
+        assert_system_with_message(error, "UTF-8 decoding error");
+    }
+}

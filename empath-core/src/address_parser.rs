@@ -652,4 +652,81 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result, Err(AddressError::InvalidLocalPart(_))));
     }
+
+    #[test]
+    fn test_empty_input_errors() -> TestResult {
+        let Err(err) = parse_forward_path("") else {
+            return Err("expected empty input error".to_string());
+        };
+        assert_eq!(err, AddressError::Empty);
+
+        let Err(err) = parse_reverse_path("   ") else {
+            return Err("expected empty input error".to_string());
+        };
+        assert_eq!(err, AddressError::Empty);
+        Ok(())
+    }
+
+    #[test]
+    fn test_domain_too_long() -> TestResult {
+        let long_domain = "a".repeat(256);
+        let input = format!("<user@{long_domain}>");
+        let Err(err) = parse_forward_path(&input) else {
+            return Err("expected path too long error".to_string());
+        };
+        assert_eq!(err, AddressError::PathTooLong);
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_domain_character() -> TestResult {
+        let Err(err) = parse_forward_path("<user@exa_mple.com>") else {
+            return Err("expected invalid domain error".to_string());
+        };
+        assert!(matches!(err, AddressError::InvalidDomain(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_domain_starting_hyphen() -> TestResult {
+        let Err(err) = parse_forward_path("<user@-example.com>") else {
+            return Err("expected invalid domain error".to_string());
+        };
+        assert!(matches!(err, AddressError::InvalidDomain(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_unclosed_quoted_string() -> TestResult {
+        let Err(err) = parse_forward_path("<\"user@example.com>") else {
+            return Err("expected missing at sign error".to_string());
+        };
+        assert_eq!(err, AddressError::MissingAtSign);
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_quoted_string_char() -> TestResult {
+        let Err(err) = parse_forward_path("<\"bad\u{7f}\"@example.com>") else {
+            return Err("expected invalid quoted string error".to_string());
+        };
+        assert!(matches!(err, AddressError::InvalidQuotedString(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_address_literal() -> TestResult {
+        let Err(err) = parse_forward_path("<user@[bad]>") else {
+            return Err("expected invalid address literal error".to_string());
+        };
+        assert!(matches!(err, AddressError::InvalidAddressLiteral(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_general_address_literal() -> TestResult {
+        let result = parse_forward_path("<user@[tag:value]>").map_err(|err| format!("{err:?}"))?;
+        assert_eq!(result.domain, "[tag:value]");
+        Ok(())
+    }
 }

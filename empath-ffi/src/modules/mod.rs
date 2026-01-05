@@ -100,6 +100,7 @@ impl ModuleRegistryBuilder {
         all_modules.append(&mut self.modules);
 
         let init_context = ModuleInitContext {
+            #[cfg(feature = "wasm")]
             outbound_bindings: self.outbound_bindings.clone(),
         };
 
@@ -941,6 +942,8 @@ impl Module {
     }
 
     fn init_with(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
+        #[cfg(not(feature = "wasm"))]
+        let _ = context;
         match self {
             Self::SharedLibrary(lib) => lib.init(),
             Self::TestModule { .. } | Self::Core { .. } => Ok(()),
@@ -984,6 +987,7 @@ fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
 }
 
 struct ModuleInitContext {
+    #[cfg(feature = "wasm")]
     outbound_bindings: Vec<String>,
 }
 

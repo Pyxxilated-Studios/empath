@@ -96,4 +96,27 @@ mod test {
         assert_eq!(Status::from(550), Status::Error);
         assert_eq!(u32::from(Status::Error), 550);
     }
+
+    #[test]
+    fn status_unknown_and_ranges() {
+        let unknown = Status::from(777);
+        assert_eq!(unknown, Status::Unknown(777));
+        assert_eq!(u32::from(unknown), 777);
+        assert!(unknown.is_permanent());
+        assert!(!unknown.is_temporary());
+
+        let temp = Status::from(421);
+        assert!(temp.is_temporary());
+        assert!(!temp.is_permanent());
+
+        let ok = Status::from(250);
+        assert!(!ok.is_temporary());
+        assert!(!ok.is_permanent());
+    }
+
+    #[test]
+    fn status_display_formats_numeric() {
+        assert_eq!(Status::Ok.to_string(), "250");
+        assert_eq!(Status::Unknown(999).to_string(), "999");
+    }
 }

@@ -5,6 +5,7 @@
 
 use empath_smtp::command::Command;
 use proptest::prelude::*;
+use proptest::test_runner::TestRunner;
 
 /// Strategy to generate valid domain names
 fn domain_strategy() -> BoxedStrategy<String> {
@@ -46,6 +47,7 @@ fn simple_command_strategy() -> impl Strategy<Value = String> {
         Just("DATA".to_string()),
         Just("HELP".to_string()),
         Just("STARTTLS".to_string()),
+        Just("TURN".to_string()),
     ]
 }
 
@@ -69,9 +71,59 @@ fn mail_from_strategy() -> impl Strategy<Value = String> {
     email_strategy().prop_map(|email| format!("MAIL FROM:<{email}>"))
 }
 
+/// Strategy to generate MAIL FROM commands with SIZE parameter and optional SMTPUTF8 flag
+fn mail_from_with_size_strategy() -> impl Strategy<Value = (String, usize, bool)> {
+    (email_strategy(), 1usize..=1_000_000, proptest::bool::ANY)
+}
+
 /// Strategy to generate RCPT TO commands
 fn rcpt_to_strategy() -> impl Strategy<Value = String> {
     email_strategy().prop_map(|email| format!("RCPT TO:<{email}>"))
+}
+
+fn arg_strategy() -> impl Strategy<Value = String> {
+    regex_strategy("[A-Za-z0-9._-]{1,20}", "arg")
+}
+
+fn noop_command_strategy() -> impl Strategy<Value = (String, Option<String>)> {
+    prop_oneof![
+        Just(("NOOP".to_string(), None)),
+        arg_strategy().prop_map(|arg| (format!("NOOP {arg}"), Some(arg))),
+    ]
+}
+
+fn vrfy_command_strategy() -> impl Strategy<Value = (String, String)> {
+    arg_strategy().prop_map(|arg| (format!("VRFY {arg}"), arg))
+}
+
+fn expn_command_strategy() -> impl Strategy<Value = (String, String)> {
+    arg_strategy().prop_map(|arg| (format!("EXPN {arg}"), arg))
+}
+
+fn etrn_command_strategy() -> impl Strategy<Value = (String, String)> {
+    arg_strategy().prop_map(|arg| (format!("ETRN {arg}"), arg))
+}
+
+fn xclient_strategy() -> impl Strategy<Value = (String, Vec<(String, String)>)> {
+    let key_strategy = prop_oneof![
+        Just("ADDR".to_string()),
+        Just("NAME".to_string()),
+        Just("HELO".to_string()),
+        Just("PROTO".to_string()),
+        Just("LOGIN".to_string()),
+    ];
+    let value_strategy = regex_strategy("[A-Za-z0-9._:-]{1,20}", "value");
+    prop::collection::hash_map(key_strategy, value_strategy, 1..=5).prop_map(|map| {
+        let mut pairs: Vec<(String, String)> = map.into_iter().collect();
+        pairs.sort_by(|left, right| left.0.cmp(&right.0));
+        let params = pairs
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let command = format!("XCLIENT {params}");
+        (command, pairs)
+    })
 }
 
 fn invalid_command_strategy() -> BoxedStrategy<String> {
@@ -93,6 +145,11 @@ fn command_strategy() -> impl Strategy<Value = String> {
         helo_command_strategy(),
         mail_from_strategy(),
         rcpt_to_strategy(),
+        noop_command_strategy().prop_map(|(cmd, _)| cmd),
+        vrfy_command_strategy().prop_map(|(cmd, _)| cmd),
+        expn_command_strategy().prop_map(|(cmd, _)| cmd),
+        etrn_command_strategy().prop_map(|(cmd, _)| cmd),
+        xclient_strategy().prop_map(|(cmd, _)| cmd),
     ]
 }
 
@@ -121,12 +178,153 @@ proptest! {
         prop_assert!(parsed.is_ok(), "Failed to parse MAIL FROM: {}", cmd);
     }
 
+    /// Test that MAIL FROM with SIZE parameter preserves declared size and flags
+    #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    fn test_mail_from_size_and_flags((email, size, smtp_utf8) in mail_from_with_size_strategy()) {
+        let command = if smtp_utf8 {
+            format!("MAIL FROM:<{email}> SIZE={size} SMTPUTF8")
+        } else {
+            format!("MAIL FROM:<{email}> SIZE={size}")
+        };
+
+        let parsed = Command::try_from(command.as_str());
+        let params = match parsed {
+            Ok(Command::MailFrom(_, params)) => params,
+            Ok(other) => {
+                return Err(TestCaseError::fail(format!(
+                    "Unexpected command variant for {command}: {other:?}"
+                )));
+            }
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse MAIL FROM with SIZE: {command}: {err:?}"
+                )));
+            }
+        };
+
+        prop_assert_eq!(params.size(), Some(size));
+        prop_assert_eq!(params.has("SMTPUTF8"), smtp_utf8);
+    }
+
     /// Test that RCPT TO commands parse successfully
     #[test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
     fn test_rcpt_to_parses(cmd in rcpt_to_strategy()) {
         let parsed = Command::try_from(cmd.as_str());
         prop_assert!(parsed.is_ok(), "Failed to parse RCPT TO: {}", cmd);
+    }
+
+    /// Test that NOOP commands preserve optional arguments
+    #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    fn test_noop_parses((command, expected_arg) in noop_command_strategy()) {
+        let parsed = Command::try_from(command.as_str());
+        let arg = match parsed {
+            Ok(Command::Noop(arg)) => arg,
+            Ok(other) => {
+                return Err(TestCaseError::fail(format!(
+                    "Unexpected command variant for {command}: {other:?}"
+                )));
+            }
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse NOOP: {command}: {err:?}"
+                )));
+            }
+        };
+
+        prop_assert_eq!(arg, expected_arg);
+    }
+
+    /// Test that VRFY commands capture the argument
+    #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    fn test_vrfy_parses((command, expected) in vrfy_command_strategy()) {
+        let parsed = Command::try_from(command.as_str());
+        let arg = match parsed {
+            Ok(Command::Vrfy(arg)) => arg,
+            Ok(other) => {
+                return Err(TestCaseError::fail(format!(
+                    "Unexpected command variant for {command}: {other:?}"
+                )));
+            }
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse VRFY: {command}: {err:?}"
+                )));
+            }
+        };
+
+        prop_assert_eq!(arg, expected);
+    }
+
+    /// Test that EXPN commands capture the argument
+    #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    fn test_expn_parses((command, expected) in expn_command_strategy()) {
+        let parsed = Command::try_from(command.as_str());
+        let arg = match parsed {
+            Ok(Command::Expn(arg)) => arg,
+            Ok(other) => {
+                return Err(TestCaseError::fail(format!(
+                    "Unexpected command variant for {command}: {other:?}"
+                )));
+            }
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse EXPN: {command}: {err:?}"
+                )));
+            }
+        };
+
+        prop_assert_eq!(arg, expected);
+    }
+
+    /// Test that ETRN commands capture the argument
+    #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    fn test_etrn_parses((command, expected) in etrn_command_strategy()) {
+        let parsed = Command::try_from(command.as_str());
+        let arg = match parsed {
+            Ok(Command::Etrn(arg)) => arg,
+            Ok(other) => {
+                return Err(TestCaseError::fail(format!(
+                    "Unexpected command variant for {command}: {other:?}"
+                )));
+            }
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse ETRN: {command}: {err:?}"
+                )));
+            }
+        };
+
+        prop_assert_eq!(arg, expected);
+    }
+
+    /// Test that XCLIENT parameters are parsed and stored correctly
+    #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    fn test_xclient_parses((command, expected) in xclient_strategy()) {
+        let parsed = Command::try_from(command.as_str());
+        let params = match parsed {
+            Ok(Command::Xclient(params)) => params,
+            Ok(other) => {
+                return Err(TestCaseError::fail(format!(
+                    "Unexpected command variant for {command}: {other:?}"
+                )));
+            }
+            Err(err) => {
+                return Err(TestCaseError::fail(format!(
+                    "Failed to parse XCLIENT: {command}: {err:?}"
+                )));
+            }
+        };
+
+        for (key, value) in expected {
+            prop_assert_eq!(params.get(&key), Some(value.as_str()));
+        }
     }
 
     /// Test that parsing is case-insensitive for command keywords
@@ -205,6 +403,15 @@ proptest! {
         prop_assert!(result.is_ok(), "Failed to parse command with trailing whitespace: {}", cmd);
     }
 
+    /// Test that non-numeric SIZE values are rejected
+    #[test]
+    #[cfg_attr(miri, ignore = "Calls an unsupported method")]
+    fn test_invalid_size_values(email in email_strategy(), size in regex_strategy("[A-Za-z]{1,6}", "BAD")) {
+        let command = format!("MAIL FROM:<{email}> SIZE={size}");
+        let parsed = Command::try_from(command.as_str());
+        prop_assert!(parsed.is_err(), "Expected SIZE parse failure for: {}", command);
+    }
+
     /// Test that commands with leading whitespace parse correctly
     #[test]
     #[cfg_attr(miri, ignore = "Calls an unsupported method")]
@@ -213,6 +420,16 @@ proptest! {
         let result = Command::try_from(with_whitespace.as_str());
         prop_assert!(result.is_ok(), "Failed to parse command with leading whitespace: {}", cmd);
     }
+}
+
+#[test]
+fn test_regex_strategy_fallback_uses_fallback() -> Result<(), String> {
+    let mut runner = TestRunner::default();
+    let tree = regex_strategy("(", "fallback")
+        .new_tree(&mut runner)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(tree.current(), "fallback");
+    Ok(())
 }
 
 #[cfg(test)]

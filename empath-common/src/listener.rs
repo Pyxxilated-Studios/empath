@@ -160,6 +160,7 @@ mod tests {
     use anyhow::{Result, anyhow};
     use serde::Deserialize;
     use tokio::net::TcpStream;
+    use tokio::time::Duration;
 
     use super::*;
     use crate::error::ProtocolError;
@@ -252,5 +253,73 @@ mod tests {
             .ok_or_else(|| anyhow!("expected invalid args to fail validation"))?;
         assert!(matches!(err, ProtocolError::MissingField("value")));
         Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn serve_shutdown_exits_cleanly() -> Result<()> {
+        let mut listener: Listener<DummyProtocol> = ron::from_str(
+            r#"
+{
+  "socket": "127.0.0.1:0",
+  "value": 1,
+  "context": (name: "alpha"),
+}
+"#,
+        )?;
+        listener.init()?;
+
+        let (tx, rx) = tokio::sync::broadcast::channel(1);
+        let handle = tokio::spawn(async move { listener.serve(rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.send(Signal::Shutdown)?;
+        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .map_err(|err| anyhow!("serve timed out: {err}"))?;
+        let result = result.map_err(|err| anyhow!("serve join error: {err}"))?;
+        if let Err(ListenerError::BindFailed { ref source, .. }) = result
+            && source.kind() == std::io::ErrorKind::PermissionDenied
+        {
+            return Ok(());
+        }
+        result.map_err(|err| anyhow!("serve error: {err}"))?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn serve_reports_bind_failure() -> Result<()> {
+        let occupied = match std::net::TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return Ok(()),
+            Err(err) => return Err(err.into()),
+        };
+        let addr = occupied.local_addr()?;
+        let config = format!(
+            r#"
+{{
+  "socket": "{addr}",
+  "value": 1,
+  "context": (name: "alpha"),
+}}
+"#
+        );
+        let listener: Listener<DummyProtocol> = ron::from_str(&config)?;
+        let (_tx, rx) = tokio::sync::broadcast::channel(1);
+        let err = listener
+            .serve(rx)
+            .await
+            .err()
+            .ok_or_else(|| anyhow!("expected bind failure"))?;
+        match err {
+            ListenerError::BindFailed { source, .. }
+                if source.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                Ok(())
+            }
+            ListenerError::BindFailed { .. } => Ok(()),
+            _ => Err(anyhow!("expected bind failure")),
+        }
     }
 }

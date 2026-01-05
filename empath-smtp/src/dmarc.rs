@@ -322,3 +322,96 @@ fn relaxed_match(a: &str, b: &str) -> bool {
     }
     b.ends_with(&format!(".{a}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use empath_common::message_api::{HeaderName, HeaderValue};
+
+    use super::*;
+
+    type TestResult = std::result::Result<(), String>;
+
+    #[test]
+    fn extract_from_domain_prefers_first_address() -> TestResult {
+        let name = HeaderName::new("From").map_err(|err| format!("{err:?}"))?;
+        let value = HeaderValue::new(b"Alice <Alice@Example.COM>, Bob <bob@test.com>")
+            .map_err(|err| format!("{err:?}"))?;
+        let headers = vec![(name, value)];
+        let view = HeadersView::new(&headers);
+
+        let domain = extract_from_domain(&view);
+
+        assert_eq!(domain.as_deref(), Some("example.com"));
+        Ok(())
+    }
+
+    #[test]
+    fn extract_dkim_info_parses_domain_and_selector() -> TestResult {
+        let name = HeaderName::new("DKIM-Signature").map_err(|err| format!("{err:?}"))?;
+        let value = HeaderValue::new(b"v=1; d=Example.COM.; s=Selector1;")
+            .map_err(|err| format!("{err:?}"))?;
+        let headers = vec![(name, value)];
+        let view = HeadersView::new(&headers);
+
+        let info = extract_dkim_info(&view).ok_or_else(|| "missing DKIM info".to_string())?;
+
+        assert_eq!(info.domain, "example.com");
+        assert_eq!(info.selector.as_deref(), Some("selector1"));
+        Ok(())
+    }
+
+    #[test]
+    fn domain_from_address_strips_trailing_dot_and_lowercases() -> TestResult {
+        let domain =
+            domain_from_address("user@Example.COM.").ok_or_else(|| "missing domain".to_string())?;
+
+        assert_eq!(domain, "example.com");
+        Ok(())
+    }
+
+    #[test]
+    fn parse_record_applies_alignment_and_policy() -> Result<(), String> {
+        let record = parse_record("v=DMARC1; p=reject; adkim=s; aspf=s")?;
+
+        assert_eq!(record.policy, "reject");
+        assert!(matches!(record.adkim, Alignment::Strict));
+        assert!(matches!(record.aspf, Alignment::Strict));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_record_defaults_to_relaxed_alignment() -> Result<(), String> {
+        let record = parse_record("v=DMARC1; p=none")?;
+
+        assert_eq!(record.policy, "none");
+        assert!(matches!(record.adkim, Alignment::Relaxed));
+        assert!(matches!(record.aspf, Alignment::Relaxed));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_record_rejects_missing_required_tags() {
+        assert!(
+            parse_record("p=reject").is_err(),
+            "missing version should be rejected"
+        );
+        assert!(
+            parse_record("v=DMARC1").is_err(),
+            "missing policy should be rejected"
+        );
+    }
+
+    #[test]
+    fn alignment_checks_match_strict_and_relaxed() {
+        assert!(is_aligned(
+            Some("mail.example.com"),
+            "example.com",
+            Alignment::Relaxed
+        ));
+        assert!(!is_aligned(
+            Some("mail.example.com"),
+            "example.com",
+            Alignment::Strict
+        ));
+    }
+}
