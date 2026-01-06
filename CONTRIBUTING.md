@@ -253,6 +253,43 @@ async fn test_async_feature() {
 }
 ```
 
+### Miri Compatibility
+
+[Miri](https://github.com/rust-lang/miri) is used to detect undefined behavior. Some tests and features are incompatible with Miri's interpreter and must be skipped:
+
+```rust,ignore
+// Skip test under Miri
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_that_uses_incompatible_features() {
+    // Test implementation
+}
+```
+
+**Common Miri-incompatible operations:**
+- FFI calls (external C libraries)
+- System calls (file I/O, network, time)
+- Thread spawning (use `#[cfg(not(miri))]` guards)
+- Inline assembly
+- Some crates (e.g., `sysinfo`, `wasmtime`)
+
+**Running Miri locally:**
+```bash
+# Install Miri
+rustup +nightly component add miri
+
+# Run Miri on a specific crate
+cargo +nightly miri test -p empath-core
+
+# Run Miri on all compatible crates
+cargo +nightly miri test
+```
+
+**When adding new code:**
+- Test with `cargo miri test` when possible
+- Add `#[cfg_attr(miri, ignore)]` to tests using incompatible features
+- Use `#[cfg(not(miri))]` to conditionally compile code that won't work under Miri
+
 ---
 
 ## Pull Request Process

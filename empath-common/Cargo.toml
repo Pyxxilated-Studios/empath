@@ -23,6 +23,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 charset.workspace = true
 empath-core.workspace = true
+empath-metrics = { workspace = true, optional = true }
 empath-tracing.workspace = true
 encoding_rs.workspace = true
 futures-util.workspace = true
@@ -38,7 +39,8 @@ tokio.workspace = true
 ulid.workspace = true
 
 [features]
-default = ["observability"]
+default = ["observability", "metrics"]
+metrics = ["empath-metrics"]
 observability = [
     "opentelemetry",
     "opentelemetry-otlp",

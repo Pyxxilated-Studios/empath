@@ -19,7 +19,7 @@ use empath_common::address_parser::parse_forward_path;
 use empath_common::context::Context;
 use empath_common::envelope::Envelope;
 use empath_common::message_id::SpooledMessageId;
-use empath_wasm::{DeterministicWasiConfig, WasmError, WasmModule};
+use empath_wasm::{DeterministicWasiConfig, ModuleError, WasmModule};
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use tokio::runtime::Runtime;
@@ -644,7 +644,7 @@ fn test_validate_data_timeout() -> TestResult {
     };
 
     match err {
-        WasmError::Timeout(callback, _) => assert_eq!(callback, "validate_data"),
+        ModuleError::Timeout { callback, .. } => assert_eq!(callback, "validate_data"),
         other => return Err(format!("Expected timeout error, got {other:?}")),
     }
     Ok(())
@@ -670,10 +670,10 @@ fn test_validate_data_memory_limit() -> TestResult {
     };
 
     match err {
-        WasmError::Wasmtime(_) => {}
+        ModuleError::Runtime(_) => {}
         other => {
             return Err(format!(
-                "Expected Wasmtime error for memory limit, got {other:?}"
+                "Expected Runtime error for memory limit, got {other:?}"
             ));
         }
     }

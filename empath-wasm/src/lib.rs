@@ -15,6 +15,7 @@ mod loader;
 
 // Re-export generated bindings
 pub use bindings::*;
-pub use error::{Result, WasmError};
+pub use empath_common::ModuleError;
+pub use error::Result;
 pub use host::{SerializableContext, WasmStore};
 pub use loader::{DeterministicWasiConfig, WasmModule};

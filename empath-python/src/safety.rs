@@ -5,10 +5,11 @@
 
 use std::time::Duration;
 
+use empath_common::ModuleError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::error::{PythonError, Result};
+use crate::error::{Result, from_pyerr};
 
 /// Execute a Python callable with timeout
 ///
@@ -47,7 +48,7 @@ pub fn call_with_timeout<'py>(
 ) -> Result<Bound<'py, PyAny>> {
     // Execute callable without timeout enforcement
     // The timeout parameter is kept for future implementation
-    callable.call1(args).map_err(PythonError::Python)
+    callable.call1(args).map_err(|e| from_pyerr(&e))
 }
 
 /// Execute a Python callback safely with exception handling
@@ -71,20 +72,21 @@ pub fn call_callback<'py>(
     timeout: Duration,
 ) -> Result<Option<Bound<'py, PyAny>>> {
     // Check if callback exists
-    if !module.contains(callback_name)? {
+    if !module.contains(callback_name).map_err(|e| from_pyerr(&e))? {
         return Ok(None);
     }
 
     let callable = module
-        .get_item(callback_name)?
-        .ok_or_else(|| PythonError::CallbackNotFound(callback_name.to_string()))?;
+        .get_item(callback_name)
+        .map_err(|e| from_pyerr(&e))?
+        .ok_or_else(|| ModuleError::CallbackNotFound(callback_name.to_string()))?;
 
     // Verify it's callable
     if !callable.is_callable() {
-        return Err(PythonError::InvalidReturn(
-            callback_name.to_string(),
-            "not a callable".to_string(),
-        ));
+        return Err(ModuleError::InvalidReturn {
+            callback: callback_name.to_string(),
+            reason: "not a callable".to_string(),
+        });
     }
 
     // Execute with timeout

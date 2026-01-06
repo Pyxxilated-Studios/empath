@@ -10,9 +10,8 @@ use empath_common::context::{Capability, Context};
 use empath_common::error::MessageParseError;
 use empath_common::message_api::{
     BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
-    HeaderValue, HeadersMut, MutationAudit, MutationKind, NewlineStyle,
+    HeaderValue, HeadersMut, MutationAudit, NewlineStyle,
 };
-use empath_metrics::metrics;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -64,7 +63,7 @@ impl PyContext {
         let module_context = module_context_snapshot(&ctx);
         let mut audit_log = module_context
             .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
+            .map(|module| MutationAudit::new(module.module_name.clone()));
 
         let result = ctx.with_message_parts_mut(|parts| {
             let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
@@ -105,7 +104,7 @@ impl PyContext {
         let module_context = module_context_snapshot(&ctx);
         let mut audit_log = module_context
             .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
+            .map(|module| MutationAudit::new(module.module_name.clone()));
 
         let result = ctx.with_message_parts_mut(|parts| {
             let mut body = parts.body_mut(BodyLimits::default(), audit_log.as_mut());
@@ -165,60 +164,9 @@ impl PyContext {
     }
 }
 
-fn module_context_snapshot(context: &Context) -> Option<(String, String)> {
-    context
-        .module_context
-        .as_ref()
-        .map(|module| (module.module_type.clone(), module.module_name.clone()))
-}
-
-fn record_mutation_records(
-    context: &Context,
-    module_context: &(String, String),
-    audit_log: &MutationAudit,
-) {
-    let (module_type, module_name) = module_context;
-    for record in audit_log.records() {
-        if let Some(logger) = context.audit_logger.as_ref() {
-            logger.log_module_mutation(context.id(), module_type, module_name, record);
-        }
-        if let Some(metrics) = metrics() {
-            let mutation_kind = match record.kind {
-                MutationKind::Header { .. } => "header",
-                MutationKind::Body => "body",
-            };
-            metrics.modules.record_mutation(
-                module_type,
-                module_name,
-                mutation_kind,
-                &record.action,
-                "success",
-                None,
-            );
-        }
-    }
-}
-
-fn record_mutation_failure(
-    module_context: Option<&(String, String)>,
-    mutation_kind: &str,
-    action: &str,
-    error_kind: &str,
-) {
-    let Some((module_type, module_name)) = module_context else {
-        return;
-    };
-    if let Some(metrics) = metrics() {
-        metrics.modules.record_mutation(
-            module_type,
-            module_name,
-            mutation_kind,
-            action,
-            "failure",
-            Some(error_kind),
-        );
-    }
-}
+use empath_common::mutation_audit::{
+    module_context_snapshot, record_mutation_failure, record_mutation_records,
+};
 
 #[pymethods]
 impl PyContext {

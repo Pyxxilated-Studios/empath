@@ -7,10 +7,9 @@ use empath_common::address_parser;
 use empath_common::context::{Capability, Context, OUTBOUND_BINDING_CONTEXT_KEY};
 use empath_common::message_api::{
     BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderLimits, HeaderName, HeaderValue,
-    MutationAudit, MutationKind, NewlineStyle,
+    MutationAudit, NewlineStyle,
 };
 use empath_common::status::Status;
-use empath_metrics::metrics;
 
 pub mod ffi_string;
 pub mod modules;
@@ -36,11 +35,13 @@ pub struct EmOutboundBindingSelection {
 }
 
 mod api {
+    use empath_common::internal;
+
     use super::{
         Address, Arc, BodyError, BodyLimits, BodyMut, BodyOpts, CStr, Capability, Charset, Context,
         Cow, EmOutboundBindingKind, EmOutboundBindingSelection, HeaderLimits, HeaderName,
-        HeaderValue, MutationAudit, MutationKind, NewlineStyle, OUTBOUND_BINDING_CONTEXT_KEY,
-        Status, address_parser, metrics,
+        HeaderValue, MutationAudit, NewlineStyle, OUTBOUND_BINDING_CONTEXT_KEY, Status,
+        address_parser,
     };
 
     /// Retrieve the id associated with this context
@@ -170,6 +171,7 @@ mod api {
         capability: *const libc::c_char,
     ) -> bool {
         if capability.is_null() {
+            internal!(level = TRACE, "em_context_capability_add: null pointer");
             return false;
         }
 
@@ -180,6 +182,11 @@ mod api {
             }
             true
         } else {
+            internal!(
+                level = TRACE,
+                "em_context_capability_add: unknown capability {:?}",
+                cap
+            );
             false
         }
     }
@@ -195,6 +202,7 @@ mod api {
         capability: *const libc::c_char,
     ) -> bool {
         if capability.is_null() {
+            internal!(level = TRACE, "em_context_capability_remove: null pointer");
             return false;
         }
 
@@ -205,6 +213,11 @@ mod api {
                 .retain(|cap| cap != &capability);
             true
         } else {
+            internal!(
+                level = TRACE,
+                "em_context_capability_remove: unknown capability {:?}",
+                cap
+            );
             false
         }
     }
@@ -505,16 +518,29 @@ mod api {
             }
             EmOutboundBindingKind::Named => {
                 if selection.name.is_null() {
+                    internal!(
+                        level = TRACE,
+                        "em_context_set_outbound_binding: null binding name"
+                    );
                     return false;
                 }
 
                 unsafe {
                     let Ok(name) = CStr::from_ptr(selection.name).to_str() else {
+                        internal!(
+                            level = TRACE,
+                            "em_context_set_outbound_binding: invalid UTF-8 binding name"
+                        );
                         return false;
                     };
                     if !crate::modules::ModuleRegistry::global()
                         .is_some_and(|registry| registry.outbound_binding_exists(name))
                     {
+                        internal!(
+                            level = TRACE,
+                            "em_context_set_outbound_binding: unknown binding {:?}",
+                            name
+                        );
                         return false;
                     }
                     validate_context.transaction.insert(
@@ -531,60 +557,52 @@ mod api {
     // Message mutation helpers (headers + body)
     // ============================================================================
 
-    fn module_context_snapshot(validate_context: &Context) -> Option<(String, String)> {
-        validate_context
-            .module_context
+    use empath_common::message_api::{HeaderError, HeadersMut};
+    use empath_common::mutation_audit::{
+        module_context_snapshot, record_mutation_failure, record_mutation_records,
+    };
+
+    /// Shared helper for header mutation operations that return `Result<T, HeaderError>`.
+    ///
+    /// This consolidates the common pattern used by `em_message_headers_set`,
+    /// `em_message_headers_append`, `em_message_headers_set_if_absent`, etc.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(value)` on success, `None` on any error (after recording the failure).
+    fn mutate_headers<T, F>(validate_context: &mut Context, action: &str, mut f: F) -> Option<T>
+    where
+        F: FnMut(&mut HeadersMut<'_>) -> Result<T, HeaderError>,
+    {
+        let module_context = module_context_snapshot(validate_context);
+        let mut audit_log = module_context
             .as_ref()
-            .map(|module| (module.module_type.clone(), module.module_name.clone()))
-    }
+            .map(|module| MutationAudit::new(module.module_name.clone()));
 
-    fn record_mutation_records(
-        validate_context: &Context,
-        module_context: &(String, String),
-        audit_log: &MutationAudit,
-    ) {
-        let (module_type, module_name) = module_context;
-        for record in audit_log.records() {
-            if let Some(logger) = validate_context.audit_logger.as_ref() {
-                logger.log_module_mutation(validate_context.id(), module_type, module_name, record);
-            }
-            #[cfg(feature = "metrics")]
-            if let Some(metrics) = metrics() {
-                let mutation_kind = match record.kind {
-                    MutationKind::Header { .. } => "header",
-                    MutationKind::Body => "body",
-                };
-                metrics.modules.record_mutation(
-                    module_type,
-                    module_name,
-                    mutation_kind,
-                    &record.action,
-                    "success",
-                    None,
-                );
-            }
-        }
-    }
+        let result = validate_context.with_message_parts_mut(|parts| {
+            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+            f(&mut headers)
+        });
 
-    fn record_mutation_failure(
-        module_context: Option<&(String, String)>,
-        mutation_kind: &str,
-        action: &str,
-        error_kind: &str,
-    ) {
-        let Some((module_type, module_name)) = module_context else {
-            return;
-        };
-        #[cfg(feature = "metrics")]
-        if let Some(metrics) = metrics() {
-            metrics.modules.record_mutation(
-                module_type,
-                module_name,
-                mutation_kind,
-                action,
-                "failure",
-                Some(error_kind),
-            );
+        match result {
+            Ok(Some(Ok(value))) => {
+                if let (Some(mc), Some(al)) = (module_context.as_ref(), audit_log.as_ref()) {
+                    record_mutation_records(validate_context, mc, al);
+                }
+                Some(value)
+            }
+            Ok(Some(Err(err))) => {
+                record_mutation_failure(module_context.as_ref(), "header", action, err.kind());
+                None
+            }
+            Ok(None) => {
+                record_mutation_failure(module_context.as_ref(), "header", action, "missing_data");
+                None
+            }
+            Err(_) => {
+                record_mutation_failure(module_context.as_ref(), "header", action, "parse_error");
+                None
+            }
         }
     }
 
@@ -652,6 +670,7 @@ mod api {
         value: *const libc::c_char,
     ) -> bool {
         if name.is_null() || value.is_null() {
+            internal!(level = TRACE, "em_message_headers_set: null pointer");
             return false;
         }
 
@@ -659,44 +678,26 @@ mod api {
         let value = unsafe { CStr::from_ptr(value) };
 
         let Some(hname) = header_name_from_cstr(name) else {
+            internal!(
+                level = TRACE,
+                "em_message_headers_set: invalid header name {:?}",
+                name
+            );
             return false;
         };
         let Some(hval) = HeaderValue::try_from(value).ok() else {
+            internal!(
+                level = TRACE,
+                "em_message_headers_set: invalid header value {:?}",
+                value
+            );
             return false;
         };
 
-        let module_context = module_context_snapshot(validate_context);
-        let mut audit_log = module_context
-            .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
-
-        let result = validate_context.with_message_parts_mut(|parts| {
-            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+        mutate_headers(validate_context, "set", |headers| {
             headers.set(&hname, &hval)
-        });
-
-        match result {
-            Ok(Some(Ok(()))) => {
-                if let (Some(module_context), Some(audit_log)) =
-                    (module_context.as_ref(), audit_log.as_ref())
-                {
-                    record_mutation_records(validate_context, module_context, audit_log);
-                }
-                true
-            }
-            Ok(Some(Err(err))) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
-                false
-            }
-            Ok(None) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "missing_data");
-                false
-            }
-            Err(_) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "parse_error");
-                false
-            }
-        }
+        })
+        .is_some()
     }
 
     /// # Safety
@@ -709,6 +710,7 @@ mod api {
         value: *const libc::c_char,
     ) -> bool {
         if name.is_null() || value.is_null() {
+            internal!(level = TRACE, "em_message_headers_append: null pointer");
             return false;
         }
 
@@ -716,49 +718,26 @@ mod api {
         let value = unsafe { CStr::from_ptr(value) };
 
         let Some(hname) = header_name_from_cstr(name) else {
+            internal!(
+                level = TRACE,
+                "em_message_headers_append: invalid header name {:?}",
+                name
+            );
             return false;
         };
         let Some(hval) = HeaderValue::try_from(value).ok() else {
+            internal!(
+                level = TRACE,
+                "em_message_headers_append: invalid header value {:?}",
+                value
+            );
             return false;
         };
 
-        let module_context = module_context_snapshot(validate_context);
-        let mut audit_log = module_context
-            .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
-
-        let result = validate_context.with_message_parts_mut(|parts| {
-            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+        mutate_headers(validate_context, "append", |headers| {
             headers.append(&hname, &hval)
-        });
-
-        match result {
-            Ok(Some(Ok(()))) => {
-                if let (Some(module_context), Some(audit_log)) =
-                    (module_context.as_ref(), audit_log.as_ref())
-                {
-                    record_mutation_records(validate_context, module_context, audit_log);
-                }
-                true
-            }
-            Ok(Some(Err(err))) => {
-                record_mutation_failure(module_context.as_ref(), "header", "append", err.kind());
-                false
-            }
-            Ok(None) => {
-                record_mutation_failure(
-                    module_context.as_ref(),
-                    "header",
-                    "append",
-                    "missing_data",
-                );
-                false
-            }
-            Err(_) => {
-                record_mutation_failure(module_context.as_ref(), "header", "append", "parse_error");
-                false
-            }
-        }
+        })
+        .is_some()
     }
 
     /// # Safety
@@ -771,6 +750,10 @@ mod api {
         value: *const libc::c_char,
     ) -> bool {
         if name.is_null() || value.is_null() {
+            internal!(
+                level = TRACE,
+                "em_message_headers_set_if_absent: null pointer"
+            );
             return false;
         }
 
@@ -778,45 +761,26 @@ mod api {
         let value = unsafe { CStr::from_ptr(value) };
 
         let Some(hname) = header_name_from_cstr(name) else {
+            internal!(
+                level = TRACE,
+                "em_message_headers_set_if_absent: invalid header name {:?}",
+                name
+            );
             return false;
         };
         let Some(hval) = HeaderValue::try_from(value).ok() else {
+            internal!(
+                level = TRACE,
+                "em_message_headers_set_if_absent: invalid header value {:?}",
+                value
+            );
             return false;
         };
 
-        let module_context = module_context_snapshot(validate_context);
-        let mut audit_log = module_context
-            .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
-
-        let result = validate_context.with_message_parts_mut(|parts| {
-            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+        mutate_headers(validate_context, "set", |headers| {
             headers.set_if_absent(&hname, &hval)
-        });
-
-        match result {
-            Ok(Some(Ok(updated))) => {
-                if updated
-                    && let (Some(module_context), Some(audit_log)) =
-                        (module_context.as_ref(), audit_log.as_ref())
-                {
-                    record_mutation_records(validate_context, module_context, audit_log);
-                }
-                updated
-            }
-            Ok(Some(Err(err))) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
-                false
-            }
-            Ok(None) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "missing_data");
-                false
-            }
-            Err(_) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "parse_error");
-                false
-            }
-        }
+        })
+        .unwrap_or(false)
     }
 
     /// # Safety
@@ -839,7 +803,7 @@ mod api {
         let module_context = module_context_snapshot(validate_context);
         let mut audit_log = module_context
             .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
+            .map(|module| MutationAudit::new(module.module_name.clone()));
 
         let result = validate_context.with_message_parts_mut(|parts| {
             let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
@@ -877,39 +841,10 @@ mod api {
     pub unsafe extern "C" fn em_message_headers_ensure_message_id(
         validate_context: &mut Context,
     ) -> bool {
-        let module_context = module_context_snapshot(validate_context);
-        let mut audit_log = module_context
-            .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
-
-        let result = validate_context.with_message_parts_mut(|parts| {
-            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
-            headers.ensure_message_id().map(|()| true)
-        });
-
-        match result {
-            Ok(Some(Ok(updated))) => {
-                if updated
-                    && let (Some(module_context), Some(audit_log)) =
-                        (module_context.as_ref(), audit_log.as_ref())
-                {
-                    record_mutation_records(validate_context, module_context, audit_log);
-                }
-                updated
-            }
-            Ok(Some(Err(err))) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
-                false
-            }
-            Ok(None) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "missing_data");
-                false
-            }
-            Err(_) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "parse_error");
-                false
-            }
-        }
+        mutate_headers(validate_context, "set", |headers| {
+            headers.ensure_message_id()
+        })
+        .is_some()
     }
 
     /// # Safety
@@ -931,38 +866,10 @@ mod api {
             return false;
         };
 
-        let module_context = module_context_snapshot(validate_context);
-        let mut audit_log = module_context
-            .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
-
-        let result = validate_context.with_message_parts_mut(|parts| {
-            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+        mutate_headers(validate_context, "set", |headers| {
             headers.set(&hname, &hval)
-        });
-
-        match result {
-            Ok(Some(Ok(()))) => {
-                if let (Some(module_context), Some(audit_log)) =
-                    (module_context.as_ref(), audit_log.as_ref())
-                {
-                    record_mutation_records(validate_context, module_context, audit_log);
-                }
-                true
-            }
-            Ok(Some(Err(err))) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
-                false
-            }
-            Ok(None) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "missing_data");
-                false
-            }
-            Err(_) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "parse_error");
-                false
-            }
-        }
+        })
+        .is_some()
     }
 
     /// # Safety
@@ -984,38 +891,10 @@ mod api {
             return false;
         };
 
-        let module_context = module_context_snapshot(validate_context);
-        let mut audit_log = module_context
-            .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
-
-        let result = validate_context.with_message_parts_mut(|parts| {
-            let mut headers = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
+        mutate_headers(validate_context, "set", |headers| {
             headers.set(&hname, &hval)
-        });
-
-        match result {
-            Ok(Some(Ok(()))) => {
-                if let (Some(module_context), Some(audit_log)) =
-                    (module_context.as_ref(), audit_log.as_ref())
-                {
-                    record_mutation_records(validate_context, module_context, audit_log);
-                }
-                true
-            }
-            Ok(Some(Err(err))) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", err.kind());
-                false
-            }
-            Ok(None) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "missing_data");
-                false
-            }
-            Err(_) => {
-                record_mutation_failure(module_context.as_ref(), "header", "set", "parse_error");
-                false
-            }
-        }
+        })
+        .is_some()
     }
 
     fn mutate_body<F>(validate_context: &mut Context, action: &str, f: F) -> bool
@@ -1026,7 +905,7 @@ mod api {
         let module_context = module_context_snapshot(validate_context);
         let mut audit_log = module_context
             .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
+            .map(|module| MutationAudit::new(module.module_name.clone()));
 
         let result = validate_context.with_message_parts_mut(|parts| {
             let mut body = parts.body_mut(BodyLimits::default(), audit_log.as_mut());

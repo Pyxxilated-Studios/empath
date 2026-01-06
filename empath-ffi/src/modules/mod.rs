@@ -4,8 +4,8 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use empath_common::context::{Context, ModuleContext};
-use empath_common::internal;
 use empath_common::status::Status;
+use empath_common::{ModuleError, internal};
 use empath_metrics::is_enabled;
 #[cfg(feature = "metrics")]
 use empath_metrics::metrics;
@@ -16,6 +16,112 @@ use tokio::task;
 use tokio::time::sleep;
 
 use super::string::StringVector;
+
+/// Handle module execution errors with consistent logging and metrics.
+///
+/// This function consolidates error handling logic shared between Python and WASM
+/// modules, including:
+/// - Recording timeout and error metrics
+/// - Logging errors at appropriate severity levels
+/// - Honoring prior rejections from the module
+/// - Returning 451 (temporary failure) for transparency
+///
+/// # Arguments
+///
+/// * `module_type` - Module type identifier (e.g., "python", "wasm")
+/// * `module_path` - Path to the module file for logging/metrics
+/// * `is_validation` - Whether this is a validation callback (affects log level)
+/// * `error` - The module error that occurred
+/// * `callback_name` - Name of the callback that failed
+/// * `context` - Context to check for prior rejection
+///
+/// # Returns
+///
+/// Returns the SMTP response code:
+/// - Prior rejection code if module set one before failing
+/// - 451 (temporary failure) otherwise
+pub fn handle_module_error(
+    module_type: &str,
+    module_path: &str,
+    is_validation: bool,
+    error: &ModuleError,
+    callback_name: &str,
+    context: &Context,
+) -> i32 {
+    let is_timeout = error.is_timeout();
+
+    // Record metrics
+    #[cfg(feature = "metrics")]
+    if let Some(metrics) = metrics() {
+        if is_timeout {
+            metrics.modules.record_timeout(module_path);
+        }
+
+        let error_kind = match (is_validation, is_timeout) {
+            (true, true) => "validation_timeout",
+            (true, false) => "validation_error",
+            (false, true) => "timeout",
+            (false, false) => "error",
+        };
+
+        metrics
+            .modules
+            .record_error_with_kind(module_type, module_path, error_kind);
+    }
+
+    // Log the error at appropriate level
+    let action = if is_timeout { "timed out" } else { "error" };
+    if is_validation {
+        internal!(
+            level = ERROR,
+            "{} module {} {action} in {callback_name}: {error}",
+            module_type.to_uppercase(),
+            module_path
+        );
+    } else {
+        internal!(
+            level = WARN,
+            "{} module {} {action} in {callback_name}: {error}",
+            module_type.to_uppercase(),
+            module_path
+        );
+    }
+
+    // Check for prior rejection - honor it if the module set one before failing
+    if let Some((status, message)) = &context.response {
+        let code = u32::from(*status);
+        if code >= 400 {
+            internal!(
+                level = WARN,
+                "{} module {} crashed after rejecting with {}: {} - honoring rejection",
+                module_type.to_uppercase(),
+                module_path,
+                code,
+                message
+            );
+            return code.try_into().unwrap_or(550);
+        }
+    }
+
+    // No prior rejection - log final failure and return temporary failure
+    if is_validation {
+        internal!(
+            level = ERROR,
+            "{} validation module {} failed - returning 451",
+            module_type.to_uppercase(),
+            module_path
+        );
+    } else {
+        internal!(
+            level = WARN,
+            "{} event module {} failed - returning 451",
+            module_type.to_uppercase(),
+            module_path
+        );
+    }
+
+    451 // Temporary failure - be transparent about module errors
+}
 
 pub mod core;
 pub mod library;

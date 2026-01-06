@@ -436,6 +436,25 @@ graph LR
 2. **EventListener**: Lifecycle notifications
    - Events: ConnectionOpened, ConnectionClosed
 
+3. **Delivery Events** (observation-only):
+   - Events: DeliveryAttempt, DeliverySuccess, DeliveryFailure
+   - **Important**: These are event-only—modules can observe but cannot intercept/reject delivery operations
+   - Return values are ignored; modules cannot block delivery
+   - Rich context provided via `DeliveryContext` for logging, alerting, and metrics
+
+**Delivery Event Design Rationale:**
+
+Delivery events are intentionally observation-only because:
+- Delivery involves complex retry logic, circuit breakers, and rate limiting
+- Allowing modules to reject would complicate the delivery state machine
+- Modules receive full context (`DeliveryContext`) for their own logging/alerting decisions
+- Use cases: metrics collection, audit logging, external notifications, monitoring integration
+
+Modules that need to affect delivery decisions should instead:
+- Set transaction context during SMTP reception (e.g., spam scores)
+- Use the delivery processor's built-in policy system (rate limiting, circuit breakers)
+- Configure per-domain delivery policies in `empath.config.ron`
+
 **Module Interface** (C API):
 ```c
 Mod* declare_module(void);

@@ -1,13 +1,32 @@
 # Empath MTA - Completed Tasks Archive
 
-> **Last Updated**: 2026-01-02
-> **Total Completed**: 166 tasks
+> **Last Updated**: 2026-01-05
+> **Total Completed**: 176 tasks
 
 This file archives completed tasks from TODO.md to reduce cognitive load and improve focus on active work.
 
 ---
 
 ## Recently Completed (Last 30 Days)
+
+### Week of 2026-01-05
+
+#### ✅ Batch archive from TODO.md
+**Completed**: 2026-01-05
+**Effort**: N/A (from TODO.md)
+**Priority**: P1-P3
+
+- MTA-01: Add outbound DKIM signing with streamed prefix injection. (`empath-delivery/src/dkim.rs`, `empath-delivery/src/processor/delivery.rs`, `empath-smtp-client/src/transaction.rs`)
+- PERF-01: Avoid holding `spool_scan_cursor` lock across `list_delta().await` to prevent scan head-of-line blocking. (`empath-delivery/src/processor/scan.rs`)
+- PERF-02: Replace per-call `record_pool_size` full-map scan with per-domain counters or cached sizes. (`empath-delivery/src/smtp_pool.rs`)
+- PERF-03: Remove `sys.refresh_all()` in `update_process_metrics` until thread count is implemented or move heavy refresh off async path. (`empath-metrics/src/system.rs`)
+- PERF-04: Replace temporary `HashMap<Domain, Vec<String>>` in spool scan with `HashSet<Domain>` (recipients list unused). (`empath-delivery/src/processor/scan.rs`)
+- TEST-01: Add smoke coverage for `empath/bin/empath.rs` entry point.
+- TEST-02: Add smoke/CLI coverage for `empath/bin/empathctl.rs` (control CLI entry point).
+- TEST-03: Add focused tests for control path logic (handler + controller). (`empath/src/control_handler.rs`, `empath/src/controller.rs`)
+- TEST-04: Add unit tests for `empath-common` listener/logging utilities. (`empath-common/src/listener.rs`, `empath-common/src/logging.rs`)
+- TEST-05: Add coverage for system metrics + exporter modules. (`empath-metrics/src/system.rs`, `empath-metrics/src/exporter.rs`)
+- TEST-06: Add minimal coverage for FFI modules with 0% coverage (library/metrics/python/validate/wasm). (`empath-ffi/src/modules/library.rs`, `empath-ffi/src/modules/metrics.rs`, `empath-ffi/src/modules/python.rs`, `empath-ffi/src/modules/validate.rs`, `empath-ffi/src/modules/wasm.rs`)
 
 ### Week of 2026-01-02
 

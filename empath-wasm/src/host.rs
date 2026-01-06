@@ -12,17 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use empath_common::context::{Context, OUTBOUND_BINDING_CONTEXT_KEY};
-use empath_common::internal;
 use empath_common::message_api::{
     BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
-    HeaderValue, HeadersMut, MutationAudit, MutationKind, NewlineStyle,
+    HeaderValue, HeadersMut, MutationAudit, NewlineStyle,
 };
-use empath_metrics::metrics;
+use empath_common::{ModuleError, internal};
 use serde::{Deserialize, Serialize};
 use wasmtime::ResourceLimiter;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
 
-use crate::error::{Result, WasmError};
+use crate::error::{Result, from_postcard};
 
 /// Serializable Context representation for passing to WASM
 ///
@@ -118,7 +117,7 @@ impl WasmStore {
                  Callback will fail gracefully without crashing.",
                 e
             );
-            WasmError::Internal(format!("Context mutex poisoned: {e}"))
+            ModuleError::Runtime(format!("Context mutex poisoned: {e}"))
         })
     }
 
@@ -146,12 +145,12 @@ impl WasmStore {
                         "Context mutex poisoned during WasmStore creation: {}",
                         e
                     );
-                    WasmError::Internal(format!("Context mutex poisoned: {e}"))
+                    ModuleError::Runtime(format!("Context mutex poisoned: {e}"))
                 })?;
                 SerializableContext::from(&*ctx_lock)
             };
 
-            postcard::to_allocvec(&serializable).map_err(WasmError::Protocol)?
+            postcard::to_allocvec(&serializable).map_err(|e| from_postcard(&e))?
         };
 
         Ok(Self {
@@ -364,7 +363,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
         let module_context = module_context_snapshot(&ctx);
         let mut audit_log = module_context
             .as_ref()
-            .map(|module| MutationAudit::new(module.1.clone()));
+            .map(|module| MutationAudit::new(module.module_name.clone()));
 
         let result = ctx.with_message_parts_mut(|parts| {
             let mut h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
@@ -408,7 +407,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
                 let module_context = module_context_snapshot(&ctx);
                 let mut audit_log = module_context
                     .as_ref()
-                    .map(|module| MutationAudit::new(module.1.clone()));
+                    .map(|module| MutationAudit::new(module.module_name.clone()));
 
                 let result = ctx.with_message_parts_mut(|parts| {
                     let mut h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
@@ -452,7 +451,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
             let module_context = module_context_snapshot(&ctx);
             let mut audit_log = module_context
                 .as_ref()
-                .map(|module| MutationAudit::new(module.1.clone()));
+                .map(|module| MutationAudit::new(module.module_name.clone()));
 
             let result = ctx.with_message_parts_mut(|parts| {
                 let mut h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
@@ -611,7 +610,7 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
             let module_context = module_context_snapshot(&ctx);
             let mut audit_log = module_context
                 .as_ref()
-                .map(|module| MutationAudit::new(module.1.clone()));
+                .map(|module| MutationAudit::new(module.module_name.clone()));
 
             let result = ctx.with_message_parts_mut(|parts| {
                 let mut body = parts.body_mut(BodyLimits::default(), audit_log.as_mut());
@@ -669,7 +668,7 @@ impl WasmStore {
             let module_context = module_context_snapshot(&ctx);
             let mut audit_log = module_context
                 .as_ref()
-                .map(|module| MutationAudit::new(module.1.clone()));
+                .map(|module| MutationAudit::new(module.module_name.clone()));
 
             let result = ctx.with_message_parts_mut(|parts| {
                 let h = parts.headers_mut(HeaderLimits::default(), audit_log.as_mut());
@@ -721,7 +720,7 @@ impl WasmStore {
             let module_context = module_context_snapshot(&ctx);
             let mut audit_log = module_context
                 .as_ref()
-                .map(|module| MutationAudit::new(module.1.clone()));
+                .map(|module| MutationAudit::new(module.module_name.clone()));
 
             let result = ctx.with_message_parts_mut(|parts| {
                 let body = parts.body_mut(BodyLimits::default(), audit_log.as_mut());
@@ -759,60 +758,9 @@ impl WasmStore {
     }
 }
 
-fn module_context_snapshot(context: &Context) -> Option<(String, String)> {
-    context
-        .module_context
-        .as_ref()
-        .map(|module| (module.module_type.clone(), module.module_name.clone()))
-}
-
-fn record_mutation_records(
-    context: &Context,
-    module_context: &(String, String),
-    audit_log: &MutationAudit,
-) {
-    let (module_type, module_name) = module_context;
-    for record in audit_log.records() {
-        if let Some(logger) = context.audit_logger.as_ref() {
-            logger.log_module_mutation(context.id(), module_type, module_name, record);
-        }
-        if let Some(metrics) = metrics() {
-            let mutation_kind = match record.kind {
-                MutationKind::Header { .. } => "header",
-                MutationKind::Body => "body",
-            };
-            metrics.modules.record_mutation(
-                module_type,
-                module_name,
-                mutation_kind,
-                &record.action,
-                "success",
-                None,
-            );
-        }
-    }
-}
-
-fn record_mutation_failure(
-    module_context: Option<&(String, String)>,
-    mutation_kind: &str,
-    action: &str,
-    error_kind: &str,
-) {
-    let Some((module_type, module_name)) = module_context else {
-        return;
-    };
-    if let Some(metrics) = metrics() {
-        metrics.modules.record_mutation(
-            module_type,
-            module_name,
-            mutation_kind,
-            action,
-            "failure",
-            Some(error_kind),
-        );
-    }
-}
+use empath_common::mutation_audit::{
+    module_context_snapshot, record_mutation_failure, record_mutation_records,
+};
 
 fn slice_bytes(
     data: &[u8],

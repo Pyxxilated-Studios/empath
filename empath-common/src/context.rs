@@ -29,40 +29,46 @@ impl ModuleContext {
     }
 }
 
-/// Transaction context key used to request a specific outbound binding.
-pub const OUTBOUND_BINDING_CONTEXT_KEY: &str = "outbound_binding";
-/// Transaction context key used to set delivery priority tier.
-pub const PRIORITY_TIER_CONTEXT_KEY: &str = "priority_tier";
-/// Transaction context key used to persist OpenTelemetry trace IDs.
-pub const TRACE_ID_CONTEXT_KEY: &str = "trace_id";
-/// Transaction context key used to persist OpenTelemetry span IDs.
-pub const SPAN_ID_CONTEXT_KEY: &str = "span_id";
+/// An owned snapshot of module context for audit/metrics recording.
+///
+/// Unlike `ModuleContext`, this type owns cloned strings and is used
+/// for recording mutations and metrics after the original context
+/// may have changed.
+#[derive(Debug, Clone)]
+pub struct ModuleContextSnapshot {
+    pub module_type: String,
+    pub module_name: String,
+}
 
-const TLS_CONTEXT_KEY: &str = "tls";
-const TLS_PROTOCOL_CONTEXT_KEY: &str = "protocol";
-const TLS_CIPHER_CONTEXT_KEY: &str = "cipher";
+impl ModuleContextSnapshot {
+    /// Creates a snapshot from module type and name.
+    #[must_use]
+    pub fn new(module_type: impl Into<String>, module_name: impl Into<String>) -> Self {
+        Self {
+            module_type: module_type.into(),
+            module_name: module_name.into(),
+        }
+    }
+}
 
-const AUTH_CONTEXT_KEY: &str = "auth";
-const AUTH_MECHANISM_CONTEXT_KEY: &str = "auth_mechanism";
-const AUTH_USER_CONTEXT_KEY: &str = "auth_user";
-const AUTHZID_CONTEXT_KEY: &str = "authzid";
-const AUTH_PASSWORD_CONTEXT_KEY: &str = "auth_password";
+impl From<&ModuleContext> for ModuleContextSnapshot {
+    fn from(ctx: &ModuleContext) -> Self {
+        Self {
+            module_type: ctx.module_type.clone(),
+            module_name: ctx.module_name.clone(),
+        }
+    }
+}
 
-const SPF_RESULT_CONTEXT_KEY: &str = "spf_result";
-const SPF_DOMAIN_CONTEXT_KEY: &str = "spf_domain";
-const SPF_HELO_DOMAIN_CONTEXT_KEY: &str = "spf_helo_domain";
-const SPF_EXPLANATION_CONTEXT_KEY: &str = "spf_explanation";
-
-const DMARC_DOMAIN_CONTEXT_KEY: &str = "dmarc_domain";
-const DMARC_RESULT_CONTEXT_KEY: &str = "dmarc_result";
-const DMARC_POLICY_CONTEXT_KEY: &str = "dmarc_policy";
-const DMARC_SPF_ALIGNED_CONTEXT_KEY: &str = "dmarc_spf_aligned";
-const DMARC_DKIM_ALIGNED_CONTEXT_KEY: &str = "dmarc_dkim_aligned";
-const DMARC_ERROR_CONTEXT_KEY: &str = "dmarc_error";
-const DMARC_REASON_CONTEXT_KEY: &str = "dmarc_reason";
-const DMARC_ACTION_CONTEXT_KEY: &str = "dmarc_action";
-const DMARC_SAMPLED_CONTEXT_KEY: &str = "dmarc_sampled";
-const DMARC_SAMPLE_RATE_BPS_CONTEXT_KEY: &str = "dmarc_sample_rate_bps";
+// Re-export commonly used context keys for backward compatibility
+pub use crate::context_keys::otel::{
+    SPAN_ID as SPAN_ID_CONTEXT_KEY, TRACE_ID as TRACE_ID_CONTEXT_KEY,
+};
+pub use crate::context_keys::transaction::{
+    OUTBOUND_BINDING as OUTBOUND_BINDING_CONTEXT_KEY, PRIORITY_TIER as PRIORITY_TIER_CONTEXT_KEY,
+};
+// Import all keys for internal use
+use crate::context_keys::{session, transaction};
 
 /// Delivery priority tier for queue scheduling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -769,239 +775,239 @@ impl Context {
     /// Returns true if TLS is active for this session.
     #[must_use]
     pub fn is_tls(&self) -> bool {
-        self.session_value(TLS_CONTEXT_KEY)
+        self.session_value(session::TLS)
             .is_some_and(|value| value == "true")
     }
 
     /// Returns the TLS protocol, if recorded.
     #[must_use]
     pub fn tls_protocol(&self) -> Option<&str> {
-        self.session_value(TLS_PROTOCOL_CONTEXT_KEY)
+        self.session_value(session::TLS_PROTOCOL)
     }
 
     /// Returns the TLS cipher, if recorded.
     #[must_use]
     pub fn tls_cipher(&self) -> Option<&str> {
-        self.session_value(TLS_CIPHER_CONTEXT_KEY)
+        self.session_value(session::TLS_CIPHER)
     }
 
     /// Record TLS state and negotiated details for this session.
     pub fn set_tls_info(&mut self, protocol: impl Into<String>, cipher: impl Into<String>) {
-        self.set_session_value(TLS_CONTEXT_KEY, "true");
-        self.set_session_value(TLS_PROTOCOL_CONTEXT_KEY, protocol);
-        self.set_session_value(TLS_CIPHER_CONTEXT_KEY, cipher);
+        self.set_session_value(session::TLS, "true");
+        self.set_session_value(session::TLS_PROTOCOL, protocol);
+        self.set_session_value(session::TLS_CIPHER, cipher);
     }
 
     /// Clear TLS metadata from this session.
     pub fn clear_tls_info(&mut self) {
-        self.remove_session_value(TLS_CONTEXT_KEY);
-        self.remove_session_value(TLS_PROTOCOL_CONTEXT_KEY);
-        self.remove_session_value(TLS_CIPHER_CONTEXT_KEY);
+        self.remove_session_value(session::TLS);
+        self.remove_session_value(session::TLS_PROTOCOL);
+        self.remove_session_value(session::TLS_CIPHER);
     }
 
     /// Returns true if authentication is marked as successful.
     #[must_use]
     pub fn is_authenticated(&self) -> bool {
-        self.session_value(AUTH_CONTEXT_KEY)
+        self.session_value(session::AUTH)
             .is_some_and(|value| value == "true")
     }
 
     /// Record authentication success or clear the auth marker.
     pub fn set_authenticated(&mut self, authenticated: bool) {
         if authenticated {
-            self.set_session_value(AUTH_CONTEXT_KEY, "true");
+            self.set_session_value(session::AUTH, "true");
         } else {
-            self.remove_session_value(AUTH_CONTEXT_KEY);
+            self.remove_session_value(session::AUTH);
         }
     }
 
     /// Record the SMTP AUTH mechanism in use.
     pub fn set_auth_mechanism(&mut self, mechanism: impl Into<String>) {
-        self.set_session_value(AUTH_MECHANISM_CONTEXT_KEY, mechanism);
+        self.set_session_value(session::AUTH_MECHANISM, mechanism);
     }
 
     /// Record the authenticated user.
     pub fn set_auth_user(&mut self, user: impl Into<String>) {
-        self.set_session_value(AUTH_USER_CONTEXT_KEY, user);
+        self.set_session_value(session::AUTH_USER, user);
     }
 
     /// Record the optional authzid for SMTP AUTH.
     pub fn set_authzid(&mut self, authzid: Option<String>) {
         if let Some(authzid) = authzid {
-            self.set_session_value(AUTHZID_CONTEXT_KEY, authzid);
+            self.set_session_value(session::AUTHZID, authzid);
         } else {
-            self.remove_session_value(AUTHZID_CONTEXT_KEY);
+            self.remove_session_value(session::AUTHZID);
         }
     }
 
     /// Record the authentication password (ephemeral).
     pub fn set_auth_password(&mut self, password: impl Into<String>) {
-        self.set_session_value(AUTH_PASSWORD_CONTEXT_KEY, password);
+        self.set_session_value(session::AUTH_PASSWORD, password);
     }
 
     /// Remove the stored authentication password.
     pub fn clear_auth_password(&mut self) {
-        self.remove_session_value(AUTH_PASSWORD_CONTEXT_KEY);
+        self.remove_session_value(session::AUTH_PASSWORD);
     }
 
     /// Returns the authentication mechanism, if any.
     #[must_use]
     pub fn auth_mechanism(&self) -> Option<&str> {
-        self.session_value(AUTH_MECHANISM_CONTEXT_KEY)
+        self.session_value(session::AUTH_MECHANISM)
     }
 
     /// Returns the authenticated user, if any.
     #[must_use]
     pub fn auth_user(&self) -> Option<&str> {
-        self.session_value(AUTH_USER_CONTEXT_KEY)
+        self.session_value(session::AUTH_USER)
     }
 
     /// Returns the authzid, if any.
     #[must_use]
     pub fn authzid(&self) -> Option<&str> {
-        self.session_value(AUTHZID_CONTEXT_KEY)
+        self.session_value(session::AUTHZID)
     }
 
     /// Returns the authentication password, if recorded.
     #[must_use]
     pub fn auth_password(&self) -> Option<&str> {
-        self.session_value(AUTH_PASSWORD_CONTEXT_KEY)
+        self.session_value(session::AUTH_PASSWORD)
     }
 
     /// Store SPF evaluation result.
     pub fn set_spf_result(&mut self, result: impl Into<String>) {
-        self.set_transaction_value(SPF_RESULT_CONTEXT_KEY, result);
+        self.set_transaction_value(transaction::SPF_RESULT, result);
     }
 
     /// Returns the SPF evaluation result.
     #[must_use]
     pub fn spf_result(&self) -> Option<&str> {
-        self.transaction_value(SPF_RESULT_CONTEXT_KEY)
+        self.transaction_value(transaction::SPF_RESULT)
     }
 
     /// Store SPF sender domain.
     pub fn set_spf_domain(&mut self, domain: impl Into<String>) {
-        self.set_transaction_value(SPF_DOMAIN_CONTEXT_KEY, domain);
+        self.set_transaction_value(transaction::SPF_DOMAIN, domain);
     }
 
     /// Returns the SPF sender domain.
     #[must_use]
     pub fn spf_domain(&self) -> Option<&str> {
-        self.transaction_value(SPF_DOMAIN_CONTEXT_KEY)
+        self.transaction_value(transaction::SPF_DOMAIN)
     }
 
     /// Store SPF HELO domain.
     pub fn set_spf_helo_domain(&mut self, domain: impl Into<String>) {
-        self.set_transaction_value(SPF_HELO_DOMAIN_CONTEXT_KEY, domain);
+        self.set_transaction_value(transaction::SPF_HELO_DOMAIN, domain);
     }
 
     /// Returns the SPF HELO domain.
     #[must_use]
     pub fn spf_helo_domain(&self) -> Option<&str> {
-        self.transaction_value(SPF_HELO_DOMAIN_CONTEXT_KEY)
+        self.transaction_value(transaction::SPF_HELO_DOMAIN)
     }
 
     /// Store SPF explanation.
     pub fn set_spf_explanation(&mut self, explanation: impl Into<String>) {
-        self.set_transaction_value(SPF_EXPLANATION_CONTEXT_KEY, explanation);
+        self.set_transaction_value(transaction::SPF_EXPLANATION, explanation);
     }
 
     /// Returns the SPF explanation, if any.
     #[must_use]
     pub fn spf_explanation(&self) -> Option<&str> {
-        self.transaction_value(SPF_EXPLANATION_CONTEXT_KEY)
+        self.transaction_value(transaction::SPF_EXPLANATION)
     }
 
     /// Store DMARC domain.
     pub fn set_dmarc_domain(&mut self, domain: impl Into<String>) {
-        self.set_transaction_value(DMARC_DOMAIN_CONTEXT_KEY, domain);
+        self.set_transaction_value(transaction::DMARC_DOMAIN, domain);
     }
 
     /// Returns the DMARC domain.
     #[must_use]
     pub fn dmarc_domain(&self) -> Option<&str> {
-        self.transaction_value(DMARC_DOMAIN_CONTEXT_KEY)
+        self.transaction_value(transaction::DMARC_DOMAIN)
     }
 
     /// Store DMARC result.
     pub fn set_dmarc_result(&mut self, result: impl Into<String>) {
-        self.set_transaction_value(DMARC_RESULT_CONTEXT_KEY, result);
+        self.set_transaction_value(transaction::DMARC_RESULT, result);
     }
 
     /// Returns the DMARC result.
     #[must_use]
     pub fn dmarc_result(&self) -> Option<&str> {
-        self.transaction_value(DMARC_RESULT_CONTEXT_KEY)
+        self.transaction_value(transaction::DMARC_RESULT)
     }
 
     /// Store DMARC policy.
     pub fn set_dmarc_policy(&mut self, policy: impl Into<String>) {
-        self.set_transaction_value(DMARC_POLICY_CONTEXT_KEY, policy);
+        self.set_transaction_value(transaction::DMARC_POLICY, policy);
     }
 
     /// Returns the DMARC policy.
     #[must_use]
     pub fn dmarc_policy(&self) -> Option<&str> {
-        self.transaction_value(DMARC_POLICY_CONTEXT_KEY)
+        self.transaction_value(transaction::DMARC_POLICY)
     }
 
     /// Store DMARC SPF alignment.
     pub fn set_dmarc_spf_aligned(&mut self, aligned: bool) {
-        self.set_transaction_value(DMARC_SPF_ALIGNED_CONTEXT_KEY, aligned.to_string());
+        self.set_transaction_value(transaction::DMARC_SPF_ALIGNED, aligned.to_string());
     }
 
     /// Store DMARC DKIM alignment.
     pub fn set_dmarc_dkim_aligned(&mut self, aligned: bool) {
-        self.set_transaction_value(DMARC_DKIM_ALIGNED_CONTEXT_KEY, aligned.to_string());
+        self.set_transaction_value(transaction::DMARC_DKIM_ALIGNED, aligned.to_string());
     }
 
     /// Store DMARC error details.
     pub fn set_dmarc_error(&mut self, error: impl Into<String>) {
-        self.set_transaction_value(DMARC_ERROR_CONTEXT_KEY, error);
+        self.set_transaction_value(transaction::DMARC_ERROR, error);
     }
 
     /// Returns the DMARC error, if any.
     #[must_use]
     pub fn dmarc_error(&self) -> Option<&str> {
-        self.transaction_value(DMARC_ERROR_CONTEXT_KEY)
+        self.transaction_value(transaction::DMARC_ERROR)
     }
 
     /// Store DMARC reason.
     pub fn set_dmarc_reason(&mut self, reason: impl Into<String>) {
-        self.set_transaction_value(DMARC_REASON_CONTEXT_KEY, reason);
+        self.set_transaction_value(transaction::DMARC_REASON, reason);
     }
 
     /// Returns the DMARC reason, if any.
     #[must_use]
     pub fn dmarc_reason(&self) -> Option<&str> {
-        self.transaction_value(DMARC_REASON_CONTEXT_KEY)
+        self.transaction_value(transaction::DMARC_REASON)
     }
 
     /// Store DMARC enforcement action.
     pub fn set_dmarc_action(&mut self, action: impl Into<String>) {
-        self.set_transaction_value(DMARC_ACTION_CONTEXT_KEY, action);
+        self.set_transaction_value(transaction::DMARC_ACTION, action);
     }
 
     /// Returns the DMARC enforcement action, if any.
     #[must_use]
     pub fn dmarc_action(&self) -> Option<&str> {
-        self.transaction_value(DMARC_ACTION_CONTEXT_KEY)
+        self.transaction_value(transaction::DMARC_ACTION)
     }
 
     /// Store DMARC sampled flag.
     pub fn set_dmarc_sampled(&mut self, sampled: bool) {
-        self.set_transaction_value(DMARC_SAMPLED_CONTEXT_KEY, sampled.to_string());
+        self.set_transaction_value(transaction::DMARC_SAMPLED, sampled.to_string());
     }
 
     /// Store DMARC sample rate (basis points).
     pub fn set_dmarc_sample_rate_bps(&mut self, rate: u32) {
-        self.set_transaction_value(DMARC_SAMPLE_RATE_BPS_CONTEXT_KEY, rate.to_string());
+        self.set_transaction_value(transaction::DMARC_SAMPLE_RATE_BPS, rate.to_string());
     }
 
     /// Returns the DMARC sample rate (basis points), if any.
     #[must_use]
     pub fn dmarc_sample_rate_bps(&self) -> Option<&str> {
-        self.transaction_value(DMARC_SAMPLE_RATE_BPS_CONTEXT_KEY)
+        self.transaction_value(transaction::DMARC_SAMPLE_RATE_BPS)
     }
 }
 

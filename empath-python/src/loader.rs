@@ -6,12 +6,13 @@
 use std::path::Path;
 use std::time::Duration;
 
+use empath_common::ModuleError;
 use empath_common::context::Context;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::context::PyContext;
-use crate::error::{PythonError, Result};
+use crate::error::{Result, from_pyerr};
 use crate::safety::call_callback;
 
 /// Default timeout for Python callbacks (5 seconds)
@@ -45,7 +46,7 @@ impl PythonModule {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
         let source = std::fs::read_to_string(&path)
-            .map_err(|_| PythonError::ModuleNotFound(path_str.clone()))?;
+            .map_err(|_| ModuleError::ModuleNotFound(path_str.clone()))?;
 
         Ok(Self {
             path: path_str,
@@ -81,12 +82,13 @@ impl PythonModule {
             let module = self.get_module_dict(py)?;
 
             // Call init() if it exists
-            let arg_list = PyList::new(py, args.iter().map(String::as_str))?;
-            let args = PyTuple::new(py, &[arg_list])?;
+            let arg_list =
+                PyList::new(py, args.iter().map(String::as_str)).map_err(|e| from_pyerr(&e))?;
+            let args = PyTuple::new(py, &[arg_list]).map_err(|e| from_pyerr(&e))?;
             if let Some(result) = call_callback(py, &module, "init", &args, self.timeout)? {
                 // Check for initialization errors
                 if matches!(result.extract::<bool>(), Ok(false)) {
-                    return Err(PythonError::InitFailed("init() returned False".to_string()));
+                    return Err(ModuleError::InitFailed("init() returned False".to_string()));
                 }
             }
 
@@ -114,10 +116,11 @@ impl PythonModule {
 
             // Wrap context for Python
             let py_context = PyContext::new(context.clone());
-            let py_context_obj = Py::new(py, py_context)?;
+            let py_context_obj = Py::new(py, py_context).map_err(|e| from_pyerr(&e))?;
 
             // Prepare arguments tuple
-            let args = PyTuple::new(py, &[py_context_obj.clone_ref(py)])?;
+            let args =
+                PyTuple::new(py, &[py_context_obj.clone_ref(py)]).map_err(|e| from_pyerr(&e))?;
 
             // Call the callback
             let result = call_callback(py, &module, callback_name, &args, self.timeout)?;
@@ -132,12 +135,12 @@ impl PythonModule {
                 .get_type()
                 .name()
                 .map_or_else(|_| "unknown".to_string(), |name| name.to_string());
-            let accept = result.extract::<bool>().map_err(|_| {
-                PythonError::InvalidReturn(
-                    callback_name.to_string(),
-                    format!("expected bool, got {type_name}"),
-                )
-            })?;
+            let accept = result
+                .extract::<bool>()
+                .map_err(|_| ModuleError::InvalidReturn {
+                    callback: callback_name.to_string(),
+                    reason: format!("expected bool, got {type_name}"),
+                })?;
 
             // Copy back any context modifications
             let py_context_ref = py_context_obj.borrow(py);
@@ -157,18 +160,20 @@ impl PythonModule {
         let module = PyDict::new(py);
 
         // Add Context class to the module namespace
-        module.set_item("Context", py.get_type::<PyContext>())?;
+        module
+            .set_item("Context", py.get_type::<PyContext>())
+            .map_err(|e| from_pyerr(&e))?;
 
         // Execute the module code
         py.run(
             std::ffi::CString::new(self.source.as_bytes())
-                .map_err(|_| PythonError::InitFailed("Invalid source code".to_string()))?
+                .map_err(|_| ModuleError::InitFailed("Invalid source code".to_string()))?
                 .as_c_str(),
             Some(&module),
             None,
         )
         .map_err(|err| {
-            PythonError::InitFailed(format!("Failed to execute module {}: {err}", self.path))
+            ModuleError::InitFailed(format!("Failed to execute module {}: {err}", self.path))
         })?;
 
         Ok(module)

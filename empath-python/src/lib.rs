@@ -26,5 +26,6 @@ mod loader;
 mod safety;
 
 pub use context::PyContext;
-pub use error::{PythonError, Result};
+pub use empath_common::ModuleError;
+pub use error::Result;
 pub use loader::PythonModule;

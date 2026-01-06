@@ -986,6 +986,7 @@ dependencies = [
  "cbindgen",
  "charset",
  "empath-core",
+ "empath-metrics",
  "empath-tracing",
  "encoding_rs",
  "futures-util",

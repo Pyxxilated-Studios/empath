@@ -18,6 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Domain;
+use crate::context::ModuleContextSnapshot;
 use crate::email::{EmailAddress, ServerId};
 use crate::message_api::{MutationKind, MutationRecord};
 
@@ -84,8 +85,7 @@ pub trait AuditLogger: Send + Sync + std::fmt::Debug {
     fn log_module_mutation(
         &self,
         message_id: &str,
-        module_type: &str,
-        module_name: &str,
+        module_context: &ModuleContextSnapshot,
         record: &MutationRecord,
     );
     fn log_delivery_attempt(
@@ -229,8 +229,7 @@ impl AuditLogger for ConfiguredAuditLogger {
     fn log_module_mutation(
         &self,
         message_id: &str,
-        module_type: &str,
-        module_name: &str,
+        module_context: &ModuleContextSnapshot,
         record: &MutationRecord,
     ) {
         if !self.config.enabled {
@@ -246,8 +245,8 @@ impl AuditLogger for ConfiguredAuditLogger {
             tracing::Level::INFO,
             event = "ModuleMutation",
             message_id = %message_id,
-            module_type = %module_type,
-            module_name = %module_name,
+            module_type = %module_context.module_type,
+            module_name = %module_context.module_name,
             mutation_kind = %mutation_kind,
             action = %record.action,
             header_name = ?header_name,

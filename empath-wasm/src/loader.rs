@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use empath_common::context::Context;
-use empath_common::internal;
+use empath_common::{ModuleError, internal};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::p2::add_to_linker_sync;
@@ -17,7 +17,7 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::bindings::Validator;
 use crate::bindings::exports::empath::validator::{events as wit_events, validation as wit};
-use crate::error::{Result, WasmError};
+use crate::error::{Result, from_wasmtime};
 use crate::host::WasmStore;
 
 /// Default timeout for callback execution (5 seconds)
@@ -172,7 +172,7 @@ fn get_or_init_engine() -> Result<Arc<Engine>> {
 
     let engine = Engine::new(&config)
         .map(Arc::new)
-        .map_err(|e| WasmError::EngineCreation(e.to_string()))?;
+        .map_err(|e| ModuleError::InitFailed(format!("Failed to create Wasmtime engine: {e}")))?;
 
     // Set may fail if another thread initialized concurrently; fall back to the stored value.
     if SHARED_ENGINE.set(Arc::clone(&engine)).is_ok() {
@@ -181,7 +181,7 @@ fn get_or_init_engine() -> Result<Arc<Engine>> {
         SHARED_ENGINE
             .get()
             .map(Arc::clone)
-            .ok_or_else(|| WasmError::EngineCreation("Failed to initialize Wasmtime engine".into()))
+            .ok_or_else(|| ModuleError::InitFailed("Failed to initialize Wasmtime engine".into()))
     }
 }
 
@@ -387,7 +387,7 @@ impl WasmModule {
 
         // Check if file exists
         if !path.as_ref().exists() {
-            return Err(WasmError::ModuleNotFound(path_str));
+            return Err(ModuleError::ModuleNotFound(path_str));
         }
 
         // Get or create the shared Wasmtime engine (with epoch interruption enabled)
@@ -397,7 +397,7 @@ impl WasmModule {
         start_epoch_manager(Arc::clone(&engine));
 
         // Load and compile the WASM component
-        let component = Component::from_file(&engine, &path)?;
+        let component = Component::from_file(&engine, &path).map_err(|e| from_wasmtime(&e))?;
 
         Ok(Self {
             path: path_str,
@@ -492,19 +492,21 @@ impl WasmModule {
 
         // Add WASI support (always enabled for components)
         internal!(level = TRACE, "Adding WASI support to component linker");
-        add_to_linker_sync(&mut linker)?;
+        add_to_linker_sync(&mut linker).map_err(|e| from_wasmtime(&e))?;
 
         // Add custom host functions from WIT interface
         internal!(level = TRACE, "Adding custom host functions to linker");
         crate::bindings::Validator::add_to_linker::<_, wasmtime::component::HasSelf<WasmStore>>(
             &mut linker,
             |data| data,
-        )?;
+        )
+        .map_err(|e| from_wasmtime(&e))?;
 
         // Instantiate the component
         let _instance = linker
             .instantiate(&mut store, &self.component)
-            .inspect_err(|e| internal!(level = TRACE, "Component instantiation error {e}"))?;
+            .inspect_err(|e| internal!(level = TRACE, "Component instantiation error {e}"))
+            .map_err(|e| from_wasmtime(&e))?;
 
         // Note: Component model uses typed interfaces defined in WIT files
         // Initialization and function calling will be handled through generated bindings
@@ -582,23 +584,25 @@ impl WasmModule {
         let mut linker = Linker::new(&self.engine);
 
         // Add WASI support (always enabled for components)
-        add_to_linker_sync(&mut linker)?;
+        add_to_linker_sync(&mut linker).map_err(|e| from_wasmtime(&e))?;
 
         // Add custom host functions from WIT interface
         crate::bindings::Validator::add_to_linker::<_, wasmtime::component::HasSelf<WasmStore>>(
             &mut linker,
             |data| data,
-        )?;
+        )
+        .map_err(|e| from_wasmtime(&e))?;
 
         // Instantiate the component using generated bindings
-        let validator = Validator::instantiate(&mut store, &self.component, &linker)?;
+        let validator = Validator::instantiate(&mut store, &self.component, &linker)
+            .map_err(|e| from_wasmtime(&e))?;
 
         // Call the appropriate validation or event function based on callback name
         let return_code = if callback_name.starts_with("validate_") {
             // Convert context to WIT validation format
             let wit_context = {
                 let ctx_lock = context_arc.lock().map_err(|e| {
-                    WasmError::Internal(format!("Failed to lock context mutex: {e}"))
+                    ModuleError::Runtime(format!("Failed to lock context mutex: {e}"))
                 })?;
                 wit::ValidationContext::from(&*ctx_lock)
             };
@@ -618,7 +622,7 @@ impl WasmModule {
             // Convert context to WIT event format
             let wit_context = {
                 let ctx_lock = context_arc.lock().map_err(|e| {
-                    WasmError::Internal(format!("Failed to lock context mutex: {e}"))
+                    ModuleError::Runtime(format!("Failed to lock context mutex: {e}"))
                 })?;
                 wit_events::EventContext::from(&*ctx_lock)
             };
@@ -641,13 +645,13 @@ impl WasmModule {
         // into_inner fails if the mutex is poisoned (would require a panic in host functions)
         let result_context = Arc::try_unwrap(context_arc)
             .map_err(|arc| {
-                WasmError::Internal(format!(
+                ModuleError::Runtime(format!(
                     "Context Arc has {} strong references (expected 1)",
                     Arc::strong_count(&arc)
                 ))
             })?
             .into_inner()
-            .map_err(|e| WasmError::Internal(format!("Context mutex poisoned: {e}")))?;
+            .map_err(|e| ModuleError::Runtime(format!("Context mutex poisoned: {e}")))?;
 
         // Restore the context with any modifications made by host functions
         *context = result_context;
@@ -729,7 +733,9 @@ impl WasmModule {
                 FilePerms::all()
             };
 
-            builder.preopened_dir(host_path, guest_name, dir_perms, file_perms)?;
+            builder
+                .preopened_dir(host_path, guest_name, dir_perms, file_perms)
+                .map_err(|e| from_wasmtime(&e))?;
         }
 
         let ctx = builder.build();
@@ -785,9 +791,12 @@ macro_rules! define_wasm_validations {
 
                 let result = call_result.map_err(|e| {
                     if is_timeout_error(&e) {
-                        WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                        ModuleError::Timeout {
+                            callback: callback_name.to_string(),
+                            timeout_secs,
+                        }
                     } else {
-                        e.into()
+                        from_wasmtime(&e)
                     }
                 })?;
 
@@ -867,9 +876,12 @@ macro_rules! define_wasm_events {
 
                 call_result.map_err(|e| {
                     if is_timeout_error(&e) {
-                        WasmError::Timeout(callback_name.to_string(), timeout_secs)
+                        ModuleError::Timeout {
+                            callback: callback_name.to_string(),
+                            timeout_secs,
+                        }
                     } else {
-                        e.into()
+                        from_wasmtime(&e)
                     }
                 })?;
 
@@ -924,7 +936,7 @@ mod tests {
     fn test_load_nonexistent_module() {
         let result = WasmModule::load("/nonexistent/path.wasm");
         assert!(result.is_err());
-        assert!(matches!(result, Err(WasmError::ModuleNotFound(_))));
+        assert!(matches!(result, Err(ModuleError::ModuleNotFound(_))));
     }
 
     #[test]
