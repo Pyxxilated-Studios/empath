@@ -6,9 +6,9 @@ use empath_common::status::Status;
 use empath_tracing::traced;
 use serde::{Deserialize, Serialize};
 
-use super::traits::{ModuleInitContext, ModuleInterface};
+use super::traits::ModuleInitContext;
 use super::{Error, Event, validate};
-use crate::modules::traits::{BoxFuture, Module};
+use crate::modules::traits::Module;
 
 /// Core validation handlers - stateless functions operating on Context
 ///
@@ -90,14 +90,15 @@ const fn validate_auth(_validation_context: &mut Context) -> i32 {
     0
 }
 
-impl ModuleInterface for Core {
+#[typetag::serde]
+impl Module for Core {
     fn init(&mut self, _context: &ModuleInitContext) -> Result<(), Error> {
         // Core module is stateless - no initialization required
         Ok(())
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-    async fn emit(&self, event: Event, context: &mut Context) -> i32 {
+    fn emit(&self, event: Event, context: &mut Context) -> i32 {
         match event {
             Event::Validate(validate::Event::Connect) => validate_connect(context),
             Event::Validate(validate::Event::Ehlo) => validate_ehlo(context),
@@ -117,26 +118,6 @@ impl ModuleInterface for Core {
 
     fn display_name(&self) -> String {
         "Core Module".to_string()
-    }
-}
-
-/// Blanket implementation: any [`Module`] can be used as a [`DynModule`].
-#[typetag::serde]
-impl Module for Core {
-    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
-        ModuleInterface::init(self, context)
-    }
-
-    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
-        Box::pin(ModuleInterface::emit(self, event, context))
-    }
-
-    fn module_context(&self) -> ModuleContext {
-        ModuleInterface::module_context(self)
-    }
-
-    fn display_name(&self) -> String {
-        ModuleInterface::display_name(self)
     }
 
     fn as_any(&self) -> &dyn Any {

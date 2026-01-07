@@ -4,13 +4,11 @@ use std::sync::Arc;
 
 use empath_common::context::{Context, ModuleContext};
 use empath_common::internal;
-use empath_tracing::traced;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 
-use super::traits::{ModuleInitContext, ModuleInterface};
-use crate::modules::traits::{BoxFuture, Module};
-use crate::modules::{Error, Event};
+use super::traits::ModuleInitContext;
+use crate::modules::traits::Module;
 
 #[derive(Debug, Serialize)]
 pub struct Shared {
@@ -53,9 +51,9 @@ impl Display for Shared {
     }
 }
 
-impl Shared {
-    #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "us"))]
-    pub(super) fn init_shared(&mut self) -> Result<(), super::Error> {
+#[typetag::serde]
+impl Module for Shared {
+    fn init(&mut self, _context: &ModuleInitContext) -> Result<(), super::Error> {
         unsafe {
             let lib = Library::new(&self.name)?;
 
@@ -69,23 +67,12 @@ impl Shared {
         }
     }
 
-    #[traced(instrument(level = tracing::Level::TRACE, skip(self, validate_context), ret), timing(precision = "us"))]
-    pub(super) fn emit_shared(&self, event: super::Event, validate_context: &mut Context) -> i32 {
+    fn emit(&self, event: super::Event, context: &mut Context) -> i32 {
         let Some(module) = &self.module else {
             return 0;
         };
 
-        module.emit(event, validate_context)
-    }
-}
-
-impl ModuleInterface for Shared {
-    fn init(&mut self, _context: &ModuleInitContext) -> Result<(), super::Error> {
-        self.init_shared()
-    }
-
-    async fn emit(&self, event: super::Event, context: &mut Context) -> i32 {
-        self.emit_shared(event, context)
+        module.emit(event, context)
     }
 
     fn module_context(&self) -> ModuleContext {
@@ -94,25 +81,6 @@ impl ModuleInterface for Shared {
 
     fn display_name(&self) -> String {
         format!("Shared Library: {}", self.name)
-    }
-}
-
-#[typetag::serde]
-impl Module for Shared {
-    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
-        ModuleInterface::init(self, context)
-    }
-
-    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
-        Box::pin(ModuleInterface::emit(self, event, context))
-    }
-
-    fn module_context(&self) -> ModuleContext {
-        ModuleInterface::module_context(self)
-    }
-
-    fn display_name(&self) -> String {
-        ModuleInterface::display_name(self)
     }
 
     fn as_any(&self) -> &dyn Any {

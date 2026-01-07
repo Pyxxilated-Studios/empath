@@ -11,9 +11,9 @@ use empath_common::context::{Context, ModuleContext};
 use empath_common::internal;
 use serde::{Deserialize, Serialize};
 
-use super::traits::{ModuleInitContext, ModuleInterface};
+use super::traits::ModuleInitContext;
 use super::{Error, Event, handle_module_error};
-use crate::modules::traits::{BoxFuture, Module};
+use crate::modules::traits::Module;
 
 pub mod context;
 pub mod loader;
@@ -35,11 +35,15 @@ pub struct Python {
 }
 
 impl Python {
-    /// Initialize the Python module by loading the .py file
-    ///
-    /// # Errors
-    /// Returns error if the module cannot be loaded or initialized
-    pub fn init_module(&self) -> Result<(), Error> {
+    /// Get the module path for display
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+#[typetag::serde]
+impl Module for Python {
+    fn init(&mut self, _context: &ModuleInitContext) -> Result<(), Error> {
         let mut module = loader::Python::load(&self.path).map_err(|e| {
             Error::Init(format!(
                 "Failed to load Python module {}: {e:?}",
@@ -62,8 +66,7 @@ impl Python {
         Ok(())
     }
 
-    /// Emit an event to the Python module
-    pub fn emit_event(&self, event: Event, context: &mut Context) -> i32 {
+    fn emit(&self, event: Event, context: &mut Context) -> i32 {
         // Get the loaded module
         let Some(module) = self.module.get() else {
             internal!(
@@ -97,46 +100,12 @@ impl Python {
         }
     }
 
-    /// Get the module path for display
-    pub fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-}
-
-impl ModuleInterface for Python {
-    fn init(&mut self, _context: &ModuleInitContext) -> Result<(), Error> {
-        self.init_module()
-    }
-
-    async fn emit(&self, event: Event, context: &mut Context) -> i32 {
-        self.emit_event(event, context)
-    }
-
     fn module_context(&self) -> ModuleContext {
         ModuleContext::new("python", self.path.display().to_string())
     }
 
     fn display_name(&self) -> String {
         format!("Python Module: {}", self.path.display())
-    }
-}
-
-#[typetag::serde]
-impl Module for Python {
-    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
-        ModuleInterface::init(self, context)
-    }
-
-    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
-        Box::pin(ModuleInterface::emit(self, event, context))
-    }
-
-    fn module_context(&self) -> ModuleContext {
-        ModuleInterface::module_context(self)
-    }
-
-    fn display_name(&self) -> String {
-        ModuleInterface::display_name(self)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -153,6 +122,7 @@ mod tests {
 
     use super::{Event, Python};
     use crate::modules::Ev;
+    use crate::modules::traits::Module;
 
     #[test]
     fn emit_returns_zero_when_uninitialized() {
@@ -164,7 +134,7 @@ mod tests {
         };
         let mut context = Context::default();
 
-        let result = module.emit_event(Event::Event(Ev::ConnectionOpened), &mut context);
+        let result = module.emit(Event::Event(Ev::ConnectionOpened), &mut context);
 
         assert_eq!(result, 0);
     }

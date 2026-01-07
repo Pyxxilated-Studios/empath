@@ -12,9 +12,9 @@ use empath_common::context::{Context, ModuleContext};
 use empath_common::internal;
 use serde::{Deserialize, Serialize};
 
-use super::traits::{ModuleInitContext, ModuleInterface};
+use super::traits::ModuleInitContext;
 use super::{Error, Event, handle_module_error};
-use crate::modules::traits::{BoxFuture, Module};
+use crate::modules::traits::Module;
 
 pub mod bindings;
 pub mod host;
@@ -93,8 +93,7 @@ impl Clone for Wasm {
 impl Wasm {
     /// Construct a WASM module definition from a file path for programmatic/tests use.
     #[must_use]
-    pub fn from_path(path: PathBuf) -> Self {
-        let _ = path.as_os_str();
+    pub const fn from_path(path: PathBuf) -> Self {
         Self {
             path,
             arguments: Vec::new(),
@@ -107,18 +106,22 @@ impl Wasm {
         }
     }
 
-    /// Initialize the WASM module
-    ///
-    /// # Errors
-    /// Returns error if the module cannot be loaded or initialized
-    pub fn init_module(&self, outbound_bindings: &[String]) -> std::result::Result<(), Error> {
+    /// Get the path to the WASM module file
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+#[typetag::serde]
+impl Module for Wasm {
+    fn init(&mut self, context: &ModuleInitContext) -> std::result::Result<(), Error> {
         let mut module = WasmModule::load(&self.path).map_err(|e| {
             Error::Init(format!(
                 "Failed to load WASM module {}: {e}",
                 self.path.display()
             ))
         })?;
-        module = module.with_outbound_bindings(outbound_bindings.to_vec());
+        module = module.with_outbound_bindings(context.outbound_bindings.clone());
         module = module.with_args(self.arguments.clone());
 
         if let Some(timeout_secs) = self.timeout_secs {
@@ -148,11 +151,7 @@ impl Wasm {
         Ok(())
     }
 
-    /// Emit an event to the WASM module
-    ///
-    /// Returns 0 if the event was handled successfully (or callback doesn't exist),
-    /// non-zero if the callback rejected the operation.
-    pub fn emit_event(&self, event: Event, context: &mut Context) -> i32 {
+    fn emit(&self, event: Event, context: &mut Context) -> i32 {
         let Some(module) = self.module.get() else {
             internal!(
                 level = ERROR,
@@ -195,46 +194,12 @@ impl Wasm {
         }
     }
 
-    /// Get the path to the WASM module file
-    pub fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-}
-
-impl ModuleInterface for Wasm {
-    fn init(&mut self, context: &ModuleInitContext) -> std::result::Result<(), Error> {
-        self.init_module(&context.outbound_bindings)
-    }
-
-    async fn emit(&self, event: Event, context: &mut Context) -> i32 {
-        self.emit_event(event, context)
-    }
-
     fn module_context(&self) -> ModuleContext {
         ModuleContext::new("wasm", self.path.display().to_string())
     }
 
     fn display_name(&self) -> String {
         format!("WASM Module: {}", self.path.display())
-    }
-}
-
-#[typetag::serde]
-impl Module for Wasm {
-    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
-        ModuleInterface::init(self, context)
-    }
-
-    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
-        Box::pin(ModuleInterface::emit(self, event, context))
-    }
-
-    fn module_context(&self) -> ModuleContext {
-        ModuleInterface::module_context(self)
-    }
-
-    fn display_name(&self) -> String {
-        ModuleInterface::display_name(self)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -251,6 +216,7 @@ mod tests {
 
     use super::{Event, Wasm};
     use crate::modules::Ev;
+    use crate::modules::traits::Module;
 
     #[test]
     fn emit_returns_zero_when_uninitialized() {
@@ -266,7 +232,7 @@ mod tests {
         };
         let mut context = Context::default();
 
-        let result = module.emit_event(Event::Event(Ev::ConnectionOpened), &mut context);
+        let result = module.emit(Event::Event(Ev::ConnectionOpened), &mut context);
 
         assert_eq!(result, 0);
     }

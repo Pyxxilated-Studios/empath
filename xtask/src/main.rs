@@ -245,7 +245,7 @@ fn build_wasm_examples() -> Result<()> {
     let sources = [
         wasm_dir.join("src/lib.rs"),
         wasm_dir.join("Cargo.toml"),
-        PathBuf::from("empath-wasm/wit/empath.wit"),
+        PathBuf::from("empath-ffi/wit/empath.wit"),
         PathBuf::from("empath-wasm-guest/wit/empath.wit"),
         wasm_dir.join("wit/empath.wit"),
     ];
@@ -346,7 +346,7 @@ fn install_wasm_target() -> Result<()> {
 }
 
 fn sync_wit_files() -> Result<()> {
-    let source_wit = Path::new("empath-wasm/wit/empath.wit");
+    let source_wit = Path::new("empath-ffi/wit/empath.wit");
     let dest_wit_dir = Path::new("empath-examples/wasm/wit");
     let dest_wit = dest_wit_dir.join("empath.wit");
 

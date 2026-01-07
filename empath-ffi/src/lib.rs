@@ -45,6 +45,45 @@ mod api {
         address_parser,
     };
 
+    // ============================================================================
+    // FFI Helper Utilities
+    // ============================================================================
+
+    /// Safely convert a C string pointer to a Rust `&str` and execute a closure.
+    ///
+    /// Returns `None` if the pointer is null or contains invalid UTF-8.
+    /// Returns `Some(f(s))` if conversion succeeds.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must either be null or point to a valid null-terminated C string.
+    fn with_cstr<T, F>(ptr: *const libc::c_char, f: F) -> Option<T>
+    where
+        F: FnOnce(&str) -> T,
+    {
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: Caller guarantees ptr is valid null-terminated string when non-null
+        unsafe { CStr::from_ptr(ptr) }.to_str().ok().map(f)
+    }
+
+    /// Safely convert a C string pointer to a Rust `&CStr`.
+    ///
+    /// Returns `None` if the pointer is null.
+    /// Returns `Some(&CStr)` if conversion succeeds.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must either be null or point to a valid null-terminated C string.
+    const fn cstr_from_ptr(ptr: *const libc::c_char) -> Option<&'static CStr> {
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: Caller guarantees ptr is valid null-terminated string when non-null
+        Some(unsafe { CStr::from_ptr(ptr) })
+    }
+
     /// Retrieve the id associated with this context
     ///
     /// This is the only way to retrieve the id for the context in an
@@ -124,7 +163,7 @@ mod api {
             .data
             .as_ref()
             .map_or_else(Default::default, |data| {
-                crate::string::String::try_from(data.as_ref()).unwrap_or_default()
+                crate::string::String::from(data.as_ref())
             })
     }
 
@@ -269,16 +308,8 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> bool {
-        if key.is_null() {
-            false
-        } else {
-            unsafe {
-                CStr::from_ptr(key)
-                    .to_str()
-                    // Default to transaction context for backward compatibility
-                    .is_ok_and(|key| validate_context.transaction.contains_key(key))
-            }
-        }
+        // Default to transaction context for backward compatibility
+        with_cstr(key, |key| validate_context.transaction.contains_key(key)).unwrap_or(false)
     }
 
     /// # Safety
@@ -291,22 +322,18 @@ mod api {
         value: *const libc::c_char,
     ) -> bool {
         if key.is_null() || value.is_null() {
-            false
-        } else {
-            unsafe {
-                CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                    let value = CStr::from_ptr(value)
-                        .to_str()
-                        .map_or_else(|_| String::new(), String::from);
-                    // Default to transaction context for backward compatibility
-                    *validate_context
-                        .transaction
-                        .entry(Cow::Owned(key.to_string()))
-                        .or_default() = value;
-                    true
-                })
-            }
+            return false;
         }
+        // Default to transaction context for backward compatibility
+
+        with_cstr(key, |key| {
+            let value = with_cstr(value, |s| String::from(s)).unwrap_or_default();
+            *validate_context
+                .transaction
+                .entry(Cow::Owned(key.to_string()))
+                .or_default() = value;
+        })
+        .is_some()
     }
 
     /// # Safety
@@ -317,21 +344,55 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> crate::string::String {
-        if key.is_null() {
-            crate::string::String::default()
-        } else {
-            unsafe {
-                CStr::from_ptr(key)
-                    .to_str()
-                    .ok()
-                    .and_then(|key| validate_context.transaction.get(key))
-                    .map_or_else(crate::string::String::default, std::convert::Into::into)
-            }
-        }
+        with_cstr(key, |key| validate_context.transaction.get(key))
+            .flatten()
+            .map_or_else(crate::string::String::default, std::convert::Into::into)
     }
 
     fn header_name_from_cstr(name: &CStr) -> Option<HeaderName> {
         name.to_str().ok().and_then(|n| HeaderName::new(n).ok())
+    }
+
+    /// Parse a header name and value from C string pointers.
+    ///
+    /// Returns `Some((HeaderName, HeaderValue))` on success, `None` if either pointer
+    /// is null, invalid UTF-8, or doesn't represent a valid header name/value.
+    ///
+    /// # Safety
+    ///
+    /// Both pointers must either be null or point to valid null-terminated C strings.
+    unsafe fn parse_header_pair(
+        name: *const libc::c_char,
+        value: *const libc::c_char,
+        fn_name: &str,
+    ) -> Option<(HeaderName, HeaderValue)> {
+        if name.is_null() || value.is_null() {
+            internal!(level = TRACE, "{fn_name}: null pointer");
+            return None;
+        }
+
+        let name_cstr = cstr_from_ptr(name)?;
+        let value_cstr = cstr_from_ptr(value)?;
+
+        let hname = header_name_from_cstr(name_cstr).or_else(|| {
+            internal!(
+                level = TRACE,
+                "{fn_name}: invalid header name {:?}",
+                name_cstr
+            );
+            None
+        })?;
+
+        let hval = HeaderValue::try_from(value_cstr).ok().or_else(|| {
+            internal!(
+                level = TRACE,
+                "{fn_name}: invalid header value {:?}",
+                value_cstr
+            );
+            None
+        })?;
+
+        Some((hname, hval))
     }
 
     // ============================================================================
@@ -350,21 +411,17 @@ mod api {
         value: *const libc::c_char,
     ) -> bool {
         if key.is_null() || value.is_null() {
-            false
-        } else {
-            unsafe {
-                CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                    let value = CStr::from_ptr(value)
-                        .to_str()
-                        .map_or_else(|_| String::new(), String::from);
-                    *validate_context
-                        .session
-                        .entry(Cow::Owned(key.to_string()))
-                        .or_default() = value;
-                    true
-                })
-            }
+            return false;
         }
+
+        with_cstr(key, |key| {
+            let value = with_cstr(value, |s| String::from(s)).unwrap_or_default();
+            *validate_context
+                .session
+                .entry(Cow::Owned(key.to_string()))
+                .or_default() = value;
+        })
+        .is_some()
     }
 
     /// Get session context
@@ -377,17 +434,9 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> crate::string::String {
-        if key.is_null() {
-            crate::string::String::default()
-        } else {
-            unsafe {
-                CStr::from_ptr(key)
-                    .to_str()
-                    .ok()
-                    .and_then(|key| validate_context.session.get(key))
-                    .map_or_else(crate::string::String::default, std::convert::Into::into)
-            }
-        }
+        with_cstr(key, |key| validate_context.session.get(key))
+            .flatten()
+            .map_or_else(crate::string::String::default, std::convert::Into::into)
     }
 
     /// Check if session context key exists
@@ -400,15 +449,7 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> bool {
-        if key.is_null() {
-            false
-        } else {
-            unsafe {
-                CStr::from_ptr(key)
-                    .to_str()
-                    .is_ok_and(|key| validate_context.session.contains_key(key))
-            }
-        }
+        with_cstr(key, |key| validate_context.session.contains_key(key)).unwrap_or(false)
     }
 
     // ============================================================================
@@ -427,21 +468,17 @@ mod api {
         value: *const libc::c_char,
     ) -> bool {
         if key.is_null() || value.is_null() {
-            false
-        } else {
-            unsafe {
-                CStr::from_ptr(key).to_str().is_ok_and(|key| {
-                    let value = CStr::from_ptr(value)
-                        .to_str()
-                        .map_or_else(|_| String::new(), String::from);
-                    *validate_context
-                        .transaction
-                        .entry(Cow::Owned(key.to_string()))
-                        .or_default() = value;
-                    true
-                })
-            }
+            return false;
         }
+
+        with_cstr(key, |key| {
+            let value = with_cstr(value, |s| String::from(s)).unwrap_or_default();
+            *validate_context
+                .transaction
+                .entry(Cow::Owned(key.to_string()))
+                .or_default() = value;
+        })
+        .is_some()
     }
 
     /// Get transaction context
@@ -454,17 +491,9 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> crate::string::String {
-        if key.is_null() {
-            crate::string::String::default()
-        } else {
-            unsafe {
-                CStr::from_ptr(key)
-                    .to_str()
-                    .ok()
-                    .and_then(|key| validate_context.transaction.get(key))
-                    .map_or_else(crate::string::String::default, std::convert::Into::into)
-            }
-        }
+        with_cstr(key, |key| validate_context.transaction.get(key))
+            .flatten()
+            .map_or_else(crate::string::String::default, std::convert::Into::into)
     }
 
     /// Check if transaction context key exists
@@ -477,15 +506,7 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> bool {
-        if key.is_null() {
-            false
-        } else {
-            unsafe {
-                CStr::from_ptr(key)
-                    .to_str()
-                    .is_ok_and(|key| validate_context.transaction.contains_key(key))
-            }
-        }
+        with_cstr(key, |key| validate_context.transaction.contains_key(key)).unwrap_or(false)
     }
 
     // ============================================================================
@@ -507,16 +528,11 @@ mod api {
     /// Provided with a null pointer, returns false.
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn em_outbound_binding_is_valid(name: *const libc::c_char) -> bool {
-        if name.is_null() {
-            return false;
-        }
-
-        unsafe {
-            CStr::from_ptr(name).to_str().is_ok_and(|binding| {
-                crate::modules::ModuleRegistry::global()
-                    .is_some_and(|registry| registry.outbound_binding_exists(binding))
-            })
-        }
+        with_cstr(name, |binding| {
+            crate::modules::ModuleRegistry::global()
+                .is_some_and(|registry| registry.outbound_binding_exists(binding))
+        })
+        .unwrap_or(false)
     }
 
     /// Set outbound binding override for this transaction.
@@ -634,12 +650,7 @@ mod api {
         validate_context: &mut Context,
         name: *const libc::c_char,
     ) -> crate::string::StringVector {
-        if name.is_null() {
-            return crate::string::StringVector::default();
-        }
-
-        let name = unsafe { CStr::from_ptr(name) };
-        let Some(hname) = header_name_from_cstr(name) else {
+        let Some(hname) = cstr_from_ptr(name).and_then(header_name_from_cstr) else {
             return crate::string::StringVector::default();
         };
 
@@ -664,12 +675,7 @@ mod api {
         validate_context: &mut Context,
         name: *const libc::c_char,
     ) -> bool {
-        if name.is_null() {
-            return false;
-        }
-
-        let name = unsafe { CStr::from_ptr(name) };
-        let Some(hname) = header_name_from_cstr(name) else {
+        let Some(hname) = cstr_from_ptr(name).and_then(header_name_from_cstr) else {
             return false;
         };
 
@@ -689,28 +695,9 @@ mod api {
         name: *const libc::c_char,
         value: *const libc::c_char,
     ) -> bool {
-        if name.is_null() || value.is_null() {
-            internal!(level = TRACE, "em_message_headers_set: null pointer");
-            return false;
-        }
-
-        let name = unsafe { CStr::from_ptr(name) };
-        let value = unsafe { CStr::from_ptr(value) };
-
-        let Some(hname) = header_name_from_cstr(name) else {
-            internal!(
-                level = TRACE,
-                "em_message_headers_set: invalid header name {:?}",
-                name
-            );
-            return false;
-        };
-        let Some(hval) = HeaderValue::try_from(value).ok() else {
-            internal!(
-                level = TRACE,
-                "em_message_headers_set: invalid header value {:?}",
-                value
-            );
+        let Some((hname, hval)) =
+            (unsafe { parse_header_pair(name, value, "em_message_headers_set") })
+        else {
             return false;
         };
 
@@ -729,28 +716,9 @@ mod api {
         name: *const libc::c_char,
         value: *const libc::c_char,
     ) -> bool {
-        if name.is_null() || value.is_null() {
-            internal!(level = TRACE, "em_message_headers_append: null pointer");
-            return false;
-        }
-
-        let name = unsafe { CStr::from_ptr(name) };
-        let value = unsafe { CStr::from_ptr(value) };
-
-        let Some(hname) = header_name_from_cstr(name) else {
-            internal!(
-                level = TRACE,
-                "em_message_headers_append: invalid header name {:?}",
-                name
-            );
-            return false;
-        };
-        let Some(hval) = HeaderValue::try_from(value).ok() else {
-            internal!(
-                level = TRACE,
-                "em_message_headers_append: invalid header value {:?}",
-                value
-            );
+        let Some((hname, hval)) =
+            (unsafe { parse_header_pair(name, value, "em_message_headers_append") })
+        else {
             return false;
         };
 
@@ -769,31 +737,9 @@ mod api {
         name: *const libc::c_char,
         value: *const libc::c_char,
     ) -> bool {
-        if name.is_null() || value.is_null() {
-            internal!(
-                level = TRACE,
-                "em_message_headers_set_if_absent: null pointer"
-            );
-            return false;
-        }
-
-        let name = unsafe { CStr::from_ptr(name) };
-        let value = unsafe { CStr::from_ptr(value) };
-
-        let Some(hname) = header_name_from_cstr(name) else {
-            internal!(
-                level = TRACE,
-                "em_message_headers_set_if_absent: invalid header name {:?}",
-                name
-            );
-            return false;
-        };
-        let Some(hval) = HeaderValue::try_from(value).ok() else {
-            internal!(
-                level = TRACE,
-                "em_message_headers_set_if_absent: invalid header value {:?}",
-                value
-            );
+        let Some((hname, hval)) =
+            (unsafe { parse_header_pair(name, value, "em_message_headers_set_if_absent") })
+        else {
             return false;
         };
 
@@ -811,12 +757,7 @@ mod api {
         validate_context: &mut Context,
         name: *const libc::c_char,
     ) -> u32 {
-        if name.is_null() {
-            return 0;
-        }
-
-        let name = unsafe { CStr::from_ptr(name) };
-        let Some(hname) = header_name_from_cstr(name) else {
+        let Some(hname) = cstr_from_ptr(name).and_then(header_name_from_cstr) else {
             return 0;
         };
 
@@ -875,11 +816,8 @@ mod api {
         validate_context: &mut Context,
         value: *const libc::c_char,
     ) -> bool {
-        if value.is_null() {
-            return false;
-        }
-        let value = unsafe { CStr::from_ptr(value) };
-        let Some(hval) = HeaderValue::try_from(value).ok() else {
+        let Some(hval) = cstr_from_ptr(value).and_then(|cstr| HeaderValue::try_from(cstr).ok())
+        else {
             return false;
         };
         let Ok(hname) = HeaderName::new("Content-Type") else {
@@ -900,11 +838,8 @@ mod api {
         validate_context: &mut Context,
         value: *const libc::c_char,
     ) -> bool {
-        if value.is_null() {
-            return false;
-        }
-        let value = unsafe { CStr::from_ptr(value) };
-        let Some(hval) = HeaderValue::try_from(value).ok() else {
+        let Some(hval) = cstr_from_ptr(value).and_then(|cstr| HeaderValue::try_from(cstr).ok())
+        else {
             return false;
         };
         let Ok(hname) = HeaderName::new("Content-Transfer-Encoding") else {
@@ -1005,22 +940,14 @@ mod api {
         text: *const libc::c_char,
         charset: *const libc::c_char,
     ) -> bool {
-        if text.is_null() {
-            return false;
-        }
-        let text = unsafe { CStr::from_ptr(text) };
-        let charset = if charset.is_null() {
-            None
-        } else {
-            Some(unsafe { CStr::from_ptr(charset) })
-        };
-        let charset = Charset::from(charset);
+        let charset = Charset::from(cstr_from_ptr(charset));
 
-        text.to_str().ok().is_some_and(|txt| {
+        with_cstr(text, |txt| {
             mutate_body(validate_context, "set-bytes", |body| {
                 body.set_text(txt, &charset, BodyOpts::default())
             })
         })
+        .unwrap_or(false)
     }
 
     /// # Safety
@@ -1032,22 +959,14 @@ mod api {
         text: *const libc::c_char,
         charset: *const libc::c_char,
     ) -> bool {
-        if text.is_null() {
-            return false;
-        }
-        let text = unsafe { CStr::from_ptr(text) };
-        let charset = if charset.is_null() {
-            None
-        } else {
-            Some(unsafe { CStr::from_ptr(charset) })
-        };
-        let charset = Charset::from(charset);
+        let charset = Charset::from(cstr_from_ptr(charset));
 
-        text.to_str().ok().is_some_and(|txt| {
+        with_cstr(text, |txt| {
             mutate_body(validate_context, "append-bytes", |body| {
                 body.append_text(txt, &charset, BodyOpts::default())
             })
         })
+        .unwrap_or(false)
     }
 
     /// # Safety
@@ -1059,22 +978,14 @@ mod api {
         html: *const libc::c_char,
         charset: *const libc::c_char,
     ) -> bool {
-        if html.is_null() {
-            return false;
-        }
-        let html = unsafe { CStr::from_ptr(html) };
-        let charset = if charset.is_null() {
-            None
-        } else {
-            Some(unsafe { CStr::from_ptr(charset) })
-        };
-        let charset = Charset::from(charset);
+        let charset = Charset::from(cstr_from_ptr(charset));
 
-        html.to_str().ok().is_some_and(|txt| {
+        with_cstr(html, |txt| {
             mutate_body(validate_context, "set-bytes", |body| {
                 body.set_html(txt, &charset, BodyOpts::default())
             })
         })
+        .unwrap_or(false)
     }
 
     /// # Safety
@@ -1086,22 +997,14 @@ mod api {
         html: *const libc::c_char,
         charset: *const libc::c_char,
     ) -> bool {
-        if html.is_null() {
-            return false;
-        }
-        let html = unsafe { CStr::from_ptr(html) };
-        let charset = if charset.is_null() {
-            None
-        } else {
-            Some(unsafe { CStr::from_ptr(charset) })
-        };
-        let charset = Charset::from(charset);
+        let charset = Charset::from(cstr_from_ptr(charset));
 
-        html.to_str().ok().is_some_and(|txt| {
+        with_cstr(html, |txt| {
             mutate_body(validate_context, "append-bytes", |body| {
                 body.append_html(txt, &charset, BodyOpts::default())
             })
         })
+        .unwrap_or(false)
     }
 
     /// # Safety
@@ -1117,23 +1020,17 @@ mod api {
         if text.is_null() || html.is_null() {
             return false;
         }
-        let text = unsafe { CStr::from_ptr(text) };
-        let html = unsafe { CStr::from_ptr(html) };
-        let charset = if charset.is_null() {
-            None
-        } else {
-            Some(unsafe { CStr::from_ptr(charset) })
-        };
-        let charset = Charset::from(charset);
+        let charset = Charset::from(cstr_from_ptr(charset));
 
-        match (text.to_str(), html.to_str()) {
-            (Ok(text_str), Ok(html_str)) => {
+        with_cstr(text, |text_str| {
+            with_cstr(html, |html_str| {
                 mutate_body(validate_context, "set-alternative", |body| {
                     body.set_alternative(text_str, html_str, &charset, BodyOpts::default())
                 })
-            }
-            _ => false,
-        }
+            })
+        })
+        .flatten()
+        .unwrap_or(false)
     }
 
     /// # Safety

@@ -12,7 +12,7 @@ fn main() {
     println!("cargo:rerun-if-changed=python/simple.py");
     println!("cargo:rerun-if-changed=python/spam_filter.py");
     // Track canonical WIT file in empath-wasm (will be synced during build)
-    println!("cargo:rerun-if-changed=../empath-wasm/wit/empath.wit");
+    println!("cargo:rerun-if-changed=../empath-ffi/wit/empath.wit");
 
     // Pass the build profile to xtask
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| String::from("debug"));

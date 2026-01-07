@@ -1,11 +1,11 @@
 use std::ffi::CString;
 use std::ptr::null;
 use std::rc::Rc;
-use std::str::Utf8Error;
 use std::sync::Arc;
 
 /// Sanitize bytes by filtering out null bytes (\0).
 /// This prevents `CString` creation from panicking on malicious FFI module input.
+#[inline]
 fn sanitize_null_bytes(bytes: &[u8]) -> Vec<u8> {
     bytes.iter().copied().filter(|&b| b != 0).collect()
 }
@@ -48,59 +48,54 @@ impl Drop for StringVector {
     }
 }
 
-impl TryFrom<&[u8]> for String {
-    type Error = Utf8Error;
+impl From<&[u8]> for String {
+    fn from(value: &[u8]) -> Self {
+        let sanitized = sanitize_null_bytes(value);
+        let len = sanitized.len();
+        // SAFETY: We just sanitized the input to remove null bytes
+        let cstring = unsafe { CString::from_vec_unchecked(sanitized) };
+        let data = cstring.into_raw().cast::<i8>();
 
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Self::from(std::str::from_utf8(value)?))
+        Self { len, data }
+    }
+}
+
+impl From<Vec<u8>> for String {
+    fn from(value: Vec<u8>) -> Self {
+        Self::from(value.as_slice())
     }
 }
 
 impl From<&str> for String {
     fn from(value: &str) -> Self {
         // SAFETY: Sanitize null bytes to prevent panics from malicious FFI module input.
-        let sanitized = sanitize_null_bytes(value.as_bytes());
-        let len = sanitized.len();
-        let id = CString::new(sanitized).unwrap_or_default();
-        let data = id.into_raw().cast::<i8>();
-
-        Self { len, data }
+        Self::from(value.as_bytes())
     }
 }
 
 impl From<&Arc<str>> for String {
     fn from(value: &Arc<str>) -> Self {
         // SAFETY: Sanitize null bytes to prevent panics from malicious FFI module input.
-        let sanitized = sanitize_null_bytes(value.as_bytes());
-        let len = sanitized.len();
-        let id = CString::new(sanitized).unwrap_or_default();
-        let data = id.into_raw().cast::<i8>();
-
-        Self { len, data }
+        Self::from(value.as_bytes())
     }
 }
 
 impl From<&Rc<str>> for String {
     fn from(value: &Rc<str>) -> Self {
         // SAFETY: Sanitize null bytes to prevent panics from malicious FFI module input.
-        let sanitized = sanitize_null_bytes(value.as_bytes());
-        let len = sanitized.len();
-        let id = CString::new(sanitized).unwrap_or_default();
-        let data = id.into_raw().cast::<i8>();
-
-        Self { len, data }
+        Self::from(value.as_bytes())
     }
 }
 
 impl From<&std::string::String> for String {
     fn from(value: &std::string::String) -> Self {
-        Self::from(value.as_str())
+        Self::from(value.as_bytes())
     }
 }
 
 impl From<std::string::String> for String {
     fn from(value: std::string::String) -> Self {
-        Self::from(value.as_str())
+        Self::from(value.as_bytes())
     }
 }
 

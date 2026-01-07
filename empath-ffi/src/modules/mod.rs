@@ -520,8 +520,7 @@ impl ModuleRegistry {
                     working_context,
                     &module_context,
                     timeout_limit,
-                )
-                .await;
+                );
                 (outcome, Some(updated_context))
             };
 
@@ -547,7 +546,6 @@ impl ModuleRegistry {
             &module_context,
             timeout_limit,
         )
-        .await
     }
 }
 
@@ -559,7 +557,7 @@ struct ModuleDispatchOutcome {
     error_kind: Option<DispatchErrorKind>,
 }
 
-async fn emit_in_context(
+fn emit_in_context(
     module: &dyn traits::Module,
     event: Event,
     context: &mut Context,
@@ -567,7 +565,7 @@ async fn emit_in_context(
 ) -> i32 {
     let previous = context.module_context.take();
     context.module_context = Some(module_context.clone());
-    let code = module.emit(event, context).await;
+    let code = module.emit(event, context);
     context.module_context = previous;
     code
 }
@@ -609,7 +607,7 @@ async fn emit_isolated(
     let mut join_handle = task::spawn_blocking(move || {
         handle.block_on(async move {
             let start = Instant::now();
-            let code = emit_in_context(module.as_ref(), event, &mut context, &module_context).await;
+            let code = emit_in_context(module.as_ref(), event, &mut context, &module_context);
             (code, start.elapsed(), context)
         })
     });
@@ -683,7 +681,7 @@ async fn emit_isolated(
     }
 }
 
-async fn emit_inline(
+fn emit_inline(
     module: &dyn traits::Module,
     event: Event,
     mut context: Context,
@@ -691,7 +689,7 @@ async fn emit_inline(
     timeout_limit: Option<Duration>,
 ) -> (ModuleDispatchOutcome, Context) {
     let start = Instant::now();
-    let code = emit_in_context(module, event, &mut context, module_context).await;
+    let code = emit_in_context(module, event, &mut context, module_context);
     let duration = start.elapsed();
     let error_kind = timeout_limit.and_then(|limit| {
         timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
@@ -708,7 +706,7 @@ async fn emit_inline(
     )
 }
 
-async fn emit_inline_in_place(
+fn emit_inline_in_place(
     module: &dyn traits::Module,
     event: Event,
     context: &mut Context,
@@ -716,7 +714,7 @@ async fn emit_inline_in_place(
     timeout_limit: Option<Duration>,
 ) -> ModuleDispatchOutcome {
     let start = Instant::now();
-    let code = emit_in_context(module, event, context, module_context).await;
+    let code = emit_in_context(module, event, context, module_context);
     let duration = start.elapsed();
     let error_kind = timeout_limit.and_then(|limit| {
         timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
@@ -1090,9 +1088,9 @@ pub mod test {
     use empath_common::context::{Context, ModuleContext};
     use serde::{Deserialize, Serialize};
 
-    use super::traits::{ModuleInitContext, ModuleInterface};
+    use super::traits::ModuleInitContext;
     use super::{Error, Event, Test};
-    use crate::modules::traits::{BoxFuture, Module};
+    use crate::modules::traits::Module;
 
     fn emit_test(mute: &RwLock<Test>, event: Event) -> i32 {
         // Use poisoned data if lock is poisoned (test module only exists in debug builds)
@@ -1118,12 +1116,13 @@ pub mod test {
     #[derive(Debug, Default, Serialize, Deserialize)]
     pub struct TestModule(pub RwLock<Test>);
 
-    impl ModuleInterface for TestModule {
+    #[typetag::serde]
+    impl Module for TestModule {
         fn init(&mut self, _context: &ModuleInitContext) -> Result<(), Error> {
             Ok(())
         }
 
-        async fn emit(&self, event: Event, _context: &mut Context) -> i32 {
+        fn emit(&self, event: Event, _context: &mut Context) -> i32 {
             emit_test(&self.0, event)
         }
 
@@ -1133,25 +1132,6 @@ pub mod test {
 
         fn display_name(&self) -> String {
             "Test Module".to_string()
-        }
-    }
-
-    #[typetag::serde]
-    impl Module for TestModule {
-        fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
-            ModuleInterface::init(self, context)
-        }
-
-        fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
-            Box::pin(ModuleInterface::emit(self, event, context))
-        }
-
-        fn module_context(&self) -> ModuleContext {
-            ModuleInterface::module_context(self)
-        }
-
-        fn display_name(&self) -> String {
-            ModuleInterface::display_name(self)
         }
 
         fn as_any(&self) -> &dyn Any {
