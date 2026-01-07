@@ -52,7 +52,6 @@ pub use empath_core::{
     Domain, SpooledMessageId, address, address_parser, domain, email, envelope, message,
     message_api, message_id, mime, spf, status,
 };
-pub use error::ModuleError;
 pub use tracing;
 
 #[derive(Debug, Clone, Copy)]

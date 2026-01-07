@@ -1,20 +1,24 @@
+use std::any::Any;
 use std::borrow::Cow;
 
-use empath_common::context::Context;
+use empath_common::context::{Context, ModuleContext};
 use empath_common::status::Status;
 use empath_tracing::traced;
+use serde::{Deserialize, Serialize};
 
-use super::{Event, validate};
+use super::traits::{ModuleInitContext, ModuleInterface};
+use super::{Error, Event, validate};
+use crate::modules::traits::{BoxFuture, Module};
 
 /// Core validation handlers - stateless functions operating on Context
 ///
 /// All validation logic reads from Context fields, making core module
 /// completely decoupled from Session implementation. The core module
 /// accesses the same data available to all validation modules.
-#[derive(Debug)]
-pub struct CoreValidators;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Core;
 
-impl CoreValidators {
+impl Core {
     /// Create a new core validators instance
     #[must_use]
     pub const fn new() -> Self {
@@ -22,7 +26,7 @@ impl CoreValidators {
     }
 }
 
-impl Default for CoreValidators {
+impl Default for Core {
     fn default() -> Self {
         Self::new()
     }
@@ -86,22 +90,56 @@ const fn validate_auth(_validation_context: &mut Context) -> i32 {
     0
 }
 
-/// Dispatch validation event to core module handlers
-#[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
-pub(super) fn emit(
-    _validators: &CoreValidators,
-    event: Event,
-    validation_context: &mut Context,
-) -> i32 {
-    match event {
-        Event::Validate(validate::Event::Connect) => validate_connect(validation_context),
-        Event::Validate(validate::Event::Ehlo) => validate_ehlo(validation_context),
-        Event::Validate(validate::Event::MailFrom) => validate_mail_from(validation_context),
-        Event::Validate(validate::Event::RcptTo) => validate_rcpt_to(validation_context),
-        Event::Validate(validate::Event::Data) => validate_data(validation_context),
-        Event::Validate(validate::Event::PreSpool) => validate_pre_spool(validation_context),
-        Event::Validate(validate::Event::StartTls) => validate_start_tls(validation_context),
-        Event::Validate(validate::Event::Auth) => validate_auth(validation_context),
-        Event::Event(_) => 0, // Core module doesn't handle connection lifecycle events
+impl ModuleInterface for Core {
+    fn init(&mut self, _context: &ModuleInitContext) -> Result<(), Error> {
+        // Core module is stateless - no initialization required
+        Ok(())
+    }
+
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
+    async fn emit(&self, event: Event, context: &mut Context) -> i32 {
+        match event {
+            Event::Validate(validate::Event::Connect) => validate_connect(context),
+            Event::Validate(validate::Event::Ehlo) => validate_ehlo(context),
+            Event::Validate(validate::Event::MailFrom) => validate_mail_from(context),
+            Event::Validate(validate::Event::RcptTo) => validate_rcpt_to(context),
+            Event::Validate(validate::Event::Data) => validate_data(context),
+            Event::Validate(validate::Event::PreSpool) => validate_pre_spool(context),
+            Event::Validate(validate::Event::StartTls) => validate_start_tls(context),
+            Event::Validate(validate::Event::Auth) => validate_auth(context),
+            Event::Event(_) => 0, // Core module doesn't handle connection lifecycle events
+        }
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleContext::new("core", "core")
+    }
+
+    fn display_name(&self) -> String {
+        "Core Module".to_string()
+    }
+}
+
+/// Blanket implementation: any [`Module`] can be used as a [`DynModule`].
+#[typetag::serde]
+impl Module for Core {
+    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
+        ModuleInterface::init(self, context)
+    }
+
+    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
+        Box::pin(ModuleInterface::emit(self, event, context))
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleInterface::module_context(self)
+    }
+
+    fn display_name(&self) -> String {
+        ModuleInterface::display_name(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

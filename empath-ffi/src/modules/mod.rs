@@ -1,16 +1,15 @@
 use std::borrow::Cow;
-use std::fmt::{self, Display};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use empath_common::context::{Context, ModuleContext};
+use empath_common::internal;
 use empath_common::status::Status;
-use empath_common::{ModuleError, internal};
 use empath_metrics::is_enabled;
 #[cfg(feature = "metrics")]
 use empath_metrics::metrics;
 use empath_tracing::traced;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::task;
 use tokio::time::sleep;
@@ -44,7 +43,7 @@ pub fn handle_module_error(
     module_type: &str,
     module_path: &str,
     is_validation: bool,
-    error: &ModuleError,
+    error: &error::ModuleError,
     callback_name: &str,
     context: &Context,
 ) -> i32 {
@@ -129,19 +128,32 @@ pub mod library;
 pub mod metrics;
 #[cfg(feature = "python")]
 pub mod python;
+pub mod traits;
 pub mod validate;
+
+pub(crate) mod error;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-#[derive(Debug)]
 pub struct ModuleRegistry {
-    modules: Arc<[Arc<Module>]>,
+    modules: Arc<[Arc<dyn traits::Module>]>,
     outbound_bindings: Arc<RwLock<Vec<String>>>,
     dispatch_config: ModuleDispatchConfig,
 }
 
+impl std::fmt::Debug for ModuleRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModuleRegistry")
+            .field("modules", &format!("[{} modules]", self.modules.len()))
+            .field("outbound_bindings", &self.outbound_bindings)
+            .field("dispatch_config", &self.dispatch_config)
+            .finish()
+    }
+}
+
 pub struct ModuleRegistryBuilder {
-    modules: Vec<Module>,
+    modules: Vec<Box<dyn traits::Module>>,
     outbound_bindings: Vec<String>,
     dispatch_config: ModuleDispatchConfig,
 }
@@ -162,9 +174,20 @@ impl ModuleRegistryBuilder {
         }
     }
 
+    /// Add modules to the registry.
+    ///
+    /// Modules are dispatched in the order they are added, after the built-in
+    /// core and metrics modules.
     #[must_use]
-    pub fn with_modules(mut self, modules: Vec<Module>) -> Self {
+    pub fn with_modules(mut self, modules: Vec<Box<dyn traits::Module>>) -> Self {
         self.modules = modules;
+        self
+    }
+
+    /// Add a single module to the registry.
+    #[must_use]
+    pub fn add_module(mut self, module: Box<dyn traits::Module>) -> Self {
+        self.modules.push(module);
         self
     }
 
@@ -188,36 +211,35 @@ impl ModuleRegistryBuilder {
     pub fn build(mut self) -> Result<ModuleRegistry, Error> {
         internal!(level = INFO, "Initialising modules ...");
 
+        let init_context = traits::ModuleInitContext {
+            outbound_bindings: self.outbound_bindings.clone(),
+        };
+
         // Add core module first so it runs before other validation modules
-        let mut all_modules = vec![
-            Module::Core {
-                validators: Arc::new(core::CoreValidators::new()),
-            },
+        let mut all_modules: Vec<Box<dyn traits::Module>> = vec![
+            Box::new(core::Core::new()),
             #[cfg(debug_assertions)]
-            Module::TestModule(RwLock::default()),
+            Box::new(test::TestModule::default()),
         ];
 
         // Add metrics module if enabled
         #[cfg(feature = "metrics")]
         if is_enabled() {
-            all_modules.push(Module::Metrics);
+            all_modules.push(Box::new(metrics::Metrics));
         }
 
         all_modules.append(&mut self.modules);
 
-        let init_context = ModuleInitContext {
-            #[cfg(feature = "wasm")]
-            outbound_bindings: self.outbound_bindings.clone(),
-        };
-
-        all_modules
-            .iter_mut()
-            .inspect(|module| internal!("Init: {module}"))
-            .try_for_each(|module| module.init_with(&init_context))?;
+        // Initialize all modules
+        for module in &mut all_modules {
+            internal!("Init: {}", module.display_name());
+            module.init(&init_context)?;
+        }
 
         internal!(level = INFO, "Modules initialised");
 
-        let modules = all_modules.into_iter().map(Arc::new).collect::<Vec<_>>();
+        let modules: Vec<Arc<dyn traits::Module>> =
+            all_modules.into_iter().map(Arc::from).collect();
 
         Ok(ModuleRegistry {
             modules: modules.into(),
@@ -325,7 +347,7 @@ impl ModuleRegistry {
     }
 
     #[must_use]
-    pub fn modules(&self) -> &[Arc<Module>] {
+    pub fn modules(&self) -> &[Arc<dyn traits::Module>] {
         &self.modules
     }
 
@@ -370,12 +392,10 @@ impl ModuleRegistry {
         let callback_name = event.callback_name();
         let mut event_error: Option<DispatchResult> = None;
 
-        for module in self
-            .modules
-            .iter()
-            .inspect(|m| internal!(level = DEBUG, "{}", m.as_ref()))
-        {
-            let module_context = module.as_ref().module_context();
+        for module in self.modules.iter() {
+            let module_context = module.module_context();
+            internal!(level = DEBUG, "{}", module.display_name());
+
             let outcome = self
                 .emit_with_policy(
                     Arc::clone(module),
@@ -415,7 +435,7 @@ impl ModuleRegistry {
                     return rejection_from_code(code, validate_context);
                 }
                 Event::Event(_) => {
-                    let module_name = format!("{}", module.as_ref());
+                    let module_name = module.display_name();
                     let kind = outcome
                         .error_kind
                         .clone()
@@ -469,7 +489,7 @@ impl ModuleRegistry {
 
     async fn emit_with_policy(
         &self,
-        module: Arc<Module>,
+        module: Arc<dyn traits::Module>,
         event: Event,
         validate_context: &mut Context,
         module_context: ModuleContext,
@@ -500,7 +520,8 @@ impl ModuleRegistry {
                     working_context,
                     &module_context,
                     timeout_limit,
-                );
+                )
+                .await;
                 (outcome, Some(updated_context))
             };
 
@@ -526,6 +547,7 @@ impl ModuleRegistry {
             &module_context,
             timeout_limit,
         )
+        .await
     }
 }
 
@@ -537,15 +559,15 @@ struct ModuleDispatchOutcome {
     error_kind: Option<DispatchErrorKind>,
 }
 
-fn emit_in_context(
-    module: &Module,
+async fn emit_in_context(
+    module: &dyn traits::Module,
     event: Event,
     context: &mut Context,
     module_context: &ModuleContext,
 ) -> i32 {
     let previous = context.module_context.take();
     context.module_context = Some(module_context.clone());
-    let code = module.emit(event, context);
+    let code = module.emit(event, context).await;
     context.module_context = previous;
     code
 }
@@ -572,22 +594,29 @@ fn apply_context_update(
 }
 
 async fn emit_isolated(
-    module: Arc<Module>,
+    module: Arc<dyn traits::Module>,
     event: Event,
     mut context: Context,
     module_context: ModuleContext,
     timeout_limit: Option<Duration>,
 ) -> (ModuleDispatchOutcome, Option<Context>) {
     let started_at = Instant::now();
-    let mut handle = task::spawn_blocking(move || {
-        let start = Instant::now();
-        let code = emit_in_context(module.as_ref(), event, &mut context, &module_context);
-        (code, start.elapsed(), context)
+
+    // Use spawn_blocking to isolate potentially blocking modules (Python, WASM, C).
+    // The async emit is wrapped with block_on so blocking operations don't starve
+    // the main executor, allowing timeouts to fire correctly.
+    let handle = tokio::runtime::Handle::current();
+    let mut join_handle = task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let start = Instant::now();
+            let code = emit_in_context(module.as_ref(), event, &mut context, &module_context).await;
+            (code, start.elapsed(), context)
+        })
     });
 
     if let Some(timeout_limit) = timeout_limit {
         let outcome = tokio::select! {
-            result = &mut handle => match result {
+            result = &mut join_handle => match result {
                 Ok((code, duration, updated_context)) => {
                     return (
                         ModuleDispatchOutcome {
@@ -598,14 +627,19 @@ async fn emit_isolated(
                         Some(updated_context),
                     );
                 }
-                Err(_) => ModuleDispatchOutcome {
+                Err(e) if e.is_panic() => ModuleDispatchOutcome {
                     code: MODULE_FAILURE_CODE,
                     duration: started_at.elapsed(),
                     error_kind: Some(DispatchErrorKind::Panicked),
                 },
+                Err(_) => ModuleDispatchOutcome {
+                    code: MODULE_FAILURE_CODE,
+                    duration: started_at.elapsed(),
+                    error_kind: Some(DispatchErrorKind::ModuleFailed { code: MODULE_FAILURE_CODE }),
+                },
             },
             () = sleep(timeout_limit) => {
-                handle.abort();
+                join_handle.abort();
                 ModuleDispatchOutcome {
                     code: MODULE_FAILURE_CODE,
                     duration: timeout_limit,
@@ -619,7 +653,7 @@ async fn emit_isolated(
         return (outcome, None);
     }
 
-    match handle.await {
+    match join_handle.await {
         Ok((code, duration, updated_context)) => (
             ModuleDispatchOutcome {
                 code,
@@ -628,7 +662,7 @@ async fn emit_isolated(
             },
             Some(updated_context),
         ),
-        Err(_) => (
+        Err(e) if e.is_panic() => (
             ModuleDispatchOutcome {
                 code: MODULE_FAILURE_CODE,
                 duration: started_at.elapsed(),
@@ -636,18 +670,28 @@ async fn emit_isolated(
             },
             None,
         ),
+        Err(_) => (
+            ModuleDispatchOutcome {
+                code: MODULE_FAILURE_CODE,
+                duration: started_at.elapsed(),
+                error_kind: Some(DispatchErrorKind::ModuleFailed {
+                    code: MODULE_FAILURE_CODE,
+                }),
+            },
+            None,
+        ),
     }
 }
 
-fn emit_inline(
-    module: &Module,
+async fn emit_inline(
+    module: &dyn traits::Module,
     event: Event,
     mut context: Context,
     module_context: &ModuleContext,
     timeout_limit: Option<Duration>,
 ) -> (ModuleDispatchOutcome, Context) {
     let start = Instant::now();
-    let code = emit_in_context(module, event, &mut context, module_context);
+    let code = emit_in_context(module, event, &mut context, module_context).await;
     let duration = start.elapsed();
     let error_kind = timeout_limit.and_then(|limit| {
         timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
@@ -664,15 +708,15 @@ fn emit_inline(
     )
 }
 
-fn emit_inline_in_place(
-    module: &Module,
+async fn emit_inline_in_place(
+    module: &dyn traits::Module,
     event: Event,
     context: &mut Context,
     module_context: &ModuleContext,
     timeout_limit: Option<Duration>,
 ) -> ModuleDispatchOutcome {
     let start = Instant::now();
-    let code = emit_in_context(module, event, context, module_context);
+    let code = emit_in_context(module, event, context, module_context).await;
     let duration = start.elapsed();
     let error_kind = timeout_limit.and_then(|limit| {
         timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
@@ -741,8 +785,12 @@ fn record_dispatch_error_metrics(
 ) {
 }
 
-fn log_dispatch_failure(event: Event, module: &Module, outcome: &ModuleDispatchOutcome) {
-    let module_name = format!("{module}");
+fn log_dispatch_failure(
+    event: Event,
+    module: &dyn traits::Module,
+    outcome: &ModuleDispatchOutcome,
+) {
+    let module_name = module.display_name();
     let callback_name = event.callback_name();
     let is_validation = matches!(event, Event::Validate(_));
 
@@ -825,7 +873,7 @@ type Init = unsafe extern "C" fn(StringVector) -> i32;
 type DeclareModule = unsafe extern "C" fn() -> Mod;
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
 pub enum Ev {
     ConnectionOpened,
     ConnectionClosed,
@@ -936,7 +984,7 @@ pub enum Error {
     Validation(String),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Test {
     pub events_called: Vec<Ev>,
     pub validators_called: Vec<validate::Event>,
@@ -944,28 +992,35 @@ pub struct Test {
     pub return_code: i32,
 }
 
+/// Configuration for module instantiation from config files.
+///
+/// This enum represents the different module types that can be deserialized
+/// from configuration. It's converted to `Box<dyn Module>` during registry build.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
-pub enum Module {
+pub enum ModuleConfig {
+    /// Shared library module (C FFI)
     SharedLibrary(library::Shared),
-    TestModule(RwLock<Test>),
-    /// Core validation module with session-specific configuration.
-    /// Not deserialized - created programmatically by each session.
-    #[serde(skip)]
-    Core {
-        validators: Arc<core::CoreValidators>,
-    },
-    /// OpenTelemetry metrics module for observability.
-    /// Not deserialized - created programmatically when metrics are enabled.
-    #[cfg(feature = "metrics")]
-    #[serde(skip)]
-    Metrics,
     /// Python module loaded from a .py file
     #[cfg(feature = "python")]
     Python(python::Python),
     /// WebAssembly module loaded from a .wasm file
     #[cfg(feature = "wasm")]
     Wasm(wasm::Wasm),
+}
+
+impl ModuleConfig {
+    /// Convert the config into a boxed trait object for the registry.
+    #[must_use]
+    pub fn into_module(self) -> Box<dyn traits::Module> {
+        match self {
+            Self::SharedLibrary(shared) => Box::new(shared),
+            #[cfg(feature = "python")]
+            Self::Python(python) => Box::new(python),
+            #[cfg(feature = "wasm")]
+            Self::Wasm(wasm) => Box::new(wasm),
+        }
+    }
 }
 
 /// Error category reported by module dispatch.
@@ -998,71 +1053,6 @@ pub enum DispatchResult {
     },
 }
 
-impl Display for Module {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SharedLibrary(lib) => f.write_fmt(format_args!("{lib}")),
-            Self::TestModule { .. } => f.write_str("Test Module"),
-            Self::Core { .. } => f.write_str("Core Module"),
-            #[cfg(feature = "metrics")]
-            Self::Metrics => f.write_str("Metrics Module"),
-            #[cfg(feature = "python")]
-            Self::Python(py) => f.write_fmt(format_args!("Python Module: {}", py.path().display())),
-            #[cfg(feature = "wasm")]
-            Self::Wasm(wasm) => f.write_fmt(format_args!("WASM Module: {}", wasm.path().display())),
-        }
-    }
-}
-
-impl Module {
-    fn module_context(&self) -> ModuleContext {
-        match self {
-            Self::SharedLibrary(lib) => ModuleContext::new("shared_library", lib.name.clone()),
-            Self::TestModule { .. } => ModuleContext::new("test", "test"),
-            Self::Core { .. } => ModuleContext::new("core", "core"),
-            #[cfg(feature = "metrics")]
-            Self::Metrics => ModuleContext::new("metrics", "metrics"),
-            #[cfg(feature = "python")]
-            Self::Python(py) => ModuleContext::new("python", py.path().display().to_string()),
-            #[cfg(feature = "wasm")]
-            Self::Wasm(wasm) => ModuleContext::new("wasm", wasm.path().display().to_string()),
-        }
-    }
-
-    #[traced(instrument(level = tracing::Level::TRACE, ret, skip(self, validate_context)), timing(precision = "us"))]
-    fn emit(&self, event: Event, validate_context: &mut Context) -> i32 {
-        match self {
-            Self::SharedLibrary(lib) => lib.emit(event, validate_context),
-            Self::TestModule { .. } => test::emit(self, event, validate_context),
-            Self::Core { validators } => core::emit(validators, event, validate_context),
-            #[cfg(feature = "metrics")]
-            Self::Metrics => {
-                metrics::emit(event, validate_context);
-                0
-            }
-            #[cfg(feature = "python")]
-            Self::Python(py) => py.emit(event, validate_context),
-            #[cfg(feature = "wasm")]
-            Self::Wasm(wasm) => wasm.emit(event, validate_context),
-        }
-    }
-
-    fn init_with(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
-        #[cfg(not(feature = "wasm"))]
-        let _ = context;
-        match self {
-            Self::SharedLibrary(lib) => lib.init(),
-            Self::TestModule { .. } | Self::Core { .. } => Ok(()),
-            #[cfg(feature = "metrics")]
-            Self::Metrics => Ok(()),
-            #[cfg(feature = "python")]
-            Self::Python(py) => py.init(),
-            #[cfg(feature = "wasm")]
-            Self::Wasm(wasm) => wasm.init(&context.outbound_bindings),
-        }
-    }
-}
-
 fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
     let status_code = u32::try_from(code).unwrap_or(451);
     let status = Status::from(status_code);
@@ -1092,39 +1082,80 @@ fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
     DispatchResult::Reject { status, message }
 }
 
-struct ModuleInitContext {
-    #[cfg(feature = "wasm")]
-    outbound_bindings: Vec<String>,
-}
-
 pub mod test {
+    use std::any::Any;
+    use std::sync::RwLock;
     use std::time::Duration;
 
-    use empath_common::context::Context;
+    use empath_common::context::{Context, ModuleContext};
+    use serde::{Deserialize, Serialize};
 
-    use super::{Event, Module};
+    use super::traits::{ModuleInitContext, ModuleInterface};
+    use super::{Error, Event, Test};
+    use crate::modules::traits::{BoxFuture, Module};
 
-    pub(super) fn emit(module: &Module, event: Event, _validate_context: &mut Context) -> i32 {
-        if let Module::TestModule(mute) = module {
-            // Use poisoned data if lock is poisoned (test module only exists in debug builds)
-            let (sleep_millis, return_code) = {
-                let mut inner = mute
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                match event {
-                    Event::Validate(ev) => inner.validators_called.push(ev),
-                    Event::Event(ev) => inner.events_called.push(ev),
-                }
-                (inner.sleep_millis, inner.return_code)
-            };
-
-            if let Some(sleep_millis) = sleep_millis {
-                std::thread::sleep(Duration::from_millis(sleep_millis));
+    fn emit_test(mute: &RwLock<Test>, event: Event) -> i32 {
+        // Use poisoned data if lock is poisoned (test module only exists in debug builds)
+        let (sleep_millis, return_code) = {
+            let mut inner = mute
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match event {
+                Event::Validate(ev) => inner.validators_called.push(ev),
+                Event::Event(ev) => inner.events_called.push(ev),
             }
+            (inner.sleep_millis, inner.return_code)
+        };
 
-            return_code
-        } else {
-            0
+        if let Some(sleep_millis) = sleep_millis {
+            std::thread::sleep(Duration::from_millis(sleep_millis));
+        }
+
+        return_code
+    }
+
+    /// Test module wrapper for trait implementation.
+    #[derive(Debug, Default, Serialize, Deserialize)]
+    pub struct TestModule(pub RwLock<Test>);
+
+    impl ModuleInterface for TestModule {
+        fn init(&mut self, _context: &ModuleInitContext) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn emit(&self, event: Event, _context: &mut Context) -> i32 {
+            emit_test(&self.0, event)
+        }
+
+        fn module_context(&self) -> ModuleContext {
+            ModuleContext::new("test", "test")
+        }
+
+        fn display_name(&self) -> String {
+            "Test Module".to_string()
+        }
+    }
+
+    #[typetag::serde]
+    impl Module for TestModule {
+        fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
+            ModuleInterface::init(self, context)
+        }
+
+        fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
+            Box::pin(ModuleInterface::emit(self, event, context))
+        }
+
+        fn module_context(&self) -> ModuleContext {
+            ModuleInterface::module_context(self)
+        }
+
+        fn display_name(&self) -> String {
+            ModuleInterface::display_name(self)
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
         }
     }
 }

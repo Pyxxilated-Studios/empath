@@ -6,7 +6,6 @@ docker/
 .config/
 .vscode/
 .cargo/
-docs/
 scripts/
 LICENSE
 justfile
@@ -16,7 +15,6 @@ rustfmt.toml
 rust-toolchain.toml
 deny.toml
 *.so
-*.md
 *.json
 *.crt
 *.key

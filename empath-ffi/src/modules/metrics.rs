@@ -7,10 +7,61 @@
 //! This follows the Observer pattern and maintains proper architectural layering:
 //! Business logic (empath-smtp, empath-delivery) → Events → Metrics (infrastructure)
 
-use empath_common::context::Context;
-use empath_metrics::metrics;
+use std::any::Any;
 
-use super::{Ev, Event};
+use empath_common::context::{Context, ModuleContext};
+use empath_metrics::metrics;
+use serde::{Deserialize, Serialize};
+
+use super::traits::{ModuleInitContext, ModuleInterface};
+use super::{Error, Ev, Event};
+use crate::modules::traits::{BoxFuture, Module};
+
+/// Metrics module struct for trait implementation.
+#[derive(Debug, Default, Clone, Copy, Deserialize, Serialize)]
+pub struct Metrics;
+
+impl ModuleInterface for Metrics {
+    fn init(&mut self, _context: &ModuleInitContext) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn emit(&self, event: Event, context: &mut Context) -> i32 {
+        emit(event, context);
+        0
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleContext::new("metrics", "metrics")
+    }
+
+    fn display_name(&self) -> String {
+        "Metrics Module".to_string()
+    }
+}
+
+#[typetag::serde]
+impl Module for Metrics {
+    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
+        ModuleInterface::init(self, context)
+    }
+
+    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
+        Box::pin(ModuleInterface::emit(self, event, context))
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleInterface::module_context(self)
+    }
+
+    fn display_name(&self) -> String {
+        ModuleInterface::display_name(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 /// Handle metrics events
 ///

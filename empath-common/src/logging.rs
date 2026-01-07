@@ -30,7 +30,7 @@ impl LoggingHandle {
                         SubscriberLevelFilter::from_level(subscriber_level).into(),
                     )
                     .parse_lossy(format!(
-                        "empath={level},empath_common={level},empath_delivery={level},empath_smtp={level}"
+                        "empath={level},empath_common={level},empath_delivery={level},empath_smtp={level},empath_ffi={level}"
                     ));
             })
             .map_err(|e| format!("failed to update log level: {e}"))
@@ -197,7 +197,7 @@ impl LoggingConfigBuilder {
         let filter = EnvFilter::builder()
             .with_default_directive(SubscriberLevelFilter::from_level(subscriber_level).into())
             .parse_lossy(format!(
-                "empath={level},empath_common={level},empath_delivery={level},empath_smtp={level}"
+                "empath={level},empath_common={level},empath_delivery={level},empath_smtp={level},empath_ffi={level}"
             ));
 
         let (filter_layer, handle) = reload::Layer::new(filter);

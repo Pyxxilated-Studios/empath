@@ -370,14 +370,14 @@ impl DefaultSmtpTransactionHandler {
         let for_segment = if recipients.is_empty() {
             String::new()
         } else {
-            format!(" for {}", recipients.join(", "))
+            format!("\n\tfor {}", recipients.join(", "))
         };
 
         let id = Ulid::new();
         let timestamp_str = timestamp.to_rfc2822();
 
         format!(
-            "Received: {from_value} by {server} (Empath) with {proto} id <{id}>{for_segment}; {timestamp_str}\r\n"
+            "Received: {from_value}\n\tby {server} (Empath)\n\twith {proto} id <{id}>{for_segment}; {timestamp_str}\r\n"
         )
     }
 }
@@ -1110,9 +1110,9 @@ mod tests {
         let first_line = std::str::from_utf8(&data[..header_end]).map_err(|err| err.to_string())?;
 
         assert!(first_line.starts_with("Received: from client.example.com"));
-        assert!(first_line.contains(" by mail.example.com (Empath)"));
-        assert!(first_line.contains(" with ESMTPS id <"));
-        assert!(first_line.contains(" for <recipient@example.com>"));
+        assert!(first_line.contains("by mail.example.com (Empath)"));
+        assert!(first_line.contains("with ESMTPS id <"));
+        assert!(first_line.contains("for <recipient@example.com>"));
         Ok(())
     }
 

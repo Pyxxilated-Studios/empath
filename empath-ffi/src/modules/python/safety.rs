@@ -5,11 +5,10 @@
 
 use std::time::Duration;
 
-use empath_common::ModuleError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::error::{Result, from_pyerr};
+use crate::error::{ModuleError, Result};
 
 /// Execute a Python callable with timeout
 ///
@@ -48,7 +47,7 @@ pub fn call_with_timeout<'py>(
 ) -> Result<Bound<'py, PyAny>> {
     // Execute callable without timeout enforcement
     // The timeout parameter is kept for future implementation
-    callable.call1(args).map_err(|e| from_pyerr(&e))
+    Ok(callable.call1(args)?)
 }
 
 /// Execute a Python callback safely with exception handling
@@ -72,13 +71,12 @@ pub fn call_callback<'py>(
     timeout: Duration,
 ) -> Result<Option<Bound<'py, PyAny>>> {
     // Check if callback exists
-    if !module.contains(callback_name).map_err(|e| from_pyerr(&e))? {
+    if !module.contains(callback_name)? {
         return Ok(None);
     }
 
     let callable = module
-        .get_item(callback_name)
-        .map_err(|e| from_pyerr(&e))?
+        .get_item(callback_name)?
         .ok_or_else(|| ModuleError::CallbackNotFound(callback_name.to_string()))?;
 
     // Verify it's callable
@@ -106,31 +104,29 @@ mod tests {
     fn test_call_callback_success() -> TestResult {
         Python::initialize();
 
-        let result: std::result::Result<(), String> =
-            Python::attach(|py| -> std::result::Result<(), String> {
+        let result: std::result::Result<(), ModuleError> =
+            Python::attach(|py| -> std::result::Result<(), ModuleError> {
                 let module = PyDict::new(py);
                 py.run(
                     std::ffi::CString::new("def test_func(x): return x * 2")
-                        .map_err(|err| err.to_string())?
+                        .map_err(|_| ModuleError::InitFailed("Invalid source".to_string()))?
                         .as_c_str(),
                     Some(&module),
                     None,
-                )
-                .map_err(|err| err.to_string())?;
+                )?;
 
-                let args = PyTuple::new(py, [5]).map_err(|err| err.to_string())?;
-                let result = call_callback(py, &module, "test_func", &args, Duration::from_secs(5))
-                    .map_err(|err| err.to_string())?;
+                let args = PyTuple::new(py, [5])?;
+                let result =
+                    call_callback(py, &module, "test_func", &args, Duration::from_secs(5))?;
 
                 assert!(result.is_some());
                 let value: i32 = result
-                    .ok_or_else(|| "missing callback result".to_string())?
-                    .extract()
-                    .map_err(|err: pyo3::PyErr| err.to_string())?;
+                    .ok_or_else(|| ModuleError::InitFailed("missing callback result".to_string()))?
+                    .extract()?;
                 assert_eq!(value, 10);
                 Ok(())
             });
-        result?;
+        result.map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -139,19 +135,18 @@ mod tests {
     fn test_call_callback_not_found() -> TestResult {
         Python::initialize();
 
-        let result: std::result::Result<(), String> =
-            Python::attach(|py| -> std::result::Result<(), String> {
+        let result: std::result::Result<(), ModuleError> =
+            Python::attach(|py| -> std::result::Result<(), ModuleError> {
                 let module = PyDict::new(py);
-                let args = PyTuple::new(py, &[] as &[i32]).map_err(|err| err.to_string())?;
+                let args = PyTuple::new(py, &[] as &[i32])?;
 
                 let result =
-                    call_callback(py, &module, "nonexistent", &args, Duration::from_secs(5))
-                        .map_err(|err| err.to_string())?;
+                    call_callback(py, &module, "nonexistent", &args, Duration::from_secs(5))?;
 
                 assert!(result.is_none());
                 Ok(())
             });
-        result?;
+        result.map_err(|e| e.to_string())?;
         Ok(())
     }
 

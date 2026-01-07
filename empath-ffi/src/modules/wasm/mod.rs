@@ -1,25 +1,32 @@
-//! WebAssembly module integration
+//! WebAssembly module support
 //!
 //! This module provides integration between WASM modules and the Empath module system.
 
+use std::any::Any;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use empath_common::context::Context;
+use empath_common::context::{Context, ModuleContext};
 use empath_common::internal;
-#[cfg(feature = "metrics")]
-use empath_metrics::metrics;
-use empath_wasm::WasmModule;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use super::traits::{ModuleInitContext, ModuleInterface};
 use super::{Error, Event, handle_module_error};
+use crate::modules::traits::{BoxFuture, Module};
+
+pub mod bindings;
+pub mod host;
+pub mod loader;
+
+pub use host::{SerializableContext, WasmStore};
+pub use loader::{DeterministicWasiConfig, WasmModule};
 
 type WasmModuleLock = OnceLock<WasmModule>;
 
 /// WebAssembly module configuration (deserializable from RON)
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Wasm {
     /// Path to the .wasm file
     path: PathBuf,
@@ -104,7 +111,7 @@ impl Wasm {
     ///
     /// # Errors
     /// Returns error if the module cannot be loaded or initialized
-    pub fn init(&self, outbound_bindings: &[String]) -> Result<(), Error> {
+    pub fn init_module(&self, outbound_bindings: &[String]) -> std::result::Result<(), Error> {
         let mut module = WasmModule::load(&self.path).map_err(|e| {
             Error::Init(format!(
                 "Failed to load WASM module {}: {e}",
@@ -145,7 +152,7 @@ impl Wasm {
     ///
     /// Returns 0 if the event was handled successfully (or callback doesn't exist),
     /// non-zero if the callback rejected the operation.
-    pub fn emit(&self, event: Event, context: &mut Context) -> i32 {
+    pub fn emit_event(&self, event: Event, context: &mut Context) -> i32 {
         let Some(module) = self.module.get() else {
             internal!(
                 level = ERROR,
@@ -167,7 +174,8 @@ impl Wasm {
         let result = module.execute_callback(callback_name, context);
 
         // Record memory limit
-        if let Some(metrics) = metrics() {
+        #[cfg(feature = "metrics")]
+        if let Some(metrics) = empath_metrics::metrics() {
             // Update memory limit tracking (configured max memory for this module)
             if let Ok(max_memory) = u64::try_from(module.max_memory_bytes()) {
                 metrics.modules.update_memory(&module_path, max_memory);
@@ -193,9 +201,51 @@ impl Wasm {
     }
 }
 
+impl ModuleInterface for Wasm {
+    fn init(&mut self, context: &ModuleInitContext) -> std::result::Result<(), Error> {
+        self.init_module(&context.outbound_bindings)
+    }
+
+    async fn emit(&self, event: Event, context: &mut Context) -> i32 {
+        self.emit_event(event, context)
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleContext::new("wasm", self.path.display().to_string())
+    }
+
+    fn display_name(&self) -> String {
+        format!("WASM Module: {}", self.path.display())
+    }
+}
+
+#[typetag::serde]
+impl Module for Wasm {
+    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
+        ModuleInterface::init(self, context)
+    }
+
+    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
+        Box::pin(ModuleInterface::emit(self, event, context))
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleInterface::module_context(self)
+    }
+
+    fn display_name(&self) -> String {
+        ModuleInterface::display_name(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::OnceLock;
 
     use empath_common::context::Context;
 
@@ -204,10 +254,19 @@ mod tests {
 
     #[test]
     fn emit_returns_zero_when_uninitialized() {
-        let module = Wasm::from_path(PathBuf::from("module.wasm"));
+        let module = Wasm {
+            path: PathBuf::from("module.wasm"),
+            arguments: Vec::new(),
+            timeout_secs: None,
+            max_memory_bytes: None,
+            enable_wasi: false,
+            wasi_dirs: Vec::new(),
+            wasi_inherit_env: false,
+            module: OnceLock::new(),
+        };
         let mut context = Context::default();
 
-        let result = module.emit(Event::Event(Ev::ConnectionOpened), &mut context);
+        let result = module.emit_event(Event::Event(Ev::ConnectionOpened), &mut context);
 
         assert_eq!(result, 0);
     }

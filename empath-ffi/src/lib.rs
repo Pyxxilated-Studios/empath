@@ -14,6 +14,7 @@ use empath_common::status::Status;
 pub mod ffi_string;
 pub mod modules;
 pub use ffi_string as string;
+pub(crate) use modules::error;
 
 pub type InitFunc = unsafe fn() -> isize;
 pub type ValidateData = unsafe fn(&Context) -> isize;
@@ -69,6 +70,10 @@ mod api {
     /// Set the sender for the message. A special value of NULL will set the
     /// sender to the NULL Sender.
     ///
+    /// Accepts both RFC 5321 format (`<user@example.com>`) and bare email addresses
+    /// (`user@example.com`). Bare addresses are automatically wrapped in angle brackets
+    /// before parsing.
+    ///
     /// # Safety
     ///
     /// This should be able to be passed any valid pointer, and a valid `validate_context`, to
@@ -86,15 +91,30 @@ mod api {
         let sender = unsafe { CStr::from_ptr(sender) };
 
         match sender.to_str() {
-            Ok(sender) => match address_parser::parse_forward_path(sender) {
-                Ok(mailbox) => {
-                    *Arc::make_mut(&mut validate_context.envelope).sender_mut() =
-                        Some(Address::from(mailbox));
-                    true
+            Ok(sender_str) => {
+                // Accept bare email addresses by wrapping in angle brackets if needed
+                let normalized = if sender_str.starts_with('<') {
+                    Cow::Borrowed(sender_str)
+                } else {
+                    Cow::Owned(format!("<{sender_str}>"))
+                };
+
+                match address_parser::parse_forward_path(&normalized) {
+                    Ok(mailbox) => {
+                        *Arc::make_mut(&mut validate_context.envelope).sender_mut() =
+                            Some(Address::from(mailbox));
+                        true
+                    }
+                    Err(err) => {
+                        internal!(level = WARN, "Failed to set sender for C FFI: {err:?}");
+                        false
+                    }
                 }
-                Err(_err) => false,
-            },
-            Err(_err) => false,
+            }
+            Err(err) => {
+                internal!(level = WARN, "Failed to set sender for C FFI: {err:?}");
+                false
+            }
         }
     }
 
@@ -1355,6 +1375,30 @@ mod test {
             assert!(em_context_set_sender(
                 &mut validate_context,
                 cstr!("<test@test.com>")
+            ));
+            let expected_mailbox = address_parser::parse_forward_path("<test@test.com>")
+                .map_err(|err| err.to_string())?;
+            assert_eq!(
+                validate_context.envelope.sender(),
+                Some(&Address::from(expected_mailbox))
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_set_sender_bare_address() -> TestResult {
+        let mut validate_context = Context {
+            id: String::from("Testing"),
+            envelope: Arc::new(Envelope::default()),
+            ..Default::default()
+        };
+
+        // Test that bare email addresses (without angle brackets) are accepted
+        unsafe {
+            assert!(em_context_set_sender(
+                &mut validate_context,
+                cstr!("test@test.com")
             ));
             let expected_mailbox = address_parser::parse_forward_path("<test@test.com>")
                 .map_err(|err| err.to_string())?;

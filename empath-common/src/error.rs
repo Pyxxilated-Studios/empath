@@ -8,60 +8,6 @@ use std::io;
 pub use empath_core::error::MessageParseError;
 use thiserror::Error;
 
-/// Errors that can occur when working with extension modules (Python, WASM, etc.)
-#[derive(Debug, Error)]
-pub enum ModuleError {
-    /// Module file not found
-    #[error("Module file not found: {0}")]
-    ModuleNotFound(String),
-
-    /// Callback not found in module
-    #[error("Callback '{0}' not found in module")]
-    CallbackNotFound(String),
-
-    /// Module initialization failed
-    #[error("Module initialization failed: {0}")]
-    InitFailed(String),
-
-    /// Invalid return value from callback
-    #[error("Invalid return value from callback '{callback}': {reason}")]
-    InvalidReturn { callback: String, reason: String },
-
-    /// Callback timeout
-    #[error("Callback '{callback}' timed out after {timeout_secs}s")]
-    Timeout { callback: String, timeout_secs: u64 },
-
-    /// I/O error
-    #[error("I/O error: {0}")]
-    Io(#[from] io::Error),
-
-    /// Runtime-specific error (Python interpreter, Wasmtime engine, etc.)
-    #[error("{0}")]
-    Runtime(String),
-
-    /// Resource limit exceeded (memory, execution time, etc.)
-    #[error("Resource limit exceeded: {0}")]
-    ResourceLimit(String),
-
-    /// Serialization/deserialization error
-    #[error("Protocol error: {0}")]
-    Protocol(String),
-}
-
-impl ModuleError {
-    /// Returns `true` if this error is a timeout.
-    #[must_use]
-    pub const fn is_timeout(&self) -> bool {
-        matches!(self, Self::Timeout { .. })
-    }
-
-    /// Returns `true` if this error indicates the callback doesn't exist.
-    #[must_use]
-    pub const fn is_callback_not_found(&self) -> bool {
-        matches!(self, Self::CallbackNotFound(_))
-    }
-}
-
 /// Errors that can occur during protocol validation.
 #[derive(Debug, Error)]
 pub enum ProtocolError {

@@ -8,9 +8,9 @@ This module demonstrates basic validation logic:
 """
 
 
-def init():
+def init(*args):
     """Initialize the module (optional)"""
-    print("Simple Python module initialized!")
+    print(f"Simple Python module initialized {args}")
     return True
 
 

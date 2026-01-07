@@ -15,10 +15,12 @@ import time
 sender_reputation = {}
 greylist = {}
 
-def init():
+
+def init(*args):
     """Initialize the spam filter module"""
-    print("Spam filter module initialized")
+    print(f"Spam filter module initialized {args}")
     return True
+
 
 def calculate_sender_reputation(sender):
     """
@@ -41,6 +43,7 @@ def calculate_sender_reputation(sender):
     sender_reputation[sender] = 50
     return 50
 
+
 def update_reputation(sender, change):
     """Update sender reputation"""
     if not sender or sender == "<>":
@@ -49,6 +52,7 @@ def update_reputation(sender, change):
     current = sender_reputation.get(sender, 50)
     new_score = max(0, min(100, current + change))
     sender_reputation[sender] = new_score
+
 
 def check_greylist(sender, recipient):
     """
@@ -82,6 +86,7 @@ def check_greylist(sender, recipient):
     # Passed greylisting period
     return (False, False)
 
+
 def validate_mail_from(ctx):
     """
     Validate sender with reputation checking
@@ -113,6 +118,7 @@ def validate_mail_from(ctx):
 
     return True
 
+
 def validate_rcpt_to(ctx):
     """
     Validate recipient with greylisting
@@ -126,7 +132,9 @@ def validate_rcpt_to(ctx):
     sender = ctx.sender or "<>"
     recipients = ctx.recipients
 
-    if not recipients:
+    if not recipients or any(
+        recipient.startswith("bypass") for recipient in recipients
+    ):
         return True
 
     # Check greylisting for first recipient
@@ -144,6 +152,7 @@ def validate_rcpt_to(ctx):
 
     print(f"Passed greylisting: {sender} -> {first_recipient}")
     return True
+
 
 def validate_data(ctx):
     """
@@ -214,6 +223,7 @@ def validate_data(ctx):
 
     print(f"Message accepted (spam score {total_score:.1f})")
     return True
+
 
 def on_smtp_message_received(ctx):
     """

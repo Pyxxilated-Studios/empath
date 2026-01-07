@@ -69,32 +69,32 @@ Empath (
     // Uncomment examples below after building the modules they reference.
     // NOTE: Python/Wasm support requires enabling those features at build time.
     modules: [
-        // (
-        //     type: "Python",
-        //     path: "empath-examples/python/simple.py",
-        //     args: [],
-        // ),
-        // (
-        //     type: "Python",
-        //     path: "empath-examples/python/spam_filter.py",
-        //     args: [],
-        // ),
-        // (
-        //     type: "SharedLibrary",
-        //     name: "target/modules/libevent.so",
-        //     args: [],
-        // ),
-        // (
-        //     type: "SharedLibrary",
-        //     name: "target/modules/libexample.so",
-        //     args: [],
-        // ),
-        // (
-        //     type: "Wasm",
-        //     path: "target/modules/simple_validator.wasm",
-        //     enable_wasi: true,
-        //     args: [],
-        // ),
+        {
+            "type": "Python",
+            "path": "empath-examples/python/simple.py",
+            "args": [],
+        },
+        {
+            "type": "Python",
+            "path": "empath-examples/python/spam_filter.py",
+            "args": [],
+        },
+        {
+            "type": "Shared",
+            "name": "target/modules/libevent.so",
+            "args": [],
+        },
+        {
+            "type": "Shared",
+            "name": "target/modules/libexample.so",
+            "args": [],
+        },
+        {
+            "type": "Wasm",
+            "path": "target/modules/simple_validator.wasm",
+            "enable_wasi": true,
+            "args": [],
+        },
     ],
     // Module dispatch configuration
     // Timeout fields are in seconds; set to None to disable.
@@ -249,7 +249,7 @@ Empath (
             bindings: {
                 "primary": (
                     // Use either source_ip or source_interface (not both)
-                    source_ip: "192.0.2.10",
+                    source_ip: "127.0.0.1",
                     helo_domain: "mx1.example.com",
                     tls: (attempt_starttls: true),
                     // Optional per-binding SMTP timeouts
@@ -299,7 +299,7 @@ Empath (
                 // Accept self-signed certs for this test domain only
                 accept_invalid_certs: true,
                 // Prefer the backup binding for this domain
-                binding: "backup",
+                // binding: "backup",
                 // Disable MTA-STS fetch for this domain
                 // mta_sts_enabled: false,
             ),

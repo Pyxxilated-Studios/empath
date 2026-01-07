@@ -983,8 +983,9 @@ mod test {
     use empath_common::context::{Context, SPAN_ID_CONTEXT_KEY, TRACE_ID_CONTEXT_KEY};
     use empath_common::email::BannerHostname;
     use empath_common::status::Status;
+    use empath_ffi::modules::test::TestModule;
     use empath_ffi::modules::validate::Event;
-    use empath_ffi::modules::{Module, ModuleRegistry, ModuleRegistryBuilder};
+    use empath_ffi::modules::{ModuleRegistry, ModuleRegistryBuilder};
     use empath_spool::{BackingStore, TestBackingStore};
     use opentelemetry::Context as OtelContext;
     use opentelemetry::trace::{
@@ -1293,9 +1294,9 @@ mod test {
             ..Default::default()
         };
 
-        let module = Module::TestModule(RwLock::default());
+        let module = TestModule(RwLock::default());
         ModuleRegistryBuilder::new()
-            .with_modules(vec![module])
+            .with_modules(vec![Box::new(module)])
             .build()
             .map_err(|err| err.to_string())?
             .install()
@@ -1331,7 +1332,7 @@ mod test {
 
         let registry = ModuleRegistry::global().ok_or_else(|| "registry missing".to_string())?;
         for module in registry.modules() {
-            if let Module::TestModule(mute) = module.as_ref() {
+            if let Some(TestModule(mute)) = module.as_any().downcast_ref() {
                 assert!(
                     mute.read()
                         .map_err(|_| "module lock poisoned".to_string())?

@@ -12,12 +12,10 @@ members = [
     "empath-ffi",
     "empath-health",
     "empath-metrics",
-    "empath-python",
     "empath-smtp-client",
     "empath-smtp",
     "empath-spool",
     "empath-tracing",
-    "empath-wasm",
     "empath-wasm-guest",
     "empath-wasm-guest-macros",
     "xtask",
@@ -32,12 +30,10 @@ default-members = [
     "empath-ffi",
     "empath-health",
     "empath-metrics",
-    "empath-python",
     "empath-smtp-client",
     "empath-smtp",
     "empath-spool",
     "empath-tracing",
-    "empath-wasm",
     "empath-wasm-guest",
     "empath-wasm-guest-macros",
 ]
@@ -100,12 +96,10 @@ empath-examples = { path = "empath-examples", version = "1" }
 empath-ffi = { path = "empath-ffi", version = "1" }
 empath-health = { path = "empath-health", version = "1" }
 empath-metrics = { path = "empath-metrics", version = "1" }
-empath-python = { path = "empath-python", version = "1" }
 empath-smtp = { path = "empath-smtp", version = "1" }
 empath-smtp-client = { path = "empath-smtp-client", version = "1" }
 empath-spool = { path = "empath-spool", version = "1" }
 empath-tracing = { path = "empath-tracing", version = "1" }
-empath-wasm = { path = "empath-wasm", version = "1" }
 empath-wasm-guest = { path = "empath-wasm-guest", version = "1" }
 empath-wasm-guest-macros = { path = "empath-wasm-guest-macros", version = "1" }
 encoding_rs = "0.8.35"
@@ -181,6 +175,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
     "json",
 ] }
+typetag = "0"
 ulid = { version = "1", features = ["serde"] }
 wasmtime = { version = "40.0", features = ["component-model"] }
 wasmtime-wasi = { version = "40.0", default-features = false, features = [

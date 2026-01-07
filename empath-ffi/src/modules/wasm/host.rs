@@ -12,16 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use empath_common::context::{Context, OUTBOUND_BINDING_CONTEXT_KEY};
+use empath_common::internal;
 use empath_common::message_api::{
     BodyError, BodyLimits, BodyMut, BodyOpts, Charset, HeaderError, HeaderLimits, HeaderName,
     HeaderValue, HeadersMut, MutationAudit, NewlineStyle,
 };
-use empath_common::{ModuleError, internal};
 use serde::{Deserialize, Serialize};
 use wasmtime::ResourceLimiter;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
 
-use crate::error::{Result, from_postcard};
+use crate::error::{ModuleError, Result};
 
 /// Serializable Context representation for passing to WASM
 ///
@@ -117,7 +117,8 @@ impl WasmStore {
                  Callback will fail gracefully without crashing.",
                 e
             );
-            ModuleError::Runtime(format!("Context mutex poisoned: {e}"))
+
+            ModuleError::Poisoned(e.to_string())
         })
     }
 
@@ -145,12 +146,12 @@ impl WasmStore {
                         "Context mutex poisoned during WasmStore creation: {}",
                         e
                     );
-                    ModuleError::Runtime(format!("Context mutex poisoned: {e}"))
+                    ModuleError::Poisoned(e.to_string())
                 })?;
                 SerializableContext::from(&*ctx_lock)
             };
 
-            postcard::to_allocvec(&serializable).map_err(|e| from_postcard(&e))?
+            postcard::to_allocvec(&serializable)?
         };
 
         Ok(Self {
@@ -194,7 +195,7 @@ impl ResourceLimiter for WasmStore {
 ///
 /// All host functions gracefully handle poisoned mutexes by logging an error and
 /// returning a safe default value instead of panicking.
-impl crate::bindings::empath::validator::host::Host for WasmStore {
+impl super::bindings::empath::validator::host::Host for WasmStore {
     fn log(&mut self, message: String) {
         internal!(level = INFO, "[WASM] {}", message);
         self.log_buffer.push(message);
@@ -248,18 +249,18 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
 
     fn set_outbound_binding(
         &mut self,
-        binding: crate::bindings::empath::validator::host::OutboundBinding,
+        binding: super::bindings::empath::validator::host::OutboundBinding,
     ) -> bool {
         let Ok(mut ctx) = self.try_lock_context() else {
             return false;
         };
 
         match binding {
-            crate::bindings::empath::validator::host::OutboundBinding::Default => {
+            super::bindings::empath::validator::host::OutboundBinding::Default => {
                 ctx.transaction.remove(OUTBOUND_BINDING_CONTEXT_KEY);
                 true
             }
-            crate::bindings::empath::validator::host::OutboundBinding::Named(name) => {
+            super::bindings::empath::validator::host::OutboundBinding::Named(name) => {
                 if !self
                     .outbound_bindings
                     .iter()
@@ -275,11 +276,11 @@ impl crate::bindings::empath::validator::host::Host for WasmStore {
     }
 }
 
-impl crate::bindings::empath::validator::message::Host for WasmStore {
+impl super::bindings::empath::validator::message::Host for WasmStore {
     fn raw_len(
         &mut self,
-    ) -> std::result::Result<u64, crate::bindings::empath::validator::message::ReadError> {
-        use crate::bindings::empath::validator::message::ReadError;
+    ) -> std::result::Result<u64, super::bindings::empath::validator::message::ReadError> {
+        use super::bindings::empath::validator::message::ReadError;
 
         self.try_lock_context()
             .map_err(|_| ReadError::HostUnavailable)
@@ -293,8 +294,8 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
         &mut self,
         offset: u64,
         len: u32,
-    ) -> std::result::Result<Vec<u8>, crate::bindings::empath::validator::message::ReadError> {
-        use crate::bindings::empath::validator::message::ReadError;
+    ) -> std::result::Result<Vec<u8>, super::bindings::empath::validator::message::ReadError> {
+        use super::bindings::empath::validator::message::ReadError;
 
         self.try_lock_context()
             .map_err(|_| ReadError::HostUnavailable)
@@ -510,8 +511,8 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
 
     fn body_len(
         &mut self,
-    ) -> std::result::Result<u64, crate::bindings::empath::validator::message::ReadError> {
-        use crate::bindings::empath::validator::message::ReadError;
+    ) -> std::result::Result<u64, super::bindings::empath::validator::message::ReadError> {
+        use super::bindings::empath::validator::message::ReadError;
 
         let mut ctx = self
             .try_lock_context()
@@ -527,8 +528,8 @@ impl crate::bindings::empath::validator::message::Host for WasmStore {
         &mut self,
         offset: u64,
         len: u32,
-    ) -> std::result::Result<Vec<u8>, crate::bindings::empath::validator::message::ReadError> {
-        use crate::bindings::empath::validator::message::ReadError;
+    ) -> std::result::Result<Vec<u8>, super::bindings::empath::validator::message::ReadError> {
+        use super::bindings::empath::validator::message::ReadError;
 
         let mut ctx = self
             .try_lock_context()
@@ -766,8 +767,8 @@ fn slice_bytes(
     data: &[u8],
     offset: u64,
     len: u32,
-) -> std::result::Result<Vec<u8>, crate::bindings::empath::validator::message::ReadError> {
-    use crate::bindings::empath::validator::message::ReadError;
+) -> std::result::Result<Vec<u8>, super::bindings::empath::validator::message::ReadError> {
+    use super::bindings::empath::validator::message::ReadError;
 
     let Ok(start) = usize::try_from(offset) else {
         return Err(ReadError::OutOfRange);
@@ -798,9 +799,9 @@ mod tests {
     use empath_common::message_api::MessageParts;
     use wasmtime_wasi::WasiCtxBuilder;
 
+    use super::super::bindings::empath::validator::host::Host;
+    use super::super::bindings::empath::validator::message::Host as MessageHost;
     use super::*;
-    use crate::bindings::empath::validator::host::Host;
-    use crate::bindings::empath::validator::message::Host as MessageHost;
 
     type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -896,11 +897,11 @@ mod tests {
 
         assert_eq!(
             MessageHost::body_len(&mut store),
-            Err(crate::bindings::empath::validator::message::ReadError::ParseFailed)
+            Err(super::super::bindings::empath::validator::message::ReadError::ParseFailed)
         );
         assert_eq!(
             MessageHost::body_read(&mut store, 0, 8),
-            Err(crate::bindings::empath::validator::message::ReadError::ParseFailed)
+            Err(super::super::bindings::empath::validator::message::ReadError::ParseFailed)
         );
         Ok(())
     }
@@ -911,11 +912,11 @@ mod tests {
 
         assert_eq!(
             MessageHost::raw_len(&mut store),
-            Err(crate::bindings::empath::validator::message::ReadError::MissingData)
+            Err(super::super::bindings::empath::validator::message::ReadError::MissingData)
         );
         assert_eq!(
             MessageHost::raw_read(&mut store, 0, 4),
-            Err(crate::bindings::empath::validator::message::ReadError::MissingData)
+            Err(super::super::bindings::empath::validator::message::ReadError::MissingData)
         );
         Ok(())
     }

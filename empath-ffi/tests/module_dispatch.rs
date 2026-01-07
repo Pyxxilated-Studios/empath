@@ -2,9 +2,10 @@ use std::time::Duration;
 
 use empath_common::context::Context;
 use empath_common::status::Status;
+use empath_ffi::modules::test::TestModule;
 use empath_ffi::modules::{
-    DispatchErrorKind, DispatchFailureMode, DispatchResult, Ev, Event, Module,
-    ModuleDispatchConfig, ModuleIsolation, ModuleRegistry, ModuleRegistryBuilder, validate,
+    DispatchErrorKind, DispatchFailureMode, DispatchResult, Ev, Event, ModuleDispatchConfig,
+    ModuleIsolation, ModuleRegistry, ModuleRegistryBuilder, validate,
 };
 
 fn build_registry(config: ModuleDispatchConfig) -> Result<ModuleRegistry, String> {
@@ -21,7 +22,7 @@ fn configure_test_module(
 ) -> Result<(), String> {
     let mut found = false;
     for module in registry.modules() {
-        if let Module::TestModule(lock) = module.as_ref() {
+        if let Some(TestModule(lock)) = module.as_any().downcast_ref() {
             found = true;
             let mut inner = lock
                 .write()

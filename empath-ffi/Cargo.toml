@@ -19,21 +19,40 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 empath-common.workspace = true
 empath-metrics = { workspace = true, optional = true }
-empath-python = { workspace = true, optional = true }
 empath-tracing.workspace = true
-empath-wasm = { workspace = true, optional = true }
 libc.workspace = true
 libloading.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+typetag.workspace = true
+
+# Python module support (consolidated from empath-python)
+parking_lot = { workspace = true, optional = true }
+pyo3 = { workspace = true, optional = true }
+
+# WASM module support (consolidated from empath-wasm)
+anyhow = { workspace = true, optional = true }
+cap-rand = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+wasmtime = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [features]
 default = ["metrics", "python"]
 metrics = ["dep:empath-metrics"]
-python = ["dep:empath-python"]
-wasm = ["dep:empath-wasm"]
+python = ["dep:pyo3", "dep:parking_lot"]
+wasm = [
+    "dep:anyhow",
+    "dep:cap-rand",
+    "dep:postcard",
+    "dep:wasmtime",
+    "dep:wasmtime-wasi",
+]
 
 [build-dependencies]
 cbindgen.workspace = true

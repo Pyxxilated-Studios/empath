@@ -13,7 +13,8 @@ use empath_delivery::{
     CircuitBreakerConfig, DeliveryProcessor, DomainConfigRegistry, RateLimitConfig, RetryPolicy,
     SmtpTimeouts, SpfDnsAdapter,
 };
-use empath_ffi::modules::{self, Module, ModuleDispatchConfig};
+use empath_ffi::modules::traits::Module;
+use empath_ffi::modules::{ModuleDispatchConfig, ModuleRegistryBuilder};
 use empath_health::{HealthChecker, HealthConfig, HealthServer};
 use empath_metrics::{Metrics, MetricsConfig, init_metrics, metrics};
 use empath_smtp::spf::SpfDnsResolver;
@@ -31,7 +32,7 @@ use crate::control_handler::EmpathControlHandler;
 #[derive(Default)]
 pub struct Empath {
     smtp_controller: Controller<Smtp>,
-    modules: Vec<Module>,
+    modules: Vec<Box<dyn Module>>,
     module_dispatch: ModuleDispatchConfig,
     spool: SpoolConfig,
     delivery: DeliveryProcessor,
@@ -57,7 +58,7 @@ struct EmpathConfig {
     #[serde(alias = "smtp")]
     smtp_controller: Controller<Smtp>,
     #[serde(alias = "module", default)]
-    modules: Vec<Module>,
+    modules: Vec<Box<dyn Module>>,
     #[serde(default)]
     module_dispatch: ModuleDispatchConfig,
     #[serde(alias = "spool", default)]
@@ -198,7 +199,7 @@ impl Empath {
         self.init_delivery(backing_store.clone())?;
         let modules = std::mem::take(&mut self.modules);
         let module_dispatch = std::mem::take(&mut self.module_dispatch);
-        modules::ModuleRegistryBuilder::new()
+        ModuleRegistryBuilder::new()
             .with_modules(modules)
             .with_outbound_bindings(self.delivery.outbound_bindings.names())
             .with_dispatch_config(module_dispatch)

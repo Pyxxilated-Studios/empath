@@ -114,7 +114,7 @@ dev: fmt lint test
     @echo "✅ Development checks passed"
 
 # Full CI check locally (lint + test + examples)
-ci: lint fmt-check test build-examples
+ci: lint fmt-check test build-examples validate-config
     @echo "✅ All CI checks passed!"
 
 # Pre-commit checks (fast)
@@ -220,6 +220,10 @@ fmt:
 # Check formatting without modifying files
 fmt-check:
     cargo fmt --all -- --check
+
+validate-config:
+    @echo "Validating Configuration empath.config.ron ..."
+    cargo run --bin empathcfg check empath.config.ron
 
 # =============================================================================
 # TESTING

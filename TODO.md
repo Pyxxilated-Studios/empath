@@ -25,6 +25,10 @@ Legend: P0 (critical) → P4 (low). Status: [ ] open, [wip] in progress, [x] don
 - [x] DOC-01: Updated `CONTRIBUTING.md` with Miri compatibility section. (`CONTRIBUTING.md:256-291`)
 - [x] DOC-02: Document delivery module integration status. Clarified that delivery events are observation-only (modules can observe but not intercept/reject delivery). (`docs/ARCHITECTURE.md:439-456`)
 
+## To Prioritise
+- [] Override Wasm/Python/C code outputs to go through tracing logging, e.g. print/printf function overrides
+
+
 ## Notes
 
 - All refactorings are behavioral-preserving (no new features)

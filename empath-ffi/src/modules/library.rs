@@ -1,17 +1,24 @@
 use core::fmt::{self, Display};
+use std::any::Any;
 use std::sync::Arc;
 
-use empath_common::context::Context;
+use empath_common::context::{Context, ModuleContext};
 use empath_common::internal;
 use empath_tracing::traced;
 use libloading::Library;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+use super::traits::{ModuleInitContext, ModuleInterface};
+use crate::modules::traits::{BoxFuture, Module};
+use crate::modules::{Error, Event};
+
+#[derive(Debug, Serialize)]
 pub struct Shared {
     pub name: String,
     pub arguments: Arc<[Arc<str>]>,
+    #[serde(skip)]
     module: Option<super::Mod>,
+    #[serde(skip)]
     library: Option<Library>,
 }
 
@@ -48,7 +55,7 @@ impl Display for Shared {
 
 impl Shared {
     #[traced(instrument(level = tracing::Level::TRACE, skip_all, ret), timing(precision = "us"))]
-    pub(super) fn init(&mut self) -> Result<(), super::Error> {
+    pub(super) fn init_shared(&mut self) -> Result<(), super::Error> {
         unsafe {
             let lib = Library::new(&self.name)?;
 
@@ -63,12 +70,53 @@ impl Shared {
     }
 
     #[traced(instrument(level = tracing::Level::TRACE, skip(self, validate_context), ret), timing(precision = "us"))]
-    pub(super) fn emit(&self, event: super::Event, validate_context: &mut Context) -> i32 {
+    pub(super) fn emit_shared(&self, event: super::Event, validate_context: &mut Context) -> i32 {
         let Some(module) = &self.module else {
             return 0;
         };
 
         module.emit(event, validate_context)
+    }
+}
+
+impl ModuleInterface for Shared {
+    fn init(&mut self, _context: &ModuleInitContext) -> Result<(), super::Error> {
+        self.init_shared()
+    }
+
+    async fn emit(&self, event: super::Event, context: &mut Context) -> i32 {
+        self.emit_shared(event, context)
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleContext::new("shared_library", self.name.clone())
+    }
+
+    fn display_name(&self) -> String {
+        format!("Shared Library: {}", self.name)
+    }
+}
+
+#[typetag::serde]
+impl Module for Shared {
+    fn init(&mut self, context: &ModuleInitContext) -> Result<(), Error> {
+        ModuleInterface::init(self, context)
+    }
+
+    fn emit<'a>(&'a self, event: Event, context: &'a mut Context) -> BoxFuture<'a, i32> {
+        Box::pin(ModuleInterface::emit(self, event, context))
+    }
+
+    fn module_context(&self) -> ModuleContext {
+        ModuleInterface::module_context(self)
+    }
+
+    fn display_name(&self) -> String {
+        ModuleInterface::display_name(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
