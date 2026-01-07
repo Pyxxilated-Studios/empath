@@ -1,5 +1,5 @@
 pub mod config;
-pub mod control_handler;
+pub mod control;
 pub mod controller;
 
 // Import tracing items for macro expansion

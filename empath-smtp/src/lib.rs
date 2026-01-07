@@ -13,7 +13,7 @@ pub mod session;
 pub mod session_state;
 pub mod spf;
 pub mod state;
-pub mod transaction_handler;
+pub mod transaction;
 
 // Re-export commonly used types
 use std::borrow::Cow;

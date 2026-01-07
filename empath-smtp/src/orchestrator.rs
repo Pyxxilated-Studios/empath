@@ -22,7 +22,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::connection::Connection;
 use crate::session::{Context, Event, Session, TlsContext};
-use crate::transaction_handler::SmtpTransactionHandler;
+use crate::transaction::SmtpTransactionHandler;
 use crate::{State, state};
 
 /// SMTP Session Orchestrator

@@ -27,7 +27,7 @@ use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 use tokio::time;
 
-use crate::control_handler::EmpathControlHandler;
+use crate::control::EmpathControlHandler;
 
 #[derive(Default)]
 pub struct Empath {

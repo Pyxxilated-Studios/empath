@@ -24,7 +24,7 @@ use x509_parser::prelude::{X509Certificate, parse_x509_certificate};
 
 use crate::State;
 use crate::extensions::Extension;
-use crate::transaction_handler::{DefaultSmtpTransactionHandler, SmtpTransactionHandler};
+use crate::transaction::{DefaultSmtpTransactionHandler, SmtpTransactionHandler};
 
 // Submodules containing implementation details
 mod io;
@@ -997,7 +997,7 @@ mod test {
     use tracing_subscriber::prelude::*;
 
     use crate::session::{Session, SessionConfig};
-    use crate::transaction_handler::SmtpTransactionHandler;
+    use crate::transaction::SmtpTransactionHandler;
     use crate::{State, state};
 
     type TestResult = std::result::Result<(), String>;

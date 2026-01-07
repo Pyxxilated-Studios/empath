@@ -165,7 +165,7 @@ The SMTP protocol implementation uses a clean three-layer separation:
    - Uses only `SessionState` (not business `Context`)
    - Enables polymorphic FSM usage and testing in isolation
 
-3. **Transaction Handler Layer** (`empath-smtp/src/transaction_handler.rs`):
+3. **Transaction Handler Layer** (`empath-smtp/src/transaction/`):
    - `SmtpTransactionHandler` trait separates validation/spooling from protocol concerns
    - `DefaultSmtpTransactionHandler` dispatches to FFI module system
    - Async operations (spooling, validation, audit logging)
@@ -195,7 +195,7 @@ let new_state = FiniteStateMachine::transition(
 
 **Example - Transaction Handler Usage:**
 ```rust,ignore
-use empath_smtp::transaction_handler::{SmtpTransactionHandler, DefaultSmtpTransactionHandler};
+use empath_smtp::transaction::{SmtpTransactionHandler, DefaultSmtpTransactionHandler};
 
 let handler = DefaultSmtpTransactionHandler::new(
     Some(spool),
