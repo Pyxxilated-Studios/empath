@@ -50,7 +50,7 @@ Legend: P0 (critical) → P4 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P3 — Idiomatic Rust (IDIOM)
 
-- [ ] IDIOM-01: Iterator patterns. Replace manual `.next()` loops with `.take(n)` adaptors. (`empath-delivery/src/processor/process.rs:402-412`)
+- [x] IDIOM-01: Iterator patterns. Replace manual `.next()` loops with `.take(n)` adaptors. (`empath-delivery/src/processor/process.rs:413-416`)
 - [ ] IDIOM-02: FFI string error handling. Replace `unwrap_or_default()` with debug assertion. (`empath-ffi/src/ffi_string.rs:64`)
 
 ## P1 — Bare Function Refactoring (STRUCT)

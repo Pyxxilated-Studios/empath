@@ -410,12 +410,15 @@ async fn process_pending_messages(
     let mut join_set: JoinSet<()> = JoinSet::new();
     let mut pending_iter = pending_message_ids.into_iter();
 
-    for _ in 0..processor.max_concurrent_deliveries.min(pending_iter.len()) {
-        if let Some(message_id) = pending_iter.next() {
-            spawn_delivery_task(&mut join_set, &processor, &spool, message_id);
-        }
+    // Spawn initial batch of workers using idiomatic .take() adaptor
+    for message_id in pending_iter
+        .by_ref()
+        .take(processor.max_concurrent_deliveries)
+    {
+        spawn_delivery_task(&mut join_set, &processor, &spool, message_id);
     }
 
+    // As each task completes, spawn the next pending message
     while join_set.join_next().await.is_some() {
         if let Some(message_id) = pending_iter.next() {
             spawn_delivery_task(&mut join_set, &processor, &spool, message_id);
