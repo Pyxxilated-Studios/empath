@@ -6,7 +6,7 @@ pub mod retry;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use empath_common::context::DeliveryPriorityTier;
 use empath_common::{DeliveryAttempt, DeliveryStatus};
 use empath_spool::SpooledMessageId;
@@ -19,6 +19,8 @@ use crate::types::DeliveryInfo;
 pub struct DeliveryQueue {
     /// Map of message IDs to delivery information (lock-free concurrent access)
     pub(crate) queue: Arc<DashMap<SpooledMessageId, DeliveryInfo>>,
+    /// Set of active message IDs (Pending or Retry status) for O(1) scan optimization
+    active_set: Arc<DashSet<SpooledMessageId>>,
 }
 
 impl Default for DeliveryQueue {
@@ -33,6 +35,7 @@ impl DeliveryQueue {
     pub fn new() -> Self {
         Self {
             queue: Arc::new(DashMap::new()),
+            active_set: Arc::new(DashSet::new()),
         }
     }
 
@@ -52,6 +55,8 @@ impl DeliveryQueue {
         recipient_domain: String,
         priority_tier: DeliveryPriorityTier,
     ) {
+        // New messages start with Pending status, so add to active set
+        self.active_set.insert(message_id.clone());
         self.queue.insert(
             message_id.clone(),
             DeliveryInfo::new_with_priority(message_id, recipient_domain, priority_tier),
@@ -60,6 +65,15 @@ impl DeliveryQueue {
 
     /// Insert a delivery info directly (for restoring from persisted state)
     pub fn insert(&self, message_id: SpooledMessageId, info: DeliveryInfo) {
+        // Update active set based on status
+        if matches!(
+            info.status,
+            DeliveryStatus::Pending | DeliveryStatus::Retry { .. }
+        ) {
+            self.active_set.insert(message_id.clone());
+        } else {
+            self.active_set.remove(&message_id);
+        }
         self.queue.insert(message_id, info);
     }
 
@@ -72,6 +86,16 @@ impl DeliveryQueue {
 
     /// Update the status of a message
     pub fn update_status(&self, message_id: &SpooledMessageId, status: DeliveryStatus) {
+        // Update active set based on new status
+        if matches!(
+            status,
+            DeliveryStatus::Pending | DeliveryStatus::Retry { .. }
+        ) {
+            self.active_set.insert(message_id.clone());
+        } else {
+            self.active_set.remove(message_id);
+        }
+
         if let Some(mut entry) = self.queue.get_mut(message_id) {
             entry.value_mut().status = status;
         }
@@ -111,6 +135,7 @@ impl DeliveryQueue {
 
     /// Remove a message from the queue
     pub fn remove(&self, message_id: &SpooledMessageId) -> Option<DeliveryInfo> {
+        self.active_set.remove(message_id);
         self.queue.remove(message_id).map(|(_, info)| info)
     }
 
@@ -144,5 +169,18 @@ impl DeliveryQueue {
             .iter()
             .filter(|entry| entry.value().status == DeliveryStatus::Pending)
             .map(|entry| entry.value().clone())
+    }
+
+    /// Get the active message IDs (Pending or Retry status) for O(1) scan optimization
+    ///
+    /// Returns an iterator over message IDs that are potentially ready for processing,
+    /// avoiding iteration over completed/failed/expired/in-progress messages.
+    pub fn active_message_ids(&self) -> impl Iterator<Item = SpooledMessageId> + '_ {
+        self.active_set.iter().map(|entry| entry.clone())
+    }
+
+    /// Mark a message as no longer active (used by `scan_queue` when status changes internally)
+    pub fn mark_inactive(&self, message_id: &SpooledMessageId) {
+        self.active_set.remove(message_id);
     }
 }

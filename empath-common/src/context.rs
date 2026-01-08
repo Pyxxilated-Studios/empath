@@ -600,6 +600,21 @@ impl Context {
         }
     }
 
+    /// Create a copy suitable for spool storage.
+    ///
+    /// This strips non-persistent fields (session context, parsed message parts,
+    /// module context, audit logger) while preserving transaction context and
+    /// message data. Use this for spooling to avoid persisting ephemeral state.
+    #[must_use]
+    pub fn clone_for_storage(&self) -> Self {
+        let mut context = Self::from_metadata(self.to_metadata());
+        context.data.clone_from(&self.data);
+        context.data_len = context
+            .data_len
+            .or_else(|| self.data.as_ref().map(|data| data.len()));
+        context
+    }
+
     /// Returns a reference to the id of this [`Context`].
     #[inline]
     pub const fn id(&self) -> &str {

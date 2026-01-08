@@ -139,14 +139,9 @@ impl BackingStore for MemoryBackingStore {
             )));
         }
 
-        // Store a metadata-based copy to avoid persisting session/parsed data.
-        let mut context_to_store = Context::from_metadata(context.to_metadata());
-        context_to_store.data.clone_from(&context.data);
-        context_to_store.data_len = context_to_store
-            .data_len
-            .or_else(|| context.data.as_ref().map(|data| data.len()));
-
-        self.messages.insert(id.clone(), context_to_store);
+        // Use clone_for_storage to strip non-persistent fields (session, parsed parts, etc.)
+        self.messages
+            .insert(id.clone(), context.clone_for_storage());
 
         let data_len = context.data.as_ref().map_or(0, |data| data.len());
         self.observer.record_io(
@@ -215,12 +210,9 @@ impl BackingStore for MemoryBackingStore {
     async fn update(&self, id: &SpooledMessageId, context: &Context) -> crate::Result<()> {
         let start = Instant::now();
         if self.messages.contains_key(id) {
-            let mut updated = Context::from_metadata(context.to_metadata());
-            updated.data.clone_from(&context.data);
-            updated.data_len = updated
-                .data_len
-                .or_else(|| context.data.as_ref().map(|data| data.len()));
-            self.messages.insert(id.clone(), updated);
+            // Use clone_for_storage to strip non-persistent fields
+            self.messages
+                .insert(id.clone(), context.clone_for_storage());
             self.observer
                 .record_io("update", 0, start.elapsed(), "memory", Some(id));
             Ok(())

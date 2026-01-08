@@ -27,13 +27,14 @@ Legend: P0 (critical) → P4 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## To Prioritise
 - [ ] Override Wasm/Python/C code outputs to go through tracing logging, e.g. print/printf function overrides
+- [ ] Message bifurcation by recipient
 
 ## P1 — Performance (PERF)
 
-- [ ] PERF-01: Queue scan O(n) optimization. Add `DashSet<SpooledMessageId>` for active messages only. (`empath-delivery/src/processor/process.rs:250-308`, `empath-delivery/src/queue/mod.rs`)
-- [ ] PERF-02: Eliminate state clone per command. Use `std::mem::take` for move semantics. (`empath-smtp/src/session/io.rs:111`)
-- [ ] PERF-03: RwLock clone for readonly config. Extract fields or use `Arc<RwLock<Arc<Config>>>`. (`empath-delivery/src/processor/process.rs:22,79,138`)
-- [ ] PERF-04: Context metadata round-trip. Add `Context::clone_for_storage()`. (`empath-spool/src/backends/memory.rs:143`, `empath-common/src/context.rs`)
+- [x] PERF-01: Queue scan O(n) optimization. Added `DashSet<SpooledMessageId>` for active messages only. (`empath-delivery/src/processor/process.rs:250-308`, `empath-delivery/src/queue/mod.rs`)
+- [x] PERF-02: Eliminate state clone per command. Use `std::mem::take` for move semantics. (`empath-smtp/src/session/io.rs:111`)
+- [x] PERF-03: RwLock clone for readonly config. Read fields directly without cloning. (`empath-delivery/src/processor/process.rs:22,79,138`)
+- [x] PERF-04: Context metadata round-trip. Added `Context::clone_for_storage()`. (`empath-spool/src/backends/memory.rs:143`, `empath-common/src/context.rs`)
 
 ## P1 — Code Duplication (DRY) — Continued
 
@@ -43,9 +44,9 @@ Legend: P0 (critical) → P4 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P2 — Large File Refactoring (SPLIT)
 
-- [ ] SPLIT-01: Split `control_handler.rs` (1,791 lines). Extract to `empath/src/control/` module. (`empath/src/control_handler.rs`)
-- [ ] SPLIT-02: Split `dns.rs` (1,740 lines). Extract to `empath-delivery/src/dns/` module. (`empath-delivery/src/dns.rs`)
-- [ ] SPLIT-03: Split `transaction_handler.rs` (1,242 lines). Extract to `empath-smtp/src/transaction/` module. (`empath-smtp/src/transaction_handler.rs`)
+- [x] SPLIT-01: Split `control_handler.rs` (1,791 lines). Extract to `empath/src/control/` module. (`empath/src/control_handler.rs`)
+- [x] SPLIT-02: Split `dns.rs` (1,740 lines). Extract to `empath-delivery/src/dns/` module. (`empath-delivery/src/dns.rs`)
+- [x] SPLIT-03: Split `transaction_handler.rs` (1,242 lines). Extract to `empath-smtp/src/transaction/` module. (`empath-smtp/src/transaction_handler.rs`)
 
 ## P3 — Idiomatic Rust (IDIOM)
 
@@ -54,15 +55,15 @@ Legend: P0 (critical) → P4 (low). Status: [ ] open, [wip] in progress, [x] don
 
 ## P1 — Bare Function Refactoring (STRUCT)
 
-- [ ] STRUCT-01: Refactor `address_parser.rs`. Create `AddressParser` unit struct, move 13 bare functions to impl block. (`empath-core/src/address_parser.rs`)
-- [ ] STRUCT-02: Refactor `core.rs`. Move 8 `validate_*` functions into `Core` impl. (`empath-ffi/src/modules/core.rs`)
-- [ ] STRUCT-03: Refactor `modules/mod.rs`. Move 10+ emit helpers into `ModuleRegistry` impl. (`empath-ffi/src/modules/mod.rs`)
-- [ ] STRUCT-04: Refactor `wasm/loader.rs`. Create `WasmRuntime` struct or expand `Wasm` impl. (`empath-ffi/src/modules/wasm/loader.rs`)
+- [x] STRUCT-01: Refactor `address_parser.rs`. Create `AddressParser` unit struct, move 13 bare functions to impl block. (`empath-core/src/address_parser.rs`)
+- [x] STRUCT-02: Refactor `core.rs`. Move 8 `validate_*` functions into `Core` impl. (`empath-ffi/src/modules/core.rs`)
+- [x] STRUCT-03: Refactor `modules/mod.rs`. Move 10+ emit helpers into `ModuleRegistry` impl. (`empath-ffi/src/modules/mod.rs`)
+- [x] STRUCT-04: Refactor `wasm/loader.rs`. Create `WasmRuntime` struct or expand `Wasm` impl. (`empath-ffi/src/modules/wasm/loader.rs`)
 
 ## P2 — Bare Function Refactoring (STRUCT) — Continued
 
-- [ ] STRUCT-05: Refactor `message_api.rs`. Move parsing helpers into `MessageParts` impl. (`empath-core/src/message_api.rs`)
-- [ ] STRUCT-06: Refactor `dsn.rs`. Move DSN building helpers into `DsnGenerator` impl. (`empath-delivery/src/dsn.rs`)
+- [x] STRUCT-05: Refactor `message_api.rs`. Move parsing helpers into `MessageParts` impl. (`empath-core/src/message_api.rs`)
+- [x] STRUCT-06: Refactor `dsn.rs`. Move DSN building helpers into `DsnGenerator` impl. (`empath-delivery/src/dsn.rs`)
 
 ## P1 — Inline ModuleInterface Delegations (INLINE)
 

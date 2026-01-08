@@ -1,7 +1,7 @@
 //! Queue processing logic for delivery attempts
 
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use empath_common::DeliveryStatus;
 use empath_common::email::ServerId;
@@ -9,6 +9,7 @@ use empath_common::tracing::{debug, error, info, warn};
 use empath_spool::{BackingStore, SpooledMessageId};
 use tokio::task::JoinSet;
 
+use super::delivery;
 use crate::dns::MailServer;
 use crate::error::DeliveryError;
 use crate::processor::DeliveryProcessor;
@@ -19,15 +20,15 @@ fn handle_circuit_breaker_gate(processor: &DeliveryProcessor, info: &DeliveryInf
     if let Some(circuit_breaker) = &processor.circuit_breaker_instance
         && !circuit_breaker.should_allow_delivery(&info.recipient_domain)
     {
-        let circuit_config = processor.circuit_breaker.read().clone();
+        // Read timeout_secs directly without cloning entire config
+        let timeout_secs = processor.circuit_breaker.read().timeout_secs;
         warn!(
             message_id = ?info.message_id,
             domain = %info.recipient_domain,
             "Circuit breaker is OPEN - rejecting delivery attempt to prevent retry storm"
         );
         // Update next retry time to check again after circuit timeout
-        let next_retry =
-            SystemTime::now() + std::time::Duration::from_secs(circuit_config.timeout_secs);
+        let next_retry = SystemTime::now() + Duration::from_secs(timeout_secs);
         processor.queue.update_status(
             &info.message_id,
             DeliveryStatus::Retry {
@@ -76,15 +77,16 @@ async fn handle_binding_disabled_gate(
         },
     );
 
-    let retry_policy = processor.retry_policy.read().clone();
-    let next_retry_at = retry_policy.calculate_next_retry(info.attempt_count());
+    // Call method directly on read guard without cloning entire config
+    let next_retry_at = processor
+        .retry_policy
+        .read()
+        .calculate_next_retry(info.attempt_count());
     processor
         .queue
         .set_next_retry_at(&info.message_id, next_retry_at);
 
-    if let Err(e) =
-        super::delivery::persist_delivery_state(processor, &info.message_id, spool).await
-    {
+    if let Err(e) = delivery::persist_delivery_state(processor, &info.message_id, spool).await {
         warn!(
             message_id = ?info.message_id,
             error = %e,
@@ -135,15 +137,16 @@ async fn handle_binding_health_gate(
         },
     );
 
-    let retry_policy = processor.retry_policy.read().clone();
-    let next_retry_at = retry_policy.calculate_next_retry(info.attempt_count());
+    // Call method directly on read guard without cloning entire config
+    let next_retry_at = processor
+        .retry_policy
+        .read()
+        .calculate_next_retry(info.attempt_count());
     processor
         .queue
         .set_next_retry_at(&info.message_id, next_retry_at);
 
-    if let Err(e) =
-        super::delivery::persist_delivery_state(processor, &info.message_id, spool).await
-    {
+    if let Err(e) = delivery::persist_delivery_state(processor, &info.message_id, spool).await {
         warn!(
             message_id = ?info.message_id,
             error = %e,
@@ -208,7 +211,7 @@ async fn process_single_message(
                 // Static value avoids panic while preserving attempt record
                 ServerId::new_unchecked("unknown-server")
             });
-            let _error = super::delivery::handle_delivery_error(
+            let _error = delivery::handle_delivery_error(
                 &processor,
                 &info.message_id,
                 &mut context,
@@ -255,8 +258,19 @@ fn scan_queue(
     let mut to_persist = Vec::new();
     let mut oldest_pending_age_secs = 0u64;
 
-    for mut entry in processor.queue.queue.iter_mut() {
+    // Use active_message_ids for O(1) lookup instead of O(n) scan of entire queue
+    // This avoids iterating over Completed/Failed/Expired/InProgress messages
+    let active_ids: Vec<_> = processor.queue.active_message_ids().collect();
+
+    for message_id in active_ids {
+        let Some(mut entry) = processor.queue.queue.get_mut(&message_id) else {
+            // Message was removed between collecting IDs and processing
+            processor.queue.mark_inactive(&message_id);
+            continue;
+        };
         let info = entry.value_mut();
+
+        // Double-check status in case it changed (defensive)
         if matches!(
             info.status,
             DeliveryStatus::Completed
@@ -264,18 +278,16 @@ fn scan_queue(
                 | DeliveryStatus::Expired
                 | DeliveryStatus::InProgress
         ) {
+            processor.queue.mark_inactive(&message_id);
             continue;
         }
 
-        if matches!(
-            info.status,
-            DeliveryStatus::Pending | DeliveryStatus::Retry { .. }
-        ) && let Ok(age) = now.duration_since(info.queued_at)
-        {
+        if let Ok(age) = now.duration_since(info.queued_at) {
             oldest_pending_age_secs = oldest_pending_age_secs.max(age.as_secs());
         }
 
         if is_expired(processor, info, now) {
+            processor.queue.mark_inactive(&message_id);
             to_persist.push(info.message_id.clone());
             continue;
         }
@@ -370,8 +382,7 @@ async fn persist_updates(
     to_persist: Vec<SpooledMessageId>,
 ) {
     for message_id in to_persist {
-        if let Err(e) = super::delivery::persist_delivery_state(processor, &message_id, spool).await
-        {
+        if let Err(e) = delivery::persist_delivery_state(processor, &message_id, spool).await {
             warn!(
                 message_id = ?message_id,
                 error = %e,

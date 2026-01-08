@@ -107,8 +107,12 @@ impl Session {
         let mut session_state = SessionState::from_context(validate_context);
 
         // Pure FSM transition using the FiniteStateMachine trait
-        let new_state =
-            FiniteStateMachine::transition(self.context.state.clone(), command, &mut session_state);
+        // Use std::mem::take to avoid cloning state - the old state is immediately replaced
+        let new_state = FiniteStateMachine::transition(
+            std::mem::take(&mut self.context.state),
+            command,
+            &mut session_state,
+        );
 
         // Update session state
         self.context = Context {
