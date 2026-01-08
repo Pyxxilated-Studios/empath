@@ -21,9 +21,9 @@ pub mod host;
 pub mod loader;
 
 pub use host::{SerializableContext, WasmStore};
-pub use loader::{DeterministicWasiConfig, WasmModule};
+pub use loader::{DeterministicWasiConfig, WasmLoader};
 
-type WasmModuleLock = OnceLock<WasmModule>;
+type WasmLoaderLock = OnceLock<WasmLoader>;
 
 /// WebAssembly module configuration (deserializable from RON)
 #[derive(Deserialize, Serialize)]
@@ -58,7 +58,7 @@ pub struct Wasm {
 
     /// Loaded WASM module (initialized once)
     #[serde(skip)]
-    module: WasmModuleLock,
+    module: WasmLoaderLock,
 }
 
 impl fmt::Debug for Wasm {
@@ -115,7 +115,7 @@ impl Wasm {
 #[typetag::serde]
 impl Module for Wasm {
     fn init(&mut self, context: &ModuleInitContext) -> std::result::Result<(), Error> {
-        let mut module = WasmModule::load(&self.path).map_err(|e| {
+        let mut module = WasmLoader::load(&self.path).map_err(|e| {
             Error::Init(format!(
                 "Failed to load WASM module {}: {e}",
                 self.path.display()

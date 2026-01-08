@@ -325,6 +325,8 @@ impl ModuleDispatchConfig {
 static MODULE_REGISTRY: OnceLock<ModuleRegistry> = OnceLock::new();
 
 impl ModuleRegistry {
+    const MODULE_FAILURE_CODE: i32 = 451;
+
     #[must_use]
     pub fn global() -> Option<&'static Self> {
         MODULE_REGISTRY.get()
@@ -417,7 +419,7 @@ impl ModuleRegistry {
             }
 
             if let Some(kind) = outcome.error_kind.as_ref() {
-                record_dispatch_error_metrics(&module_context, event, kind);
+                Self::record_dispatch_error_metrics(&module_context, event, kind);
             }
 
             if outcome.error_kind.is_none() && outcome.code == 0 {
@@ -427,12 +429,12 @@ impl ModuleRegistry {
             match event {
                 Event::Validate(_) => {
                     if matches!(failure_mode, DispatchFailureMode::FailOpen) {
-                        log_dispatch_failure(event, module.as_ref(), &outcome);
+                        Self::log_dispatch_failure(event, module.as_ref(), &outcome);
                         continue;
                     }
 
                     let code = outcome.code;
-                    return rejection_from_code(code, validate_context);
+                    return Self::rejection_from_code(code, validate_context);
                 }
                 Event::Event(_) => {
                     let module_name = module.display_name();
@@ -448,7 +450,7 @@ impl ModuleRegistry {
                         };
                     }
 
-                    log_dispatch_failure(event, module.as_ref(), &outcome);
+                    Self::log_dispatch_failure(event, module.as_ref(), &outcome);
                     if event_error.is_none() {
                         event_error = Some(DispatchResult::Error {
                             module: module_name,
@@ -505,7 +507,7 @@ impl ModuleRegistry {
         if use_clone {
             let working_context = validate_context.clone();
             let (outcome, updated_context) = if use_isolation {
-                emit_isolated(
+                Self::emit_isolated(
                     module,
                     event,
                     working_context,
@@ -514,7 +516,7 @@ impl ModuleRegistry {
                 )
                 .await
             } else {
-                let (outcome, updated_context) = emit_inline(
+                let (outcome, updated_context) = Self::emit_inline(
                     module.as_ref(),
                     event,
                     working_context,
@@ -527,7 +529,7 @@ impl ModuleRegistry {
             if outcome.error_kind.is_none()
                 && let Some(updated_context) = updated_context
             {
-                apply_context_update(
+                Self::apply_context_update(
                     validate_context,
                     updated_context,
                     failure_mode,
@@ -539,7 +541,7 @@ impl ModuleRegistry {
             return outcome;
         }
 
-        emit_inline_in_place(
+        Self::emit_inline_in_place(
             module.as_ref(),
             event,
             validate_context,
@@ -547,324 +549,358 @@ impl ModuleRegistry {
             timeout_limit,
         )
     }
-}
 
-const MODULE_FAILURE_CODE: i32 = 451;
+    fn emit_in_context(
+        module: &dyn traits::Module,
+        event: Event,
+        context: &mut Context,
+        module_context: &ModuleContext,
+    ) -> i32 {
+        let previous = context.module_context.take();
+        context.module_context = Some(module_context.clone());
+        let code = module.emit(event, context);
+        context.module_context = previous;
+        code
+    }
+
+    fn timeout_overrun(limit: Duration, elapsed: Duration) -> Option<Duration> {
+        if elapsed > limit { Some(limit) } else { None }
+    }
+
+    fn apply_context_update(
+        target: &mut Context,
+        updated: Context,
+        failure_mode: DispatchFailureMode,
+        code: i32,
+        completed: bool,
+    ) {
+        if !completed {
+            return;
+        }
+
+        let should_apply = matches!(failure_mode, DispatchFailureMode::FailClosed) || code == 0;
+        if should_apply {
+            *target = updated;
+        }
+    }
+
+    async fn emit_isolated(
+        module: Arc<dyn traits::Module>,
+        event: Event,
+        mut context: Context,
+        module_context: ModuleContext,
+        timeout_limit: Option<Duration>,
+    ) -> (ModuleDispatchOutcome, Option<Context>) {
+        let started_at = Instant::now();
+
+        // Use spawn_blocking to isolate potentially blocking modules (Python, WASM, C).
+        // The async emit is wrapped with block_on so blocking operations don't starve
+        // the main executor, allowing timeouts to fire correctly.
+        let handle = tokio::runtime::Handle::current();
+        let mut join_handle = task::spawn_blocking(move || {
+            handle.block_on(async move {
+                let start = Instant::now();
+                let code =
+                    Self::emit_in_context(module.as_ref(), event, &mut context, &module_context);
+                (code, start.elapsed(), context)
+            })
+        });
+
+        if let Some(timeout_limit) = timeout_limit {
+            let outcome = tokio::select! {
+                result = &mut join_handle => match result {
+                    Ok((code, duration, updated_context)) => {
+                        return (
+                            ModuleDispatchOutcome {
+                                code,
+                                duration,
+                                error_kind: None,
+                            },
+                            Some(updated_context),
+                        );
+                    }
+                    Err(e) if e.is_panic() => ModuleDispatchOutcome {
+                        code: Self::MODULE_FAILURE_CODE,
+                        duration: started_at.elapsed(),
+                        error_kind: Some(DispatchErrorKind::Panicked),
+                    },
+                    Err(_) => ModuleDispatchOutcome {
+                        code: Self::MODULE_FAILURE_CODE,
+                        duration: started_at.elapsed(),
+                        error_kind: Some(DispatchErrorKind::ModuleFailed { code: Self::MODULE_FAILURE_CODE }),
+                    },
+                },
+                () = sleep(timeout_limit) => {
+                    join_handle.abort();
+                    ModuleDispatchOutcome {
+                        code: Self::MODULE_FAILURE_CODE,
+                        duration: timeout_limit,
+                        error_kind: Some(DispatchErrorKind::Timeout {
+                            timeout: timeout_limit,
+                        }),
+                    }
+                }
+            };
+
+            return (outcome, None);
+        }
+
+        match join_handle.await {
+            Ok((code, duration, updated_context)) => (
+                ModuleDispatchOutcome {
+                    code,
+                    duration,
+                    error_kind: None,
+                },
+                Some(updated_context),
+            ),
+            Err(e) if e.is_panic() => (
+                ModuleDispatchOutcome {
+                    code: Self::MODULE_FAILURE_CODE,
+                    duration: started_at.elapsed(),
+                    error_kind: Some(DispatchErrorKind::Panicked),
+                },
+                None,
+            ),
+            Err(_) => (
+                ModuleDispatchOutcome {
+                    code: Self::MODULE_FAILURE_CODE,
+                    duration: started_at.elapsed(),
+                    error_kind: Some(DispatchErrorKind::ModuleFailed {
+                        code: Self::MODULE_FAILURE_CODE,
+                    }),
+                },
+                None,
+            ),
+        }
+    }
+
+    fn emit_inline(
+        module: &dyn traits::Module,
+        event: Event,
+        mut context: Context,
+        module_context: &ModuleContext,
+        timeout_limit: Option<Duration>,
+    ) -> (ModuleDispatchOutcome, Context) {
+        let start = Instant::now();
+        let code = Self::emit_in_context(module, event, &mut context, module_context);
+        let duration = start.elapsed();
+        let error_kind = timeout_limit.and_then(|limit| {
+            Self::timeout_overrun(limit, duration)
+                .map(|limit| DispatchErrorKind::Timeout { timeout: limit })
+        });
+        let code = error_kind
+            .as_ref()
+            .map_or(code, |_| Self::MODULE_FAILURE_CODE);
+
+        (
+            ModuleDispatchOutcome {
+                code,
+                duration,
+                error_kind,
+            },
+            context,
+        )
+    }
+
+    fn emit_inline_in_place(
+        module: &dyn traits::Module,
+        event: Event,
+        context: &mut Context,
+        module_context: &ModuleContext,
+        timeout_limit: Option<Duration>,
+    ) -> ModuleDispatchOutcome {
+        let start = Instant::now();
+        let code = Self::emit_in_context(module, event, context, module_context);
+        let duration = start.elapsed();
+        let error_kind = timeout_limit.and_then(|limit| {
+            Self::timeout_overrun(limit, duration)
+                .map(|limit| DispatchErrorKind::Timeout { timeout: limit })
+        });
+        let code = error_kind
+            .as_ref()
+            .map_or(code, |_| Self::MODULE_FAILURE_CODE);
+
+        ModuleDispatchOutcome {
+            code,
+            duration,
+            error_kind,
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_dispatch_error_metrics(
+        module_context: &ModuleContext,
+        event: Event,
+        error_kind: &DispatchErrorKind,
+    ) {
+        let Some(metrics) = metrics() else {
+            return;
+        };
+
+        let is_validation = matches!(event, Event::Validate(_));
+        let error_kind_label = match error_kind {
+            DispatchErrorKind::Timeout { .. } => {
+                if is_validation {
+                    "validation_timeout"
+                } else {
+                    "timeout"
+                }
+            }
+            DispatchErrorKind::Panicked => {
+                if is_validation {
+                    "validation_panic"
+                } else {
+                    "panic"
+                }
+            }
+            DispatchErrorKind::NotInitialized => "not_initialized",
+            DispatchErrorKind::ModuleFailed { .. } => {
+                if is_validation {
+                    "validation_error"
+                } else {
+                    "error"
+                }
+            }
+        };
+
+        metrics.modules.record_error_with_kind(
+            &module_context.module_type,
+            &module_context.module_name,
+            error_kind_label,
+        );
+
+        if matches!(error_kind, DispatchErrorKind::Timeout { .. }) {
+            metrics.modules.record_timeout(&module_context.module_name);
+        }
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn record_dispatch_error_metrics(
+        _module_context: &ModuleContext,
+        _event: Event,
+        _error_kind: &DispatchErrorKind,
+    ) {
+    }
+
+    fn log_dispatch_failure(
+        event: Event,
+        module: &dyn traits::Module,
+        outcome: &ModuleDispatchOutcome,
+    ) {
+        let module_name = module.display_name();
+        let callback_name = event.callback_name();
+        let is_validation = matches!(event, Event::Validate(_));
+
+        if let Some(error_kind) = outcome.error_kind.as_ref() {
+            match error_kind {
+                DispatchErrorKind::Timeout { timeout } => {
+                    if is_validation {
+                        internal!(
+                            level = ERROR,
+                            "Module {module_name} timed out in {callback_name} after {timeout:?}"
+                        );
+                    } else {
+                        internal!(
+                            level = WARN,
+                            "Module {module_name} timed out in {callback_name} after {timeout:?}"
+                        );
+                    }
+                }
+                DispatchErrorKind::Panicked => {
+                    if is_validation {
+                        internal!(
+                            level = ERROR,
+                            "Module {module_name} panicked in {callback_name}"
+                        );
+                    } else {
+                        internal!(
+                            level = WARN,
+                            "Module {module_name} panicked in {callback_name}"
+                        );
+                    }
+                }
+                DispatchErrorKind::NotInitialized => {
+                    if is_validation {
+                        internal!(
+                            level = ERROR,
+                            "Module {module_name} not initialized for {callback_name}"
+                        );
+                    } else {
+                        internal!(
+                            level = WARN,
+                            "Module {module_name} not initialized for {callback_name}"
+                        );
+                    }
+                }
+                DispatchErrorKind::ModuleFailed { code } => {
+                    if is_validation {
+                        internal!(
+                            level = ERROR,
+                            "Module {module_name} returned non-zero code {code} in {callback_name}"
+                        );
+                    } else {
+                        internal!(
+                            level = WARN,
+                            "Module {module_name} returned non-zero code {code} in {callback_name}"
+                        );
+                    }
+                }
+            }
+            return;
+        }
+
+        if outcome.code != 0 {
+            if is_validation {
+                internal!(
+                    level = ERROR,
+                    "Module {module_name} returned non-zero code {} in {callback_name}",
+                    outcome.code
+                );
+            } else {
+                internal!(
+                    level = WARN,
+                    "Module {module_name} returned non-zero code {} in {callback_name}",
+                    outcome.code
+                );
+            }
+        }
+    }
+
+    fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
+        let status_code = u32::try_from(code).unwrap_or(451);
+        let status = Status::from(status_code);
+        let message = context
+            .response
+            .as_ref()
+            .and_then(|(existing_status, message)| {
+                if existing_status.is_temporary() || existing_status.is_permanent() {
+                    Some(message.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Cow::Borrowed("Rejected"));
+
+        if context.response.is_none()
+            || context
+                .response
+                .as_ref()
+                .is_some_and(|(existing_status, _)| {
+                    !existing_status.is_temporary() && !existing_status.is_permanent()
+                })
+        {
+            context.response = Some((status, message.clone()));
+        }
+
+        DispatchResult::Reject { status, message }
+    }
+}
 
 struct ModuleDispatchOutcome {
     code: i32,
     duration: Duration,
     error_kind: Option<DispatchErrorKind>,
-}
-
-fn emit_in_context(
-    module: &dyn traits::Module,
-    event: Event,
-    context: &mut Context,
-    module_context: &ModuleContext,
-) -> i32 {
-    let previous = context.module_context.take();
-    context.module_context = Some(module_context.clone());
-    let code = module.emit(event, context);
-    context.module_context = previous;
-    code
-}
-
-fn timeout_overrun(limit: Duration, elapsed: Duration) -> Option<Duration> {
-    if elapsed > limit { Some(limit) } else { None }
-}
-
-fn apply_context_update(
-    target: &mut Context,
-    updated: Context,
-    failure_mode: DispatchFailureMode,
-    code: i32,
-    completed: bool,
-) {
-    if !completed {
-        return;
-    }
-
-    let should_apply = matches!(failure_mode, DispatchFailureMode::FailClosed) || code == 0;
-    if should_apply {
-        *target = updated;
-    }
-}
-
-async fn emit_isolated(
-    module: Arc<dyn traits::Module>,
-    event: Event,
-    mut context: Context,
-    module_context: ModuleContext,
-    timeout_limit: Option<Duration>,
-) -> (ModuleDispatchOutcome, Option<Context>) {
-    let started_at = Instant::now();
-
-    // Use spawn_blocking to isolate potentially blocking modules (Python, WASM, C).
-    // The async emit is wrapped with block_on so blocking operations don't starve
-    // the main executor, allowing timeouts to fire correctly.
-    let handle = tokio::runtime::Handle::current();
-    let mut join_handle = task::spawn_blocking(move || {
-        handle.block_on(async move {
-            let start = Instant::now();
-            let code = emit_in_context(module.as_ref(), event, &mut context, &module_context);
-            (code, start.elapsed(), context)
-        })
-    });
-
-    if let Some(timeout_limit) = timeout_limit {
-        let outcome = tokio::select! {
-            result = &mut join_handle => match result {
-                Ok((code, duration, updated_context)) => {
-                    return (
-                        ModuleDispatchOutcome {
-                            code,
-                            duration,
-                            error_kind: None,
-                        },
-                        Some(updated_context),
-                    );
-                }
-                Err(e) if e.is_panic() => ModuleDispatchOutcome {
-                    code: MODULE_FAILURE_CODE,
-                    duration: started_at.elapsed(),
-                    error_kind: Some(DispatchErrorKind::Panicked),
-                },
-                Err(_) => ModuleDispatchOutcome {
-                    code: MODULE_FAILURE_CODE,
-                    duration: started_at.elapsed(),
-                    error_kind: Some(DispatchErrorKind::ModuleFailed { code: MODULE_FAILURE_CODE }),
-                },
-            },
-            () = sleep(timeout_limit) => {
-                join_handle.abort();
-                ModuleDispatchOutcome {
-                    code: MODULE_FAILURE_CODE,
-                    duration: timeout_limit,
-                    error_kind: Some(DispatchErrorKind::Timeout {
-                        timeout: timeout_limit,
-                    }),
-                }
-            }
-        };
-
-        return (outcome, None);
-    }
-
-    match join_handle.await {
-        Ok((code, duration, updated_context)) => (
-            ModuleDispatchOutcome {
-                code,
-                duration,
-                error_kind: None,
-            },
-            Some(updated_context),
-        ),
-        Err(e) if e.is_panic() => (
-            ModuleDispatchOutcome {
-                code: MODULE_FAILURE_CODE,
-                duration: started_at.elapsed(),
-                error_kind: Some(DispatchErrorKind::Panicked),
-            },
-            None,
-        ),
-        Err(_) => (
-            ModuleDispatchOutcome {
-                code: MODULE_FAILURE_CODE,
-                duration: started_at.elapsed(),
-                error_kind: Some(DispatchErrorKind::ModuleFailed {
-                    code: MODULE_FAILURE_CODE,
-                }),
-            },
-            None,
-        ),
-    }
-}
-
-fn emit_inline(
-    module: &dyn traits::Module,
-    event: Event,
-    mut context: Context,
-    module_context: &ModuleContext,
-    timeout_limit: Option<Duration>,
-) -> (ModuleDispatchOutcome, Context) {
-    let start = Instant::now();
-    let code = emit_in_context(module, event, &mut context, module_context);
-    let duration = start.elapsed();
-    let error_kind = timeout_limit.and_then(|limit| {
-        timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
-    });
-    let code = error_kind.as_ref().map_or(code, |_| MODULE_FAILURE_CODE);
-
-    (
-        ModuleDispatchOutcome {
-            code,
-            duration,
-            error_kind,
-        },
-        context,
-    )
-}
-
-fn emit_inline_in_place(
-    module: &dyn traits::Module,
-    event: Event,
-    context: &mut Context,
-    module_context: &ModuleContext,
-    timeout_limit: Option<Duration>,
-) -> ModuleDispatchOutcome {
-    let start = Instant::now();
-    let code = emit_in_context(module, event, context, module_context);
-    let duration = start.elapsed();
-    let error_kind = timeout_limit.and_then(|limit| {
-        timeout_overrun(limit, duration).map(|limit| DispatchErrorKind::Timeout { timeout: limit })
-    });
-    let code = error_kind.as_ref().map_or(code, |_| MODULE_FAILURE_CODE);
-
-    ModuleDispatchOutcome {
-        code,
-        duration,
-        error_kind,
-    }
-}
-
-#[cfg(feature = "metrics")]
-fn record_dispatch_error_metrics(
-    module_context: &ModuleContext,
-    event: Event,
-    error_kind: &DispatchErrorKind,
-) {
-    let Some(metrics) = metrics() else {
-        return;
-    };
-
-    let is_validation = matches!(event, Event::Validate(_));
-    let error_kind_label = match error_kind {
-        DispatchErrorKind::Timeout { .. } => {
-            if is_validation {
-                "validation_timeout"
-            } else {
-                "timeout"
-            }
-        }
-        DispatchErrorKind::Panicked => {
-            if is_validation {
-                "validation_panic"
-            } else {
-                "panic"
-            }
-        }
-        DispatchErrorKind::NotInitialized => "not_initialized",
-        DispatchErrorKind::ModuleFailed { .. } => {
-            if is_validation {
-                "validation_error"
-            } else {
-                "error"
-            }
-        }
-    };
-
-    metrics.modules.record_error_with_kind(
-        &module_context.module_type,
-        &module_context.module_name,
-        error_kind_label,
-    );
-
-    if matches!(error_kind, DispatchErrorKind::Timeout { .. }) {
-        metrics.modules.record_timeout(&module_context.module_name);
-    }
-}
-
-#[cfg(not(feature = "metrics"))]
-fn record_dispatch_error_metrics(
-    _module_context: &ModuleContext,
-    _event: Event,
-    _error_kind: &DispatchErrorKind,
-) {
-}
-
-fn log_dispatch_failure(
-    event: Event,
-    module: &dyn traits::Module,
-    outcome: &ModuleDispatchOutcome,
-) {
-    let module_name = module.display_name();
-    let callback_name = event.callback_name();
-    let is_validation = matches!(event, Event::Validate(_));
-
-    if let Some(error_kind) = outcome.error_kind.as_ref() {
-        match error_kind {
-            DispatchErrorKind::Timeout { timeout } => {
-                if is_validation {
-                    internal!(
-                        level = ERROR,
-                        "Module {module_name} timed out in {callback_name} after {timeout:?}"
-                    );
-                } else {
-                    internal!(
-                        level = WARN,
-                        "Module {module_name} timed out in {callback_name} after {timeout:?}"
-                    );
-                }
-            }
-            DispatchErrorKind::Panicked => {
-                if is_validation {
-                    internal!(
-                        level = ERROR,
-                        "Module {module_name} panicked in {callback_name}"
-                    );
-                } else {
-                    internal!(
-                        level = WARN,
-                        "Module {module_name} panicked in {callback_name}"
-                    );
-                }
-            }
-            DispatchErrorKind::NotInitialized => {
-                if is_validation {
-                    internal!(
-                        level = ERROR,
-                        "Module {module_name} not initialized for {callback_name}"
-                    );
-                } else {
-                    internal!(
-                        level = WARN,
-                        "Module {module_name} not initialized for {callback_name}"
-                    );
-                }
-            }
-            DispatchErrorKind::ModuleFailed { code } => {
-                if is_validation {
-                    internal!(
-                        level = ERROR,
-                        "Module {module_name} returned non-zero code {code} in {callback_name}"
-                    );
-                } else {
-                    internal!(
-                        level = WARN,
-                        "Module {module_name} returned non-zero code {code} in {callback_name}"
-                    );
-                }
-            }
-        }
-        return;
-    }
-
-    if outcome.code != 0 {
-        if is_validation {
-            internal!(
-                level = ERROR,
-                "Module {module_name} returned non-zero code {} in {callback_name}",
-                outcome.code
-            );
-        } else {
-            internal!(
-                level = WARN,
-                "Module {module_name} returned non-zero code {} in {callback_name}",
-                outcome.code
-            );
-        }
-    }
 }
 
 type Init = unsafe extern "C" fn(StringVector) -> i32;
@@ -1049,35 +1085,6 @@ pub enum DispatchResult {
         module: String,
         kind: DispatchErrorKind,
     },
-}
-
-fn rejection_from_code(code: i32, context: &mut Context) -> DispatchResult {
-    let status_code = u32::try_from(code).unwrap_or(451);
-    let status = Status::from(status_code);
-    let message = context
-        .response
-        .as_ref()
-        .and_then(|(existing_status, message)| {
-            if existing_status.is_temporary() || existing_status.is_permanent() {
-                Some(message.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(Cow::Borrowed("Rejected"));
-
-    if context.response.is_none()
-        || context
-            .response
-            .as_ref()
-            .is_some_and(|(existing_status, _)| {
-                !existing_status.is_temporary() && !existing_status.is_permanent()
-            })
-    {
-        context.response = Some((status, message.clone()));
-    }
-
-    DispatchResult::Reject { status, message }
 }
 
 pub mod test {

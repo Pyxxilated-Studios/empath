@@ -166,21 +166,21 @@ impl DsnGenerator {
                 })?;
 
         // Build the three parts of the DSN
-        let human_readable = build_human_readable_part(
+        let human_readable = Self::build_human_readable_part(
             original_sender,
             original_recipients,
             request.delivery_info,
             request.error,
         );
 
-        let machine_readable = build_machine_readable_part(
+        let machine_readable = Self::build_machine_readable_part(
             &self.config,
             original_recipients,
             request.delivery_info,
             request.error,
         );
 
-        let original_headers = extract_original_headers(request.original_context);
+        let original_headers = Self::extract_original_headers(request.original_context);
 
         // Generate unique boundary for multipart message
         let boundary = format!(
@@ -260,6 +260,140 @@ impl DsnGenerator {
 
         Ok(dsn_context)
     }
+
+    /// Build the human-readable text part of the DSN (Part 1)
+    fn build_human_readable_part(
+        original_sender: &Address,
+        original_recipients: &AddressList,
+        delivery_info: &DeliveryInfo,
+        error: &DeliveryError,
+    ) -> String {
+        let recipient_list = original_recipients
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!(
+            "This is the mail system at host {recipient_list}.\n\
+            \n\
+            I'm sorry to have to inform you that your message could not\n\
+            be delivered to one or more recipients. It's attached below.\n\
+            \n\
+            For further assistance, please contact <{error}>.\n\
+            \n\
+            Your message could not be delivered:\n\
+            \n\
+            {recipient_list}: {error}\n\
+            \n\
+            Message details:\n\
+            - Original sender: {original_sender}\n\
+            - Failed recipient(s): {recipient_list}\n\
+            - Delivery attempts: {attempts}\n\
+            - Domain: {domain}\n\
+            {last_server}",
+            recipient_list = recipient_list,
+            error = error,
+            original_sender = original_sender,
+            attempts = delivery_info.attempt_count(),
+            domain = delivery_info.recipient_domain,
+            last_server =
+                delivery_info
+                    .current_mail_server()
+                    .map_or_else(String::new, |server| format!(
+                        "- Last server attempted: {}",
+                        server.address()
+                    ))
+        )
+    }
+
+    /// Build the machine-readable delivery status part (Part 2)
+    fn build_machine_readable_part(
+        config: &DsnConfig,
+        original_recipients: &AddressList,
+        delivery_info: &DeliveryInfo,
+        error: &DeliveryError,
+    ) -> String {
+        // Determine SMTP status code from error type
+        let (status_code, action) = if error.is_permanent() {
+            ("5.0.0", "failed")
+        } else {
+            ("4.0.0", "failed") // Temporary failure that exhausted retries
+        };
+
+        // Per-message fields (mandatory: Reporting-MTA)
+        let mut dsn = format!("Reporting-MTA: dns; {}\r\n", config.reporting_mta);
+
+        // Add arrival date if available
+        if let Ok(duration) = delivery_info
+            .queued_at
+            .duration_since(SystemTime::UNIX_EPOCH)
+        {
+            let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                duration.as_secs().try_into().unwrap_or(0),
+                duration.subsec_nanos(),
+            )
+            .map_or_else(|| "unknown".to_string(), |dt| dt.to_rfc2822());
+            let _ = write!(dsn, "Arrival-Date: {timestamp}\r\n");
+        }
+
+        // Per-recipient fields (one group per recipient)
+        for recipient in original_recipients.iter() {
+            dsn.push_str("\r\n"); // Blank line separates per-recipient groups
+
+            // Final-Recipient (mandatory)
+            let _ = write!(dsn, "Final-Recipient: rfc822; {recipient}\r\n");
+
+            // Action (mandatory)
+            let _ = write!(dsn, "Action: {action}\r\n");
+
+            // Status (mandatory) - enhanced status code
+            let _ = write!(dsn, "Status: {status_code}\r\n");
+
+            // Diagnostic-Code (optional but helpful)
+            let _ = write!(dsn, "Diagnostic-Code: smtp; {error}\r\n");
+
+            // Remote-MTA (if available)
+            if let Some(server) = delivery_info.current_mail_server() {
+                let _ = write!(dsn, "Remote-MTA: dns; {}\r\n", server.host);
+            }
+
+            // Last-Attempt-Date (if available)
+            if let Some(last_attempt) = delivery_info.attempts.last()
+                && let Ok(duration) = last_attempt
+                    .timestamp
+                    .duration_since(SystemTime::UNIX_EPOCH)
+            {
+                let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                    duration.as_secs().try_into().unwrap_or(0),
+                    duration.subsec_nanos(),
+                )
+                .map_or_else(|| "unknown".to_string(), |dt| dt.to_rfc2822());
+                let _ = write!(dsn, "Last-Attempt-Date: {timestamp}\r\n");
+            }
+        }
+
+        dsn
+    }
+
+    /// Extract original message headers for Part 3
+    ///
+    /// Returns the first 1KB of the original message headers to avoid
+    /// including large message bodies in the DSN.
+    fn extract_original_headers(original_context: &Context) -> String {
+        original_context.data.as_ref().map_or_else(
+            || String::from("(No message data available)"),
+            |data| {
+                // Find the end of headers (double CRLF)
+                let header_end = data
+                    .windows(4)
+                    .position(|w| w == b"\r\n\r\n")
+                    .unwrap_or_else(|| data.len().min(1024)); // Limit to 1KB
+
+                String::from_utf8_lossy(&data[..header_end]).to_string()
+            },
+        )
+    }
 }
 
 pub struct DsnGeneratorBuilder {
@@ -302,140 +436,6 @@ impl DsnGeneratorBuilder {
     pub fn build(self) -> DsnGenerator {
         DsnGenerator::new(self.config)
     }
-}
-
-/// Build the human-readable text part of the DSN (Part 1)
-fn build_human_readable_part(
-    original_sender: &Address,
-    original_recipients: &AddressList,
-    delivery_info: &DeliveryInfo,
-    error: &DeliveryError,
-) -> String {
-    let recipient_list = original_recipients
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    format!(
-        "This is the mail system at host {recipient_list}.\n\
-        \n\
-        I'm sorry to have to inform you that your message could not\n\
-        be delivered to one or more recipients. It's attached below.\n\
-        \n\
-        For further assistance, please contact <{error}>.\n\
-        \n\
-        Your message could not be delivered:\n\
-        \n\
-        {recipient_list}: {error}\n\
-        \n\
-        Message details:\n\
-        - Original sender: {original_sender}\n\
-        - Failed recipient(s): {recipient_list}\n\
-        - Delivery attempts: {attempts}\n\
-        - Domain: {domain}\n\
-        {last_server}",
-        recipient_list = recipient_list,
-        error = error,
-        original_sender = original_sender,
-        attempts = delivery_info.attempt_count(),
-        domain = delivery_info.recipient_domain,
-        last_server =
-            delivery_info
-                .current_mail_server()
-                .map_or_else(String::new, |server| format!(
-                    "- Last server attempted: {}",
-                    server.address()
-                ))
-    )
-}
-
-/// Build the machine-readable delivery status part (Part 2)
-fn build_machine_readable_part(
-    config: &DsnConfig,
-    original_recipients: &AddressList,
-    delivery_info: &DeliveryInfo,
-    error: &DeliveryError,
-) -> String {
-    // Determine SMTP status code from error type
-    let (status_code, action) = if error.is_permanent() {
-        ("5.0.0", "failed")
-    } else {
-        ("4.0.0", "failed") // Temporary failure that exhausted retries
-    };
-
-    // Per-message fields (mandatory: Reporting-MTA)
-    let mut dsn = format!("Reporting-MTA: dns; {}\r\n", config.reporting_mta);
-
-    // Add arrival date if available
-    if let Ok(duration) = delivery_info
-        .queued_at
-        .duration_since(SystemTime::UNIX_EPOCH)
-    {
-        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
-            duration.as_secs().try_into().unwrap_or(0),
-            duration.subsec_nanos(),
-        )
-        .map_or_else(|| "unknown".to_string(), |dt| dt.to_rfc2822());
-        let _ = write!(dsn, "Arrival-Date: {timestamp}\r\n");
-    }
-
-    // Per-recipient fields (one group per recipient)
-    for recipient in original_recipients.iter() {
-        dsn.push_str("\r\n"); // Blank line separates per-recipient groups
-
-        // Final-Recipient (mandatory)
-        let _ = write!(dsn, "Final-Recipient: rfc822; {recipient}\r\n");
-
-        // Action (mandatory)
-        let _ = write!(dsn, "Action: {action}\r\n");
-
-        // Status (mandatory) - enhanced status code
-        let _ = write!(dsn, "Status: {status_code}\r\n");
-
-        // Diagnostic-Code (optional but helpful)
-        let _ = write!(dsn, "Diagnostic-Code: smtp; {error}\r\n");
-
-        // Remote-MTA (if available)
-        if let Some(server) = delivery_info.current_mail_server() {
-            let _ = write!(dsn, "Remote-MTA: dns; {}\r\n", server.host);
-        }
-
-        // Last-Attempt-Date (if available)
-        if let Some(last_attempt) = delivery_info.attempts.last()
-            && let Ok(duration) = last_attempt
-                .timestamp
-                .duration_since(SystemTime::UNIX_EPOCH)
-        {
-            let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                duration.as_secs().try_into().unwrap_or(0),
-                duration.subsec_nanos(),
-            )
-            .map_or_else(|| "unknown".to_string(), |dt| dt.to_rfc2822());
-            let _ = write!(dsn, "Last-Attempt-Date: {timestamp}\r\n");
-        }
-    }
-
-    dsn
-}
-
-/// Extract original message headers for Part 3
-///
-/// Returns the first 1KB of the original message headers to avoid
-/// including large message bodies in the DSN.
-fn extract_original_headers(original_context: &Context) -> String {
-    original_context.data.as_ref().map_or_else(
-        || String::from("(No message data available)"),
-        |data| {
-            // Find the end of headers (double CRLF)
-            let header_end = data
-                .windows(4)
-                .position(|w| w == b"\r\n\r\n")
-                .unwrap_or_else(|| data.len().min(1024)); // Limit to 1KB
-
-            String::from_utf8_lossy(&data[..header_end]).to_string()
-        },
-    )
 }
 
 #[cfg(test)]

@@ -245,104 +245,11 @@ impl From<&Context> for wit_events::EventContext {
     }
 }
 
-/// Convert validation result to return code
-///
-/// Returns 0 for Accept, or the SMTP error code for Reject
-///
-/// # SMTP Code Validation (RFC 5321)
-///
-/// Validates that rejection codes are in the valid SMTP range (400-599).
-/// Invalid codes are replaced with 550 (Requested action not taken) to ensure
-/// RFC compliance and prevent protocol errors.
-fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult) -> i32 {
-    match result {
-        wit::ValidationResult::Accept => {
-            internal!(
-                level = DEBUG,
-                "WASM callback '{callback_name}' returned: Accept"
-            );
-            0
-        }
-        wit::ValidationResult::Reject(rejection) => {
-            let code = rejection.code.cast_signed();
-
-            // Validate SMTP code is in valid range (400-599 per RFC 5321)
-            let validated_code = if (400..=599).contains(&code) {
-                code
-            } else {
-                internal!(
-                    level = WARN,
-                    "WASM callback '{callback_name}' returned invalid SMTP code {}, using 550 instead",
-                    code
-                );
-                550 // Default to "Requested action not taken" for invalid codes
-            };
-
-            internal!(
-                level = INFO,
-                "WASM callback '{callback_name}' returned: Reject({}, {})",
-                validated_code,
-                rejection.message
-            );
-
-            validated_code
-        }
-    }
-}
-
-/// Check if a Wasmtime error is caused by an epoch timeout
-fn is_timeout_error(err: &wasmtime::Error) -> bool {
-    // Prefer structured information when available.
-    if let Some(trap) = err.downcast_ref::<wasmtime::Trap>()
-        && trap.to_string().to_ascii_lowercase().contains("interrupt")
-    {
-        return true;
-    }
-
-    // Fallback to string search for host-propagated errors.
-    let combined = format!("{err:?} {err}").to_ascii_lowercase();
-    combined.contains("epoch deadline exceeded") || combined.contains("interrupt")
-}
-
-/// Call a validation callback and return the result code
-///
-/// # Errors
-/// Returns `WasmError::Timeout` if the callback exceeds the configured timeout
-fn call_validation_callback(
-    callback_name: &str,
-    validator: &Validator,
-    store: &mut Store<WasmStore>,
-    wit_context: &wit::ValidationContext,
-) -> Result<i32> {
-    let Some(validation) = WasmValidation::from_name(callback_name) else {
-        return Ok(-1); // Unknown callback
-    };
-
-    validation.dispatch(validator, store, wit_context)
-}
-
-/// Call an event callback
-///
-/// # Errors
-/// Returns `WasmError::Timeout` if the callback exceeds the configured timeout
-fn call_event_callback(
-    callback_name: &str,
-    validator: &Validator,
-    store: &mut Store<WasmStore>,
-    wit_context: &wit_events::EventContext,
-) -> Result<()> {
-    let Some(event) = WasmEvent::from_name(callback_name) else {
-        return Ok(()); // Unknown callback
-    };
-
-    event.dispatch(validator, store, wit_context)
-}
-
 /// WebAssembly component wrapper
 ///
 /// Manages the lifecycle of a WASM component including loading, initialization,
 /// and callback execution with resource limits.
-pub struct WasmModule {
+pub struct WasmLoader {
     /// Path to the WASM component file
     path: String,
 
@@ -374,7 +281,7 @@ pub struct WasmModule {
     deterministic_wasi: Option<DeterministicWasiConfig>,
 }
 
-impl WasmModule {
+impl WasmLoader {
     /// Load a WASM component from a file
     ///
     /// # Arguments
@@ -603,8 +510,12 @@ impl WasmModule {
                 wit::ValidationContext::from(&*ctx_lock)
             };
             // Validation callback
-            let code =
-                call_validation_callback(callback_name, &validator, &mut store, &wit_context)?;
+            let code = Self::call_validation_callback(
+                callback_name,
+                &validator,
+                &mut store,
+                &wit_context,
+            )?;
             if code == -1 {
                 internal!(
                     level = WARN,
@@ -623,7 +534,7 @@ impl WasmModule {
                 wit_events::EventContext::from(&*ctx_lock)
             };
             // Event callback
-            call_event_callback(callback_name, &validator, &mut store, &wit_context)?;
+            Self::call_event_callback(callback_name, &validator, &mut store, &wit_context)?;
             0
         } else {
             // Unknown callback - log warning and accept
@@ -731,6 +642,99 @@ impl WasmModule {
         internal!(level = TRACE, "WASI context built successfully");
         Ok(ctx)
     }
+
+    /// Convert validation result to return code
+    ///
+    /// Returns 0 for Accept, or the SMTP error code for Reject
+    ///
+    /// # SMTP Code Validation (RFC 5321)
+    ///
+    /// Validates that rejection codes are in the valid SMTP range (400-599).
+    /// Invalid codes are replaced with 550 (Requested action not taken) to ensure
+    /// RFC compliance and prevent protocol errors.
+    fn validation_result_to_code(callback_name: &str, result: wit::ValidationResult) -> i32 {
+        match result {
+            wit::ValidationResult::Accept => {
+                internal!(
+                    level = DEBUG,
+                    "WASM callback '{callback_name}' returned: Accept"
+                );
+                0
+            }
+            wit::ValidationResult::Reject(rejection) => {
+                let code = rejection.code.cast_signed();
+
+                // Validate SMTP code is in valid range (400-599 per RFC 5321)
+                let validated_code = if (400..=599).contains(&code) {
+                    code
+                } else {
+                    internal!(
+                        level = WARN,
+                        "WASM callback '{callback_name}' returned invalid SMTP code {}, using 550 instead",
+                        code
+                    );
+                    550 // Default to "Requested action not taken" for invalid codes
+                };
+
+                internal!(
+                    level = INFO,
+                    "WASM callback '{callback_name}' returned: Reject({}, {})",
+                    validated_code,
+                    rejection.message
+                );
+
+                validated_code
+            }
+        }
+    }
+
+    /// Check if a Wasmtime error is caused by an epoch timeout
+    fn is_timeout_error(err: &wasmtime::Error) -> bool {
+        // Prefer structured information when available.
+        if let Some(trap) = err.downcast_ref::<wasmtime::Trap>()
+            && trap.to_string().to_ascii_lowercase().contains("interrupt")
+        {
+            return true;
+        }
+
+        // Fallback to string search for host-propagated errors.
+        let combined = format!("{err:?} {err}").to_ascii_lowercase();
+        combined.contains("epoch deadline exceeded") || combined.contains("interrupt")
+    }
+
+    /// Call a validation callback and return the result code
+    ///
+    /// # Errors
+    /// Returns `WasmError::Timeout` if the callback exceeds the configured timeout
+    fn call_validation_callback(
+        callback_name: &str,
+        validator: &Validator,
+        store: &mut Store<WasmStore>,
+        wit_context: &wit::ValidationContext,
+    ) -> Result<i32> {
+        let Some(validation) = WasmValidation::from_name(callback_name) else {
+            return Ok(-1); // Unknown callback
+        };
+
+        validation.dispatch(validator, store, wit_context)
+    }
+
+    /// Call an event callback
+    ///
+    /// # Errors
+    /// Returns `WasmError::Timeout` if the callback exceeds the configured timeout
+    fn call_event_callback(
+        callback_name: &str,
+        validator: &Validator,
+        store: &mut Store<WasmStore>,
+        wit_context: &wit_events::EventContext,
+    ) -> Result<()> {
+        let Some(event) = WasmEvent::from_name(callback_name) else {
+            return Ok(()); // Unknown callback
+        };
+
+        event.dispatch(validator, store, wit_context)
+    }
 }
 
 macro_rules! define_wasm_validations {
@@ -779,7 +783,7 @@ macro_rules! define_wasm_validations {
                 };
 
                 let result = call_result.map_err(|e| {
-                    if is_timeout_error(&e) {
+                    if WasmLoader::is_timeout_error(&e) {
                         ModuleError::Timeout {
                             callback: callback_name.to_string(),
                             timeout_secs,
@@ -789,7 +793,7 @@ macro_rules! define_wasm_validations {
                     }
                 })?;
 
-                Ok(validation_result_to_code(callback_name, result))
+                Ok(WasmLoader::validation_result_to_code(callback_name, result))
             }
         }
     };
@@ -864,7 +868,7 @@ macro_rules! define_wasm_events {
                 };
 
                 call_result.map_err(|e| {
-                    if is_timeout_error(&e) {
+                    if WasmLoader::is_timeout_error(&e) {
                         ModuleError::Timeout {
                             callback: callback_name.to_string(),
                             timeout_secs,
@@ -923,25 +927,15 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_load_nonexistent_module() {
-        let result = WasmModule::load("/nonexistent/path.wasm");
+        let result = WasmLoader::load("/nonexistent/path.wasm");
         assert!(result.is_err());
         assert!(matches!(result, Err(ModuleError::ModuleNotFound(_))));
     }
 
     #[test]
-    fn test_with_timeout() {
-        // This test would require a valid WASM file, so we'll skip the actual loading
-        // and just test the builder methods would work
-        let _timeout = Duration::from_secs(10);
-        // In a real test with a valid module:
-        // let module = WasmModule::load("test.wasm").unwrap().with_timeout(timeout);
-        // assert_eq!(module.timeout(), timeout);
-    }
-
-    #[test]
     fn validation_result_to_code_accept_is_zero() {
         let result = wit::ValidationResult::Accept;
-        assert_eq!(validation_result_to_code("accept", result), 0);
+        assert_eq!(WasmLoader::validation_result_to_code("accept", result), 0);
     }
 
     #[test]
@@ -951,18 +945,21 @@ mod tests {
             message: "bad code".to_string(),
         };
         let result = wit::ValidationResult::Reject(rejection);
-        assert_eq!(validation_result_to_code("invalid", result), 550);
+        assert_eq!(
+            WasmLoader::validation_result_to_code("invalid", result),
+            550
+        );
     }
 
     #[test]
     fn timeout_error_detection_matches_epoch_message() {
         let timeout_err = wasmtime::Error::msg("epoch deadline exceeded");
-        assert!(is_timeout_error(&timeout_err));
+        assert!(WasmLoader::is_timeout_error(&timeout_err));
 
         // Use an error that is not an interrupt
         let other_err = wasmtime::Error::msg("component instantiation failed");
         assert!(
-            !is_timeout_error(&other_err),
+            !WasmLoader::is_timeout_error(&other_err),
             "non-interrupt traps should not be treated as timeout"
         );
     }

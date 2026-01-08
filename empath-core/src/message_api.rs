@@ -288,8 +288,8 @@ impl MessageParts {
     /// # Errors
     /// Returns `MessageParseError` if the message is structurally invalid.
     pub fn from_bytes(raw: &[u8]) -> Result<Self, MessageParseError> {
-        let (header_bytes, body) = split_headers_body(raw)?;
-        let headers = parse_headers_block(header_bytes)?;
+        let (header_bytes, body) = Self::split_headers_body(raw)?;
+        let headers = Self::parse_headers_block(header_bytes)?;
         Ok(Self {
             headers,
             body: body.to_vec(),
@@ -346,6 +346,86 @@ impl MessageParts {
     /// Mark as clean after persistence.
     pub const fn clear_dirty(&mut self) {
         self.dirty = false;
+    }
+
+    fn split_headers_body(raw: &[u8]) -> Result<(&[u8], &[u8]), MessageParseError> {
+        raw.windows(4).position(|w| w == b"\r\n\r\n").map_or_else(
+            || {
+                Err(MessageParseError::InvalidStructure(
+                    "Missing CRLF CRLF between headers and body".to_string(),
+                ))
+            },
+            |idx| {
+                let headers = &raw[..idx];
+                let body = &raw[idx + 4..];
+                Ok((headers, body))
+            },
+        )
+    }
+
+    fn parse_headers_block(
+        block: &[u8],
+    ) -> Result<Vec<(HeaderName, HeaderValue)>, MessageParseError> {
+        let mut headers = Vec::new();
+        let mut current_name: Option<Vec<u8>> = None;
+        let mut current_value: Vec<u8> = Vec::new();
+
+        for line in block.split(|b| *b == b'\n') {
+            let line = line.strip_suffix(b"\r").map_or(line, |stripped| stripped);
+
+            if line.is_empty() {
+                continue;
+            }
+
+            if line[0].is_ascii_whitespace() {
+                if current_name.is_none() {
+                    return Err(MessageParseError::InvalidStructure(
+                        "Header continuation without a field".to_string(),
+                    ));
+                }
+                current_value.push(b' ');
+                current_value.extend_from_slice(Self::trim_leading_ws(line));
+                continue;
+            }
+
+            if let Some(name_bytes) = current_name.take() {
+                let name_str = std::str::from_utf8(&name_bytes)?;
+                headers.push((
+                    HeaderName::new(name_str).map_err(Self::to_parse_error)?,
+                    HeaderValue::new(&current_value).map_err(Self::to_parse_error)?,
+                ));
+            }
+
+            let mut parts = line.splitn(2, |b| *b == b':');
+            let name = parts.next().unwrap_or(&[]);
+            let value = parts.next().ok_or_else(|| {
+                MessageParseError::InvalidStructure("Header missing ':'".to_string())
+            })?;
+            current_name = Some(name.to_vec());
+            current_value = Self::trim_leading_ws(value).to_vec();
+        }
+
+        if let Some(name_bytes) = current_name.take() {
+            let name_str = std::str::from_utf8(&name_bytes)?;
+            headers.push((
+                HeaderName::new(name_str).map_err(Self::to_parse_error)?,
+                HeaderValue::new(&current_value).map_err(Self::to_parse_error)?,
+            ));
+        }
+
+        Ok(headers)
+    }
+
+    fn trim_leading_ws(bytes: &[u8]) -> &[u8] {
+        let skip = bytes
+            .iter()
+            .position(|b| !b.is_ascii_whitespace())
+            .unwrap_or(bytes.len());
+        &bytes[skip..]
+    }
+
+    fn to_parse_error(err: HeaderError) -> MessageParseError {
+        MessageParseError::InvalidStructure(format!("{err:?}"))
     }
 }
 
@@ -593,7 +673,34 @@ impl<'a> BodyView<'a> {
 
     #[must_use]
     pub fn newline_style(&self) -> NewlineStyle {
-        detect_newline(self.bytes)
+        Self::detect_newline(self.bytes)
+    }
+
+    fn detect_newline(bytes: &[u8]) -> NewlineStyle {
+        let mut saw_crlf = false;
+        let mut saw_lf = false;
+
+        let mut idx = 0;
+        while idx < bytes.len() {
+            match bytes[idx] {
+                b'\r' if bytes.get(idx + 1) == Some(&b'\n') => {
+                    saw_crlf = true;
+                    idx += 2;
+                    continue;
+                }
+                b'\n' => {
+                    saw_lf = true;
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+
+        match (saw_crlf, saw_lf) {
+            (true, true) => NewlineStyle::Mixed,
+            (true, false) => NewlineStyle::Crlf,
+            (false, _) => NewlineStyle::Lf,
+        }
     }
 }
 
@@ -640,7 +747,7 @@ impl<'a> BodyMut<'a> {
         action: &str,
     ) -> Result<(), BodyError> {
         if opts.normalize_crlf {
-            normalize_crlf(&mut next);
+            Self::normalize_crlf_impl(&mut next);
         }
 
         self.enforce_size(next.len())?;
@@ -757,8 +864,28 @@ impl<'a> BodyMut<'a> {
     /// Returns `BodyError` if limits are exceeded.
     pub fn normalize_crlf(&mut self) -> Result<(), BodyError> {
         let mut next = self.buffer.clone();
-        normalize_crlf(&mut next);
+        Self::normalize_crlf_impl(&mut next);
         self.update_body(next, BodyOpts::default(), "normalize-crlf")
+    }
+
+    fn normalize_crlf_impl(buf: &mut Vec<u8>) {
+        let mut normalized = Vec::with_capacity(buf.len());
+        let mut idx = 0;
+        while idx < buf.len() {
+            match buf[idx] {
+                b'\r' if buf.get(idx + 1) == Some(&b'\n') => {
+                    normalized.extend_from_slice(b"\r\n");
+                    idx += 2;
+                    continue;
+                }
+                b'\n' => {
+                    normalized.extend_from_slice(b"\r\n");
+                }
+                byte => normalized.push(byte),
+            }
+            idx += 1;
+        }
+        *buf = normalized;
     }
 }
 
@@ -827,131 +954,6 @@ pub struct MutationRecord {
 pub enum MutationKind {
     Header { name: String },
     Body,
-}
-
-fn detect_newline(bytes: &[u8]) -> NewlineStyle {
-    let mut saw_crlf = false;
-    let mut saw_lf = false;
-
-    let mut idx = 0;
-    while idx < bytes.len() {
-        match bytes[idx] {
-            b'\r' if bytes.get(idx + 1) == Some(&b'\n') => {
-                saw_crlf = true;
-                idx += 2;
-                continue;
-            }
-            b'\n' => {
-                saw_lf = true;
-            }
-            _ => {}
-        }
-        idx += 1;
-    }
-
-    match (saw_crlf, saw_lf) {
-        (true, true) => NewlineStyle::Mixed,
-        (true, false) => NewlineStyle::Crlf,
-        (false, _) => NewlineStyle::Lf,
-    }
-}
-
-fn normalize_crlf(buf: &mut Vec<u8>) {
-    let mut normalized = Vec::with_capacity(buf.len());
-    let mut idx = 0;
-    while idx < buf.len() {
-        match buf[idx] {
-            b'\r' if buf.get(idx + 1) == Some(&b'\n') => {
-                normalized.extend_from_slice(b"\r\n");
-                idx += 2;
-                continue;
-            }
-            b'\n' => {
-                normalized.extend_from_slice(b"\r\n");
-            }
-            byte => normalized.push(byte),
-        }
-        idx += 1;
-    }
-    *buf = normalized;
-}
-
-fn split_headers_body(raw: &[u8]) -> Result<(&[u8], &[u8]), MessageParseError> {
-    raw.windows(4).position(|w| w == b"\r\n\r\n").map_or_else(
-        || {
-            Err(MessageParseError::InvalidStructure(
-                "Missing CRLF CRLF between headers and body".to_string(),
-            ))
-        },
-        |idx| {
-            let headers = &raw[..idx];
-            let body = &raw[idx + 4..];
-            Ok((headers, body))
-        },
-    )
-}
-
-fn parse_headers_block(block: &[u8]) -> Result<Vec<(HeaderName, HeaderValue)>, MessageParseError> {
-    let mut headers = Vec::new();
-    let mut current_name: Option<Vec<u8>> = None;
-    let mut current_value: Vec<u8> = Vec::new();
-
-    for line in block.split(|b| *b == b'\n') {
-        let line = line.strip_suffix(b"\r").map_or(line, |stripped| stripped);
-
-        if line.is_empty() {
-            continue;
-        }
-
-        if line[0].is_ascii_whitespace() {
-            if current_name.is_none() {
-                return Err(MessageParseError::InvalidStructure(
-                    "Header continuation without a field".to_string(),
-                ));
-            }
-            current_value.push(b' ');
-            current_value.extend_from_slice(trim_leading_ws(line));
-            continue;
-        }
-
-        if let Some(name_bytes) = current_name.take() {
-            let name_str = std::str::from_utf8(&name_bytes)?;
-            headers.push((
-                HeaderName::new(name_str).map_err(to_parse_error)?,
-                HeaderValue::new(&current_value).map_err(to_parse_error)?,
-            ));
-        }
-
-        let mut parts = line.splitn(2, |b| *b == b':');
-        let name = parts.next().unwrap_or(&[]);
-        let value = parts
-            .next()
-            .ok_or_else(|| MessageParseError::InvalidStructure("Header missing ':'".to_string()))?;
-        current_name = Some(name.to_vec());
-        current_value = trim_leading_ws(value).to_vec();
-    }
-
-    if let Some(name_bytes) = current_name.take() {
-        let name_str = std::str::from_utf8(&name_bytes)?;
-        headers.push((
-            HeaderName::new(name_str).map_err(to_parse_error)?,
-            HeaderValue::new(&current_value).map_err(to_parse_error)?,
-        ));
-    }
-
-    Ok(headers)
-}
-
-fn trim_leading_ws(bytes: &[u8]) -> &[u8] {
-    let skip = bytes
-        .iter()
-        .position(|b| !b.is_ascii_whitespace())
-        .unwrap_or(bytes.len());
-    &bytes[skip..]
-}
-
-fn to_parse_error(err: HeaderError) -> MessageParseError {
-    MessageParseError::InvalidStructure(format!("{err:?}"))
 }
 
 impl std::fmt::Display for TransferEncoding {
