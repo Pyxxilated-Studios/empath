@@ -59,6 +59,7 @@ mod tests {
     use super::{Cli, Command, validate_config};
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_check_command() -> Result<(), String> {
         let cli = Cli::try_parse_from(["empathcfg", "check", "one.ron", "two.ron"])
             .map_err(|err| err.to_string())?;
@@ -74,6 +75,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_emit_default_command() -> Result<(), String> {
         let cli =
             Cli::try_parse_from(["empathcfg", "emit-default"]).map_err(|err| err.to_string())?;
@@ -84,6 +86,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn validate_config_accepts_default() -> anyhow::Result<()> {
         let content = empath::config::emit_default_config()?;
         let path = std::env::temp_dir().join(format!(
@@ -100,6 +103,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn validate_config_missing_file_reports_error() {
         let path = std::env::temp_dir().join("empathcfg-missing-file.ron");
         let err = validate_config(&path).err();

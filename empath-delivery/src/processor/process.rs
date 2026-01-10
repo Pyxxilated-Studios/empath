@@ -268,6 +268,7 @@ fn scan_queue(
             processor.queue.mark_inactive(&message_id);
             continue;
         };
+
         let info = entry.value_mut();
 
         // Double-check status in case it changed (defensive)
@@ -323,6 +324,7 @@ fn is_expired(processor: &DeliveryProcessor, info: &mut DeliveryInfo, now: Syste
     let Some(expiration_secs) = processor.message_expiration_secs else {
         return false;
     };
+
     let age_secs = now
         .duration_since(info.queued_at)
         .unwrap_or_default()
@@ -337,6 +339,7 @@ fn is_expired(processor: &DeliveryProcessor, info: &mut DeliveryInfo, now: Syste
         expiration_secs = expiration_secs,
         "Message expired, marking as Expired"
     );
+
     info.status = DeliveryStatus::Expired;
     true
 }
@@ -407,7 +410,7 @@ async fn process_pending_messages(
         "Processing delivery queue with parallel workers"
     );
 
-    let mut join_set: JoinSet<()> = JoinSet::new();
+    let mut join_set = JoinSet::new();
     let mut pending_iter = pending_message_ids.into_iter();
 
     // Spawn initial batch of workers using idiomatic .take() adaptor
@@ -432,12 +435,12 @@ fn spawn_delivery_task(
     spool: &Arc<dyn BackingStore>,
     message_id: SpooledMessageId,
 ) {
-    let processor_clone = Arc::clone(processor);
-    let spool_clone = Arc::clone(spool);
+    let processor = Arc::clone(processor);
+    let spool = Arc::clone(spool);
 
     join_set.spawn(async move {
-        if let Some(info) = processor_clone.queue.get(&message_id) {
-            Box::pin(process_single_message(processor_clone, spool_clone, info)).await;
+        if let Some(info) = processor.queue.get(&message_id) {
+            Box::pin(process_single_message(processor, spool, info)).await;
         }
     });
 }
