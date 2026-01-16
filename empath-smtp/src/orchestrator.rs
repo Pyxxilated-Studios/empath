@@ -21,7 +21,8 @@ use empath_tracing::traced;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::connection::Connection;
-use crate::session::{Context, Event, Session, TlsContext};
+use crate::session::{Context, Event, Session};
+use crate::tls::TlsContext;
 use crate::transaction::SmtpTransactionHandler;
 use crate::{State, state};
 

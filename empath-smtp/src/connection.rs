@@ -9,7 +9,7 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::{ProtocolVersion, ServerConnection, SupportedCipherSuite};
 use tokio_rustls::server::TlsStream;
 
-use super::session::TlsContext;
+use super::tls::TlsContext;
 use crate::error::{ConnectionResult, TlsError, TlsResult};
 
 #[repr(C)]

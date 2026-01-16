@@ -13,6 +13,7 @@ pub mod session;
 pub mod session_state;
 pub mod spf;
 pub mod state;
+pub mod tls;
 pub mod transaction;
 
 // Re-export commonly used types
@@ -29,14 +30,15 @@ use empath_common::traits::protocol::Protocol;
 use empath_spool::BackingStore;
 use empath_tracing::traced;
 use serde::Deserialize;
-pub use session::{Session, TlsContextInfo, TlsContextRegistry, TlsProfileInfo};
+pub use session::Session;
 // Re-export the type-safe state machine from the state module
 pub use state::State;
+pub use tls::{TlsContext, TlsContextInfo, TlsContextRegistry, TlsProfileInfo, TlsProfileSet};
 use tokio::net::TcpStream;
 
 use crate::extensions::Extension;
 use crate::orchestrator::SmtpSessionOrchestrator;
-use crate::session::{SessionConfig, TlsProfileSet};
+use crate::session::SessionConfig;
 
 /// SMTP server-side timeout configuration
 ///
@@ -301,16 +303,16 @@ impl Protocol for Smtp {
         let (session, transaction_handler, tls_context) = crate::session::Session::create(
             peer,
             SessionConfig::builder()
-                .with_extensions(extensions)
-                .with_capabilities(capabilities)
-                .with_require_dkim(args.require_dkim)
-                .with_dmarc_enforce(args.dmarc_enforce)
-                .with_spool(args.spool)
-                .with_timeouts(args.timeouts)
-                .with_spf_dns_resolver(args.spf_dns_resolver)
-                .with_spf_config(args.spf_config)
-                .with_audit_logger(args.audit_logger)
-                .with_init_context(
+                .extensions(extensions)
+                .capabilities(capabilities)
+                .require_dkim(args.require_dkim)
+                .dmarc_enforce(args.dmarc_enforce)
+                .spool(args.spool)
+                .timeouts(args.timeouts)
+                .spf_dns_resolver(args.spf_dns_resolver)
+                .spf_config(args.spf_config)
+                .audit_logger(args.audit_logger)
+                .init_context(
                     init_context
                         .into_iter()
                         .map(|(k, v)| (Cow::Owned(k), v))

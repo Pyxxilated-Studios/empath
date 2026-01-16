@@ -24,6 +24,7 @@ pub mod queue;
 mod rate_limiter;
 mod service;
 mod smtp_pool;
+mod traffic_control;
 mod types;
 
 // Re-export circuit breaker types
@@ -57,4 +58,5 @@ pub use queue::DeliveryQueue;
 // Re-export rate limiting types
 pub use rate_limiter::{DomainRateLimit, RateLimitConfig, RateLimitStats};
 pub use service::{DeliveryQueryService, QueueSnapshot};
+pub use traffic_control::{TrafficControl, TrafficControlConfig};
 pub use types::{ConnectionStats, DeliveryInfo, SmtpPoolConfig, SmtpTimeouts};

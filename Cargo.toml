@@ -127,6 +127,7 @@ opentelemetry_sdk = { version = "0.31", default-features = false, features = [
 ] }
 opentelemetry-otlp = "0.31"
 parking_lot = "0.12"
+paste = "1"
 phf = { version = "0.13", default-features = false, features = ["macros"] }
 pretty_assertions = "1"
 proc-macro2 = "1"
@@ -175,6 +176,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
     "json",
 ] }
+typed-builder = "0.20"
 typetag = "0"
 ulid = { version = "1", features = ["serde"] }
 wasmtime = { version = "40.0", features = ["component-model"] }

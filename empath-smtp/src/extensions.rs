@@ -3,7 +3,7 @@ use core::fmt::{self, Display};
 use empath_common::context::Capability;
 use serde::Deserialize;
 
-use crate::session::TlsProfileSet;
+use crate::tls::TlsProfileSet;
 
 /// SMTP protocol extensions advertised in EHLO response.
 ///
@@ -82,7 +82,7 @@ impl TryInto<Capability> for &Extension {
 #[cfg(test)]
 mod test {
     use super::Extension;
-    use crate::session::{TlsContext, TlsProfileSet};
+    use crate::tls::{TlsContext, TlsProfileSet};
 
     #[test]
     fn extension_display() -> Result<(), String> {

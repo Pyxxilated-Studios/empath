@@ -28,6 +28,7 @@ empath-tracing.workspace = true
 encoding_rs.workspace = true
 futures-util.workspace = true
 opentelemetry = { workspace = true, optional = true }
+paste.workspace = true
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 serde.workspace = true

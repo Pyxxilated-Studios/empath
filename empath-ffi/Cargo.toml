@@ -17,6 +17,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ahash.workspace = true
 empath-common.workspace = true
 empath-metrics = { workspace = true, optional = true }
 empath-tracing.workspace = true

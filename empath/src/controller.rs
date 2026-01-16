@@ -279,10 +279,10 @@ impl Empath {
     ) {
         (
             self.delivery.domains.clone(),
-            self.delivery.rate_limit.clone(),
+            self.delivery.traffic_control.rate_limit_config().clone(),
             self.delivery.retry_policy.read().clone(),
             self.delivery.smtp_timeouts.read().clone(),
-            self.delivery.circuit_breaker.read().clone(),
+            self.delivery.traffic_control.circuit_breaker_config(),
         )
     }
 
@@ -645,7 +645,10 @@ mod tests {
                 burst_size: 3,
             },
         );
-        empath.delivery.rate_limit = rate_limit;
+        empath
+            .delivery
+            .traffic_control
+            .set_rate_limit_config(rate_limit);
 
         let retry_policy = RetryPolicy {
             max_attempts: 5,
@@ -673,7 +676,10 @@ mod tests {
             success_threshold: 2,
             ..CircuitBreakerConfig::default()
         };
-        *empath.delivery.circuit_breaker.write() = circuit;
+        empath
+            .delivery
+            .traffic_control
+            .set_circuit_breaker_config(circuit);
 
         let (domains, rate_limit, retry_policy, timeouts, circuit) =
             empath.delivery_reload_settings();

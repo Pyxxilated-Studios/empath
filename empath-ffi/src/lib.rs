@@ -36,6 +36,7 @@ pub struct EmOutboundBindingSelection {
 }
 
 mod api {
+    use ahash::AHashMap;
     use empath_common::internal;
 
     use super::{
@@ -309,7 +310,7 @@ mod api {
         key: *const libc::c_char,
     ) -> bool {
         // Default to transaction context for backward compatibility
-        with_cstr(key, |key| validate_context.transaction.contains_key(key)).unwrap_or(false)
+        context_map_exists(&validate_context.transaction, key)
     }
 
     /// # Safety
@@ -321,19 +322,8 @@ mod api {
         key: *const libc::c_char,
         value: *const libc::c_char,
     ) -> bool {
-        if key.is_null() || value.is_null() {
-            return false;
-        }
         // Default to transaction context for backward compatibility
-
-        with_cstr(key, |key| {
-            let value = with_cstr(value, |s| String::from(s)).unwrap_or_default();
-            *validate_context
-                .transaction
-                .entry(Cow::Owned(key.to_string()))
-                .or_default() = value;
-        })
-        .is_some()
+        context_map_set(&mut validate_context.transaction, key, value)
     }
 
     /// # Safety
@@ -344,9 +334,8 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> crate::string::String {
-        with_cstr(key, |key| validate_context.transaction.get(key))
-            .flatten()
-            .map_or_else(crate::string::String::default, std::convert::Into::into)
+        // Default to transaction context for backward compatibility
+        context_map_get(&validate_context.transaction, key)
     }
 
     fn header_name_from_cstr(name: &CStr) -> Option<HeaderName> {
@@ -396,6 +385,53 @@ mod api {
     }
 
     // ============================================================================
+    // Context Map Helpers (reduce duplication across session/transaction/legacy)
+    // ============================================================================
+
+    /// Set a value in a context map.
+    ///
+    /// Handles null pointer checks internally - returns false if key or value is null.
+    fn context_map_set(
+        map: &mut AHashMap<Cow<'static, str>, String>,
+        key: *const libc::c_char,
+        value: *const libc::c_char,
+    ) -> bool {
+        if key.is_null() || value.is_null() {
+            return false;
+        }
+        // SAFETY: we checked for null above, and with_cstr handles the rest safely
+        with_cstr(key, |key| {
+            let value = with_cstr(value, |s| String::from(s)).unwrap_or_default();
+            *map.entry(Cow::Owned(key.to_string())).or_default() = value;
+        })
+        .is_some()
+    }
+
+    /// Get a value from a context map.
+    ///
+    /// Returns default if key is null or not found.
+    fn context_map_get(
+        map: &AHashMap<Cow<'static, str>, String>,
+        key: *const libc::c_char,
+    ) -> crate::string::String {
+        // SAFETY: with_cstr handles null checks and UTF-8 validation
+        with_cstr(key, |key| map.get(key))
+            .flatten()
+            .map_or_else(crate::string::String::default, std::convert::Into::into)
+    }
+
+    /// Check if a key exists in a context map.
+    ///
+    /// Returns false if key is null.
+    fn context_map_exists(
+        map: &AHashMap<Cow<'static, str>, String>,
+        key: *const libc::c_char,
+    ) -> bool {
+        // SAFETY: with_cstr handles null checks and UTF-8 validation
+        with_cstr(key, |key| map.contains_key(key)).unwrap_or(false)
+    }
+
+    // ============================================================================
     // Session Context Functions
     // ============================================================================
 
@@ -410,18 +446,7 @@ mod api {
         key: *const libc::c_char,
         value: *const libc::c_char,
     ) -> bool {
-        if key.is_null() || value.is_null() {
-            return false;
-        }
-
-        with_cstr(key, |key| {
-            let value = with_cstr(value, |s| String::from(s)).unwrap_or_default();
-            *validate_context
-                .session
-                .entry(Cow::Owned(key.to_string()))
-                .or_default() = value;
-        })
-        .is_some()
+        context_map_set(&mut validate_context.session, key, value)
     }
 
     /// Get session context
@@ -434,9 +459,7 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> crate::string::String {
-        with_cstr(key, |key| validate_context.session.get(key))
-            .flatten()
-            .map_or_else(crate::string::String::default, std::convert::Into::into)
+        context_map_get(&validate_context.session, key)
     }
 
     /// Check if session context key exists
@@ -449,7 +472,7 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> bool {
-        with_cstr(key, |key| validate_context.session.contains_key(key)).unwrap_or(false)
+        context_map_exists(&validate_context.session, key)
     }
 
     // ============================================================================
@@ -467,18 +490,7 @@ mod api {
         key: *const libc::c_char,
         value: *const libc::c_char,
     ) -> bool {
-        if key.is_null() || value.is_null() {
-            return false;
-        }
-
-        with_cstr(key, |key| {
-            let value = with_cstr(value, |s| String::from(s)).unwrap_or_default();
-            *validate_context
-                .transaction
-                .entry(Cow::Owned(key.to_string()))
-                .or_default() = value;
-        })
-        .is_some()
+        context_map_set(&mut validate_context.transaction, key, value)
     }
 
     /// Get transaction context
@@ -491,9 +503,7 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> crate::string::String {
-        with_cstr(key, |key| validate_context.transaction.get(key))
-            .flatten()
-            .map_or_else(crate::string::String::default, std::convert::Into::into)
+        context_map_get(&validate_context.transaction, key)
     }
 
     /// Check if transaction context key exists
@@ -506,7 +516,7 @@ mod api {
         validate_context: &Context,
         key: *const libc::c_char,
     ) -> bool {
-        with_cstr(key, |key| validate_context.transaction.contains_key(key)).unwrap_or(false)
+        context_map_exists(&validate_context.transaction, key)
     }
 
     // ============================================================================

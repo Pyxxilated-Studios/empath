@@ -40,6 +40,7 @@ socket2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
+typed-builder.workspace = true
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 ulid.workspace = true

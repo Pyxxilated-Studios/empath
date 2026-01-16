@@ -44,7 +44,7 @@
 //! ```
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use dashmap::DashMap;
 use empath_common::domain::Domain;
@@ -114,6 +114,34 @@ pub struct DomainCircuitBreakerConfig {
     pub timeout_secs: u64,
     /// Success threshold for this domain
     pub success_threshold: u32,
+}
+
+/// Result of checking whether delivery should proceed through the circuit breaker gate
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateDecision {
+    /// Delivery is allowed to proceed
+    Allow,
+    /// Circuit breaker is open - delivery should be blocked
+    Block {
+        /// Next retry time (after circuit breaker timeout)
+        next_retry_at: SystemTime,
+        /// Current attempt count for status update
+        attempt_count: u32,
+    },
+}
+
+impl GateDecision {
+    /// Returns `true` if the decision allows delivery to proceed
+    #[must_use]
+    pub const fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allow)
+    }
+
+    /// Returns `true` if the decision blocks delivery
+    #[must_use]
+    pub const fn is_blocked(&self) -> bool {
+        matches!(self, Self::Block { .. })
+    }
 }
 
 /// Circuit breaker state
@@ -353,6 +381,36 @@ impl CircuitBreaker {
         let breaker = self.get_breaker(domain);
         let mut breaker_guard = breaker.lock();
         breaker_guard.should_allow_delivery()
+    }
+
+    /// Decide whether delivery should proceed through the circuit breaker gate
+    ///
+    /// Returns a `GateDecision` that indicates whether delivery should proceed
+    /// or be blocked, along with the information needed to update queue state.
+    ///
+    /// This is a higher-level API than `should_allow_delivery` that provides
+    /// all the context needed for the caller to handle the blocking case.
+    ///
+    /// # Arguments
+    /// * `domain` - The recipient domain to check
+    /// * `attempt_count` - Current number of delivery attempts
+    ///
+    /// # Returns
+    /// * `GateDecision::Allow` - Delivery should proceed
+    /// * `GateDecision::Block { next_retry_at, attempt_count }` - Circuit is open
+    pub fn decide(&self, domain: &Domain, attempt_count: u32) -> GateDecision {
+        if self.should_allow_delivery(domain) {
+            return GateDecision::Allow;
+        }
+
+        // Circuit is open - calculate next retry time based on timeout
+        let timeout_secs = self.config.read().timeout_secs;
+        let next_retry_at = SystemTime::now() + Duration::from_secs(timeout_secs);
+
+        GateDecision::Block {
+            next_retry_at,
+            attempt_count,
+        }
     }
 
     /// Record a successful delivery

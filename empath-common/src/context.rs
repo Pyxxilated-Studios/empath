@@ -786,24 +786,166 @@ impl Context {
     fn transaction_value(&self, key: &'static str) -> Option<&str> {
         self.transaction.get(key).map(String::as_str)
     }
+}
+
+// Macro to generate simple getter/setter pairs for context values.
+// This reduces ~200 lines of repetitive boilerplate to ~30 lines of declarations.
+macro_rules! context_accessors {
+    // Transaction accessors: getter + setter pairs for transaction map
+    (transaction: $(
+        $(#[$getter_meta:meta])*
+        $getter:ident,
+        $(#[$setter_meta:meta])*
+        $setter:ident => $key:expr
+    ),* $(,)?) => {
+        $(
+            $(#[$getter_meta])*
+            #[must_use]
+            pub fn $getter(&self) -> Option<&str> {
+                self.transaction_value($key)
+            }
+
+            $(#[$setter_meta])*
+            pub fn $setter(&mut self, value: impl Into<String>) {
+                self.set_transaction_value($key, value);
+            }
+        )*
+    };
+
+    // Session accessors: getter + setter pairs for session map
+    (session: $(
+        $(#[$getter_meta:meta])*
+        $getter:ident,
+        $(#[$setter_meta:meta])*
+        $setter:ident => $key:expr
+    ),* $(,)?) => {
+        $(
+            $(#[$getter_meta])*
+            #[must_use]
+            pub fn $getter(&self) -> Option<&str> {
+                self.session_value($key)
+            }
+
+            $(#[$setter_meta])*
+            pub fn $setter(&mut self, value: impl Into<String>) {
+                self.set_session_value($key, value);
+            }
+        )*
+    };
+
+    // Session getters only (for fields with combined setters like TLS info)
+    (session_getters: $(
+        $(#[$meta:meta])*
+        $name:ident => $key:expr
+    ),* $(,)?) => {
+        $(
+            $(#[$meta])*
+            #[must_use]
+            pub fn $name(&self) -> Option<&str> {
+                self.session_value($key)
+            }
+        )*
+    };
+}
+
+impl Context {
+    // Session accessors - getter/setter pairs for session map
+    context_accessors! {
+        session:
+        /// Returns the authentication mechanism, if any.
+        auth_mechanism,
+        /// Record the SMTP AUTH mechanism in use.
+        set_auth_mechanism => session::AUTH_MECHANISM,
+
+        /// Returns the authenticated user, if any.
+        auth_user,
+        /// Record the authenticated user.
+        set_auth_user => session::AUTH_USER,
+
+        /// Returns the authentication password, if recorded.
+        auth_password,
+        /// Record the authentication password (ephemeral).
+        set_auth_password => session::AUTH_PASSWORD,
+    }
+
+    // Session getters only (setters are combined or special)
+    context_accessors! {
+        session_getters:
+        /// Returns the TLS protocol, if recorded.
+        tls_protocol => session::TLS_PROTOCOL,
+
+        /// Returns the TLS cipher, if recorded.
+        tls_cipher => session::TLS_CIPHER,
+
+        /// Returns the authzid, if any.
+        authzid => session::AUTHZID,
+    }
+
+    // Transaction accessors - getter/setter pairs for transaction map
+    context_accessors! {
+        transaction:
+        /// Returns the SPF evaluation result.
+        spf_result,
+        /// Store SPF evaluation result.
+        set_spf_result => transaction::SPF_RESULT,
+
+        /// Returns the SPF sender domain.
+        spf_domain,
+        /// Store SPF sender domain.
+        set_spf_domain => transaction::SPF_DOMAIN,
+
+        /// Returns the SPF HELO domain.
+        spf_helo_domain,
+        /// Store SPF HELO domain.
+        set_spf_helo_domain => transaction::SPF_HELO_DOMAIN,
+
+        /// Returns the SPF explanation, if any.
+        spf_explanation,
+        /// Store SPF explanation.
+        set_spf_explanation => transaction::SPF_EXPLANATION,
+
+        /// Returns the DMARC domain.
+        dmarc_domain,
+        /// Store DMARC domain.
+        set_dmarc_domain => transaction::DMARC_DOMAIN,
+
+        /// Returns the DMARC result.
+        dmarc_result,
+        /// Store DMARC result.
+        set_dmarc_result => transaction::DMARC_RESULT,
+
+        /// Returns the DMARC policy.
+        dmarc_policy,
+        /// Store DMARC policy.
+        set_dmarc_policy => transaction::DMARC_POLICY,
+
+        /// Returns the DMARC error, if any.
+        dmarc_error,
+        /// Store DMARC error details.
+        set_dmarc_error => transaction::DMARC_ERROR,
+
+        /// Returns the DMARC reason, if any.
+        dmarc_reason,
+        /// Store DMARC reason.
+        set_dmarc_reason => transaction::DMARC_REASON,
+
+        /// Returns the DMARC enforcement action, if any.
+        dmarc_action,
+        /// Store DMARC enforcement action.
+        set_dmarc_action => transaction::DMARC_ACTION,
+    }
+
+    /// Returns the DMARC sample rate (basis points), if any.
+    #[must_use]
+    pub fn dmarc_sample_rate_bps(&self) -> Option<&str> {
+        self.transaction_value(transaction::DMARC_SAMPLE_RATE_BPS)
+    }
 
     /// Returns true if TLS is active for this session.
     #[must_use]
     pub fn is_tls(&self) -> bool {
         self.session_value(session::TLS)
             .is_some_and(|value| value == "true")
-    }
-
-    /// Returns the TLS protocol, if recorded.
-    #[must_use]
-    pub fn tls_protocol(&self) -> Option<&str> {
-        self.session_value(session::TLS_PROTOCOL)
-    }
-
-    /// Returns the TLS cipher, if recorded.
-    #[must_use]
-    pub fn tls_cipher(&self) -> Option<&str> {
-        self.session_value(session::TLS_CIPHER)
     }
 
     /// Record TLS state and negotiated details for this session.
@@ -836,16 +978,6 @@ impl Context {
         }
     }
 
-    /// Record the SMTP AUTH mechanism in use.
-    pub fn set_auth_mechanism(&mut self, mechanism: impl Into<String>) {
-        self.set_session_value(session::AUTH_MECHANISM, mechanism);
-    }
-
-    /// Record the authenticated user.
-    pub fn set_auth_user(&mut self, user: impl Into<String>) {
-        self.set_session_value(session::AUTH_USER, user);
-    }
-
     /// Record the optional authzid for SMTP AUTH.
     pub fn set_authzid(&mut self, authzid: Option<String>) {
         if let Some(authzid) = authzid {
@@ -855,115 +987,9 @@ impl Context {
         }
     }
 
-    /// Record the authentication password (ephemeral).
-    pub fn set_auth_password(&mut self, password: impl Into<String>) {
-        self.set_session_value(session::AUTH_PASSWORD, password);
-    }
-
     /// Remove the stored authentication password.
     pub fn clear_auth_password(&mut self) {
         self.remove_session_value(session::AUTH_PASSWORD);
-    }
-
-    /// Returns the authentication mechanism, if any.
-    #[must_use]
-    pub fn auth_mechanism(&self) -> Option<&str> {
-        self.session_value(session::AUTH_MECHANISM)
-    }
-
-    /// Returns the authenticated user, if any.
-    #[must_use]
-    pub fn auth_user(&self) -> Option<&str> {
-        self.session_value(session::AUTH_USER)
-    }
-
-    /// Returns the authzid, if any.
-    #[must_use]
-    pub fn authzid(&self) -> Option<&str> {
-        self.session_value(session::AUTHZID)
-    }
-
-    /// Returns the authentication password, if recorded.
-    #[must_use]
-    pub fn auth_password(&self) -> Option<&str> {
-        self.session_value(session::AUTH_PASSWORD)
-    }
-
-    /// Store SPF evaluation result.
-    pub fn set_spf_result(&mut self, result: impl Into<String>) {
-        self.set_transaction_value(transaction::SPF_RESULT, result);
-    }
-
-    /// Returns the SPF evaluation result.
-    #[must_use]
-    pub fn spf_result(&self) -> Option<&str> {
-        self.transaction_value(transaction::SPF_RESULT)
-    }
-
-    /// Store SPF sender domain.
-    pub fn set_spf_domain(&mut self, domain: impl Into<String>) {
-        self.set_transaction_value(transaction::SPF_DOMAIN, domain);
-    }
-
-    /// Returns the SPF sender domain.
-    #[must_use]
-    pub fn spf_domain(&self) -> Option<&str> {
-        self.transaction_value(transaction::SPF_DOMAIN)
-    }
-
-    /// Store SPF HELO domain.
-    pub fn set_spf_helo_domain(&mut self, domain: impl Into<String>) {
-        self.set_transaction_value(transaction::SPF_HELO_DOMAIN, domain);
-    }
-
-    /// Returns the SPF HELO domain.
-    #[must_use]
-    pub fn spf_helo_domain(&self) -> Option<&str> {
-        self.transaction_value(transaction::SPF_HELO_DOMAIN)
-    }
-
-    /// Store SPF explanation.
-    pub fn set_spf_explanation(&mut self, explanation: impl Into<String>) {
-        self.set_transaction_value(transaction::SPF_EXPLANATION, explanation);
-    }
-
-    /// Returns the SPF explanation, if any.
-    #[must_use]
-    pub fn spf_explanation(&self) -> Option<&str> {
-        self.transaction_value(transaction::SPF_EXPLANATION)
-    }
-
-    /// Store DMARC domain.
-    pub fn set_dmarc_domain(&mut self, domain: impl Into<String>) {
-        self.set_transaction_value(transaction::DMARC_DOMAIN, domain);
-    }
-
-    /// Returns the DMARC domain.
-    #[must_use]
-    pub fn dmarc_domain(&self) -> Option<&str> {
-        self.transaction_value(transaction::DMARC_DOMAIN)
-    }
-
-    /// Store DMARC result.
-    pub fn set_dmarc_result(&mut self, result: impl Into<String>) {
-        self.set_transaction_value(transaction::DMARC_RESULT, result);
-    }
-
-    /// Returns the DMARC result.
-    #[must_use]
-    pub fn dmarc_result(&self) -> Option<&str> {
-        self.transaction_value(transaction::DMARC_RESULT)
-    }
-
-    /// Store DMARC policy.
-    pub fn set_dmarc_policy(&mut self, policy: impl Into<String>) {
-        self.set_transaction_value(transaction::DMARC_POLICY, policy);
-    }
-
-    /// Returns the DMARC policy.
-    #[must_use]
-    pub fn dmarc_policy(&self) -> Option<&str> {
-        self.transaction_value(transaction::DMARC_POLICY)
     }
 
     /// Store DMARC SPF alignment.
@@ -976,39 +1002,6 @@ impl Context {
         self.set_transaction_value(transaction::DMARC_DKIM_ALIGNED, aligned.to_string());
     }
 
-    /// Store DMARC error details.
-    pub fn set_dmarc_error(&mut self, error: impl Into<String>) {
-        self.set_transaction_value(transaction::DMARC_ERROR, error);
-    }
-
-    /// Returns the DMARC error, if any.
-    #[must_use]
-    pub fn dmarc_error(&self) -> Option<&str> {
-        self.transaction_value(transaction::DMARC_ERROR)
-    }
-
-    /// Store DMARC reason.
-    pub fn set_dmarc_reason(&mut self, reason: impl Into<String>) {
-        self.set_transaction_value(transaction::DMARC_REASON, reason);
-    }
-
-    /// Returns the DMARC reason, if any.
-    #[must_use]
-    pub fn dmarc_reason(&self) -> Option<&str> {
-        self.transaction_value(transaction::DMARC_REASON)
-    }
-
-    /// Store DMARC enforcement action.
-    pub fn set_dmarc_action(&mut self, action: impl Into<String>) {
-        self.set_transaction_value(transaction::DMARC_ACTION, action);
-    }
-
-    /// Returns the DMARC enforcement action, if any.
-    #[must_use]
-    pub fn dmarc_action(&self) -> Option<&str> {
-        self.transaction_value(transaction::DMARC_ACTION)
-    }
-
     /// Store DMARC sampled flag.
     pub fn set_dmarc_sampled(&mut self, sampled: bool) {
         self.set_transaction_value(transaction::DMARC_SAMPLED, sampled.to_string());
@@ -1017,12 +1010,6 @@ impl Context {
     /// Store DMARC sample rate (basis points).
     pub fn set_dmarc_sample_rate_bps(&mut self, rate: u32) {
         self.set_transaction_value(transaction::DMARC_SAMPLE_RATE_BPS, rate.to_string());
-    }
-
-    /// Returns the DMARC sample rate (basis points), if any.
-    #[must_use]
-    pub fn dmarc_sample_rate_bps(&self) -> Option<&str> {
-        self.transaction_value(transaction::DMARC_SAMPLE_RATE_BPS)
     }
 }
 

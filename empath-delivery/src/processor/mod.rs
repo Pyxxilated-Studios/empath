@@ -2,6 +2,8 @@
 
 pub mod cleanup;
 pub mod delivery;
+pub mod gates;
+pub mod job;
 pub mod process;
 pub mod scan;
 
@@ -22,14 +24,15 @@ use tokio::sync::{Mutex, Notify};
 
 use crate::binding::OutboundBindingRegistry;
 use crate::binding_health::{BindingHealthConfig, BindingHealthStatus, BindingHealthTracker};
-use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use crate::circuit_breaker::CircuitBreakerConfig;
 use crate::dns::{DnsConfig, DnsResolver, HickoryDnsResolver};
 use crate::domain_config::DomainConfigRegistry;
 use crate::dsn::DsnConfig;
 use crate::error::DeliveryError;
 use crate::policy::{RetryPolicy, TlsPolicy};
 use crate::queue::DeliveryQueue;
-use crate::rate_limiter::{RateLimitConfig, RateLimiter};
+use crate::rate_limiter::RateLimitConfig;
+use crate::traffic_control::TrafficControl;
 use crate::types::{SmtpPoolConfig, SmtpTimeouts};
 
 const fn default_scan_interval() -> u64 {
@@ -131,23 +134,11 @@ pub struct DeliveryProcessor {
     /// Default: enabled with localhost as reporting MTA
     pub dsn: DsnConfig,
 
-    /// Rate limiting configuration
+    /// Traffic control for rate limiting and circuit breaking
     ///
-    /// Controls per-domain rate limits to prevent overwhelming recipient servers
-    /// and avoid blacklisting. Uses token bucket algorithm for burst tolerance.
-    ///
-    /// Default: 10 messages/sec with burst of 20
-    pub rate_limit: RateLimitConfig,
-
-    /// Circuit breaker configuration
-    ///
-    /// Controls per-domain circuit breakers to prevent retry storms when destination
-    /// servers are experiencing prolonged outages. Automatically opens the circuit
-    /// after a threshold of failures, rejecting delivery attempts immediately to
-    /// preserve resources.
-    ///
-    /// Default: 5 failures in 60 seconds triggers 5-minute circuit open
-    pub circuit_breaker: RwLock<CircuitBreakerConfig>,
+    /// Combines per-domain rate limits (to prevent overwhelming recipient servers)
+    /// and circuit breakers (to prevent retry storms during outages).
+    pub traffic_control: TrafficControl,
 
     /// How often to process the cleanup queue for failed deletions (in seconds)
     ///
@@ -185,12 +176,6 @@ pub struct DeliveryProcessor {
 
     /// SMTP client pool (initialized in `init()`)
     pub(crate) smtp_pool_state: crate::smtp_pool::SmtpClientPool,
-
-    /// Rate limiter for per-domain throttling (initialized in `init()`)
-    pub(crate) rate_limiter: Option<RateLimiter>,
-
-    /// Circuit breaker for per-domain failure protection (initialized in `init()`)
-    pub(crate) circuit_breaker_instance: Option<CircuitBreaker>,
 
     /// Binding health tracker (initialized in `init()`)
     pub(crate) binding_health: Option<BindingHealthTracker>,
@@ -284,8 +269,7 @@ impl From<DeliveryProcessorConfig> for DeliveryProcessor {
             smtp_timeouts: RwLock::new(config.smtp_timeouts),
             smtp_pool: config.smtp_pool.clone(),
             dsn: config.dsn,
-            rate_limit: config.rate_limit,
-            circuit_breaker: RwLock::new(config.circuit_breaker),
+            traffic_control: TrafficControl::new(config.rate_limit, config.circuit_breaker),
             cleanup_interval_secs: config.cleanup_interval_secs,
             max_cleanup_attempts: config.max_cleanup_attempts,
             mta_sts_cache: crate::mta_sts::MtaStsPolicyCache::builder()
@@ -319,8 +303,7 @@ impl Default for DeliveryProcessor {
             smtp_timeouts: RwLock::new(SmtpTimeouts::default()),
             smtp_pool: SmtpPoolConfig::default(),
             dsn: DsnConfig::default(),
-            rate_limit: RateLimitConfig::default(),
-            circuit_breaker: RwLock::new(CircuitBreakerConfig::default()),
+            traffic_control: TrafficControl::default(),
             cleanup_interval_secs: default_cleanup_interval(),
             max_cleanup_attempts: default_max_cleanup_attempts(),
             spool: None,
@@ -334,8 +317,6 @@ impl Default for DeliveryProcessor {
             cleanup_queue: crate::queue::cleanup::CleanupQueue::new(),
             metrics: None,
             smtp_pool_state: crate::smtp_pool::SmtpClientPool::new(SmtpPoolConfig::default()),
-            rate_limiter: None,
-            circuit_breaker_instance: None,
             binding_health: None,
             audit_logger: AuditLoggerBuilder::default().build(),
             dkim_signer: None,
@@ -441,23 +422,19 @@ impl DeliveryProcessor {
             self.smtp_pool.idle_ttl_secs
         );
 
-        // Initialize rate limiter
-        self.rate_limiter = Some(RateLimiter::new(self.rate_limit.clone()));
-        internal!(
-            "Rate limiter initialized (default: {} msg/sec, burst: {})",
-            self.rate_limit.messages_per_second,
-            self.rate_limit.burst_size
-        );
-
-        // Initialize circuit breaker
-        let circuit_config = self.circuit_breaker.read().clone();
-        self.circuit_breaker_instance = Some(CircuitBreaker::new(circuit_config.clone()));
-        internal!(
-            "Circuit breaker initialized (threshold: {} failures in {}s, timeout: {}s)",
-            circuit_config.failure_threshold,
-            circuit_config.failure_window_secs,
-            circuit_config.timeout_secs
-        );
+        // Initialize traffic control (rate limiter + circuit breaker)
+        self.traffic_control.init();
+        if let Some(rate_limiter) = self.traffic_control.rate_limiter() {
+            internal!(
+                "Rate limiter initialized (default: {} msg/sec, burst: {})",
+                self.traffic_control.rate_limit_config().messages_per_second,
+                self.traffic_control.rate_limit_config().burst_size
+            );
+            let _ = rate_limiter; // Acknowledge usage for logging
+        }
+        if self.traffic_control.circuit_breaker().is_some() {
+            internal!("Circuit breaker initialized");
+        }
 
         self.binding_health = Some(BindingHealthTracker::new());
         internal!("Binding health tracker initialized");
@@ -908,10 +885,7 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
     fn connection_stats(&self) -> crate::types::ConnectionStats {
         crate::types::ConnectionStats {
             queue_size: self.queue.len(),
-            rate_limit_domains: self
-                .rate_limiter
-                .as_ref()
-                .map_or(0, crate::rate_limiter::RateLimiter::bucket_count),
+            rate_limit_domains: self.traffic_control.rate_limit_bucket_count(),
         }
     }
 
@@ -921,17 +895,12 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
         messages_per_second: f64,
         burst: u32,
     ) -> Result<(), String> {
-        let limiter = self
-            .rate_limiter
-            .as_ref()
-            .ok_or_else(|| "Rate limiter not initialized".to_string())?;
-        limiter.update_limits(domain.as_deref(), messages_per_second, burst)
+        self.traffic_control
+            .update_rate_limits(domain.as_deref(), messages_per_second, burst)
     }
 
     fn replace_rate_limit_config(&self, config: crate::rate_limiter::RateLimitConfig) {
-        if let Some(limiter) = &self.rate_limiter {
-            limiter.replace_config(config);
-        }
+        self.traffic_control.replace_rate_limit_config(config);
     }
 
     fn replace_retry_policy(&self, policy: crate::policy::RetryPolicy) {
@@ -943,10 +912,7 @@ impl crate::service::DeliveryQueryService for DeliveryProcessor {
     }
 
     fn replace_circuit_breaker_config(&self, config: crate::circuit_breaker::CircuitBreakerConfig) {
-        *self.circuit_breaker.write() = config.clone();
-        if let Some(breaker) = &self.circuit_breaker_instance {
-            breaker.replace_config(config);
-        }
+        self.traffic_control.replace_circuit_breaker_config(config);
     }
 
     fn replace_domains(&self, registry: crate::DomainConfigRegistry) {

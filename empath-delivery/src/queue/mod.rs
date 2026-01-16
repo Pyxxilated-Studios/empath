@@ -14,6 +14,48 @@ use empath_spool::SpooledMessageId;
 use crate::dns::MailServer;
 use crate::types::DeliveryInfo;
 
+/// Configuration for queue scanning
+#[derive(Debug, Clone, Default)]
+pub struct ScanConfig {
+    /// Message expiration time in seconds (None = never expire)
+    pub message_expiration_secs: Option<u64>,
+}
+
+/// Result of scanning the delivery queue for pending messages
+#[derive(Debug, Default)]
+pub struct ScanResult {
+    /// Message IDs that are ready for delivery (sorted by priority, then age)
+    pub pending_ids: Vec<SpooledMessageId>,
+    /// Message IDs that need their state persisted to spool
+    pub to_persist_ids: Vec<SpooledMessageId>,
+    /// Age of oldest pending message in seconds (for metrics)
+    pub oldest_pending_age_secs: u64,
+}
+
+impl ScanResult {
+    /// Create an empty scan result
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            pending_ids: Vec::new(),
+            to_persist_ids: Vec::new(),
+            oldest_pending_age_secs: 0,
+        }
+    }
+
+    /// Returns `true` if there are no pending messages
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.pending_ids.is_empty()
+    }
+
+    /// Returns the count of pending messages
+    #[must_use]
+    pub const fn pending_count(&self) -> usize {
+        self.pending_ids.len()
+    }
+}
+
 /// Manages the delivery queue for outbound messages
 #[derive(Debug, Clone)]
 pub struct DeliveryQueue {
@@ -182,5 +224,191 @@ impl DeliveryQueue {
     /// Mark a message as no longer active (used by `scan_queue` when status changes internally)
     pub fn mark_inactive(&self, message_id: &SpooledMessageId) {
         self.active_set.remove(message_id);
+    }
+
+    /// Scan the queue for messages ready for delivery
+    ///
+    /// This method:
+    /// 1. Iterates over active messages (Pending or Retry status)
+    /// 2. Checks for expired messages based on config
+    /// 3. Transitions Retry messages to Pending when retry time has elapsed
+    /// 4. Sorts pending messages by priority tier and age
+    ///
+    /// # Arguments
+    /// * `now` - Current time for age calculations
+    /// * `config` - Scan configuration (expiration settings)
+    ///
+    /// # Returns
+    /// A `ScanResult` containing pending message IDs, IDs needing persistence,
+    /// and the oldest message age in seconds.
+    pub fn scan(&self, now: SystemTime, config: &ScanConfig) -> ScanResult {
+        let mut pending_messages = Vec::new();
+        let mut to_persist = Vec::new();
+        let mut oldest_pending_age_secs = 0u64;
+
+        // Use active_message_ids for O(1) lookup instead of O(n) scan
+        let active_ids: Vec<_> = self.active_message_ids().collect();
+
+        for message_id in active_ids {
+            let Some(mut entry) = self.queue.get_mut(&message_id) else {
+                // Message was removed between collecting IDs and processing
+                self.mark_inactive(&message_id);
+                continue;
+            };
+
+            let info = entry.value_mut();
+
+            // Double-check status in case it changed (defensive)
+            if matches!(
+                info.status,
+                DeliveryStatus::Completed
+                    | DeliveryStatus::Failed(_)
+                    | DeliveryStatus::Expired
+                    | DeliveryStatus::InProgress
+            ) {
+                self.mark_inactive(&message_id);
+                continue;
+            }
+
+            // Track oldest message age
+            if let Ok(age) = now.duration_since(info.queued_at) {
+                oldest_pending_age_secs = oldest_pending_age_secs.max(age.as_secs());
+            }
+
+            // Check expiration
+            if Self::is_expired(info, now, config) {
+                self.mark_inactive(&message_id);
+                to_persist.push(info.message_id.clone());
+                continue;
+            }
+
+            // Check if retry is ready
+            if !Self::ready_to_retry(info, now, &mut to_persist) {
+                continue;
+            }
+
+            // Collect pending messages for sorting
+            if matches!(info.status, DeliveryStatus::Pending) {
+                let queued_at_secs = info
+                    .queued_at
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                pending_messages.push((
+                    info.priority_tier.rank(),
+                    queued_at_secs,
+                    info.message_id.clone(),
+                ));
+            }
+        }
+
+        // Sort by priority (lower rank = higher priority), then by age (older first)
+        pending_messages.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        let pending_ids = pending_messages
+            .into_iter()
+            .map(|(_, _, message_id)| message_id)
+            .collect();
+
+        ScanResult {
+            pending_ids,
+            to_persist_ids: to_persist,
+            oldest_pending_age_secs,
+        }
+    }
+
+    /// Check if a message has expired based on configuration
+    ///
+    /// If expired, updates the message status to `Expired` and returns `true`.
+    fn is_expired(info: &mut DeliveryInfo, now: SystemTime, config: &ScanConfig) -> bool {
+        let Some(expiration_secs) = config.message_expiration_secs else {
+            return false;
+        };
+
+        let age_secs = now
+            .duration_since(info.queued_at)
+            .unwrap_or_default()
+            .as_secs();
+
+        if age_secs <= expiration_secs {
+            return false;
+        }
+
+        empath_common::tracing::warn!(
+            message_id = ?info.message_id,
+            age_secs = age_secs,
+            expiration_secs = expiration_secs,
+            "Message expired, marking as Expired"
+        );
+
+        info.status = DeliveryStatus::Expired;
+        true
+    }
+
+    /// Check if a Retry message is ready for another attempt
+    ///
+    /// If ready, transitions status to Pending and returns `true`.
+    /// Adds `message_id` to `to_persist` when status changes.
+    fn ready_to_retry(
+        info: &mut DeliveryInfo,
+        now: SystemTime,
+        to_persist: &mut Vec<SpooledMessageId>,
+    ) -> bool {
+        if !matches!(info.status, DeliveryStatus::Retry { .. }) {
+            return true;
+        }
+
+        if let Some(next_retry_at) = info.next_retry_at
+            && now < next_retry_at
+        {
+            let wait_secs = next_retry_at
+                .duration_since(now)
+                .unwrap_or_default()
+                .as_secs();
+            empath_common::tracing::debug!(
+                message_id = ?info.message_id,
+                wait_secs = wait_secs,
+                "Skipping message, not yet time to retry"
+            );
+            return false;
+        }
+
+        empath_common::tracing::debug!(
+            message_id = ?info.message_id,
+            attempt = info.attempt_count(),
+            "Time to retry delivery"
+        );
+        info.status = DeliveryStatus::Pending;
+        info.reset_server_index();
+        to_persist.push(info.message_id.clone());
+        true
+    }
+
+    /// Apply a circuit breaker gate decision to a message
+    ///
+    /// Updates the message status and next retry time based on the decision.
+    /// Returns `true` if the message was blocked (and state was updated).
+    pub fn apply(
+        &self,
+        message_id: &SpooledMessageId,
+        decision: &crate::circuit_breaker::GateDecision,
+    ) -> bool {
+        match decision {
+            crate::circuit_breaker::GateDecision::Allow => false,
+            crate::circuit_breaker::GateDecision::Block {
+                next_retry_at,
+                attempt_count,
+            } => {
+                self.update_status(
+                    message_id,
+                    DeliveryStatus::Retry {
+                        attempts: *attempt_count,
+                        last_error: "Circuit breaker open".to_string(),
+                    },
+                );
+                self.set_next_retry_at(message_id, *next_retry_at);
+                true
+            }
+        }
     }
 }
