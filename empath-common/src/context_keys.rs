@@ -43,6 +43,10 @@ pub mod session {
     pub const AUTHZID: &str = "authzid";
     /// Authentication password (sensitive - handle with care).
     pub const AUTH_PASSWORD: &str = "auth_password";
+
+    /// Early talker detection flag ("true" if client sent data before 220 banner).
+    /// This is a strong spam indicator per RFC 5321.
+    pub const EARLY_TALKER: &str = "early_talker";
 }
 
 /// Transaction-scoped context keys.

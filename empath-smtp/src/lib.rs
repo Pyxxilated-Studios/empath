@@ -114,6 +114,35 @@ const fn default_connection_timeout() -> u64 {
     1800 // 30 minutes
 }
 
+const fn default_banner_delay_ms() -> u64 {
+    3000 // 3 seconds
+}
+
+/// Early talker detection configuration.
+///
+/// Detects SMTP clients that send data before receiving the 220 banner.
+/// This violates RFC 5321 and is a strong spam indicator.
+#[derive(Clone, Debug, Deserialize)]
+pub struct EarlyTalkerConfig {
+    /// Enable early talker detection.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Delay in milliseconds before sending the banner.
+    /// Clients that send data during this window are flagged as early talkers.
+    /// Default: 3000ms (3 seconds).
+    #[serde(default = "default_banner_delay_ms")]
+    pub banner_delay_ms: u64,
+}
+
+impl Default for EarlyTalkerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            banner_delay_ms: default_banner_delay_ms(),
+        }
+    }
+}
+
 #[derive(Default, Deserialize)]
 pub struct Smtp;
 
@@ -141,6 +170,8 @@ pub struct SmtpArgs {
     pub spf_config: spf::SpfConfig,
     #[serde(skip)]
     audit_logger: Option<Arc<dyn AuditLogger>>,
+    #[serde(default)]
+    pub early_talker: EarlyTalkerConfig,
 }
 
 impl std::fmt::Debug for SmtpArgs {
@@ -166,6 +197,7 @@ impl std::fmt::Debug for SmtpArgs {
                 "audit_logger",
                 &self.audit_logger.as_ref().map(|_| "<audit_logger>"),
             )
+            .field("early_talker", &self.early_talker)
             .finish()
     }
 }
@@ -253,6 +285,13 @@ impl SmtpArgs {
         self
     }
 
+    /// Set the early talker detection configuration for this SMTP server
+    #[must_use]
+    pub const fn with_early_talker(mut self, config: EarlyTalkerConfig) -> Self {
+        self.early_talker = config;
+        self
+    }
+
     /// Register TLS contexts with the shared registry so certs can be reloaded at runtime.
     #[must_use]
     pub fn with_tls_context_registry(self, registry: &Arc<TlsContextRegistry>) -> Self {
@@ -329,6 +368,7 @@ impl Protocol for Smtp {
             timeouts,
             tls_context,
             implicit_tls_context,
+            args.early_talker,
         )
     }
 

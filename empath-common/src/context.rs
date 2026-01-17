@@ -283,6 +283,22 @@ mod tests {
         assert!(status.matches_filter("retry"));
         assert!(!status.matches_filter("failed"));
     }
+
+    #[test]
+    fn early_talker_context_accessors_round_trip() {
+        let mut context = Context::default();
+
+        // Initially false
+        assert!(!context.is_early_talker());
+
+        // Set to true
+        context.set_early_talker(true);
+        assert!(context.is_early_talker());
+
+        // Set back to false
+        context.set_early_talker(false);
+        assert!(!context.is_early_talker());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1010,6 +1026,25 @@ impl Context {
     /// Store DMARC sample rate (basis points).
     pub fn set_dmarc_sample_rate_bps(&mut self, rate: u32) {
         self.set_transaction_value(transaction::DMARC_SAMPLE_RATE_BPS, rate.to_string());
+    }
+
+    /// Returns true if this connection was flagged as an early talker.
+    ///
+    /// An early talker is a client that sends data before receiving the 220 banner,
+    /// which violates RFC 5321 and is a strong spam indicator.
+    #[must_use]
+    pub fn is_early_talker(&self) -> bool {
+        self.session_value(session::EARLY_TALKER)
+            .is_some_and(|value| value == "true")
+    }
+
+    /// Record whether this connection is an early talker.
+    pub fn set_early_talker(&mut self, early_talker: bool) {
+        if early_talker {
+            self.set_session_value(session::EARLY_TALKER, "true");
+        } else {
+            self.remove_session_value(session::EARLY_TALKER);
+        }
     }
 }
 

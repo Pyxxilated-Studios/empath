@@ -553,6 +553,17 @@ impl PyContext {
         self.inner.read().tls_cipher().map(ToString::to_string)
     }
 
+    // ===== Early Talker Detection =====
+
+    /// Check if this connection was flagged as an early talker.
+    ///
+    /// An early talker is a client that sends data before receiving the 220 banner,
+    /// which violates RFC 5321 and is a strong spam indicator.
+    #[getter]
+    fn is_early_talker(&self) -> bool {
+        self.inner.read().is_early_talker()
+    }
+
     // ===== Rejection Interface =====
 
     /// Reject the current operation with an SMTP code and message

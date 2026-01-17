@@ -198,6 +198,81 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> Connection<Stream> {
         }
     }
 
+    /// Probe for early data by attempting to read within a timeout.
+    ///
+    /// This method checks if there's already buffered data, or attempts to read
+    /// data with a timeout. If data is received, it's stored in the internal buffer
+    /// and will be returned by subsequent `receive` calls.
+    ///
+    /// Returns `Ok(true)` if data was detected (early talker), `Ok(false)` if
+    /// no data arrived within the timeout.
+    #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
+    pub(crate) async fn probe_for_early_data(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> ConnectionResult<bool> {
+        const BUFFER_SIZE: usize = 8192;
+
+        match self {
+            Self::Plain {
+                stream,
+                read_buf,
+                read_pos,
+                read_len,
+            } => {
+                // If we already have buffered data, that's early data
+                if *read_pos < *read_len {
+                    return Ok(true);
+                }
+
+                // Ensure buffer is allocated
+                if read_buf.is_empty() {
+                    read_buf.resize(BUFFER_SIZE, 0);
+                }
+
+                // Try to read with timeout
+                match tokio::time::timeout(timeout, stream.read(read_buf)).await {
+                    Ok(Ok(n)) if n > 0 => {
+                        *read_pos = 0;
+                        *read_len = n;
+                        Ok(true)
+                    }
+                    // No data, EOF, or timeout - all indicate no early data
+                    Ok(Ok(_)) | Err(_) => Ok(false),
+                    Ok(Err(e)) => Err(e.into()),
+                }
+            }
+            Self::Tls {
+                stream,
+                read_buf,
+                read_pos,
+                read_len,
+            } => {
+                // If we already have buffered data, that's early data
+                if *read_pos < *read_len {
+                    return Ok(true);
+                }
+
+                // Ensure buffer is allocated
+                if read_buf.is_empty() {
+                    read_buf.resize(BUFFER_SIZE, 0);
+                }
+
+                // Try to read with timeout
+                match tokio::time::timeout(timeout, stream.read(read_buf)).await {
+                    Ok(Ok(n)) if n > 0 => {
+                        *read_pos = 0;
+                        *read_len = n;
+                        Ok(true)
+                    }
+                    // No data, EOF, or timeout - all indicate no early data
+                    Ok(Ok(_)) | Err(_) => Ok(false),
+                    Ok(Err(e)) => Err(e.into()),
+                }
+            }
+        }
+    }
+
     #[traced(instrument(level = tracing::Level::TRACE, skip_all), timing)]
     pub(crate) async fn receive(&mut self, buf: &mut [u8]) -> ConnectionResult<usize> {
         const BUFFER_SIZE: usize = 8192;
@@ -315,6 +390,66 @@ mod tests {
         let second_read = connection.receive(&mut buf).await?;
         assert_eq!(second_read, 3);
         assert_eq!(&buf[..second_read], b"llo");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn probe_for_early_data_detects_early_data() -> Result<(), Box<dyn std::error::Error>> {
+        let (client, mut server) = duplex(64);
+        let mut connection = make_plain(client);
+
+        // Send data before probing
+        server.write_all(b"EHLO").await?;
+
+        // Give the data time to be readable
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // Probe with a long timeout - should detect the early data
+        let is_early = connection
+            .probe_for_early_data(std::time::Duration::from_secs(1))
+            .await?;
+        assert!(is_early, "Should detect early data");
+
+        // The data should be buffered and readable via receive
+        let mut buf = [0u8; 4];
+        let n = connection.receive(&mut buf).await?;
+        assert_eq!(n, 4);
+        assert_eq!(&buf, b"EHLO");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn probe_for_early_data_times_out_when_no_data() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (client, _server) = duplex(64);
+        let mut connection = make_plain(client);
+
+        // Probe with a short timeout - should timeout since no data is sent
+        let is_early = connection
+            .probe_for_early_data(std::time::Duration::from_millis(50))
+            .await?;
+        assert!(!is_early, "Should not detect early data when none sent");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn probe_for_early_data_detects_already_buffered_data()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (client, mut server) = duplex(64);
+        let mut connection = make_plain(client);
+
+        // Send data to buffer
+        server.write_all(b"pre-buffered").await?;
+
+        // First receive some data to populate the buffer partially
+        let mut buf = [0u8; 4];
+        let _ = connection.receive(&mut buf).await?;
+
+        // Now probe - should detect remaining buffered data
+        let is_early = connection
+            .probe_for_early_data(std::time::Duration::from_millis(50))
+            .await?;
+        assert!(is_early, "Should detect already buffered data");
         Ok(())
     }
 }

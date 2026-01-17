@@ -24,7 +24,7 @@ use crate::connection::Connection;
 use crate::session::{Context, Event, Session};
 use crate::tls::TlsContext;
 use crate::transaction::SmtpTransactionHandler;
-use crate::{State, state};
+use crate::{EarlyTalkerConfig, State, state};
 
 /// SMTP Session Orchestrator
 ///
@@ -61,6 +61,9 @@ pub struct SmtpSessionOrchestrator<Stream: AsyncRead + AsyncWrite + Unpin + Send
 
     /// TLS context for implicit TLS listeners (SMTPS).
     implicit_tls_context: Option<TlsContext>,
+
+    /// Early talker detection configuration
+    early_talker_config: EarlyTalkerConfig,
 }
 
 impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrator<Stream> {
@@ -73,7 +76,10 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
     /// - `transaction_handler`: Business logic handler
     /// - `timeouts`: Server-side timeout configuration
     /// - `tls_context`: Optional TLS context for STARTTLS
+    /// - `implicit_tls_context`: Optional TLS context for implicit TLS (SMTPS)
+    /// - `early_talker_config`: Early talker detection configuration
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         stream: Stream,
         peer: SocketAddr,
@@ -82,6 +88,7 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
         timeouts: crate::SmtpServerTimeouts,
         tls_context: Option<TlsContext>,
         implicit_tls_context: Option<TlsContext>,
+        early_talker_config: EarlyTalkerConfig,
     ) -> Self {
         Self {
             connection: Some(Connection::Plain {
@@ -97,6 +104,36 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             peer,
             tls_context,
             implicit_tls_context,
+            early_talker_config,
+        }
+    }
+
+    /// Detect if the client is an "early talker" - sending data before receiving the banner.
+    ///
+    /// This is a strong spam indicator per RFC 5321.
+    /// Returns `true` if the client sent data before the banner delay expired.
+    async fn detect_early_talker(&mut self) -> bool {
+        if !self.early_talker_config.enabled || self.early_talker_config.banner_delay_ms == 0 {
+            return false;
+        }
+
+        let delay = std::time::Duration::from_millis(self.early_talker_config.banner_delay_ms);
+
+        let Some(connection) = self.connection.as_mut() else {
+            tracing::debug!("No connection available for early talker detection");
+            return false;
+        };
+
+        match connection.probe_for_early_data(delay).await {
+            Ok(is_early) => is_early,
+            Err(e) => {
+                // Log warning but fail-open for detection (don't block legitimate mail)
+                tracing::warn!(
+                    error = %e,
+                    "Early talker detection probe failed, assuming normal client"
+                );
+                false
+            }
         }
     }
 
@@ -147,6 +184,15 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
             None
         };
 
+        // Early talker detection: check if client sends data before we send the banner
+        let is_early_talker = self.detect_early_talker().await;
+        if is_early_talker {
+            tracing::warn!(
+                peer = ?self.peer,
+                "Early talker detected - client sent data before receiving banner"
+            );
+        }
+
         // Initialize business context from session state
         let mut validate_context = context::Context {
             banner: Arc::clone(&self.session.banner),
@@ -169,6 +215,11 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync> SmtpSessionOrchestrat
 
         if let Some(info) = tls_info {
             validate_context.set_tls_info(info.proto(), info.cipher());
+        }
+
+        // Set early talker flag in session context
+        if is_early_talker {
+            validate_context.set_early_talker(true);
         }
 
         // Validate connection (Connect state)

@@ -212,6 +212,15 @@ mod api {
             .map_or_else(crate::string::String::default, crate::string::String::from)
     }
 
+    /// Check if this connection was flagged as an early talker.
+    ///
+    /// An early talker is a client that sends data before receiving the 220 banner,
+    /// which violates RFC 5321 and is a strong spam indicator.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn em_context_is_early_talker(validate_context: &Context) -> bool {
+        validate_context.is_early_talker()
+    }
+
     // ============================================================================
     // Capability Functions
     // ============================================================================
