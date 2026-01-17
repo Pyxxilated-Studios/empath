@@ -127,7 +127,6 @@ opentelemetry_sdk = { version = "0.31", default-features = false, features = [
 ] }
 opentelemetry-otlp = "0.31"
 parking_lot = "0.12"
-paste = "1"
 phf = { version = "0.13", default-features = false, features = ["macros"] }
 pretty_assertions = "1"
 proc-macro2 = "1"

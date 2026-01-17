@@ -574,8 +574,7 @@ fn set_socket_interface(socket: &TcpSocket, interface: &str) -> Result<()> {
     };
 
     if result != 0 {
-        return Err(ClientError::Io(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(ClientError::Io(io::Error::other(
             "Failed to set socket interface",
         )));
     }

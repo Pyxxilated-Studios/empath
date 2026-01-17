@@ -20,7 +20,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 ahash.workspace = true
 anyhow.workspace = true
-async-trait.workspace = true
 charset.workspace = true
 empath-core.workspace = true
 empath-metrics = { workspace = true, optional = true }
@@ -28,7 +27,6 @@ empath-tracing.workspace = true
 encoding_rs.workspace = true
 futures-util.workspace = true
 opentelemetry = { workspace = true, optional = true }
-paste.workspace = true
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 serde.workspace = true

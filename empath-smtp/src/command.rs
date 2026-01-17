@@ -657,6 +657,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn mail_from_command() -> TestResult {
         let expected_mailbox = address_parser::parse_forward_path("<test@gmail.com>")
             .map_err(|err| format!("{err:?}"))?;
