@@ -175,7 +175,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
     "json",
 ] }
-typed-builder = "0.20"
+typed-builder = "0"
 typetag = "0"
 ulid = { version = "1", features = ["serde"] }
 wasmtime = { version = "40.0", features = ["component-model"] }
